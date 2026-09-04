@@ -1,10 +1,13 @@
 [project]
 name = "nautilus-perps"
 version = "0.1.0"
-description = "Hyperliquid (HIP-3 xyz dex) x Lighter cross-exchange spread feasibility validation"
+description = "Hyperliquid (HIP-3 xyz dex) x Lighter x Aster cross-exchange spread feasibility validation"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "nautilus_trader==2.0.0rc4",
+    # Local fork wheel (E:/nautilus_trader, branch aster): v2.0.0rc4 + Aster adapter.
+    # Rebuild: see E:/nautilus_trader/BUILD_WINDOWS.md; install into this venv with
+    #   uv pip install --python .venv/Scripts/python.exe <wheel>
+    "nautilus_trader @ file:///E:/nautilus_trader/target/wheels/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
     "python-dotenv",
 ]
 
