@@ -17,7 +17,10 @@ for H in (0.5,1,2,5,10,30):
         j=bisect.bisect_left(T,t+H)
         if j>=len(T): break
         forced.append(G[i][0]+G[j][1]-FEE_RT)
-        best.append(G[i][0]+max(g[1] for g in G[i+1:j+1])-FEE_RT)
+        mx=G[i+1][1]
+        for g in G[i+2:j+1]:
+            if g[1]>mx: mx=g[1]
+        best.append(G[i][0]+mx-FEE_RT)
     if not forced: continue
     fs=sorted(forced); bs=sorted(best)
     print(f"  H={H:>4}s forced: med={st.median(fs):6.2f} p90={fs[int(.9*len(fs))]:6.2f} max={fs[-1]:6.2f} pos={100*sum(x>0 for x in fs)/len(fs):4.1f}% | best: med={st.median(bs):6.2f} max={bs[-1]:6.2f} pos={100*sum(x>0 for x in bs)/len(bs):4.1f}%")

@@ -15,10 +15,12 @@ for theta in (1.0,1.5,2.0,2.5,3.0,4.0):
     tot=[]; 
     for d,idx_in,idx_out in (('A_sell_B_buy',1,2),('B_sell_A_buy',2,1)):
         ev=by[d]; T=[e[0] for e in ev]; i=0; pnl=[]
+        P=[0.0]
+        for e in ev: P.append(P[-1]+e[idx_in])
         while i<len(ev):
             t=T[i]; k=bisect.bisect_left(T,t-W)
             if i-k<10: i+=1; continue
-            m=st.mean(e[idx_in] for e in ev[k:i]); dev=ev[i][idx_in]-m
+            m=(P[i]-P[k])/(i-k); dev=ev[i][idx_in]-m
             if dev<=theta: i+=1; continue
             entry=ev[i][idx_in]; j=i+1; done=None
             while j<len(ev) and T[j]<=t+H:
