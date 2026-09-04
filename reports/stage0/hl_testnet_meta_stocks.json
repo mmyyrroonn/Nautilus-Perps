@@ -1,0 +1,1 @@
+{"universe":[{"szDecimals":4,"name":"stocks:TSLA","maxLeverage":10,"marginTableId":10,"onlyIsolated":true,"marginMode":"strictIsolated","lastFeeScaleChangeTime":"1970-01-01T00:00:00","deployerFeeScale":"1.0"}],"marginTables":[[50,{"description":"","marginTiers":[{"lowerBound":"0.0","maxLeverage":50}]}]],"collateralToken":0}

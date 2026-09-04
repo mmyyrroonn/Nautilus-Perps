@@ -1,0 +1,12 @@
+[project]
+name = "nautilus-perps"
+version = "0.1.0"
+description = "Hyperliquid (HIP-3 xyz dex) x Lighter cross-exchange spread feasibility validation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "nautilus_trader==2.0.0rc4",
+    "python-dotenv",
+]
+
+[tool.uv]
+package = false
