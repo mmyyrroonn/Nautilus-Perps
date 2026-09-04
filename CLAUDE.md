@@ -16,5 +16,13 @@ Hyperliquid (xyz HIP-3 美股永续) × Lighter 跨所价差**实盘可行性验
 - 版本钉在 `nautilus_trader==2.0.0rc4`（v2 Rust-first 结构，单个 `_libnautilus.pyd` + `.pyi` 存根）。原因：Lighter 适配器的 Python 面只存在于 2.x，稳定版 1.231.0 没有。看文档用 `docs/latest`（跟踪 2.x），不要看 1.x 文档
 - 本机 conda base 常驻激活，`uv pip` 会优先装进 conda 而不是 `.venv`：**所有 `uv pip` 命令必须带 `--python .venv\Scripts\python.exe`**
 
+## Aster / NautilusTrader fork
+- Aster 适配器不在上游，来自本地 fork：`E:\nautilus_trader`，分支 `aster`（基于 v2.0.0rc4）。
+- 编译步骤见 `E:\nautilus_trader\BUILD_WINDOWS.md`；产物是一个 wheel。
+- 装进本仓库 venv：`uv pip install --python .venv\Scripts\python.exe <wheel>`（覆盖 PyPI 的 2.0.0rc4）。
+- Aster 数据面由 Binance 适配器派生：没有 depth10 订阅；exchangeInfo 限流严格，必须只传 `load_ids`。
+- Aster 资金费 8 小时一次（HL / Lighter 每小时），CSV 里存原始费率不做归一。
+- **Aster 主网真实下单同样受「上主网」规则约束**，用户没在当轮说，默认只读。
+
 ## 交流
 中文交流；代码、注释、commit 用英文。

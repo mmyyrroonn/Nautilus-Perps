@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """
-Stage 1 - read-only cross-venue spread watch (Hyperliquid xyz HIP-3 vs Lighter).
+Stage 1 - read-only cross-venue spread watch (Hyperliquid / Lighter / Aster).
 
-Streams top-of-book for one symbol from both mainnet venues, computes the
+Streams top-of-book for one symbol from two mainnet venues, computes the
 taker-taker spread in both directions on every update, and appends every
 net-positive moment to a CSV. Data clients only: no execution client, no keys,
 no signing, no orders.
+
+Any two of the registered venues can be paired:
+    --pair NVDA:HL-LIGHTER      (symbol : venue A - venue B)
+    --pair NVDA:HL-ASTER
+    --symbol NVDA               (alias for NVDA:HL-LIGHTER, the stage-1 default)
 """
 
 from __future__ import annotations
@@ -14,20 +19,11 @@ import argparse
 import csv
 import statistics
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.adapters.hyperliquid import (
-    HyperliquidDataClientConfig,
-    HyperliquidDataClientFactory,
-    HyperliquidEnvironment,
-)
-from nautilus_trader.adapters.lighter import (
-    LighterDataClientConfig,
-    LighterDataClientFactory,
-    LighterEnvironment,
-)
 from nautilus_trader.common import Environment, LogColor, LogLevel, LoggerConfig, TimeEvent
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.live import LiveNode
@@ -46,6 +42,10 @@ from nautilus_trader.trading import Strategy
 HL_TAKER_FEE_BPS = 0.9  # xyz HIP-3 taker, PROMPT.md section 2
 HL_MAIN_TAKER_FEE_BPS = 4.5  # HL main-dex perps, tier-0 taker (no HIP-3 discount)
 LIGHTER_TAKER_FEE_BPS = 0.0  # Lighter standard taker
+# Aster docs, "RWA perpetual" taker 0.009% (read 2026-09-04). Unconfirmed for the
+# stock perps specifically: an older source quoted 20 bps. Replace with the live
+# /fapi/v3/commissionRate value once the execution leg is wired.
+ASTER_TAKER_FEE_BPS = 0.9
 RESERVE_BPS = 5.0  # one-leg failure reserve
 MAX_AGE_MS = 2_000  # a leg older than this is not tradable
 STATUS_SECS = 30
@@ -63,35 +63,169 @@ DIR_AB = "A_sell_B_buy"  # sell on A, buy on B
 DIR_BA = "B_sell_A_buy"
 
 
+# ---------------------------------------------------------------- venue registry
+
+
+def _adapter_missing(venue_key: str, module: str) -> str:
+    return (
+        f"[stage1] {venue_key} adapter not installed: cannot import '{module}'. "
+        f"Install a nautilus_trader build that ships the {venue_key} adapter into "
+        f"this repo's .venv, or pick a pair that does not use {venue_key}."
+    )
+
+
+def _hyperliquid_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
+    """Hyperliquid mainnet data client (public market data, no keys)."""
+    try:
+        from nautilus_trader.adapters.hyperliquid import (
+            HyperliquidDataClientConfig,
+            HyperliquidDataClientFactory,
+            HyperliquidEnvironment,
+        )
+    except ImportError as exc:
+        raise SystemExit(_adapter_missing("HL", "nautilus_trader.adapters.hyperliquid")) from exc
+    return (
+        HyperliquidDataClientFactory(),
+        HyperliquidDataClientConfig(environment=HyperliquidEnvironment.MAINNET),
+    )
+
+
+def _lighter_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
+    """Lighter mainnet data client (public market data, no keys)."""
+    try:
+        from nautilus_trader.adapters.lighter import (
+            LighterDataClientConfig,
+            LighterDataClientFactory,
+            LighterEnvironment,
+        )
+    except ImportError as exc:
+        raise SystemExit(_adapter_missing("LIGHTER", "nautilus_trader.adapters.lighter")) from exc
+    return (
+        LighterDataClientFactory(),
+        LighterDataClientConfig(environment=LighterEnvironment.MAINNET),
+    )
+
+
+def _aster_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
+    """Aster mainnet data client. Binance-derived adapter, lives in a local fork."""
+    try:
+        from nautilus_trader.adapters.aster import (
+            AsterDataClientConfig,
+            AsterDataClientFactory,
+            AsterEnvironment,
+        )
+        from nautilus_trader.adapters.binance import BinanceInstrumentProviderConfig
+    except ImportError as exc:
+        raise SystemExit(_adapter_missing("ASTER", "nautilus_trader.adapters.aster")) from exc
+    return (
+        AsterDataClientFactory(),
+        AsterDataClientConfig(
+            environment=AsterEnvironment.MAINNET,
+            # Aster rate-limits exchangeInfo hard: never load_all, only what we watch.
+            instrument_provider=BinanceInstrumentProviderConfig(load_ids=list(instrument_ids)),
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class VenueSpec:
+    """One venue: how to name it, and how to build its data client."""
+
+    key: str  # short tag used on the CLI: HL / LIGHTER / ASTER
+    venue: str  # Nautilus venue string, also the ClientId
+    build_client: Callable[[Sequence[str]], tuple[object, object]]
+    supports_depth10: bool = True  # Aster's Binance-derived path has no depth10 sub
+
+
+VENUES: dict[str, VenueSpec] = {
+    "HL": VenueSpec("HL", "HYPERLIQUID", _hyperliquid_client),
+    "LIGHTER": VenueSpec("LIGHTER", "LIGHTER", _lighter_client),
+    "ASTER": VenueSpec("ASTER", "ASTER", _aster_client, supports_depth10=False),
+}
+
+# Legacy stage-1 pair: keeps the old CSV file names so reports/stage1 stays uniform.
+DEFAULT_PAIR = ("HL", "LIGHTER")
+
+# symbol -> venue key -> (instrument id, taker fee bps).
+# Funding: HL and Lighter settle hourly, Aster every 8 hours. The CSV stores the
+# raw rate as reported by each venue; no per-hour normalisation is done here.
+# MSFT / HOOD / MU / SNDK / CRCL exist on HL xyz (xyz:MSFT-USD-PERP.HYPERLIQUID
+# etc.) but their Aster / Lighter listings are not verified yet - add them once
+# the instrument ids are confirmed against each venue's instrument list.
+INSTRUMENTS: dict[str, dict[str, tuple[str, float]]] = {
+    "NVDA": {
+        "HL": ("xyz:NVDA-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
+        "LIGHTER": ("NVDA-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
+        "ASTER": ("NVDAUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+    },
+    "TSLA": {
+        "HL": ("xyz:TSLA-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
+        "LIGHTER": ("TSLA-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
+        "ASTER": ("TSLAUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+    },
+    "GOLD": {  # Aster lists gold as XAUUSDT
+        "HL": ("xyz:GOLD-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
+        "LIGHTER": ("XAU-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
+        "ASTER": ("XAUUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+    },
+    "BTC": {  # main-dex crypto perp: always live, used to smoke-test the plumbing
+        "HL": ("BTC-USD-PERP.HYPERLIQUID", HL_MAIN_TAKER_FEE_BPS),
+        "LIGHTER": ("BTC-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
+        "ASTER": ("BTCUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+    },
+}
+
+
 @dataclass(frozen=True)
 class LegSpec:
     """One venue leg: what to subscribe to and what it costs to cross."""
 
-    tag: str
+    tag: str  # "A" / "B"; fixes the CSV column suffixes
+    venue_key: str  # key into VENUES
     instrument_id: str
     client_id: str
     taker_fee_bps: float
 
+    @property
+    def label(self) -> str:
+        return f"{self.tag}:{self.venue_key}"
 
-# symbol -> (leg A, leg B). Explicit by design; a third venue is a config change only.
-SYMBOLS: dict[str, tuple[LegSpec, LegSpec]] = {
-    "NVDA": (
-        LegSpec("A", "xyz:NVDA-USD-PERP.HYPERLIQUID", "HYPERLIQUID", HL_TAKER_FEE_BPS),
-        LegSpec("B", "NVDA-PERP.LIGHTER", "LIGHTER", LIGHTER_TAKER_FEE_BPS),
-    ),
-    "GOLD": (
-        LegSpec("A", "xyz:GOLD-USD-PERP.HYPERLIQUID", "HYPERLIQUID", HL_TAKER_FEE_BPS),
-        LegSpec("B", "XAU-PERP.LIGHTER", "LIGHTER", LIGHTER_TAKER_FEE_BPS),
-    ),
-    "TSLA": (
-        LegSpec("A", "xyz:TSLA-USD-PERP.HYPERLIQUID", "HYPERLIQUID", HL_TAKER_FEE_BPS),
-        LegSpec("B", "TSLA-PERP.LIGHTER", "LIGHTER", LIGHTER_TAKER_FEE_BPS),
-    ),
-    "BTC": (
-        LegSpec("A", "BTC-USD-PERP.HYPERLIQUID", "HYPERLIQUID", HL_MAIN_TAKER_FEE_BPS),
-        LegSpec("B", "BTC-PERP.LIGHTER", "LIGHTER", LIGHTER_TAKER_FEE_BPS),
-    ),
-}
+
+def parse_pair(spec: str) -> tuple[str, str, str]:
+    """`NVDA:HL-LIGHTER` -> ("NVDA", "HL", "LIGHTER"). Raises SystemExit on bad input."""
+    symbol, sep, venues = spec.upper().partition(":")
+    if not sep or not venues:
+        raise SystemExit(f"[stage1] bad --pair {spec!r}: expected SYMBOL:VENUE_A-VENUE_B")
+    venue_a, sep, venue_b = venues.partition("-")
+    if not sep or not venue_b:
+        raise SystemExit(f"[stage1] bad --pair {spec!r}: expected SYMBOL:VENUE_A-VENUE_B")
+    if symbol not in INSTRUMENTS:
+        raise SystemExit(f"[stage1] unknown symbol {symbol!r}; known: {sorted(INSTRUMENTS)}")
+    for venue in (venue_a, venue_b):
+        if venue not in VENUES:
+            raise SystemExit(f"[stage1] unknown venue {venue!r}; known: {sorted(VENUES)}")
+        if venue not in INSTRUMENTS[symbol]:
+            raise SystemExit(
+                f"[stage1] no {symbol} instrument mapped for {venue}; "
+                f"mapped: {sorted(INSTRUMENTS[symbol])}",
+            )
+    if venue_a == venue_b:
+        raise SystemExit(f"[stage1] --pair {spec!r}: the two venues must differ")
+    return symbol, venue_a, venue_b
+
+
+def build_legs(symbol: str, venue_a: str, venue_b: str) -> tuple[LegSpec, LegSpec]:
+    legs = []
+    for tag, venue_key in (("A", venue_a), ("B", venue_b)):
+        instrument_id, fee_bps = INSTRUMENTS[symbol][venue_key]
+        legs.append(LegSpec(tag, venue_key, instrument_id, VENUES[venue_key].venue, fee_bps))
+    return legs[0], legs[1]
+
+
+def csv_stem(symbol: str, venue_a: str, venue_b: str, stamp: str) -> str:
+    if (venue_a, venue_b) == DEFAULT_PAIR:
+        return f"spread_{symbol}_{stamp}"  # legacy name, kept for reports/stage1
+    return f"spread_{symbol}_{venue_a}-{venue_b}_{stamp}"
 
 
 @dataclass
@@ -174,20 +308,20 @@ class SpreadWatch(Strategy):
         for leg in (self._a, self._b):
             venue = leg.instrument_id.venue
             ids = self.cache.instrument_ids(venue)
-            self.log.info(f"[{leg.spec.tag}] {venue} instruments loaded: {len(ids)}", LogColor.BLUE)
+            self.log.info(f"[{leg.spec.label}] {venue} instruments loaded: {len(ids)}", LogColor.BLUE)
             if self.cache.instrument(leg.instrument_id) is None:
                 base = str(leg.instrument_id.symbol).split("-")[0].split(":")[-1]
                 near = [str(i) for i in ids if base in str(i)][:20]
-                self.log.error(f"[{leg.spec.tag}] {leg.instrument_id} NOT loaded; candidates: {near}")
+                self.log.error(f"[{leg.spec.label}] {leg.instrument_id} NOT loaded; candidates: {near}")
                 self.stop()
                 return
-            self.log.info(f"[{leg.spec.tag}] instrument OK: {leg.instrument_id}", LogColor.GREEN)
+            self.log.info(f"[{leg.spec.label}] instrument OK: {leg.instrument_id}", LogColor.GREEN)
 
         self._open_csv()
         for leg in (self._a, self._b):
             self.subscribe_quotes(leg.instrument_id, client_id=leg.client_id)
             self.subscribe_funding_rates(leg.instrument_id, client_id=leg.client_id)
-            self.log.info(f"[{leg.spec.tag}] subscribed quotes+funding {leg.instrument_id}", LogColor.GREEN)
+            self.log.info(f"[{leg.spec.label}] subscribed quotes+funding {leg.instrument_id}", LogColor.GREEN)
 
         now = self.clock.utc_now()
         self.clock.set_time_alert("fallback", now + timedelta(seconds=FALLBACK_SECS))
@@ -232,6 +366,7 @@ class SpreadWatch(Strategy):
         self._evaluate()
 
     def on_funding_rate(self, funding_rate: FundingRateUpdate) -> None:
+        # Raw venue rate; HL/Lighter settle hourly, Aster every 8 hours.
         leg = self._by_id.get(funding_rate.instrument_id)
         if leg is not None:
             leg.funding = float(funding_rate.rate)
@@ -245,9 +380,15 @@ class SpreadWatch(Strategy):
     def _maybe_fallback(self) -> None:
         for leg in (self._a, self._b):
             if leg.updates == 0:
+                if not VENUES[leg.spec.venue_key].supports_depth10:
+                    self.log.warning(
+                        f"[{leg.spec.label}] no quotes in {FALLBACK_SECS}s and "
+                        f"{leg.spec.venue_key} has no depth10 subscription -> no fallback",
+                    )
+                    continue
                 leg.source = "depth10"
                 self.subscribe_book_depth10(leg.instrument_id, BookType.L2_MBP, client_id=leg.client_id)
-                self.log.warning(f"[{leg.spec.tag}] no quotes in {FALLBACK_SECS}s -> depth10 fallback")
+                self.log.warning(f"[{leg.spec.label}] no quotes in {FALLBACK_SECS}s -> depth10 fallback")
 
     def _log_status(self) -> None:
         self.log.info(
@@ -322,8 +463,8 @@ class SpreadWatch(Strategy):
         lines = [
             "",
             "=" * 78,
-            f"SUMMARY  updates A={self._a.updates} ({self._a.source})  "
-            f"B={self._b.updates} ({self._b.source})",
+            f"SUMMARY  updates A={self._a.updates} ({self._a.spec.venue_key}, {self._a.source})  "
+            f"B={self._b.updates} ({self._b.spec.venue_key}, {self._b.source})",
             f"  evaluated samples={self._samples}  skipped-stale={self._stale}  "
             f"fee+reserve={self._fee_total:.2f} bps",
             f"  net-positive rows written={self._rows}   all-sample rows={self._all_rows}",
@@ -345,36 +486,31 @@ class SpreadWatch(Strategy):
         return "\n".join(lines)
 
 
-def build_node(symbol: str, out_dir: Path, depth_levels: int, all_sample_ms: int) -> tuple[LiveNode, SpreadWatch]:
-    leg_a, leg_b = SYMBOLS[symbol]
+def build_node(symbol: str, venue_a: str, venue_b: str, out_dir: Path, depth_levels: int,
+               all_sample_ms: int) -> tuple[LiveNode, SpreadWatch]:
+    leg_a, leg_b = build_legs(symbol, venue_a, venue_b)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stem = csv_stem(symbol, venue_a, venue_b, stamp)
     config = SpreadWatchConfig(
         strategy_id=StrategyId.from_str("SPREAD-WATCH-001"),
         leg_a=leg_a,
         leg_b=leg_b,
-        csv_path=out_dir / f"spread_{symbol}_{stamp}.csv",
-        all_csv_path=out_dir / f"spread_{symbol}_{stamp}_all.csv",
+        csv_path=out_dir / f"{stem}.csv",
+        all_csv_path=out_dir / f"{stem}_all.csv",
         book_depth_levels=depth_levels,
         all_sample_ms=all_sample_ms,
     )
     strategy = SpreadWatch(config)
-    node = (
+    builder = (
         LiveNode.builder("STAGE1-SPREAD-WATCH", TraderId.from_str("STAGE1-001"), Environment.LIVE)
         .with_logging(LoggerConfig(stdout_level=LogLevel.INFO))
         .with_timeout_connection(60)
         .with_delay_post_stop_secs(2)
-        .add_data_client(
-            None,
-            HyperliquidDataClientFactory(),
-            HyperliquidDataClientConfig(environment=HyperliquidEnvironment.MAINNET),
-        )
-        .add_data_client(
-            None,
-            LighterDataClientFactory(),
-            LighterDataClientConfig(environment=LighterEnvironment.MAINNET),
-        )
-        .build()
     )
+    for leg in (leg_a, leg_b):  # only the two venues of this pair are registered
+        factory, client_config = VENUES[leg.venue_key].build_client([leg.instrument_id])
+        builder = builder.add_data_client(None, factory, client_config)
+    node = builder.build()
     node.add_strategy(strategy)
     return node, strategy
 
@@ -383,10 +519,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stage 1 read-only cross-venue spread watch")
     parser.add_argument("--minutes", type=float, default=30.0, help="run duration in minutes")
     parser.add_argument("--out", type=Path, default=Path("reports/stage1"), help="output directory")
-    parser.add_argument("--symbol", default="NVDA", choices=sorted(SYMBOLS), help="symbol to watch")
+    parser.add_argument("--pair", default=None,
+                        help=f"SYMBOL:VENUE_A-VENUE_B, e.g. NVDA:HL-ASTER; venues: {sorted(VENUES)}")
+    parser.add_argument("--symbol", default=None, choices=sorted(INSTRUMENTS),
+                        help="alias for SYMBOL:HL-LIGHTER (legacy stage-1 pair)")
     parser.add_argument("--all-sample-ms", type=int, default=ALL_SAMPLE_MS, help="min interval between _all.csv rows; 0 = every evaluation")
     parser.add_argument("--depth-levels", type=int, default=10, help="book depth levels for the depth10 fallback (v2 fixes this at 10; kept for config parity)")
     args = parser.parse_args()
+
+    if args.pair and args.symbol:
+        parser.error("use either --pair or --symbol, not both")
+    pair_spec = args.pair or f"{args.symbol or 'NVDA'}:{DEFAULT_PAIR[0]}-{DEFAULT_PAIR[1]}"
+    symbol, venue_a, venue_b = parse_pair(pair_spec)
 
     try:  # optional; no credentials are needed for read-only market data
         from dotenv import load_dotenv
@@ -395,12 +539,13 @@ def main() -> None:
     except ImportError:
         pass
 
-    print(f"[stage1] watching {args.symbol} for {args.minutes} min -> {args.out}", flush=True)
+    print(f"[stage1] watching {symbol} {venue_a}-{venue_b} for {args.minutes} min -> {args.out}", flush=True)
     strategy: SpreadWatch | None = None
     for attempt in range(1, CONNECT_ATTEMPTS + 1):
         # Venue connects are occasionally flaky (TLS handshake eof / instrument
         # bootstrap timeout). A failed connect writes no CSV, so retrying is safe.
-        node, strategy = build_node(args.symbol, args.out, args.depth_levels, args.all_sample_ms)
+        node, strategy = build_node(symbol, venue_a, venue_b, args.out, args.depth_levels,
+                                    args.all_sample_ms)
         handle = node.handle()
         timer = threading.Timer(args.minutes * 60.0, handle.stop)
         timer.daemon = True
