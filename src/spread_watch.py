@@ -83,6 +83,10 @@ SYMBOLS: dict[str, tuple[LegSpec, LegSpec]] = {
         LegSpec("A", "xyz:GOLD-USD-PERP.HYPERLIQUID", "HYPERLIQUID", HL_TAKER_FEE_BPS),
         LegSpec("B", "XAU-PERP.LIGHTER", "LIGHTER", LIGHTER_TAKER_FEE_BPS),
     ),
+    "TSLA": (
+        LegSpec("A", "xyz:TSLA-USD-PERP.HYPERLIQUID", "HYPERLIQUID", HL_TAKER_FEE_BPS),
+        LegSpec("B", "TSLA-PERP.LIGHTER", "LIGHTER", LIGHTER_TAKER_FEE_BPS),
+    ),
     "BTC": (
         LegSpec("A", "BTC-USD-PERP.HYPERLIQUID", "HYPERLIQUID", HL_MAIN_TAKER_FEE_BPS),
         LegSpec("B", "BTC-PERP.LIGHTER", "LIGHTER", LIGHTER_TAKER_FEE_BPS),
