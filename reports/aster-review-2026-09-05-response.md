@@ -6,16 +6,16 @@
 
 | 仓库 | 审查 HEAD | 修复后 HEAD | 新增提交 |
 | --- | --- | --- | --- |
-| NautilusTrader fork `E:/nautilus_trader` (`aster`) | `7bae5cf` | `bc1e65a` | `5aed57e`（未知资产注册 + GET 重试）、`08c21e8`（F01–F08、费率、流就绪）、`bc1e65a`（启动对账与引擎契约对齐） |
+| NautilusTrader fork `E:/nautilus_trader` (`aster`) | `7bae5cf` | `e60923e` | `5aed57e`（未知资产注册 + GET 重试）、`08c21e8`（F01–F08、费率、流就绪）、`bc1e65a`（启动对账与引擎契约对齐）、`e60923e`（平仓行，有界对账可净额） |
 | Nautilus-Perps `E:/Nautilus-Perps` (`task/aster-support`) | `3fd3cab` | `73b0a10` | `73b0a10`（探针 F06、F09–F12、cancel API、35 个离线测试、审查报告入库） |
 
 12 项全部确认成立，未打回任何一项。修复之外，两次真实 testnet 运行另外暴露了 4 个审查未覆盖的缺陷，一并列在第 3 节。
 
 ## 1. 验证方式说明
 
-- Rust：`cargo test -p nautilus-aster`（lib 216 + 集成 33，集成测试用 axum 模拟交易所，含分页与游标/时间窗互斥）、`cargo test -p nautilus-binance`（970 / 233 / 147，与审查基线相比只多 3 个连接超时回归测试）、`cargo clippy --no-deps ... -D warnings` 两个 crate 均为零警告。主 session 亲自重跑了上述测试，输出与 sub agent 报告一致。
+- Rust：`cargo test -p nautilus-aster`（lib 223 + 集成 35，集成测试用 axum 模拟交易所，含分页与游标/时间窗互斥）、`cargo test -p nautilus-binance`（970 / 233 / 147，与审查基线相比只多 3 个连接超时回归测试）、`cargo clippy --no-deps ... -D warnings` 两个 crate 均为零警告。主 session 亲自重跑了上述测试，输出与 sub agent 报告一致。
 - Python：`python -m unittest discover -s tests` → 35 passed。
-- 真实 testnet：`src/exec_probe.py --instrument-id ETHUSDT-PERP.ASTER`，最近一次运行（2026-09-05 03:17 UTC，wheel = `08c21e8`）exit 0：GTC 挂单 accepted → 撤单 → `OrderCanceled`（用户流推回）→ IOC 成交 0.003 ETH @ 2451.40（手续费 0.00381143 ASTER）→ 费率行 → 节点自停。日志 `logs/stage2_aster_testnet_probe.log`（gitignored，本机保留）。
+- 真实 testnet：`src/exec_probe.py --instrument-id ETHUSDT-PERP.ASTER`，最近一次运行（2026-09-05 04:00 UTC，wheel = `e60923e`）exit 0：GTC 挂单 accepted → 撤单 → `OrderCanceled`（用户流推回）→ IOC 成交 0.003 ETH（手续费 0.00385280 ASTER）→ 费率行（真实 `commissionRate`）→ 节点自停；启动对账零 ERROR、零 `InvalidStateTrigger`，剩余 WARN 只有 testnet 无 NVDAUSDT、availableBalance 钳制提示、探针费率提示、IOC 成交留下的仓位。日志 `logs/stage2_aster_testnet_probe.log`（gitignored，本机保留）。
 - 未做：主网任何操作；`make format` / `pre-commit` / 全仓测试；对上游的 PR 准备。
 
 ## 2. 逐项结论
@@ -33,7 +33,7 @@
 ### F03 [P1] 私有流重连后未补偿断线期间的成交 — 已修复，一处待验证
 - 改动：`connect` 内联建立首个 listenKey + WebSocket，失败则 `connect` 失败（不再先标记 connected）；新增 `SessionContext` + `StreamState`（在途订单登记表、按 symbol 的已应用 trade id），在每次会话重建和 `Reconnected` 帧上执行 `compensate()`：open orders 对账（消失的逐笔查询）、分页 `userTrades` 补成交并按 trade id 去重、余额与持仓刷新（含平仓行）；`session_start_ms` 作为补偿下限。用户流连接超时从共享 Binance 客户端的固定 5 s 改为可配置（`ws_connect_timeout_secs`，默认 20），初次连接对传输错误按 1 s / 2 s / 4 s 重试。
 - 测试：`test_connect_fails_when_the_first_user_stream_cannot_start`、`test_connect_waits_for_the_user_stream_before_reporting_connected`、`test_outage_compensation_applies_a_fill_and_a_cancel_missed_by_the_stream`、`test_outage_compensation_does_not_reapply_a_fill_already_seen_on_the_stream`、`test_listen_key_expiry_rebuilds_the_session_and_compensates`、`test_compensation_never_reaches_behind_the_session_start`、`test_recorded_fill_is_not_offered_again`、`test_stream_connect_retries_transport_faults` 等；Binance 侧 `test_connect_timeout_defaults_to_the_binance_value` 等 3 个回归。全部 ok。
-- 剩余限制：补偿在流任务内联执行，期间帧排队（无界通道，不丢）。冷启动 `InvalidStateTrigger` 告警已在 `bc1e65a` 消除（见第 3 节 D）；剩一条有界对账 ERROR 处理中（D2）。
+- 剩余限制：补偿在流任务内联执行，期间帧排队（无界通道，不丢）。冷启动 `InvalidStateTrigger` 告警已在 `bc1e65a` 消除，有界对账 ERROR 已在 `e60923e` 消除（见第 3 节 D、D2）。
 
 ### F04 [P1] 对账源失败仍被报告为完整成功 — 已修复
 - 改动：`generate_order_status_reports` / `generate_fill_reports` / `generate_position_status_reports` 对请求失败和必要字段解析失败返回 `Err`，不再 `continue` + `Ok`。顺带修了第二个 bug：`AsterPositionRisk::is_flat()` 把解析失败的数量当作平仓，现在先解析再判平。
@@ -81,11 +81,11 @@
 - **B. 探针撤单 API 用错**（已修，`73b0a10`）：v2 `Strategy.cancel_order` 接受 `ClientOrderId`，探针传了订单对象；回调里的 TypeError 被框架静默吞掉，订单一直挂在交易所。现所有 `on_*` 回调都有异常守卫。
 - **C. 同步回调重入**（已修，`73b0a10`）：`OrderPendingCancel` 在 `Strategy.cancel_order` 内部同步发出，此时策略在 Rust 侧处于可变借用状态，回调里调 `self.log` 抛 `RuntimeError: Already mutably borrowed`；Rust 日志器还会整条丢弃多行消息。探针在该回调里只计数，失败记录先写 stderr。
 - **D. 冷启动对账告警**（已修，`bc1e65a`）：根因是引擎 `ExecutionManager::reconcile_execution_mass_status` 在应用前按 `ts_event` 排序事件，要求订单的 `ts_accepted` 不晚于它自己的成交；Aster 的部分 `allOrders` 行缺 `time` 字段，适配器回落到「现在」，历史成交因此排到接受之前而被拒。适配器现在在 `generate_mass_status` 里把 `ts_accepted` 对齐到该订单最早成交、单行内 `ts_accepted ≤ ts_last`、声明报告窗口、丢弃无对应订单的孤儿成交并告警。集成测试 `test_startup_reconciliation_of_historical_fills_is_accepted_by_the_engine` 走真实 `ExecutionManager + ExecutionEngine` 回放 5 笔历史成交订单，断言零 `InvalidStateTrigger`。真实 testnet 冷启动（wheel = `bc1e65a`）：`InvalidStateTrigger` 计数 0。
-- **D2. 有界对账 ERROR**（处理中）：同一次启动仍有一条 `[ERROR] nautilus_live::execution::manager: Bounded reconciliation does not explain the reported position for ETHUSDT-PERP.ASTER; projecting 7 historical order(s) without position or portfolio effects`。当时仓位已平（历史 5 笔买入 0.003、2 笔手工卖出 0.012 + 0.003，净 0）。状态正确，但每次启动一条 ERROR 不可接受，正在核对引擎的检查条件并在适配器侧调整报告窗口/持仓报告。
+- **D2. 有界对账 ERROR**（已修，`e60923e`）：引擎的有界对账（`ExecutionManager::order_only_venue_order_ids`，仅在声明报告窗口后启用）把窗口内成交净额与持仓报告比较，期望值只从持仓报告取；Aster 的 `positionRisk` 省略平仓合约，适配器又跳过了平仓行，于是期望值缺失、所有历史订单被降级投影并打 ERROR。现在 `generate_position_status_reports` 上报 Flat 行，`generate_mass_status` 为窗口内有成交但无持仓行的合约补一条平仓行。引擎级测试 `test_flat_account_with_pre_session_history_reconciles_without_complaint` 回放该账户（5 笔 IOC 买 + 2 笔手工减仓卖，`positionRisk` 为空），断言无任何对账 WARN/ERROR。真实 testnet 冷启动（wheel = `e60923e`）：对账零 ERROR/WARN。已知残余风险：若交易所返回同一毫秒内交错的两笔成交，或减仓单回放时净额为零，引擎仍会告警，这取决于交易所时间戳，出现时把对应 `allOrders`/`userTrades` 行加进 fixture 即可定位。
 - **E. 环境**：本机 DNS 解析到 198.18.x.x（代理 fake-ip），对 Aster 主网/测试网的 TLS 握手中断与连接超时频繁；每次节点启动拉两次 exchangeInfo（数据 + 执行客户端），Aster 对该端点限流，连续运行需间隔。
 
 ## 4. 未完成与后续
 
-- D2 项修完后：重装 wheel、再跑一次探针确认启动零 ERROR/WARN，更新本文；fork 再一个提交。
+- 审查 12 项与实测发现 A–D2 均已修复并经真实 testnet 复验；无待办修复项。
 - 主网阶段前仍需：NVDAUSDT 真实费率（主网只读 `commissionRate`）、`config/limits.toml` 与硬编码限额的阶段 3 脚本、`make format` / `pre-commit`（若准备向上游提 PR）。
 - 任务分支 `task/aster-support` 按用户要求暂不合并。
