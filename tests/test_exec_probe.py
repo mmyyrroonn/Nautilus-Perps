@@ -205,6 +205,9 @@ class ProbeUnderTest(exec_probe.AsterProbeStrategy):
         self.submitted: list[FakeOrder] = []
         self.cancel_calls: list[object] = []
         self.subscriptions: list[InstrumentId] = []
+        # Client order ids whose cancel must raise, mirroring the native cancel_order
+        # refusing a tracked id that is not in the cache.
+        self.cancel_raises_for: set[object] = set()
 
     @property
     def cache(self) -> FakeCache:
@@ -222,6 +225,10 @@ class ProbeUnderTest(exec_probe.AsterProbeStrategy):
         self._stub_cache.orders[order.client_order_id] = order
 
     def cancel_order(self, client_order_id, client_id=None, params=None) -> None:
+        if client_order_id in self.cancel_raises_for:
+            raise RuntimeError(
+                f"Cannot cancel order: order not found in cache: {client_order_id}",
+            )
         self.cancel_calls.append(client_order_id)
 
 
@@ -829,6 +836,102 @@ class TestCleanupOnStop(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(calls, [1])
         self.assertFalse(state["cleanup_confirmed"])
+
+
+# --------------------------------------------------- round-3 review: R3-04 cleanup failure
+
+
+class TestRound3CleanupFailure(unittest.TestCase):
+    """
+    R3-04: a cleanup that cannot even request a cancel must not cost the run its result.
+
+    The native ``Strategy.cancel_order`` raises for a tracked id that is not in the cache -
+    exactly the state the cleanup exists to report. Before the fix that exception escaped
+    ``_finish``, so the summary was never built, ``done_event`` was never set, and only the
+    watchdog timeout could end the run.
+    """
+
+    def test_native_cancel_error_still_produces_a_result(self) -> None:
+        # Real (client-less) LiveNode so the strategy is registered and the real native
+        # cancel_order runs. The node is never started and there is no venue connection.
+        probe = exec_probe.AsterProbeStrategy(
+            exec_probe.AsterProbeConfig(instrument_id=exec_probe.BTC_INSTRUMENT_ID),
+        )
+        probe._probe_order_ids.append(ClientOrderId("MISSING-1"))
+        probe._orders_sent = 1
+        node = (
+            exec_probe.LiveNode.builder(
+                "PROBE-CLEANUP-FAILURE-TEST",
+                exec_probe.TraderId.from_str("TESTER-002"),
+                exec_probe.Environment.LIVE,
+            )
+            .with_logging(
+                exec_probe.LoggerConfig(
+                    stdout_level=exec_probe.LogLevel.OFF,
+                    bypass_logging=True,
+                ),
+            )
+            .build()
+        )
+        node.add_strategy(probe)
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            probe.record_failure("injected tracked-id/cache mismatch")
+
+        self.assertTrue(probe.finished)
+        self.assertTrue(probe.done_event.is_set(), "cleanup error skipped the done signal")
+        self.assertTrue(probe.summary_line, "cleanup error skipped the result summary")
+        self.assertEqual(len(probe.cancel_errors), 1)
+        self.assertIn("MISSING-1", probe.cancel_errors[0])
+        self.assertIn("not found in cache", probe.cancel_errors[0])
+        self.assertEqual(probe.exit_code, exec_probe.EXIT_PROBE_FAILED)
+        self.assertIn("cancel_errors=1", probe.summary_line)
+        # The done signal and the cleanup-confirmed signal stay separate.
+        self.assertFalse(probe.cleanup_done_event.is_set())
+        self.assertEqual(probe.leftovers, ["MISSING-1=unknown (not in the cache)"])
+
+
+class TestCleanupErrorsWithDoubles(unittest.TestCase):
+    """
+    The same contract, driven through the fast test doubles.
+    """
+
+    def test_one_failing_cancel_does_not_stop_the_others(self) -> None:
+        probe, resting = resting_probe()
+        second = FakeOrder(
+            ClientOrderId("O-EXTRA"),
+            Quantity.from_str("0.0001"),
+            Price.from_str("50000.0"),
+        )
+        probe.cache.orders[second.client_order_id] = second
+        probe._probe_order_ids.append(second.client_order_id)
+        probe.cancel_raises_for.add(resting.client_order_id)
+
+        probe.on_order_rejected(FakeEvent(resting.client_order_id, reason="venue error"))
+
+        # The refused cancel is recorded and the remaining order is still cancelled.
+        self.assertEqual(len(probe.cancel_errors), 1)
+        self.assertIn("O-1", probe.cancel_errors[0])
+        self.assertIn(second.client_order_id, probe.cancel_calls)
+        self.assertTrue(probe.done_event.is_set())
+        self.assertIn("cancel_errors=1", probe.summary_line)
+        self.assertIn("result=failed", probe.summary_line)
+        self.assertEqual(probe.exit_code, exec_probe.EXIT_PROBE_FAILED)
+
+    def test_leftover_report_is_labelled_as_a_stop_time_snapshot(self) -> None:
+        probe, resting = resting_probe()
+        probe.on_stop()
+        self.assertIn("NOT venue-confirmed", probe.leftover_report)
+        self.assertIn(f"{resting.client_order_id}=ACCEPTED", probe.leftover_report)
+
+    def test_confirmed_cleanup_is_not_labelled_a_snapshot(self) -> None:
+        probe = build_probe(commission_ids=(PROBE_ID,))
+        _, ioc = run_to_ioc(probe)
+        ioc.close("CANCELED")
+        probe.on_order_canceled(FakeEvent(ioc.client_order_id))
+        self.assertTrue(probe.cleanup_done_event.is_set())
+        self.assertIn("none", probe.leftover_report)
+        self.assertNotIn("NOT venue-confirmed", probe.leftover_report)
 
 
 if __name__ == "__main__":
