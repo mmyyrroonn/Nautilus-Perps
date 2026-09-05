@@ -42,9 +42,9 @@ from nautilus_trader.trading import Strategy
 HL_TAKER_FEE_BPS = 0.9  # xyz HIP-3 taker, PROMPT.md section 2
 HL_MAIN_TAKER_FEE_BPS = 4.5  # HL main-dex perps, tier-0 taker (no HIP-3 discount)
 LIGHTER_TAKER_FEE_BPS = 0.0  # Lighter standard taker
-# Aster docs, "RWA perpetual" taker 0.009% (read 2026-09-04). Unconfirmed for the
-# stock perps specifically: an older source quoted 20 bps. Replace with the live
-# /fapi/v3/commissionRate value once the execution leg is wired.
+# Verified on mainnet 2026-09-05 via the signed /fapi/v3/commissionRate endpoint for
+# NVDAUSDT, XAUUSDT and XAUUSD1: takerCommissionRate 0.000090 (0.9 bps), maker 0.
+# The older "20 bps" figure for stock perps is wrong for this account.
 ASTER_TAKER_FEE_BPS = 0.9
 RESERVE_BPS = 5.0  # one-leg failure reserve
 MAX_AGE_MS = 2_000  # a leg older than this is not tradable
@@ -167,6 +167,11 @@ INSTRUMENTS: dict[str, dict[str, tuple[str, float]]] = {
         "HL": ("xyz:GOLD-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
         "LIGHTER": ("XAU-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
         "ASTER": ("XAUUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+    },
+    "GOLD1": {  # Aster's USD1-margined gold perp (XAUUSD1); same HL / Lighter legs as GOLD
+        "HL": ("xyz:GOLD-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
+        "LIGHTER": ("XAU-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
+        "ASTER": ("XAUUSD1-PERP.ASTER", ASTER_TAKER_FEE_BPS),
     },
     "BTC": {  # main-dex crypto perp: always live, used to smoke-test the plumbing
         "HL": ("BTC-USD-PERP.HYPERLIQUID", HL_MAIN_TAKER_FEE_BPS),
