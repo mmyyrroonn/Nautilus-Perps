@@ -660,5 +660,176 @@ class TestFeeReporting(unittest.TestCase):
         self.assertTrue(any("not loaded" in line for line in probe._fee_lines))
 
 
+# ------------------------------------------------- round-2 review: R2-06 / R2-07 / R2-08
+
+
+def resting_probe() -> tuple[ProbeUnderTest, FakeOrder]:
+    """
+    Drive the probe to "GTC accepted, cancel requested" and return it with the resting order.
+    """
+    probe = build_probe()
+    probe.on_start()
+    probe.on_quote(FakeQuote("100000.0", "100000.1"))
+    resting = probe.submitted[0]
+    probe.on_order_accepted(FakeEvent(resting.client_order_id))
+    return probe, resting
+
+
+class TestRound2Regressions(unittest.TestCase):
+    """
+    The three round-2 review cases, with their assertions unchanged.
+    """
+
+    def test_failure_prevents_late_cancel_from_submitting_ioc(self) -> None:
+        # R2-06
+        probe, resting = resting_probe()
+        # Inject an event sequence, not an assertion that the Aster adapter emits
+        # OrderCancelRejected for every HTTP cancellation failure.
+        probe.on_order_cancel_rejected(
+            FakeEvent(resting.client_order_id, reason="cancel outcome unknown"),
+        )
+        self.assertTrue(probe.finished)
+        self.assertTrue(probe.done_event.is_set())
+        count = probe.orders_sent
+        resting.close("CANCELED")
+        probe.on_order_canceled(FakeEvent(resting.client_order_id))
+        self.assertEqual(
+            probe.orders_sent,
+            count,
+            f"new order after failure: phase={probe._phase}, orders={probe.orders_sent}",
+        )
+
+    def test_timeout_initiates_cleanup_of_unresolved_gtc(self) -> None:
+        # R2-07
+        probe, resting = resting_probe()
+        original_cancel_count = len(probe.cancel_calls)
+        # The watchdog only signals from its thread; the node invokes on_stop
+        # on the main thread. Keep the same thread boundary for PyStrategy.
+        stop_requested = threading.Event()
+        thread, state = exec_probe.start_stop_watchdog(
+            probe.done_event,
+            stop_requested.set,
+            0.01,
+        )
+        thread.join(timeout=1.0)
+        self.assertTrue(state["timed_out"])
+        self.assertTrue(stop_requested.is_set())
+        probe.on_stop()
+        self.assertFalse(resting.is_closed)
+        self.assertGreater(
+            len(probe.cancel_calls),
+            original_cancel_count,
+            "watchdog exit leaves accepted GTC with no cleanup request",
+        )
+
+    def test_filled_gtc_does_not_pass_cancel_probe(self) -> None:
+        # R2-08
+        probe, resting = resting_probe()
+        resting.close("FILLED", filled_qty=str(resting.quantity))
+        probe.on_order_filled(
+            FakeEvent(
+                resting.client_order_id,
+                last_qty=resting.quantity,
+                last_px=resting.price,
+                commission=None,
+                liquidity_side="MAKER",
+            ),
+        )
+        if len(probe.submitted) > 1:
+            ioc = probe.submitted[1]
+            ioc.close("CANCELED")
+            probe.on_order_canceled(FakeEvent(ioc.client_order_id))
+        self.assertNotEqual(
+            probe.exit_code,
+            exec_probe.EXIT_OK,
+            f"cancel never succeeded: {probe.summary_line}",
+        )
+
+
+class TestCleanupOnStop(unittest.TestCase):
+    """
+    R2-07 detail: the cleanup is bounded, probe-scoped, and reports what it cannot confirm.
+    """
+
+    def test_cleanup_only_cancels_this_probes_own_orders(self) -> None:
+        probe, resting = resting_probe()
+        # An unrelated order in the same cache must never be touched.
+        foreign = FakeOrder(
+            ClientOrderId("FOREIGN-1"),
+            Quantity.from_str("1.0"),
+            Price.from_str("100.0"),
+        )
+        probe.cache.orders[foreign.client_order_id] = foreign
+        probe.on_stop()
+        self.assertNotIn(foreign.client_order_id, probe.cancel_calls)
+        self.assertEqual(set(probe.cancel_calls), {resting.client_order_id})
+
+    def test_leftovers_are_named_with_their_status(self) -> None:
+        probe, resting = resting_probe()
+        probe.on_stop()
+        self.assertEqual(probe.leftovers, [f"{resting.client_order_id}=ACCEPTED"])
+        self.assertFalse(probe.cleanup_done_event.is_set())
+
+    def test_closed_orders_leave_nothing_to_clean_up(self) -> None:
+        probe = build_probe(commission_ids=(PROBE_ID,))
+        _, ioc = run_to_ioc(probe)
+        ioc.close("CANCELED")
+        probe.on_order_canceled(FakeEvent(ioc.client_order_id))
+        self.assertEqual(probe.leftovers, [])
+        self.assertTrue(probe.cleanup_done_event.is_set())
+        self.assertIn("outstanding=0", probe.summary_line)
+        before = list(probe.cancel_calls)
+        probe.on_stop()
+        self.assertEqual(probe.cancel_calls, before)
+
+    def test_failure_cleanup_cancels_the_open_resting_order(self) -> None:
+        probe, resting = resting_probe()
+        before = len(probe.cancel_calls)
+        probe.on_order_rejected(FakeEvent(resting.client_order_id, reason="venue error"))
+        self.assertGreater(len(probe.cancel_calls), before)
+        self.assertIn("outstanding=1", probe.summary_line)
+        self.assertFalse(probe.cleanup_done_event.is_set())
+        # A late confirmation closes the cleanup out without starting anything new.
+        resting.close("CANCELED")
+        probe.on_order_canceled(FakeEvent(resting.client_order_id))
+        self.assertTrue(probe.cleanup_done_event.is_set())
+        self.assertEqual(probe.leftovers, [])
+        self.assertEqual(len(probe.submitted), 1)
+
+    def test_watchdog_waits_for_the_cleanup_within_a_bound(self) -> None:
+        done = threading.Event()
+        cleanup = threading.Event()
+        calls: list[int] = []
+        thread, state = exec_probe.start_stop_watchdog(
+            done,
+            lambda: calls.append(1),
+            30.0,
+            cleanup,
+            5.0,
+        )
+        done.set()
+        cleanup.set()
+        thread.join(timeout=5.0)
+        self.assertEqual(calls, [1])
+        self.assertTrue(state["cleanup_confirmed"])
+
+    def test_watchdog_stops_anyway_when_the_cleanup_is_never_confirmed(self) -> None:
+        done = threading.Event()
+        cleanup = threading.Event()
+        calls: list[int] = []
+        thread, state = exec_probe.start_stop_watchdog(
+            done,
+            lambda: calls.append(1),
+            30.0,
+            cleanup,
+            0.05,
+        )
+        done.set()
+        thread.join(timeout=5.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(calls, [1])
+        self.assertFalse(state["cleanup_confirmed"])
+
+
 if __name__ == "__main__":
     unittest.main()
