@@ -1,0 +1,3 @@
+# Cached raw venue responses: re-fetchable, never committed.
+*
+!.gitignore
