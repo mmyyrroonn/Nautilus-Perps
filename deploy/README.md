@@ -62,3 +62,29 @@ new `WATCH_UNTIL`, use `pm2 delete <app>` then `pm2 start ...` (or
 - CSVs: `reports/stage1/` (repo-relative, same layout as local runs)
 - pm2 stdout/stderr: `logs/pm2-stocks.out.log` / `.err.log`,
   `logs/pm2-crypto.out.log` / `.err.log` (timestamped, `time: true`)
+
+## Analyse a finished run
+
+`src/analysis/opportunities.py` is offline and stdlib-only: copy the CSVs back
+(or run it on the box) and point it at the run stamp.
+
+```bash
+.venv/Scripts/python.exe src/analysis/opportunities.py \
+    --dir reports/stage1 --stamp 20260907T094928Z \
+    [--symbols SOL,HYPE] [--gap-s 2] [--hold-s 30] [--min-usd 1000] \
+    [--from 2026-09-07T13:30:00Z --to 2026-09-07T20:00:00Z] \
+    [--md reports/stage1/opps.md]
+```
+
+Symbols are discovered from the file names of that stamp. Per symbol and per
+direction it prints: the gross-bps distribution against the fee+reserve
+threshold, hits merged into deduplicated episodes, top-of-book and depth-bucket
+capacity per episode, a taker-in/taker-out round trip inside `--hold-s`, and the
+hourly-normalised funding carry per venue pair. `--from` / `--to` restrict the
+window (US RTH is 13:30-20:00 UTC). It streams each file once: ~9 s and ~150 MB
+of RSS for 3.4 M rows (2 M `_all` + 1 M hits + 0.34 M depth).
+
+Funding is reported raw AND normalised to bps/h (Aster / 8, HL and Lighter as
+reported). That unit was never verified against a settlement, so implausible
+magnitudes are flagged in the report instead of being trusted -- Lighter's
+0.0012 reads as 12 bps/h (1051 %/yr), which is almost certainly not per hour.
