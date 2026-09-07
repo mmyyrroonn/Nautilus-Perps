@@ -44,12 +44,20 @@ from spread_watch import INSTRUMENTS, RESERVE_BPS  # noqa: E402  (needs sys.path
 
 CAP_BPS = (2, 5, 10)  # depth buckets written by spread_watch, in bps off the touch
 DEPTH_TOL_S = 2.0  # a depth row this far from the episode start still counts
-# Funding settlement interval per venue: the CSV stores the RAW venue rate.
-# HL and Lighter settle hourly, Aster every 8 hours. The unit of the raw number
-# was never verified against a settlement, so the hourly figure below is an
-# assumption, not a measurement.
-FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0, "ASTER": 8.0}
-DEFAULT_FUNDING_HOURS = 1.0
+# Funding: the CSV stores the RAW venue number as delivered by the Nautilus
+# adapter. Units verified 2026-09-07 against the adapter sources and venue docs:
+#   HL      fraction per hour                         -> bps/h = raw * 1e4
+#   LIGHTER PERCENT per hour (adapter does not /100)  -> bps/h = raw * 1e2
+#   ASTER   fraction per settlement interval; the interval is per symbol
+#           (GET /fapi/v1/fundingInfo fundingIntervalHours: 1 / 4 / 8 h)
+FUNDING_SCALE = {"HL": 1e4, "LIGHTER": 1e2, "ASTER": 1e4}
+FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0}
+ASTER_FUNDING_HOURS = {  # fundingInfo snapshot 2026-09-07; unknown symbols fall back to 8
+    "BTC": 8, "ETH": 8, "SOL": 8, "HYPE": 4, "ZEC": 1, "PONS": 1, "LIT": 1, "ASTER": 4,
+    "DASH": 8, "PUMP": 4, "ARB": 8, "NVDA": 8, "TSLA": 8, "HOOD": 8, "SNDK": 8, "MU": 8,
+    "SPCX": 8, "GOLD": 4, "GOLD1": 4,
+}
+DEFAULT_FUNDING_HOURS = 8.0
 SUSPICIOUS_BPS_H = 3.0  # |hourly funding| above this is flagged, not trusted
 
 
@@ -526,8 +534,14 @@ def round_trips(
 # ---------------------------------------------------------------- funding
 
 
-def hourly_bps(raw: float, venue: str) -> float:
-    return raw / FUNDING_HOURS.get(venue, DEFAULT_FUNDING_HOURS) * 1e4
+def funding_hours(venue: str, symbol: str) -> float:
+    if venue == "ASTER":
+        return float(ASTER_FUNDING_HOURS.get(symbol, DEFAULT_FUNDING_HOURS))
+    return FUNDING_HOURS.get(venue, 1.0)
+
+
+def hourly_bps(raw: float, venue: str, symbol: str) -> float:
+    return raw * FUNDING_SCALE.get(venue, 1e4) / funding_hours(venue, symbol)
 
 
 @dataclass
@@ -540,7 +554,7 @@ class FundingPair:
 
 
 def funding_report(
-    data: AllData, fees: dict[str, float],
+    data: AllData, fees: dict[str, float], symbol: str,
 ) -> tuple[list[list[object]], list[FundingPair], list[str]]:
     """Per-venue raw/hourly medians plus the per-pair carry of short-high/long-low."""
     venue_rows: list[list[object]] = []
@@ -555,8 +569,8 @@ def funding_report(
         median_raw = weighted_median(counter)
         if median_raw is None:
             continue
-        interval = FUNDING_HOURS.get(venue, DEFAULT_FUNDING_HOURS)
-        per_h = hourly_bps(median_raw, venue)
+        interval = funding_hours(venue, symbol)
+        per_h = hourly_bps(median_raw, venue, symbol)
         venue_rows.append([
             venue, f"{median_raw:.10f}".rstrip("0").rstrip("."), f"{interval:g}",
             fmt(per_h, 4), fmt(per_h * 24 * 365 / 100.0, 1), len(counter),
@@ -564,8 +578,8 @@ def funding_report(
         if abs(per_h) > SUSPICIOUS_BPS_H:
             flags.append(
                 f"{venue} funding {median_raw:.8f} raw -> {per_h:.2f} bps/h "
-                f"({per_h * 24 * 365 / 100.0:.0f}%/yr) is implausibly large: the raw unit "
-                f"was never verified, do NOT trade on this number",
+                f"({per_h * 24 * 365 / 100.0:.0f}%/yr) is implausibly large; check the raw "
+                f"unit before trusting it",
             )
         elif median_raw == 0.0:
             flags.append(f"{venue} funding is exactly 0 in every sample (feed may be idle)")
@@ -581,7 +595,8 @@ def funding_report(
         diff = Counter()
         for (raw_sell, raw_buy), count in data.funding_pair[key].items():
             try:
-                delta = hourly_bps(float(raw_sell), sell) - hourly_bps(float(raw_buy), buy)
+                delta = (hourly_bps(float(raw_sell), sell, symbol)
+                         - hourly_bps(float(raw_buy), buy, symbol))
             except ValueError:
                 continue
             diff[delta] += count
@@ -824,8 +839,9 @@ def analyse(files: SymbolFiles, args) -> list[str]:
         lines.append("")
 
     # ---- 5. funding
-    venue_rows, pairs, flags = funding_report(data, fees)
-    lines.append("### 5. Funding carry (raw -> hourly, UNVERIFIED unit)")
+    venue_rows, pairs, flags = funding_report(data, fees, files.symbol)
+    lines.append("### 5. Funding carry (raw -> bps/h; HL fraction/h, Lighter percent/h, "
+                 "Aster fraction per 1/4/8 h interval)")
     lines.append("")
     if venue_rows:
         lines += table(

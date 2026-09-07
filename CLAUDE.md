@@ -21,7 +21,7 @@ Hyperliquid (xyz HIP-3 美股永续) × Lighter 跨所价差**实盘可行性验
 - 编译步骤见 `E:\nautilus_trader\BUILD_WINDOWS.md`；产物是一个 wheel。
 - 装进本仓库 venv：`uv pip install --python .venv\Scripts\python.exe <wheel>`（覆盖 PyPI 的 2.0.0rc4）。
 - Aster 数据面由 Binance 适配器派生：没有 depth10 订阅；exchangeInfo 限流严格，必须只传 `load_ids`。
-- Aster 资金费 8 小时一次（HL / Lighter 每小时），CSV 里存原始费率不做归一。
+- 资金费结算：HL 每小时（原始值为小时分数），Lighter 每小时（原始值是百分数，适配器不除 100），Aster 按品种 1 / 4 / 8 小时（`/fapi/v1/fundingInfo`）。CSV 存原始值不归一，折算见 `src/analysis/opportunities.py`。
 - **Aster 主网真实下单同样受「上主网」规则约束**，用户没在当轮说，默认只读。
 
 ## 交流
