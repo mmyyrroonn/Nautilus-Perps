@@ -21,7 +21,10 @@ const path = require('path');
 const REPO_ROOT = path.join(__dirname, '..');
 const INTERPRETER = '.venv/bin/python';
 const SCRIPT = 'src/spread_watch.py';
-const VENUES = 'HL,LIGHTER,ASTER';
+// LIGHTER_RH is Lighter's Robinhood Chain deployment (venue LIGHTER_ROBINHOOD,
+// quote asset USDG, zero fees). Symbols it does not list -- HOOD, ASTER, DASH,
+// PUMP, ARB as of 2026-09-07 -- simply skip that leg with an INFO line.
+const VENUES = 'HL,LIGHTER,LIGHTER_RH,ASTER';
 const OUT = 'reports/stage1';
 
 function watchArgs(symbols) {

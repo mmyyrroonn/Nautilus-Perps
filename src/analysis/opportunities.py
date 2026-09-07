@@ -48,10 +48,14 @@ DEPTH_TOL_S = 2.0  # a depth row this far from the episode start still counts
 # adapter. Units verified 2026-09-07 against the adapter sources and venue docs:
 #   HL      fraction per hour                         -> bps/h = raw * 1e4
 #   LIGHTER PERCENT per hour (adapter does not /100)  -> bps/h = raw * 1e2
+#   LIGHTER_RH  same as LIGHTER (same adapter, ROBINHOOD deployment): PERCENT per
+#           hour, hourly. Confirmed on a live sample 2026-09-07: HYPE raw medians
+#           were LIGHTER 0.0012 and LIGHTER_RH 0.0011, i.e. 0.12 / 0.11 bps/h -
+#           reading them as fractions would give an absurd ~960 %/yr.
 #   ASTER   fraction per settlement interval; the interval is per symbol
 #           (GET /fapi/v1/fundingInfo fundingIntervalHours: 1 / 4 / 8 h)
-FUNDING_SCALE = {"HL": 1e4, "LIGHTER": 1e2, "ASTER": 1e4}
-FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0}
+FUNDING_SCALE = {"HL": 1e4, "LIGHTER": 1e2, "LIGHTER_RH": 1e2, "ASTER": 1e4}
+FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0}
 ASTER_FUNDING_HOURS = {  # fundingInfo snapshot 2026-09-07; unknown symbols fall back to 8
     "BTC": 8, "ETH": 8, "SOL": 8, "HYPE": 4, "ZEC": 1, "PONS": 1, "LIT": 1, "ASTER": 4,
     "DASH": 8, "PUMP": 4, "ARB": 8, "NVDA": 8, "TSLA": 8, "HOOD": 8, "SNDK": 8, "MU": 8,
@@ -633,7 +637,9 @@ def discover(directory: Path, stamp: str) -> list[SymbolFiles]:
             stem = name[len("spread_"):-len(f"_{stamp}.csv")]
         else:
             continue
-        symbol, _, venues = stem.rpartition("_")
+        # Split on the FIRST underscore: symbols never contain one, venue keys can
+        # (LIGHTER_RH), so `NVDA_HL-LIGHTER-LIGHTER_RH-ASTER` must yield "NVDA".
+        symbol, _, venues = stem.partition("_")
         if not symbol or not venues:
             continue
         found.setdefault(symbol, SymbolFiles(

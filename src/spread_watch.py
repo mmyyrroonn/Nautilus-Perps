@@ -6,10 +6,11 @@ One process streams top-of-book for N symbols from up to N venues each, computes
 the taker-taker spread for every venue pair in both directions on every update,
 and appends every net-positive moment to a CSV. In parallel it samples each leg's
 order book once per second and records how much notional sits within 2 / 5 / 10
-bps of the touch. Data clients only: no execution client, no keys, no signing,
-no orders.
+bps of the touch, and records every public trade tick of every leg. Data clients
+only: no execution client, no keys, no signing, no orders.
 
     --symbols NVDA,TSLA --venues HL,LIGHTER,ASTER     multi-symbol, N venues
+    --venues HL,LIGHTER,LIGHTER_RH,ASTER              adds Lighter's Robinhood Chain
     --pair NVDA:HL-ASTER                              legacy single-pair alias
     --symbol NVDA                                     alias for NVDA:HL-LIGHTER
 """
@@ -40,12 +41,16 @@ from nautilus_trader.model import (
     QuoteTick,
     StrategyId,
     TraderId,
+    TradeTick,
 )
 from nautilus_trader.trading import Strategy
 
 HL_TAKER_FEE_BPS = 0.9  # xyz HIP-3 taker, PROMPT.md section 2
 HL_MAIN_TAKER_FEE_BPS = 4.5  # HL main-dex perps, tier-0 taker (no HIP-3 discount)
 LIGHTER_TAKER_FEE_BPS = 0.0  # Lighter standard taker
+# Lighter's Robinhood Chain deployment: separate exchange, quote asset USDG, every
+# fee 0 (taker_fee / maker_fee are "0.0000" on every order book, checked 2026-09-07).
+LIGHTER_RH_TAKER_FEE_BPS = 0.0
 # Verified on mainnet 2026-09-05 via the signed /fapi/v3/commissionRate endpoint for
 # NVDAUSDT, XAUUSDT and XAUUSD1: takerCommissionRate 0.000090 (0.9 bps), maker 0.
 # The older "20 bps" figure for stock perps is wrong for this account.
@@ -70,6 +75,11 @@ SPREAD_HEADER = [
     "sell_bid", "sell_bid_size", "buy_ask", "buy_ask_size",
     "sell_ask", "buy_bid", "funding_sell", "funding_buy",
     "age_sell_ms", "age_buy_ms",
+]
+# Trades csv: one row per public trade tick, per leg.
+TRADES_HEADER = [
+    "ts_utc", "venue", "price", "size", "aggressor_side", "trade_id",
+    "ts_event_ns", "ts_init_ns",
 ]
 DEPTH_HEADER = [
     "ts_utc", "venue", "bid", "ask", "mid", "levels_bid", "levels_ask",
@@ -121,6 +131,32 @@ def _lighter_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
     )
 
 
+def _lighter_rh_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
+    """Lighter on Robinhood Chain: same adapter, ROBINHOOD deployment (public data)."""
+    try:
+        from nautilus_trader.adapters.lighter import (
+            LIGHTER_ROBINHOOD_VENUE,
+            LighterDataClientConfig,
+            LighterDataClientFactory,
+            LighterDeployment,
+            LighterEnvironment,
+        )
+    except ImportError as exc:
+        raise SystemExit(
+            _adapter_missing("LIGHTER_RH", "nautilus_trader.adapters.lighter"),
+        ) from exc
+    return (
+        LighterDataClientFactory(),
+        # base_url_http / base_url_ws stay unset: the adapter resolves the ROBINHOOD
+        # MAINNET endpoints itself (https://api.rh.lighter.xyz, wss://api.rh.lighter.xyz/stream).
+        LighterDataClientConfig(
+            environment=LighterEnvironment.MAINNET,
+            deployment=LighterDeployment.ROBINHOOD,
+            venue=LIGHTER_ROBINHOOD_VENUE,
+        ),
+    )
+
+
 def _aster_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
     """Aster mainnet data client. Binance-derived adapter, lives in a local fork."""
     try:
@@ -146,7 +182,7 @@ def _aster_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
 class VenueSpec:
     """One venue: how to name it, and how to build its data client."""
 
-    key: str  # short tag used on the CLI: HL / LIGHTER / ASTER
+    key: str  # short tag used on the CLI: HL / LIGHTER / LIGHTER_RH / ASTER
     venue: str  # Nautilus venue string, also the ClientId
     build_client: Callable[[Sequence[str]], tuple[object, object]]
     supports_depth10: bool = True  # Aster's Binance-derived path has no depth10 sub
@@ -155,13 +191,41 @@ class VenueSpec:
 VENUES: dict[str, VenueSpec] = {
     "HL": VenueSpec("HL", "HYPERLIQUID", _hyperliquid_client),
     "LIGHTER": VenueSpec("LIGHTER", "LIGHTER", _lighter_client),
+    "LIGHTER_RH": VenueSpec("LIGHTER_RH", "LIGHTER_ROBINHOOD", _lighter_rh_client),
     "ASTER": VenueSpec("ASTER", "ASTER", _aster_client, supports_depth10=False),
 }
-ALL_VENUES = ("HL", "LIGHTER", "ASTER")
+ALL_VENUES = ("HL", "LIGHTER", "LIGHTER_RH", "ASTER")
+# What `--venues` defaults to. LIGHTER_RH is opt-in: it is a separate exchange with
+# its own books, so it only joins a run when it is named explicitly.
+DEFAULT_VENUES = ("HL", "LIGHTER", "ASTER")
 DEFAULT_PAIR = ("HL", "LIGHTER")  # what bare --symbol means
 
 
 # ---------------------------------------------------------------- symbol table
+
+
+# Perp order books listed by the Lighter Robinhood Chain instance, read on
+# 2026-09-07 from https://api.rh.lighter.xyz/api/v1/orderBooks (57 perps, all
+# "active"; the 27 "<X>/USDG" spot books in the same response are ignored).
+# Nautilus names them "<BASE>-PERP.LIGHTER_ROBINHOOD" (confirmed against the
+# instrument provider on the same day).
+LIGHTER_RH_PERPS = frozenset({
+    "AAPL", "AI", "AMC", "AMD", "AMZN", "ANSEM", "ANTHROPIC", "ASTS", "BABA", "BE",
+    "BTC", "CASHCAT", "CLSK", "COIN", "CRCL", "CRWV", "ETH", "GOOGL", "HYPE", "INTC",
+    "IREN", "LIT", "LUNR", "META", "MSFT", "MU", "NEAR", "NVDA", "OPENAI", "ORCL",
+    "PLTR", "PONS", "QBTS", "QQQ", "RGTI", "SGOV", "SHEIN", "SKHY", "SLV", "SMCI",
+    "SNDK", "SOFI", "SOL", "SOXL", "SPCX", "SPY", "SUI", "TSLA", "TSM", "USAR",
+    "USO", "VVV", "WULF", "XAG", "XAU", "XRP", "ZEC",
+})
+# Watched symbols the Robinhood Chain does NOT list on 2026-09-07, so they simply
+# run without the LIGHTER_RH leg: HOOD, ASTER, DASH, PUMP, ARB.
+
+
+def lighter_rh(base: str) -> dict[str, tuple[str, float]]:
+    """LIGHTER_RH leg for `base`, or nothing when the Robinhood Chain has no such perp."""
+    if base not in LIGHTER_RH_PERPS:
+        return {}
+    return {"LIGHTER_RH": (f"{base}-PERP.LIGHTER_ROBINHOOD", LIGHTER_RH_TAKER_FEE_BPS)}
 
 
 def crypto(base: str) -> dict[str, tuple[str, float]]:
@@ -170,6 +234,7 @@ def crypto(base: str) -> dict[str, tuple[str, float]]:
         "HL": (f"{base}-USD-PERP.HYPERLIQUID", HL_MAIN_TAKER_FEE_BPS),
         "LIGHTER": (f"{base}-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
         "ASTER": (f"{base}USDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+        **lighter_rh(base),
     }
 
 
@@ -184,6 +249,7 @@ def stock(base: str, aster_symbol: str) -> dict[str, tuple[str, float]]:
         "HL": (f"xyz:{base}-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
         "LIGHTER": (f"{base}-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
         "ASTER": (f"{aster_symbol}-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+        **lighter_rh(base),
     }
 
 
@@ -203,11 +269,13 @@ INSTRUMENTS: dict[str, dict[str, tuple[str, float]]] = {
         "HL": ("xyz:GOLD-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
         "LIGHTER": ("XAU-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
         "ASTER": ("XAUUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+        **lighter_rh("XAU"),
     },
     "GOLD1": {  # Aster's USD1-margined gold perp (XAUUSD1); same HL / Lighter legs as GOLD
         "HL": ("xyz:GOLD-USD-PERP.HYPERLIQUID", HL_TAKER_FEE_BPS),
         "LIGHTER": ("XAU-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
         "ASTER": ("XAUUSD1-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+        **lighter_rh("XAU"),
     },
 }
 for _base in CRYPTO_SYMBOLS:  # main-dex crypto perps: always live, smoke-test the plumbing
@@ -257,9 +325,11 @@ def build_plan(symbols: Sequence[str], venue_keys: Sequence[str]) -> dict[str, l
         for key in venue_keys:
             mapping = INSTRUMENTS[symbol].get(key)
             if mapping is None:
+                # Not every venue lists every symbol (e.g. HOOD is not on LIGHTER_RH):
+                # skip that leg and watch the rest, never fail the whole run.
                 print(
-                    f"[stage1] WARNING {symbol}: no instrument mapped for {key}; "
-                    f"watching the remaining legs",
+                    f"[stage1] INFO {symbol}: no instrument mapped for {key}; "
+                    f"skipping that leg and watching the remaining legs",
                     flush=True,
                 )
                 continue
@@ -339,6 +409,7 @@ class LegState:
     depth_updates: int = 0  # book messages seen (deltas batches or depth10 snapshots)
     depth_warned: bool = False
     depth10_subscribed: bool = False
+    trades: int = 0  # public trade ticks seen on this leg
 
     def ready(self) -> bool:
         return self.bid > 0.0 and self.ask > 0.0
@@ -421,6 +492,7 @@ class SpreadWatchConfig(StrategyConfig):
         csv_path: Path,
         all_csv_path: Path,
         depth_csv_path: Path,
+        trades_csv_path: Path,
         run_state: RunState,
         reserve_bps: float = RESERVE_BPS,
         book_depth_levels: int = 10,
@@ -434,6 +506,7 @@ class SpreadWatchConfig(StrategyConfig):
         self.csv_path = csv_path
         self.all_csv_path = all_csv_path
         self.depth_csv_path = depth_csv_path
+        self.trades_csv_path = trades_csv_path
         self.run_state = run_state
         self.reserve_bps = reserve_bps
         self.book_depth_levels = book_depth_levels
@@ -479,6 +552,7 @@ class SpreadWatch(Strategy):
         self._hits = CsvSink(config.csv_path, SPREAD_HEADER)
         self._all = CsvSink(config.all_csv_path, SPREAD_HEADER)
         self._depth = CsvSink(config.depth_csv_path, DEPTH_HEADER)
+        self._trades = CsvSink(config.trades_csv_path, TRADES_HEADER)
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -504,12 +578,15 @@ class SpreadWatch(Strategy):
                 LogColor.GREEN,
             )
 
-        for sink in (self._hits, self._all, self._depth):
+        for sink in (self._hits, self._all, self._depth, self._trades):
             sink.open()
 
         for leg in self._legs:
             self.subscribe_quotes(leg.instrument_id, client_id=leg.client_id)
             self.subscribe_funding_rates(leg.instrument_id, client_id=leg.client_id)
+            # Public trade prints: what actually traded, at what size and on which
+            # side. Purely additive - the spread path still runs off quotes.
+            self.subscribe_trades(leg.instrument_id, client_id=leg.client_id)
             # Managed deltas on EVERY venue: the data engine maintains a full L2
             # OrderBook in the cache, which is the capacity source. depth10 caps at
             # 10 levels - far inside 2 bps on a liquid book - so it is only a
@@ -521,7 +598,7 @@ class SpreadWatch(Strategy):
                 client_id=leg.client_id, managed=True,
             )
             self.log.info(
-                f"[{self.symbol}/{leg.spec.label}] subscribed quotes+funding"
+                f"[{self.symbol}/{leg.spec.label}] subscribed quotes+funding+trades"
                 f"+deltas(managed) {leg.instrument_id}",
                 LogColor.GREEN,
             )
@@ -537,7 +614,7 @@ class SpreadWatch(Strategy):
                              start_time=now)
 
     def on_stop(self) -> None:
-        for sink in (self._hits, self._all, self._depth):
+        for sink in (self._hits, self._all, self._depth, self._trades):
             sink.close()
 
     # ------------------------------------------------------------------ handlers
@@ -582,6 +659,24 @@ class SpreadWatch(Strategy):
                 f"{leg.depth_updates} managed deltas -> maintaining a local OrderBook",
             )
         leg.local_book.apply_deltas(deltas)
+
+    def on_trade(self, trade: TradeTick) -> None:
+        leg = self._by_id.get(trade.instrument_id)
+        if leg is None:
+            return
+        leg.trades += 1
+        # aggressor_side as the adapter reports it; this build names the variants
+        # BUY / SELL / NO_AGGRESSOR.
+        self._trades.write([
+            datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            leg.spec.venue_key,
+            str(trade.price),
+            str(trade.size),
+            trade.aggressor_side.name,
+            str(trade.trade_id),
+            trade.ts_event,
+            trade.ts_init,
+        ])
 
     def on_funding_rate(self, funding_rate: FundingRateUpdate) -> None:
         # Raw venue rate; HL/Lighter settle hourly, Aster every 8 hours.
@@ -681,7 +776,8 @@ class SpreadWatch(Strategy):
     def _log_status(self) -> None:
         now_ns = self.clock.timestamp_ns()
         legs = " ".join(
-            f"{leg.spec.venue_key}={leg.updates}({leg.source}/{leg.book_mode}:{leg.depth_updates})"
+            f"{leg.spec.venue_key}={leg.updates}({leg.source}/{leg.book_mode}:"
+            f"{leg.depth_updates},trades={leg.trades})"
             for leg in self._legs
         )
         gross = " ".join(
@@ -692,7 +788,7 @@ class SpreadWatch(Strategy):
         self.log.info(
             f"STATUS [{self.symbol}] {legs} | samples={self._samples} stale={self._stale} "
             f"| last gross {gross} bps | net+ rows={self._hits.rows} (dirs {hits}) "
-            f"| depth rows={self._depth.rows}",
+            f"| depth rows={self._depth.rows} | trade rows={self._trades.rows}",
             LogColor.CYAN,
         )
         for leg in self._legs:
@@ -771,16 +867,17 @@ class SpreadWatch(Strategy):
         ]
         for leg in self._legs:
             lines.append(
-                f"  leg {leg.spec.venue_key:<8} top-of-book updates={leg.updates} "
+                f"  leg {leg.spec.venue_key:<10} top-of-book updates={leg.updates} "
                 f"({leg.source})  book updates={leg.depth_updates} ({leg.book_mode})  "
-                f"{leg.spec.instrument_id}",
+                f"trades={leg.trades}  {leg.spec.instrument_id}",
             )
         lines.append(
             f"  evaluated samples={self._samples}  skipped-stale={self._stale}",
         )
         lines.append(
             f"  net-positive rows written={self._hits.rows}   "
-            f"all-sample rows={self._all.rows}   depth rows={self._depth.rows}",
+            f"all-sample rows={self._all.rows}   depth rows={self._depth.rows}   "
+            f"trade rows={self._trades.rows}",
         )
         for (sell, buy) in self._gross:
             series = self._gross[(sell, buy)]
@@ -795,7 +892,8 @@ class SpreadWatch(Strategy):
                 f"max={max(series):.2f} min={min(series):.2f} bps  "
                 f"fee+reserve={fee:.2f}",
             )
-        for path in (self._cfg.csv_path, self._cfg.all_csv_path, self._cfg.depth_csv_path):
+        for path in (self._cfg.csv_path, self._cfg.all_csv_path,
+                     self._cfg.depth_csv_path, self._cfg.trades_csv_path):
             lines.append(f"  csv: {path}")
         lines.append("=" * 78)
         return "\n".join(lines)
@@ -837,8 +935,12 @@ def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
             if leg.instrument_id not in ids_by_venue[leg.venue_key]:
                 ids_by_venue[leg.venue_key].append(leg.instrument_id)
     for venue_key, ids in ids_by_venue.items():
-        factory, client_config = VENUES[venue_key].build_client(ids)
-        builder = builder.add_data_client(None, factory, client_config)
+        spec = VENUES[venue_key]
+        factory, client_config = spec.build_client(ids)
+        # Name the client after the venue instead of letting it default to the factory
+        # name: LIGHTER and LIGHTER_RH share one factory ("LIGHTER"), so the default
+        # would collide. The name is the ClientId the legs subscribe with.
+        builder = builder.add_data_client(spec.venue, factory, client_config)
     node = builder.build()
 
     strategies: list[SpreadWatch] = []
@@ -851,6 +953,7 @@ def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
             csv_path=np.out_dir / f"spread_{stem}.csv",
             all_csv_path=np.out_dir / f"spread_{stem}_all.csv",
             depth_csv_path=np.out_dir / f"depth_{stem}.csv",
+            trades_csv_path=np.out_dir / f"trades_{stem}.csv",
             run_state=run_state,
             book_depth_levels=np.depth_levels,
             all_sample_ms=np.all_sample_ms,
@@ -913,7 +1016,7 @@ def main() -> None:
                         help="output directory")
     parser.add_argument("--symbols", default=None,
                         help=f"comma list of symbols, e.g. NVDA,TSLA; known: {sorted(INSTRUMENTS)}")
-    parser.add_argument("--venues", default=",".join(ALL_VENUES),
+    parser.add_argument("--venues", default=",".join(DEFAULT_VENUES),
                         help=f"comma list of venues to watch per symbol; known: {sorted(VENUES)}")
     parser.add_argument("--pair", default=None,
                         help=f"legacy alias: SYMBOL:VENUE_A-VENUE_B, e.g. NVDA:HL-ASTER; "
