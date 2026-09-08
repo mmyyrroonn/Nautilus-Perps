@@ -30,12 +30,18 @@ const OUT = 'reports/stage1';
 function watchArgs(symbols) {
   const deadline = process.env.WATCH_UNTIL;
   const deadlineArgs = deadline ? ['--until', deadline] : ['--minutes', '30'];
+  // WATCH_REFERENCE=FUTU adds the real US stock quote as a reference leg
+  // (src/ref_feed.py). Needs FUTU_API_KEY / FUTU_PRIVATE_KEY in the repo's
+  // .env on this box: spread_watch.py loads it itself, pm2 never sees the keys.
+  const reference = process.env.WATCH_REFERENCE;
+  const referenceArgs = reference ? ['--reference', reference] : [];
   return [
     SCRIPT,
     '--symbols', symbols.join(','),
     '--venues', VENUES,
     '--out', OUT,
     ...deadlineArgs,
+    ...referenceArgs,
   ];
 }
 

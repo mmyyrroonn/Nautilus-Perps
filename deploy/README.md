@@ -57,6 +57,24 @@ pm2 snapshots the environment at the first `pm2 start`. To run again with a
 new `WATCH_UNTIL`, use `pm2 delete <app>` then `pm2 start ...` (or
 `pm2 restart <app> --update-env`); a plain `pm2 restart` keeps the old deadline.
 
+## Reference price (Futu) on the box
+
+`--reference FUTU` (src/ref_feed.py) streams the real US stock quote from the
+FUTUNN OPEN API WebSocket next to the perp legs and writes `<stem>_ref.csv`.
+It is the one thing here that needs credentials: put `FUTU_API_KEY` and
+`FUTU_PRIVATE_KEY` into `~/Nautilus-Perps/.env` on the box by hand (never via
+`git archive`/`scp` of the tree). `spread_watch.py` loads that file itself, so
+pm2 never carries the keys. Then:
+
+```bash
+WATCH_REFERENCE=FUTU WATCH_UNTIL=2026-09-09T20:05:00Z pm2 start deploy/ecosystem.config.js --only stocks
+```
+
+Analyse with `.venv/bin/python src/analysis/leadlag.py reports/stage1/<stem>_ref.csv`.
+`FUTU_SUB_KINDS=order_book,ticker,quote` widens the subscription; the default
+leaves QUOTE out (no bid/ask in it, and the extra bytes tripped the server's
+`slow_consumer` close on a slow link).
+
 ## Where things land
 
 - CSVs: `reports/stage1/` (repo-relative, same layout as local runs)

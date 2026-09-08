@@ -9,6 +9,10 @@ dependencies = [
     #   uv pip install --python .venv/Scripts/python.exe <wheel>
     "nautilus_trader @ file:///E:/nautilus_trader/target/wheels/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
     "python-dotenv",
+    # Reference-price leg (src/ref_feed.py): the FUTUNN OPEN API quote WebSocket
+    # (wss://webapi-quote.futunn.com/ws) and its Ed25519 / RSA-SHA256 auth signature.
+    "websockets",
+    "cryptography",
 ]
 
 [tool.uv]

@@ -13,6 +13,7 @@ only: no execution client, no keys, no signing, no orders.
     --venues HL,LIGHTER,LIGHTER_RH,ASTER              adds Lighter's Robinhood Chain
     --pair NVDA:HL-ASTER                              legacy single-pair alias
     --symbol NVDA                                     alias for NVDA:HL-LIGHTER
+    --reference FUTU                                  adds the real US stock quote
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import statistics
+import sys
 import threading
 import time
 from collections import deque
@@ -32,6 +34,7 @@ from nautilus_trader.common import Environment, LogColor, LogLevel, LoggerConfig
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.live import LiveNode
 from nautilus_trader.model import (
+    ActorId,
     BookType,
     ClientId,
     FundingRateUpdate,
@@ -45,6 +48,20 @@ from nautilus_trader.model import (
     TradeTick,
 )
 from nautilus_trader.trading import Strategy
+
+_SRC_DIR = Path(__file__).resolve().parent
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from ref_feed import (  # noqa: E402  (needs sys.path above)
+    RefActor,
+    RefActorConfig,
+    RefState,
+    RefUpdate,
+    buy_edge_bps,
+    ref_data_type,
+    sell_edge_bps,
+)
 
 HL_TAKER_FEE_BPS = 0.9  # xyz HIP-3 taker, PROMPT.md section 2
 HL_MAIN_TAKER_FEE_BPS = 4.5  # HL main-dex perps, tier-0 taker (no HIP-3 discount)
@@ -91,6 +108,30 @@ DEPTH_HEADER = [
     *[f"bid_usd_{bps}bps" for bps in CAPACITY_BPS],
     *[f"ask_usd_{bps}bps" for bps in CAPACITY_BPS],
 ]
+# Reference csv (<stem>_ref.csv): the stock quote next to every perp leg, one row
+# per reference update and one per perp quote update. Written only when
+# --reference is on and only for symbols that have a reference code.
+REF_HEAD = [
+    "ts_utc", "event", "ref_ts_src_utc", "ref_last", "ref_bid", "ref_ask",
+    "ref_mid", "ref_age_ms",
+    # Futu server timestamp minus the exchange timestamp: the exchange -> Futu
+    # hop, which sits in front of every reference price we see.
+    "ref_src_to_srv_ms",
+    # Which rule produced ref_bid / ref_ask: the cross-exchange composite, the
+    # single freshest exchange (composite crossed), or the last print only.
+    "ref_book_mode",
+]
+REF_SILENT_SECS = 60  # --reference on but nothing arrived by then -> warn
+
+
+def ref_header(legs: Sequence[LegSpec]) -> list[str]:
+    """Reference csv header: the shared reference block, then one block per leg."""
+    out = list(REF_HEAD)
+    for leg in legs:
+        key = leg.venue_key
+        out += [f"{key}_bid", f"{key}_ask", f"{key}_age_ms",
+                f"{key}_buy_edge_bps", f"{key}_sell_edge_bps"]
+    return out
 
 
 # ---------------------------------------------------------------- venue registry
@@ -294,6 +335,33 @@ INSTRUMENTS["ANSEM"] = {
     "ASTER": ("ANSEMUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
     **lighter_rh("ANSEM"),
 }
+
+
+# ---------------------------------------------------------------- reference codes
+
+
+# Futu codes are "{market}.{code}" (https://open.futunn.com/zh-cn/api/quote/push/subscribe).
+# Watched symbols that are NOT a US-listed equity have no reference price: the
+# crypto perps, and gold (a commodity perp, whose Futu code would be a futures
+# contract rather than the thing these perps track).
+REF_CODE_OVERRIDES: dict[str, str | None] = {
+    "GOLD": None,
+    "GOLD1": None,
+    "ANSEM": None,  # memecoin listed alongside the equities, not an equity
+}
+
+
+def reference_code(symbol: str) -> str | None:
+    """Watched symbol -> Futu code, or None when the symbol has no stock behind it.
+
+    Every equity ticker in INSTRUMENTS maps by rule (NVDA -> US.NVDA), so Lighter
+    Robinhood names such as SPY / QQQ / AAPL work as soon as they are added.
+    """
+    if symbol in REF_CODE_OVERRIDES:
+        return REF_CODE_OVERRIDES[symbol]
+    if symbol in CRYPTO_SYMBOLS:
+        return None
+    return f"US.{symbol}"
 
 
 # ---------------------------------------------------------------- leg / plan
@@ -512,6 +580,8 @@ class SpreadWatchConfig(StrategyConfig):
         book_depth_levels: int = 10,
         max_age_ms: int = MAX_AGE_MS,
         all_sample_ms: int = ALL_SAMPLE_MS,
+        ref_code: str | None = None,
+        ref_csv_path: Path | None = None,
         **_kwargs: object,
     ) -> None:
         super().__init__()  # pyo3 base: strategy_id must travel through __new__ kwargs
@@ -521,6 +591,8 @@ class SpreadWatchConfig(StrategyConfig):
         self.all_csv_path = all_csv_path
         self.depth_csv_path = depth_csv_path
         self.trades_csv_path = trades_csv_path
+        self.ref_code = ref_code
+        self.ref_csv_path = ref_csv_path
         self.run_state = run_state
         self.reserve_bps = reserve_bps
         self.book_depth_levels = book_depth_levels
@@ -573,6 +645,18 @@ class SpreadWatch(Strategy):
         self._all = CsvSink(config.all_csv_path, SPREAD_HEADER)
         self._depth = CsvSink(config.depth_csv_path, DEPTH_HEADER)
         self._trades = CsvSink(config.trades_csv_path, TRADES_HEADER)
+        # Reference leg (optional): a real stock quote, never a tradable leg. It
+        # stays out of _evaluate's pair enumeration and out of the other CSVs.
+        self._ref: RefState | None = (
+            RefState(config.ref_code) if config.ref_code else None
+        )
+        self._ref_sink: CsvSink | None = (
+            CsvSink(config.ref_csv_path, ref_header(config.legs))
+            if config.ref_code and config.ref_csv_path is not None
+            else None
+        )
+        self._ref_warned = False
+        self._ref_last_written: float | None = None  # ref_last on the last ref row
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -600,6 +684,16 @@ class SpreadWatch(Strategy):
 
         for sink in (self._hits, self._all, self._depth, self._trades):
             sink.open()
+        if self._ref_sink is not None:
+            self._ref_sink.open()
+        if self._ref is not None:
+            # Published by RefActor on this node's message bus; no data client and
+            # no funding / trades / deltas subscription - it is not a trading leg.
+            self.subscribe_data(ref_data_type(self._ref.code))
+            self.log.info(
+                f"[{self.symbol}/ref] subscribed reference price {self._ref.code}",
+                LogColor.GREEN,
+            )
 
         for leg in self._legs:
             self.subscribe_quotes(leg.instrument_id, client_id=leg.client_id)
@@ -636,6 +730,8 @@ class SpreadWatch(Strategy):
     def on_stop(self) -> None:
         for sink in (self._hits, self._all, self._depth, self._trades):
             sink.close()
+        if self._ref_sink is not None:
+            self._ref_sink.close()
 
     # ------------------------------------------------------------------ handlers
 
@@ -648,6 +744,17 @@ class SpreadWatch(Strategy):
         leg.ts_ns = quote.ts_init
         leg.updates += 1
         self._evaluate(leg)
+        self._write_ref_row(f"quote:{leg.spec.venue_key}")
+
+    def on_data(self, data) -> None:  # noqa: ANN001 - CustomData or a bare payload
+        """Reference-price updates republished by RefActor."""
+        update = getattr(data, "data", data)
+        if not isinstance(update, RefUpdate) or self._ref is None:
+            return
+        if update.code != self._ref.code:
+            return
+        self._ref.apply(update)
+        self._write_ref_row(f"ref:{update.kind}")
 
     def on_book_depth(self, depth: OrderBookDepth10) -> None:
         leg = self._by_id.get(depth.instrument_id)
@@ -788,6 +895,91 @@ class SpreadWatch(Strategy):
                 *[f"{v:.2f}" for v in ask_caps],
             ])
 
+    # ------------------------------------------------------------------ reference
+
+    def _write_ref_row(self, event: str) -> None:
+        """One row per reference update and per perp quote update, side by side.
+
+        Rows before the first reference update are skipped: with no ref_mid there
+        is no edge to record, and outside US hours that would be every quote row.
+        """
+        ref, sink = self._ref, self._ref_sink
+        if ref is None or sink is None or ref.updates == 0:
+            return
+        if event == "ref:ticker" and ref.last == self._ref_last_written:
+            # Same print price as the previous row: ref_mid comes from the book, so
+            # the edges are unchanged too. NVDA pushed ~250 prints/s on 2026-09-08
+            # and 56% of them repeated the price; that was 7.7 MB per 2 minutes.
+            return
+        self._ref_last_written = ref.last
+        now_ns = self.clock.timestamp_ns()
+        mid = ref.mid
+        src = (
+            datetime.fromtimestamp(ref.ts_src_ns / 1e9, timezone.utc)
+            .isoformat(timespec="milliseconds")
+            if ref.ts_src_ns else ""
+        )
+        age = ref.age_ms(time.time_ns())  # ts_recv_ns is a wall-clock time.time_ns()
+        row: list[object] = [
+            datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            event,
+            src,
+            "" if ref.last is None else f"{ref.last:.6f}",
+            "" if ref.bid is None else f"{ref.bid:.6f}",
+            "" if ref.ask is None else f"{ref.ask:.6f}",
+            "" if mid is None else f"{mid:.6f}",
+            "" if age is None else f"{age:.1f}",
+            "" if ref.src_to_srv_ms is None else f"{ref.src_to_srv_ms:.1f}",
+            ref.book_mode,
+        ]
+        for leg in self._legs:
+            if not leg.ready():
+                row += ["", "", "", "", ""]
+                continue
+            fee = leg.spec.taker_fee_bps
+            buy = "" if not mid else f"{buy_edge_bps(mid, leg.ask, fee):.4f}"
+            sell = "" if not mid else f"{sell_edge_bps(mid, leg.bid, fee):.4f}"
+            row += [f"{leg.bid:.8f}", f"{leg.ask:.8f}", f"{leg.age_ms(now_ns):.1f}", buy, sell]
+        sink.write(row)
+
+    def _log_ref_status(self, now_ns: int) -> None:
+        ref = self._ref
+        if ref is None:
+            return
+        if ref.updates == 0:
+            silent_s = (now_ns - self._start_ns) / 1e9 if self._start_ns else 0.0
+            if silent_s >= REF_SILENT_SECS and not self._ref_warned:
+                self._ref_warned = True
+                self.log.warning(
+                    f"[{self.symbol}/ref] no reference update for {ref.code} in "
+                    f"{silent_s:.0f}s (US regular hours are 13:30-20:00 UTC)",
+                )
+            self.log.info(
+                f"ref: {ref.code} no updates yet ({silent_s:.0f}s)", LogColor.CYAN,
+            )
+            return
+        age = ref.age_ms(time.time_ns())
+        kinds = ",".join(f"{k}={n}" for k, n in sorted(ref.by_kind.items()))
+        mid = ref.mid
+        bid, ask = ref.bid, ref.ask
+        books = ",".join(sorted(ref.fresh_books())) or "-"
+        hop = ref.src_to_srv_ms
+        self.log.info(
+            f"ref: {ref.code} last={'-' if ref.last is None else f'{ref.last:.4f}'} "
+            f"bid/ask={'-' if bid is None else f'{bid:.4f}@{ref.bid_venue}'}"
+            f"/{'-' if ask is None else f'{ask:.4f}@{ref.ask_venue}'} "
+            f"mid={'-' if mid is None else f'{mid:.4f}'} "
+            f"age={'-' if age is None else f'{age:.0f}'}ms "
+            f"src->srv={'-' if hop is None else f'{hop:.0f}'}ms books={books} "
+            f"mode={ref.book_mode} crossed={ref.crossed} "
+            f"updates={ref.updates} ({kinds}) rows={self._ref_sink.rows if self._ref_sink else 0}",
+            LogColor.CYAN,
+        )
+        if age is not None and age >= REF_SILENT_SECS * 1000:
+            self.log.warning(
+                f"[{self.symbol}/ref] reference {ref.code} stale for {age / 1000:.0f}s",
+            )
+
     # ------------------------------------------------------------------ status
 
     def _last_update_ns(self) -> int:
@@ -811,6 +1003,7 @@ class SpreadWatch(Strategy):
             f"| depth rows={self._depth.rows} | trade rows={self._trades.rows}",
             LogColor.CYAN,
         )
+        self._log_ref_status(now_ns)
         for leg in self._legs:
             if leg.ts_ns == 0:
                 age_s = (now_ns - self._start_ns) / 1e9 if self._start_ns else 0.0
@@ -920,8 +1113,17 @@ class SpreadWatch(Strategy):
                 f"max={self._gross_max[key]:.2f} min={self._gross_min[key]:.2f} bps  "
                 f"fee+reserve={fee:.2f}",
             )
-        for path in (self._cfg.csv_path, self._cfg.all_csv_path,
-                     self._cfg.depth_csv_path, self._cfg.trades_csv_path):
+        if self._ref is not None:
+            kinds = ",".join(f"{k}={n}" for k, n in sorted(self._ref.by_kind.items())) or "-"
+            lines.append(
+                f"  reference {self._ref.code}: updates={self._ref.updates} ({kinds})  "
+                f"ref rows={self._ref_sink.rows if self._ref_sink else 0}",
+            )
+        paths = [self._cfg.csv_path, self._cfg.all_csv_path,
+                 self._cfg.depth_csv_path, self._cfg.trades_csv_path]
+        if self._ref_sink is not None:
+            paths.append(self._cfg.ref_csv_path)
+        for path in paths:
             lines.append(f"  csv: {path}")
         lines.append("=" * 78)
         return "\n".join(lines)
@@ -939,11 +1141,25 @@ class NodePlan:
     stamp: str
     depth_levels: int
     all_sample_ms: int
+    reference: str = "none"  # none / FUTU / FAKE
     stems: dict[str, str] = field(default_factory=dict)
+    ref_codes: dict[str, str] = field(default_factory=dict)  # symbol -> Futu code
 
     def __post_init__(self) -> None:
         for symbol, legs in self.plan.items():
             self.stems[symbol] = csv_stem(symbol, legs, self.stamp)
+        if self.reference.lower() == "none":
+            return
+        for symbol in self.plan:
+            code = reference_code(symbol)
+            if code is None:
+                print(
+                    f"[stage1] INFO {symbol}: no reference price (not a US equity); "
+                    f"--reference has no effect on it",
+                    flush=True,
+                )
+                continue
+            self.ref_codes[symbol] = code
 
 
 def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
@@ -971,9 +1187,20 @@ def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
         builder = builder.add_data_client(spec.venue, factory, client_config)
     node = builder.build()
 
+    if np.ref_codes:
+        # One feed for the whole node: it publishes per-code custom data that each
+        # symbol's strategy subscribes to. No data client, no execution client.
+        codes = sorted(set(np.ref_codes.values()))
+        node.add_actor(RefActor(RefActorConfig(
+            actor_id=ActorId("REF-FEED"),
+            codes=codes,
+            feed_kind=np.reference,
+        )))
+
     strategies: list[SpreadWatch] = []
     for symbol, legs in np.plan.items():
         stem = np.stems[symbol]
+        ref_code = np.ref_codes.get(symbol)
         config = SpreadWatchConfig(
             strategy_id=StrategyId.from_str(f"SPREAD-WATCH-{symbol}"),
             symbol=symbol,
@@ -982,6 +1209,8 @@ def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
             all_csv_path=np.out_dir / f"spread_{stem}_all.csv",
             depth_csv_path=np.out_dir / f"depth_{stem}.csv",
             trades_csv_path=np.out_dir / f"trades_{stem}.csv",
+            ref_code=ref_code,
+            ref_csv_path=(np.out_dir / f"{stem}_ref.csv") if ref_code else None,
             run_state=run_state,
             book_depth_levels=np.depth_levels,
             all_sample_ms=np.all_sample_ms,
@@ -1059,6 +1288,11 @@ def main() -> None:
                              "(v2 fixes this at 10; kept for config parity)")
     parser.add_argument("--max-restarts", type=int, default=MAX_RESTARTS,
                         help="rebuild the node at most this many times before the deadline")
+    parser.add_argument("--reference", default="none", choices=["none", "FUTU", "FAKE"],
+                        help="reference price leg: FUTU streams the real US stock quote "
+                             "from the FUTUNN OPEN API WebSocket (needs FUTU_API_KEY / "
+                             "FUTU_PRIVATE_KEY in .env), FAKE is a local random walk for "
+                             "testing the path; writes <stem>_ref.csv per equity symbol")
     args = parser.parse_args()
 
     symbols, venue_keys = resolve_targets(args, parser)
@@ -1085,10 +1319,15 @@ def main() -> None:
         stamp=started.strftime("%Y%m%dT%H%M%SZ"),  # fixed at process start, not per restart
         depth_levels=args.depth_levels,
         all_sample_ms=args.all_sample_ms,
+        reference=args.reference,
     )
     describe = "  ".join(
         f"{symbol}[{'-'.join(leg.venue_key for leg in legs)}]" for symbol, legs in plan.items()
     )
+    if node_plan.ref_codes:
+        describe += f"  reference[{args.reference}]=" + ",".join(
+            sorted(set(node_plan.ref_codes.values())),
+        )
     print(
         f"[stage1] watching {describe} until {deadline.isoformat(timespec='seconds')} "
         f"-> {args.out}",

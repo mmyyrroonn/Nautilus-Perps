@@ -26,7 +26,8 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 echo "== deps =="
-uv pip install --python .venv/bin/python python-dotenv
+# websockets + cryptography: the Futu reference-price feed (src/ref_feed.py).
+uv pip install --python .venv/bin/python python-dotenv websockets cryptography
 
 WHEEL="${1:-}"
 if [ -n "$WHEEL" ]; then
