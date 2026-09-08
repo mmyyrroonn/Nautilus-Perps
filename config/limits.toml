@@ -1,0 +1,84 @@
+# Operator limits for src/maker_live.py (Lighter maker, Aster taker hedge).
+#
+# Every value here can only make the run SMALLER / SAFER.  src/live_limits.py holds a
+# module-constant hard cap for each capped key and applies min(config, CAP): editing this
+# file can never widen a limit, only tighten it.  A missing file, a missing section or a
+# missing key falls back to the default shown in the comment, which is already inside the
+# cap.  Run `maker_live.py --dry-run` to print the resolved table (configured / cap / applied).
+#
+# DEVIATION FROM PROMPT.md STAGE 3 - APPROVED BY THE USER 2026-09-08.  PROMPT.md says the
+# mainnet stage is limited to "单日最多 20 次触发".  That number describes the old taker/taker
+# arbitrage design, where one trigger is one round trip.  A two-sided market maker earns its
+# edge from many small passive fills: a single 10-minute session already prints dozens.  So
+# the daily budget below is expressed as FILLS, set to 300 here with a 500 hard cap, not 20
+# triggers.  Note the counter counts fill EVENTS, so a partially filled clip contributes one
+# per partial - the budget is consumed faster than "orders filled" would suggest.
+
+[order]
+# Notional of one resting clip on Lighter.  Hard cap 50 USD (PROMPT.md stage 3).
+max_notional_usd = 20.0
+# 0 = derive the floor from the venue's own minimum (min_base_amount / min_quote_amount).
+# A positive value raises the floor.  If the venue minimum ever exceeds max_notional_usd the
+# run refuses instead of sizing up.
+min_notional_usd_floor = 0.0
+
+[inventory]
+# Gross |position| on the maker venue (Lighter), in USD.  Hard cap 100.
+max_inventory_usd = 60.0
+# Signed delta filled on Lighter but not yet hedged on Aster, in USD.  Hard cap 30.
+# The opening side stops quoting while the unhedged delta is above this.
+max_unhedged_usd = 15.0
+
+[exposure]
+# |Lighter position| + |Aster position|, in USD.  Hard cap 100 (PROMPT.md stage 3).
+max_total_notional_usd = 100.0
+
+[daily]
+# Counters persist in reports/live/state_<env>_<symbol>.json so a restart cannot reset them.
+# They roll over at the UTC day boundary recorded in that file.
+max_fills = 300     # hard cap 500 - see the deviation note above (built-in fallback: 200)
+max_tx = 20000      # Lighter order transactions (create + modify + cancel).  Hard cap 40000
+
+[kill]
+# Cumulative net P&L (realized + mark-to-market) since the state file's day start, in USD.
+# Hard cap 20.  A breach cancels every quote, hedges the residual and exits non-zero.
+max_loss_usd = 5.0
+# Round trips that closed at a negative net, back to back.
+max_consecutive_losing_trips = 10
+# EWMA of the net bps of the last 20 round trips (after both fees).
+min_trip_net_bps_ewma = -2.0
+# Seconds the unhedged delta may stay above [inventory] max_unhedged_usd before the kill fires.
+max_hedge_fail_s = 30.0
+
+[quote]
+# The maker_inventory quoting rule.  edge_min_bps is measured after the hedge venue taker fee,
+# the maker venue fee and reserve_bps; it gates only the side that would GROW the inventory.
+edge_min_bps = 3.0
+reserve_bps = 0.0
+# Minimum seconds between two re-prices of one side.  3 s held the offline PONS replay to
+# 26 tx/min with zero deferrals.
+requote_min_s = 3.0
+# Local token bucket over Lighter order transactions.  The venue allows 40 sendTx/min per L1
+# address shared by creates, modifies and cancels; hard cap 40, stay below it.
+tx_per_min = 36.0
+# 1 = improve the touch by one tick (queue ahead 0); 0 = join the touch (queue ahead = the
+# top-of-book size).  A quote that would lock the book is never sent.
+improve_ticks = 1
+# Lighter's minimum order (20 PONS ~ 15.6 USD) is close to max_notional_usd, so a residual
+# smaller than that minimum cannot be closed passively at all: the closing side simply stops
+# quoting and the inventory sits there.  With this on, a closing side whose clip would be
+# below the venue minimum is quoted AT the venue minimum instead.  A full fill then carries
+# the position through zero by (venue_min - |q|), which is itself under the venue minimum and
+# is hedged like any other fill.  Set false to keep the strict never-flip rule, which is also
+# what the offline simulator does.
+close_min_flip = true
+
+[hedge]
+venue = "ASTER"
+# The hedge is a LIMIT IOC at the Aster touch offset by this much - never a MARKET order.
+slippage_bps = 20.0
+# Residual delta below this notional waits instead of being hedged one dust order at a time.
+# 0 = use the Aster instrument's own min_notional (5 USD).
+aggregate_min_notional_usd = 5.0
+# ... but it never waits longer than this before rounding up to the venue minimum.
+max_wait_s = 5.0

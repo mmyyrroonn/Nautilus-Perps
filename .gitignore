@@ -10,3 +10,4 @@ catalog/
 *.sqlite
 *.parquet
 reports/stage1/dev/
+reports/live/
