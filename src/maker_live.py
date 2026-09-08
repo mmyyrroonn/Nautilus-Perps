@@ -105,6 +105,8 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from live_limits import CAP_DAILY_FILLS  # noqa: E402
+from live_limits import CAP_DAILY_FILLS_PROFITABLE  # noqa: E402
 from live_limits import CAP_ORDER_NOTIONAL_USD  # noqa: E402
 from live_limits import CAP_TOTAL_NOTIONAL_USD  # noqa: E402
 from live_limits import Limits  # noqa: E402
@@ -901,7 +903,20 @@ class DailyState:
     fills: int = 0
     tx: int = 0
     realized_net_usd: float = 0.0
+    # True once today's realised net cleared [daily] profit_gate_usd with a non-negative trip
+    # EWMA.  Persisted so a restart keeps the budget the day already earned - and so a restart
+    # cannot be used to re-roll it either.  Cleared when the day gives the profit back.
+    profit_unlocked: bool = False
     started: str = ""
+
+    def unlocked_now(self) -> bool:
+        """Whether the extended fill budget is in force, read from persisted state alone.
+
+        Both halves matter: the flag says the day earned the budget, and the realised net says
+        it still holds it.  A process that died between re-locking and saving would leave the
+        flag set with a non-positive net, and this predicate ignores it.
+        """
+        return self.profit_unlocked and self.realized_net_usd > 0.0
 
     @staticmethod
     def today() -> str:
@@ -922,6 +937,7 @@ class DailyState:
             fills=int(raw.get("fills", 0)),
             tx=int(raw.get("tx", 0)),
             realized_net_usd=float(raw.get("realized_net_usd", 0.0)),
+            profit_unlocked=bool(raw.get("profit_unlocked", False)),
             started=str(raw.get("started", "")),
         )
 
@@ -932,6 +948,7 @@ class DailyState:
             "fills": self.fills,
             "tx": self.tx,
             "realized_net_usd": round(self.realized_net_usd, 8),
+            "profit_unlocked": self.profit_unlocked,
             "started": self.started,
             "updated": datetime.now(timezone.utc).isoformat(),
         }
@@ -1053,7 +1070,8 @@ class KillCheck:
     detail: str = ""
 
     def margin(self) -> str:
-        return f"{self.name} {self.value:.4g}/{self.threshold:.4g}"
+        base = f"{self.name} {self.value:.4g}/{self.threshold:.4g}"
+        return f"{base} ({self.detail})" if self.detail else base
 
 
 class KillSwitch:
@@ -1065,6 +1083,39 @@ class KillSwitch:
         self.exposure = limits.exposure
         self.state = state
         self.reason: str | None = None
+        # The fill budget in force, and whether it is the extended one.  Read by the status
+        # line; kept here so it survives between evaluations.
+        self.fill_cap = self.daily.fill_cap(unlocked=state.unlocked_now())
+        self.fill_cap_unlocked = state.unlocked_now()
+        # Set when the unlock flag flips, so the caller knows to persist the state file.
+        self.unlock_changed = False
+
+    def _resolve_fill_cap(self, realized: float, ewma: float | None) -> tuple[int, bool]:
+        """Apply the profit gate and its hysteresis, then return (cap, unlocked).
+
+        Unlocking needs the day to be genuinely profitable: realised net above
+        ``profit_gate_usd`` AND a trip-net EWMA that is not negative, so a day that is up only
+        because an open position is marked favourably, or one grinding out losing round trips,
+        never earns the larger budget.  ``realized`` is deliberately the persisted REALISED
+        net, not the mark-to-market total - unrealised profit is not profit yet.
+
+        Once unlocked the budget stays in force while realised net is merely still positive,
+        not while it is still above the gate.  Without that hysteresis a day hovering around
+        the gate would flip between a 300 and a 1500 cap every second.  Giving the profit back
+        entirely re-locks it, and a session already past the base cap then stops at the next
+        check - which is the point: the extended budget is spent, and the day is no longer
+        paying for it.
+        """
+        state = self.state
+        if not state.profit_unlocked:
+            if realized > self.daily.profit_gate_usd and (ewma is None or ewma >= 0.0):
+                state.profit_unlocked = True
+                self.unlock_changed = True
+        elif realized <= 0.0:
+            state.profit_unlocked = False
+            self.unlock_changed = True
+        unlocked = state.profit_unlocked
+        return self.daily.fill_cap(unlocked=unlocked), unlocked
 
     def evaluate(
         self,
@@ -1080,9 +1131,12 @@ class KillSwitch:
         # ``state.realized_net_usd`` already holds this process's realised total (it is written
         # back on every fill), so the sum above is "everything since the state file's day
         # start" without double counting this session.
+        ewma = pnl.trip_bps_ewma
+        cap, unlocked = self._resolve_fill_cap(self.state.realized_net_usd, ewma)
+        self.fill_cap, self.fill_cap_unlocked = cap, unlocked
         checks = [
-            KillCheck("day_fills", day_fills, self.daily.max_fills,
-                      day_fills >= self.daily.max_fills),
+            KillCheck("day_fills", day_fills, cap, day_fills >= cap,
+                      detail="unlocked" if unlocked else "base"),
             KillCheck("day_tx", day_tx, self.daily.max_tx, day_tx >= self.daily.max_tx),
             KillCheck("net_usd", net, -self.k.max_loss_usd, net <= -self.k.max_loss_usd),
             KillCheck("losing_trips", pnl.consecutive_losses,
@@ -1094,7 +1148,6 @@ class KillSwitch:
             KillCheck("hedge_fail_s", hedge_breach_s, self.k.max_hedge_fail_s,
                       hedge_breach_s > self.k.max_hedge_fail_s),
         ]
-        ewma = pnl.trip_bps_ewma
         # The EWMA only binds once the window is full: one bad dust round trip must not stop a
         # session that has barely started.
         tripped = (
@@ -1588,6 +1641,17 @@ class LighterMaker(Strategy):
             day_fills=self._day_fills(),
             day_tx=self._day_tx(),
         )
+        if self._kill.unlock_changed:
+            # The budget the day has earned must reach the state file immediately: a crash
+            # between the flip and the next fill would otherwise lose it, or keep it.
+            self._kill.unlock_changed = False
+            self._log_safe(
+                "info",
+                f"[maker] daily fill budget now {self._kill.fill_cap} "
+                f"({'unlocked by profit' if self._kill.fill_cap_unlocked else 're-locked'}; "
+                f"realized {self._state.realized_net_usd:.4f} USD)",
+            )
+            self._persist_state()
         if self._kill.reason is not None:
             self._trigger_kill(self._kill.reason)
             return
@@ -1902,7 +1966,9 @@ class LighterMaker(Strategy):
             f"delta={delta:.4g} ({abs(delta) * mid_h:.2f} USD)  "
             f"trips={pnl.trips} ewma={'-' if ewma is None else f'{ewma:.2f}'} bps  "
             f"net={net:.4f} USD  tx/min={tx_min:.1f} tokens={self._engine.tokens:.1f}  "
-            f"day {self._state.fills}f/{self._state.tx}tx  | {margins}",
+            f"day {self._state.fills}/{self._kill.fill_cap}f"
+            f"{' UNLOCKED' if self._kill.fill_cap_unlocked else ''} "
+            f"{self._state.tx}/{self._limits.daily.max_tx}tx  | {margins}",
             flush=True,
         )
         self._pnl_csv.write([
@@ -1943,7 +2009,9 @@ class LighterMaker(Strategy):
             f"tx_per_min={self._engine.tx_sent / elapsed * 60.0:.1f} "
             f"rounded_up_hedges={self._hedger.rounded_up if self._hedger else 0} "
             f"dust_carry_decisions={self._hedger.carried if self._hedger else 0} "
-            f"day_fills={self._state.fills}/{self._limits.daily.max_fills} "
+            f"day_fills={self._state.fills}/"
+            f"{self._kill.fill_cap if self._kill else self._limits.daily.max_fills}"
+            f"{'(unlocked)' if self._kill and self._kill.fill_cap_unlocked else '(base)'} "
             f"day_tx={self._state.tx}/{self._limits.daily.max_tx} "
             f"[{counters}] kill={self._kill_reason or 'none'} "
             f"failures={len(self._failures)} leftovers={len(self._leftovers)} "
@@ -2402,14 +2470,22 @@ def main(argv: list[str] | None = None) -> int:
         path = rp.state_path_for(name)
         loaded = DailyState.load(path)
         active = "  <- this run" if name == rp.file_mode and mode != "dry-run" else ""
+        unlocked = loaded.unlocked_now()
+        cap = limits.daily.fill_cap(unlocked=unlocked)
         print(f"daily state {name:<5} : {path} "
-              f"(day={loaded.day} fills={loaded.fills}/{limits.daily.max_fills} "
+              f"(day={loaded.day} fills={loaded.fills}/{cap}"
+              f"{' unlocked' if unlocked else ' base'} "
               f"tx={loaded.tx}/{limits.daily.max_tx} "
               f"realized={loaded.realized_net_usd:.4f} USD){active}")
     print(f"risk engine       : bypass=False, max_notional_per_order="
           f"{CAP_ORDER_NOTIONAL_USD:g} USD (HARD cap) on "
           f"{[plan.maker_id] + ([plan.hedge_id] if hedge_enabled else [])}")
     print(f"total exposure cap: {CAP_TOTAL_NOTIONAL_USD:g} USD (HARD cap)")
+    print(f"daily fill budget : {limits.daily.max_fills} base -> "
+          f"{limits.daily.max_fills_profitable} once realised net > "
+          f"{limits.daily.profit_gate_usd:g} USD with a non-negative trip EWMA "
+          f"(hard caps {CAP_DAILY_FILLS} / {CAP_DAILY_FILLS_PROFITABLE}); "
+          f"re-locks at realised net <= 0")
     print(f"lighter creds set : {lighter_credentials_present(args.env)}")
     print(f"aster creds set   : {aster_credentials_present(args.env)}")
     print()

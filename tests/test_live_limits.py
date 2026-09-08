@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import live_limits  # noqa: E402
 from live_limits import CAP_DAILY_FILLS  # noqa: E402
+from live_limits import CAP_DAILY_FILLS_PROFITABLE  # noqa: E402
 from live_limits import CAP_DAILY_TX  # noqa: E402
 from live_limits import CAP_INVENTORY_USD  # noqa: E402
 from live_limits import CAP_LOSS_USD  # noqa: E402
@@ -79,6 +80,57 @@ class TestDefaults(unittest.TestCase):
         self.assertIn("20 triggers/day", report)
         self.assertIn("FILL EVENTS", report)
         self.assertIn("approved by the user", report)
+
+    def test_shipped_config_carries_the_profit_gated_budget(self) -> None:
+        """300 base, 1500 once the day has made more than 1 USD; hard caps 500 / 3000."""
+        limits = load_limits(REPO / "config" / "limits.toml")
+        self.assertEqual(limits.daily.max_fills, 300)
+        self.assertEqual(limits.daily.max_fills_profitable, 1500)
+        self.assertEqual(limits.daily.profit_gate_usd, 1.0)
+        self.assertEqual(CAP_DAILY_FILLS_PROFITABLE, 3000)
+        self.assertLess(limits.daily.max_fills_profitable, CAP_DAILY_FILLS_PROFITABLE)
+
+    def test_fill_cap_selects_the_budget(self) -> None:
+        limits = load_limits(REPO / "config" / "limits.toml")
+        self.assertEqual(limits.daily.fill_cap(unlocked=False), 300)
+        self.assertEqual(limits.daily.fill_cap(unlocked=True), 1500)
+
+    def test_shipped_config_carries_a_full_day_of_transactions(self) -> None:
+        """~23 tx/min observed x 24 h is ~33k, so 20k would stop a healthy session early."""
+        limits = load_limits(REPO / "config" / "limits.toml")
+        self.assertEqual(limits.daily.max_tx, 40_000)
+        self.assertEqual(CAP_DAILY_TX, 60_000)
+        self.assertGreater(limits.daily.max_tx, 23 * 60 * 24)
+
+    def test_config_cannot_raise_the_profitable_budget_past_its_cap(self) -> None:
+        limits = load_limits(write_toml("[daily]\nmax_fills_profitable = 999999\n"))
+        self.assertEqual(limits.daily.max_fills_profitable, CAP_DAILY_FILLS_PROFITABLE)
+        self.assertIn("daily.max_fills_profitable",
+                      [r.key for r in limits.capped_rows])
+
+    def test_config_cannot_raise_the_transaction_budget_past_its_cap(self) -> None:
+        limits = load_limits(write_toml("[daily]\nmax_tx = 999999\n"))
+        self.assertEqual(limits.daily.max_tx, CAP_DAILY_TX)
+
+    def test_the_profit_gate_must_be_strictly_positive(self) -> None:
+        """A zero or negative gate would hand the extended budget to a flat day."""
+        for value in ("0.0", "-1.0", "-0.0001"):
+            with self.subTest(value=value), self.assertRaises(LimitsError):
+                load_limits(write_toml(f"[daily]\nprofit_gate_usd = {value}\n"))
+        self.assertEqual(
+            load_limits(write_toml("[daily]\nprofit_gate_usd = 0.01\n")).daily.profit_gate_usd,
+            0.01,
+        )
+
+    def test_the_profitable_budget_cannot_be_smaller_than_the_base(self) -> None:
+        with self.assertRaises(LimitsError):
+            load_limits(write_toml("[daily]\nmax_fills = 300\nmax_fills_profitable = 100\n"))
+
+    def test_the_report_states_both_budgets_and_the_gate(self) -> None:
+        report = load_limits(REPO / "config" / "limits.toml").report()
+        self.assertIn("daily fill budget: 300 base", report)
+        self.assertIn("1500 once the day", report)
+        self.assertIn("re-locks", report)
 
     def test_shipped_config_carries_the_approved_fill_budget(self) -> None:
         """The user approved 300/day on 2026-09-08; the hard cap stays 500."""

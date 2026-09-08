@@ -1098,6 +1098,203 @@ class TestKillSwitch(unittest.TestCase):
             self.assertIn("/", check.margin())
 
 
+# --------------------------------------------------------------------------- profit gate
+
+
+class TestProfitGatedFillCap(unittest.TestCase):
+    """The extended daily fill budget a profitable day earns, and how it is given back.
+
+    Base 300 fills; 1500 once today's REALISED net clears the 1 USD gate with a trip-net EWMA
+    that is not negative; hysteresis holds it while realised net is merely still positive; it
+    re-locks at realised net <= 0, at which point a session already past 300 stops.
+    """
+
+    def setUp(self) -> None:
+        self.limits = load_limits(REPO / "config" / "limits.toml")
+        self.path = Path(tempfile.mkdtemp(prefix="gate-")) / "state.json"
+        self.state = DailyState.load(self.path)
+        self.pnl = PnLMonitor(maker_fee_bps=0.0, hedge_fee_bps=0.9, trip_window=20)
+
+    def check(self, **over):
+        switch = KillSwitch(self.limits, self.state)
+        kwargs = dict(pnl=self.pnl, mid_m=0.73, mid_h=0.73, hedge_breach_s=0.0,
+                      day_fills=0, day_tx=0)
+        kwargs.update(over)
+        checks = switch.evaluate(**kwargs)
+        return switch, {c.name: c for c in checks}
+
+    def trips(self, realized_each: float, count: int = 3) -> None:
+        for _ in range(count):
+            self.pnl._record_trip(realized_each, 0.0, 10.0)
+
+    # -- unlocking ------------------------------------------------------------------------
+
+    def test_the_base_cap_applies_to_a_flat_day(self) -> None:
+        switch, by_name = self.check(day_fills=299)
+        self.assertEqual(by_name["day_fills"].threshold, 300)
+        self.assertEqual(by_name["day_fills"].detail, "base")
+        self.assertFalse(self.state.profit_unlocked)
+        self.assertIsNone(switch.reason)
+
+    def test_the_base_cap_still_stops_a_flat_day(self) -> None:
+        switch, _ = self.check(day_fills=300)
+        self.assertIn("day_fills", switch.reason or "")
+
+    def test_clearing_the_gate_with_a_flat_ewma_unlocks(self) -> None:
+        """No trips yet means no EWMA, which counts as not negative."""
+        self.state.realized_net_usd = self.limits.daily.profit_gate_usd + 0.01
+        switch, by_name = self.check(day_fills=400)
+        self.assertTrue(self.state.profit_unlocked)
+        self.assertTrue(switch.fill_cap_unlocked)
+        self.assertEqual(switch.fill_cap, 1500)
+        self.assertEqual(by_name["day_fills"].threshold, 1500)
+        self.assertEqual(by_name["day_fills"].detail, "unlocked")
+        self.assertIsNone(switch.reason, "400 fills is inside the extended budget")
+
+    def test_clearing_the_gate_with_a_positive_ewma_unlocks(self) -> None:
+        self.trips(0.05)  # +50 bps per trip
+        self.state.realized_net_usd = 2.0
+        switch, _ = self.check(day_fills=400)
+        self.assertTrue(self.state.profit_unlocked)
+        self.assertEqual(switch.fill_cap, 1500)
+
+    def test_a_negative_ewma_never_unlocks_however_profitable_the_day_looks(self) -> None:
+        """Grinding out losing round trips must not buy a bigger budget."""
+        self.trips(-0.01)  # -10 bps per trip
+        self.assertLess(self.pnl.trip_bps_ewma, 0.0)
+        self.state.realized_net_usd = 99.0
+        switch, by_name = self.check(day_fills=400)
+        self.assertFalse(self.state.profit_unlocked)
+        self.assertEqual(by_name["day_fills"].threshold, 300)
+        self.assertIn("day_fills", switch.reason or "")
+
+    def test_profit_at_or_below_the_gate_does_not_unlock(self) -> None:
+        self.state.realized_net_usd = self.limits.daily.profit_gate_usd
+        self.check(day_fills=10)
+        self.assertFalse(self.state.profit_unlocked)
+
+    def test_unrealised_profit_does_not_unlock(self) -> None:
+        """The gate reads persisted REALISED net; an open position marked up is not profit."""
+        self.pnl.maker_fill(sell=False, base=100.0, price=0.7300)  # open, unrealised only
+        self.assertEqual(self.state.realized_net_usd, 0.0)
+        self.check(mid_m=0.9, mid_h=0.9, day_fills=10)
+        self.assertFalse(self.state.profit_unlocked)
+
+    # -- hysteresis -----------------------------------------------------------------------
+
+    def test_the_extended_cap_holds_below_the_gate_once_unlocked(self) -> None:
+        """Otherwise a day hovering at the gate would flip caps every second."""
+        self.state.realized_net_usd = 1.5
+        self.check()
+        self.assertTrue(self.state.profit_unlocked)
+
+        self.state.realized_net_usd = 0.5  # under the gate, still a profitable day
+        switch, by_name = self.check(day_fills=400)
+        self.assertTrue(self.state.profit_unlocked)
+        self.assertEqual(by_name["day_fills"].threshold, 1500)
+        self.assertIsNone(switch.reason)
+
+    def test_giving_the_profit_back_re_locks_and_stops_a_long_session(self) -> None:
+        self.state.realized_net_usd = 1.5
+        self.check()
+        self.assertTrue(self.state.profit_unlocked)
+
+        self.state.realized_net_usd = 0.0  # the day is no longer paying for the budget
+        switch, by_name = self.check(day_fills=400)
+        self.assertFalse(self.state.profit_unlocked)
+        self.assertEqual(by_name["day_fills"].threshold, 300)
+        self.assertIn("day_fills", switch.reason or "")
+
+    def test_re_locking_below_the_base_cap_does_not_stop_the_session(self) -> None:
+        self.state.realized_net_usd = 1.5
+        self.check()
+        self.state.realized_net_usd = -0.2
+        switch, by_name = self.check(day_fills=120)
+        self.assertFalse(self.state.profit_unlocked)
+        self.assertEqual(by_name["day_fills"].threshold, 300)
+        self.assertIsNone(switch.reason)
+
+    def test_re_unlocking_needs_the_gate_again_not_merely_a_positive_net(self) -> None:
+        self.state.realized_net_usd = 1.5
+        self.check()
+        self.state.realized_net_usd = -0.1
+        self.check()
+        self.assertFalse(self.state.profit_unlocked)
+        self.state.realized_net_usd = 0.5  # positive, but back under the gate
+        self.check()
+        self.assertFalse(self.state.profit_unlocked)
+        self.state.realized_net_usd = 1.5
+        self.check()
+        self.assertTrue(self.state.profit_unlocked)
+
+    def test_a_flip_is_reported_so_the_caller_can_persist_it(self) -> None:
+        self.state.realized_net_usd = 1.5
+        switch, _ = self.check()
+        self.assertTrue(switch.unlock_changed)
+        switch, _ = self.check()  # a fresh switch, no further transition
+        self.assertFalse(switch.unlock_changed)
+
+    # -- the loss kill is untouched --------------------------------------------------------
+
+    def test_the_loss_kill_still_applies_while_unlocked(self) -> None:
+        self.state.realized_net_usd = 1.5
+        self.check()
+        self.assertTrue(self.state.profit_unlocked)
+        self.state.realized_net_usd = -self.limits.kill.max_loss_usd - 0.01
+        switch, _ = self.check(day_fills=10)
+        self.assertIn("net_usd", switch.reason or "")
+
+    # -- persistence ----------------------------------------------------------------------
+
+    def test_the_unlock_survives_a_simulated_restart(self) -> None:
+        self.state.realized_net_usd = 1.5
+        self.state.fills = 400
+        self.check()
+        self.assertTrue(self.state.profit_unlocked)
+        self.state.save()
+
+        restarted = DailyState.load(self.path)  # the "restart"
+        self.assertTrue(restarted.profit_unlocked)
+        self.assertTrue(restarted.unlocked_now())
+        switch = KillSwitch(self.limits, restarted)
+        self.assertEqual(switch.fill_cap, 1500, "the budget the day earned is not re-rolled")
+        checks = {c.name: c for c in switch.evaluate(
+            pnl=self.pnl, mid_m=0.73, mid_h=0.73, hedge_breach_s=0.0,
+            day_fills=restarted.fills, day_tx=0,
+        )}
+        self.assertEqual(checks["day_fills"].threshold, 1500)
+        self.assertIsNone(switch.reason)
+
+    def test_a_new_utc_day_starts_locked_again(self) -> None:
+        self.state.realized_net_usd = 5.0
+        self.state.profit_unlocked = True
+        self.state.save()
+        rolled = DailyState.load(self.path, day="2099-01-01")
+        self.assertFalse(rolled.profit_unlocked)
+        self.assertEqual(rolled.fills, 0)
+
+    def test_a_stale_flag_with_a_non_positive_net_is_ignored_on_load(self) -> None:
+        """A process killed between re-locking and saving must not leave the budget open."""
+        self.state.profit_unlocked = True
+        self.state.realized_net_usd = -1.0
+        self.state.save()
+        reloaded = DailyState.load(self.path)
+        self.assertTrue(reloaded.profit_unlocked)
+        self.assertFalse(reloaded.unlocked_now())
+        self.assertEqual(KillSwitch(self.limits, reloaded).fill_cap, 300)
+
+    # -- reporting ------------------------------------------------------------------------
+
+    def test_the_margin_names_the_active_budget(self) -> None:
+        self.state.realized_net_usd = 1.5
+        _, by_name = self.check(day_fills=412)
+        self.assertEqual(by_name["day_fills"].margin(), "day_fills 412/1500 (unlocked)")
+
+    def test_the_margin_names_the_base_budget(self) -> None:
+        _, by_name = self.check(day_fills=12)
+        self.assertEqual(by_name["day_fills"].margin(), "day_fills 12/300 (base)")
+
+
 # --------------------------------------------------------------------------- pnl monitor
 
 
@@ -1343,6 +1540,66 @@ class TestStrategy(unittest.TestCase):
         strategy.on_stop()
         self.assertTrue(strategy.leftovers)
         self.assertEqual(strategy.exit_code, maker_live.EXIT_FAILED)
+
+    def test_the_status_line_names_the_active_fill_budget(self) -> None:
+        """The operator must be able to see which budget is in force without reading the code."""
+        strategy = build_strategy()
+        feed_books(strategy)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        strategy._decide()
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            strategy._status()
+        base = out.getvalue()
+        self.assertIn("/300f", base)
+        self.assertNotIn("UNLOCKED", base)
+        self.assertIn("day_fills 0/300 (base)", base)
+
+        # Now earn the extended budget and re-check.
+        strategy._state.realized_net_usd = 2.0
+        strategy._decide()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            strategy._status()
+        unlocked = out.getvalue()
+        self.assertIn("/1500f UNLOCKED", unlocked)
+        self.assertIn("(unlocked)", unlocked)
+
+    def test_the_unlock_is_persisted_as_soon_as_it_flips(self) -> None:
+        """A crash between the flip and the next fill must not lose the earned budget."""
+        out_dir = Path(tempfile.mkdtemp(prefix="unlock-"))
+        strategy = build_strategy(out=out_dir)
+        feed_books(strategy)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        strategy._decide()
+        # Nothing earned and nothing filled yet, so there is nothing to persist.
+        self.assertFalse((out_dir / "state.json").exists())
+
+        strategy._state.realized_net_usd = 2.0
+        strategy._decide()
+        payload = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(payload["profit_unlocked"])
+        self.assertAlmostEqual(payload["realized_net_usd"], 2.0)
+
+    def test_the_extended_budget_lets_a_long_session_keep_quoting(self) -> None:
+        """Past the base cap but profitable: the run continues instead of being killed."""
+        strategy = build_strategy()
+        feed_books(strategy)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        strategy._decide()
+        strategy._state.realized_net_usd = 2.0
+        strategy._state.fills = 400  # well past the 300 base cap
+        strategy.clock.advance(1.0)
+        strategy._decide()
+        self.assertIsNone(strategy.kill_reason)
+        self.assertTrue(strategy._kill.fill_cap_unlocked)
+
+        # Give the profit back: the same fill count now stops the run.
+        strategy._state.realized_net_usd = 0.0
+        strategy.clock.advance(1.0)
+        strategy._decide()
+        self.assertIn("day_fills", strategy.kill_reason or "")
 
     def test_daily_state_is_persisted_as_the_run_goes(self) -> None:
         out = Path(tempfile.mkdtemp(prefix="persist-"))

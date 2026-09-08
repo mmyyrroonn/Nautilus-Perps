@@ -36,8 +36,20 @@ max_total_notional_usd = 100.0
 [daily]
 # Counters persist in reports/live/state_<env>_<symbol>.json so a restart cannot reset them.
 # They roll over at the UTC day boundary recorded in that file.
-max_fills = 300     # hard cap 500 - see the deviation note above (built-in fallback: 200)
-max_tx = 20000      # Lighter order transactions (create + modify + cancel).  Hard cap 40000
+# The BASE fill budget, in force unless the day has earned the extended one below.
+max_fills = 300              # hard cap 500 (built-in fallback when this file is absent: 200)
+# A day that is actually making money may run longer.  The extended budget replaces max_fills
+# once today's realised net clears profit_gate_usd AND the trip-net EWMA is not negative; it
+# then stays in force while realised net is merely still positive (hysteresis, so a session
+# does not flip between the two caps around the gate), and re-locks as soon as realised net
+# falls back to zero - a session already past 300 fills then stops at the next check.  The
+# -5 USD loss kill switch below is unaffected and still applies throughout.
+max_fills_profitable = 1500  # hard cap 3000
+profit_gate_usd = 1.0        # must be strictly positive; a flat day never unlocks
+# Lighter order transactions (create + modify + cancel).  The observed quoting rate is
+# ~23 tx/min, so a full trading day needs ~33000; 20000 would stop a healthy session after
+# about 14 hours.  Hard cap 60000 (built-in fallback when this file is absent: 20000).
+max_tx = 40000
 
 [kill]
 # Cumulative net P&L (realized + mark-to-market) since the state file's day start, in USD.

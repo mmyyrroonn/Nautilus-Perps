@@ -18,10 +18,20 @@ mainnet stage at "单日最多 20 次触发".  That budget describes the origina
 arbitrage, where one trigger is one complete round trip.  A two-sided maker earns from many
 small passive fills instead - a ten minute session prints dozens - so the daily budget here is
 counted in FILLS (300 in the shipped config, 200 as the built-in fallback when no config file
-is present, hard cap 500) and in Lighter order transactions (20 000, hard cap 40 000).  The
-per-order notional (50 USD) and total exposure (100 USD) hard caps are unchanged from
-PROMPT.md.  The fill counter counts fill EVENTS, so a partially filled clip contributes one
-per partial.
+is present, hard cap 500) and in Lighter order transactions (40 000 in the config, 20 000 as
+the fallback, hard cap 60 000 - at the observed ~23 tx/min a full day needs ~33 000, so a
+20 000 budget would stop a healthy session after about 14 hours).  The per-order notional
+(50 USD) and total exposure (100 USD) hard caps are unchanged from PROMPT.md.  The fill
+counter counts fill EVENTS, so a partially filled clip contributes one per partial.
+
+**Profit-gated fill budget.**  A day that is actually making money may run longer than the
+base 300 fills: ``[daily] max_fills_profitable`` (1 500, hard cap 3 000) replaces
+``max_fills`` once the day's realised net clears ``profit_gate_usd`` with a trip-net EWMA that
+is not negative.  It then stays in force on hysteresis while realised net is merely still
+positive, so a session does not flip between the two caps around the gate, and it re-locks the
+moment the day gives its profit back - at which point a session already past 300 fills stops
+on the next check.  The loss kill switch is untouched by any of this.  Both the fallbacks and
+the caps are chosen so that no configuration produces a budget a losing day can reach.
 
 Read-only, stdlib only (``tomllib`` is 3.11+).
 """
@@ -43,8 +53,14 @@ CAP_ORDER_NOTIONAL_USD = 50.0  # PROMPT.md stage 3: single order <= 50 USD notio
 CAP_INVENTORY_USD = 100.0
 CAP_UNHEDGED_USD = 30.0
 CAP_TOTAL_NOTIONAL_USD = 100.0  # PROMPT.md stage 3: total exposure <= 100 USD
-CAP_DAILY_FILLS = 500  # see the deviation note in the module docstring (config ships 300)
-CAP_DAILY_TX = 40_000
+CAP_DAILY_FILLS = 500  # base budget; see the deviation note in the module docstring
+# The extended budget a profitable day may earn (see DailyLimits.profit_gate_usd).  It is a
+# separate, larger hard cap rather than a raised CAP_DAILY_FILLS, so a losing or a flat day can
+# never reach it: the base cap still binds unless the day has actually made money.
+CAP_DAILY_FILLS_PROFITABLE = 3_000
+# ~23 tx/min was the observed quoting rate, so a full trading day needs ~33k transactions;
+# 40k of budget with a 60k cap leaves a healthy session room to run the day out.
+CAP_DAILY_TX = 60_000
 CAP_LOSS_USD = 20.0
 CAP_TX_PER_MIN = 40.0  # Lighter allows 40 sendTx/min per L1 address; never quote above it
 
@@ -200,8 +216,16 @@ class ExposureLimits:
 
 @dataclass(frozen=True)
 class DailyLimits:
-    max_fills: int = 200
+    max_fills: int = 200  # the base budget, in force unless the day has earned the extended one
+    max_fills_profitable: int = 1_500
+    # Realised net the day must clear before the extended budget unlocks.  Strictly positive:
+    # a zero or negative gate would hand a flat day the larger budget.
+    profit_gate_usd: float = 1.0
     max_tx: int = 20_000
+
+    def fill_cap(self, *, unlocked: bool) -> int:
+        """The fill budget in force, given whether the extended one has been unlocked today."""
+        return self.max_fills_profitable if unlocked else self.max_fills
 
 
 @dataclass(frozen=True)
@@ -306,10 +330,16 @@ class Limits:
             f"gross notional, so the exposure cap binds first",
         )
         lines.append(
-            f"  NOTE  [daily] counts FILL EVENTS ({self.daily.max_fills} today, hard cap "
-            f"{CAP_DAILY_FILLS}), not the 20 triggers/day of PROMPT.md stage 3 - a maker "
-            f"prints many small fills, and a partially filled clip counts once per partial. "
-            f"Deviation approved by the user 2026-09-08.",
+            f"  daily fill budget: {self.daily.max_fills} base (hard cap {CAP_DAILY_FILLS})"
+            f"  ->  {self.daily.max_fills_profitable} once the day's realised net clears "
+            f"{self.daily.profit_gate_usd:g} USD with a non-negative trip EWMA (hard cap "
+            f"{CAP_DAILY_FILLS_PROFITABLE}); it re-locks when realised net falls back to 0",
+        )
+        lines.append(
+            f"  NOTE  [daily] counts FILL EVENTS ({self.daily.max_fills} base, "
+            f"{self.daily.max_fills_profitable} when profitable), not the 20 triggers/day of "
+            f"PROMPT.md stage 3 - a maker prints many small fills, and a partially filled clip "
+            f"counts once per partial. Deviation approved by the user 2026-09-08.",
         )
         return "\n".join(lines)
 
@@ -358,6 +388,10 @@ def load_limits(path: Path | str | None = None) -> Limits:
     )
     daily = DailyLimits(
         max_fills=r.count("daily", "max_fills", 200, CAP_DAILY_FILLS, minimum=1),
+        max_fills_profitable=r.count(
+            "daily", "max_fills_profitable", 1_500, CAP_DAILY_FILLS_PROFITABLE, minimum=1,
+        ),
+        profit_gate_usd=r.number("daily", "profit_gate_usd", 1.0),
         max_tx=r.count("daily", "max_tx", 20_000, CAP_DAILY_TX, minimum=1),
     )
     kill = KillLimits(
@@ -390,6 +424,17 @@ def load_limits(path: Path | str | None = None) -> Limits:
         raise LimitsError(
             f"[order] max_notional_usd {order.max_notional_usd:g} exceeds [inventory] "
             f"max_inventory_usd {inventory.max_inventory_usd:g}: one clip would breach the cap",
+        )
+    if daily.profit_gate_usd <= 0.0:
+        raise LimitsError(
+            f"[daily] profit_gate_usd must be strictly positive, got "
+            f"{daily.profit_gate_usd:g}: a zero or negative gate would hand the extended fill "
+            f"budget to a flat or losing day",
+        )
+    if daily.max_fills_profitable < daily.max_fills:
+        raise LimitsError(
+            f"[daily] max_fills_profitable {daily.max_fills_profitable} is below max_fills "
+            f"{daily.max_fills}: the profitable budget can only ever be the larger one",
         )
     if inventory.max_inventory_usd > exposure.max_total_notional_usd:
         raise LimitsError(
