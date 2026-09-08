@@ -22,6 +22,7 @@ import csv
 import statistics
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,10 @@ LOCAL_BOOK_AFTER = 20  # deltas batches with no cache book before we maintain ou
 LEG_STALE_SECS = 120  # per-leg staleness warning on the status tick
 ALL_SILENT_SECS = 600  # every leg of every symbol silent this long -> restart node
 ALL_SAMPLE_MS = 1_000
+# Per (sell, buy) pair we keep only the most recent gross-bps samples for the
+# end-of-run median. The full series was an unbounded list appended on every
+# quote (~5 M floats/h across 9 crypto symbols -> ~190 MB/h RSS on vultr-worker).
+GROSS_KEEP = 20_000
 RESTART_PAUSE_SECS = 15
 MAX_RESTARTS = 20
 CAPACITY_BPS = (2, 5, 10)  # depth buckets, in bps away from the touch
@@ -535,14 +540,20 @@ class SpreadWatch(Strategy):
             if sell is not buy
         ]
         self._fee: dict[tuple[str, str], float] = {}
-        self._gross: dict[tuple[str, str], list[float]] = {}
+        self._gross: dict[tuple[str, str], deque[float]] = {}  # recent, bounded
+        self._evals: dict[tuple[str, str], int] = {}  # total appended, unbounded
+        self._gross_min: dict[tuple[str, str], float] = {}
+        self._gross_max: dict[tuple[str, str], float] = {}
         self._positive: dict[tuple[str, str], int] = {}
         self._last_gross: dict[tuple[str, str], float] = {}
         self._last_all_ns: dict[tuple[str, str], int] = {}
         for sell, buy in self._pairs:
             key = (sell.spec.venue_key, buy.spec.venue_key)
             self._fee[key] = sell.spec.taker_fee_bps + buy.spec.taker_fee_bps + config.reserve_bps
-            self._gross[key] = []
+            self._gross[key] = deque(maxlen=GROSS_KEEP)
+            self._evals[key] = 0
+            self._gross_min[key] = float("inf")
+            self._gross_max[key] = float("-inf")
             self._positive[key] = 0
             self._last_gross[key] = float("nan")
             self._last_all_ns[key] = 0
@@ -830,6 +841,11 @@ class SpreadWatch(Strategy):
             net_bps = gross_bps - self._fee[key]
             self._last_gross[key] = gross_bps
             self._gross[key].append(gross_bps)
+            self._evals[key] += 1
+            if gross_bps < self._gross_min[key]:
+                self._gross_min[key] = gross_bps
+            if gross_bps > self._gross_max[key]:
+                self._gross_max[key] = gross_bps
             if not counted:
                 self._samples += 1
                 counted = True
@@ -880,16 +896,19 @@ class SpreadWatch(Strategy):
             f"trade rows={self._trades.rows}",
         )
         for (sell, buy) in self._gross:
-            series = self._gross[(sell, buy)]
-            fee = self._fee[(sell, buy)]
-            if not series:
+            key = (sell, buy)
+            series = self._gross[key]
+            total = self._evals[key]
+            fee = self._fee[key]
+            if not total:
                 lines.append(f"  {sell}>{buy}: no samples (fee+reserve={fee:.2f} bps)")
                 continue
-            pct = 100.0 * self._positive[(sell, buy)] / len(series)
+            pct = 100.0 * self._positive[key] / total
+            median_note = "" if total <= GROSS_KEEP else f" (last {len(series)})"
             lines.append(
-                f"  {sell}>{buy}: net-positive {self._positive[(sell, buy)]}/{len(series)} "
-                f"({pct:.2f}%)  gross median={statistics.median(series):.2f} "
-                f"max={max(series):.2f} min={min(series):.2f} bps  "
+                f"  {sell}>{buy}: net-positive {self._positive[key]}/{total} "
+                f"({pct:.2f}%)  gross median={statistics.median(series):.2f}{median_note} "
+                f"max={self._gross_max[key]:.2f} min={self._gross_min[key]:.2f} bps  "
                 f"fee+reserve={fee:.2f}",
             )
         for path in (self._cfg.csv_path, self._cfg.all_csv_path,
