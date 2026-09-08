@@ -39,7 +39,7 @@ Accounting is average-cost matched per venue, so the total decomposes exactly:
 
     spread_capture  realised on M: (sell px - avg buy px) * base over matched base
     hedge_cost      realised on H, the mirror trade - normally negative
-    fees            taker fee on every hedge (maker fee on M is 0 on Lighter)
+    fees            taker fee on every hedge plus the maker venue fee (MAKER_FEE_BPS table)
     residual_mtm    the still-open q marked at the M mid and -q at the H mid
 
 Read-only, stdlib only, streams every file once; loaders, book merge and table
@@ -94,7 +94,10 @@ from opportunities import (  # noqa: E402
 )
 
 ASK, BID = 1, 0  # side index: ASK = we sell on M, BID = we buy on M
-MAKER_FEE_BPS = 0.0  # Lighter / Lighter-RH maker fee; no maker venue here charges one
+# Maker fee per maker venue, bps of notional. Lighter charges none (2026-09); Aster
+# mainnet commissionRate showed maker 0 / taker 0.9 bps on the symbols probed
+# 2026-09-05; HL main dex base tier is 1.5 bps. Override with --maker-fee-bps.
+MAKER_FEE_BPS = {"LIGHTER": 0.0, "LIGHTER_RH": 0.0, "ASTER": 0.0, "HL": 1.5}
 
 
 # ---------------------------------------------------------------- parameters
@@ -111,6 +114,7 @@ class Params:
     reserve_bps: float
     hedge_delay_s: float
     one_sided: bool = False
+    maker_fee_bps: float = 0.0
     label: str = "base"
 
     def variants(self) -> list[Params]:
@@ -119,13 +123,13 @@ class Params:
         for scale in (0.5, 2.0):
             out.append(Params(
                 self.mode, self.order_usd, self.max_inv_usd * scale, self.min_edge_bps,
-                self.reserve_bps, self.hedge_delay_s, self.one_sided,
+                self.reserve_bps, self.hedge_delay_s, self.one_sided, self.maker_fee_bps,
                 f"max-inv x{scale:g}",
             ))
         for scale in (0.5, 2.0):
             out.append(Params(
                 self.mode, self.order_usd * scale, self.max_inv_usd, self.min_edge_bps,
-                self.reserve_bps, self.hedge_delay_s, self.one_sided,
+                self.reserve_bps, self.hedge_delay_s, self.one_sided, self.maker_fee_bps,
                 f"order x{scale:g}",
             ))
         return out
@@ -306,7 +310,7 @@ def simulate(
                     ok = size > EPS
                 else:
                     raw = (price - hedge_px) if sell else (hedge_px - price)
-                    if raw / mid * 1e4 - fee_h - p.reserve_bps < p.min_edge_bps:
+                    if raw / mid * 1e4 - fee_h - p.maker_fee_bps - p.reserve_bps < p.min_edge_bps:
                         run.gated[side] += 1
                         ok = False
                     elif abs(q) * price + p.order_usd > p.max_inv_usd + EPS:
@@ -516,7 +520,7 @@ def settle(books: PairBooks, run: Run, *, fee_h: float, p: Params) -> Result:
         if ev is None:
             continue
         signed = -base if ev.sell else base
-        fee = MAKER_FEE_BPS / 1e4 * base * ev.price
+        fee = p.maker_fee_bps / 1e4 * base * ev.price
         realized, rt_fee, matched = m_book.trade(signed, ev.price, fee)
         ev.realized_m += realized
         ev.rt_fee += rt_fee
@@ -698,14 +702,27 @@ def run_pair(
     return settle(books, run, fee_h=fee_h, p=p)
 
 
+def maker_fee(venue: str, override: str | None) -> float:
+    """Maker fee in bps for ``venue``: the table above unless --maker-fee-bps names it."""
+    fee = MAKER_FEE_BPS.get(venue, 0.0)
+    for item in (override or "").split(","):
+        if ":" in item:
+            name, value = item.split(":", 1)
+            if name.strip() == venue:
+                fee = float(value)
+    return fee
+
+
 def pair_block(
     symbol: str, books: PairBooks, trades: VenueTrades, fees: dict[str, float], args,
 ) -> list[str]:
     """One (maker, hedge) pair: every quote mode, with its hourly and sensitivity split."""
     maker, hedge = books.maker, books.hedge
     fee_h = fees.get(hedge, 0.0)
+    fee_m = maker_fee(maker, args.maker_fee_bps)
     lines = [
         f"### maker {maker} -> hedge {hedge}  (taker fee {hedge} {fmt(fee_h)} bps, "
+        f"maker fee {maker} {fmt(fee_m)} bps, "
         f"{len(books)} mirrored samples"
         + (f", {books.unmatched} unmatched" if books.unmatched else "") + ")",
         "",
@@ -715,13 +732,15 @@ def pair_block(
             mode=mode, order_usd=args.order_usd, max_inv_usd=args.max_inv_usd,
             min_edge_bps=args.min_edge_bps, reserve_bps=args.reserve_bps,
             hedge_delay_s=args.hedge_delay_s, one_sided=args.one_sided,
+            maker_fee_bps=fee_m,
         )
         res = run_pair(books, trades, fee_h=fee_h, p=base)
         run = res.run
         lines.append(
             f"**quote = {mode}**  (order {args.order_usd:g} USD, max inventory "
             f"{args.max_inv_usd:g} USD, opening gate >= {args.min_edge_bps:g} bps after "
-            f"the {fmt(fee_h)} bps {hedge} taker fee and a {args.reserve_bps:g} bps "
+            f"the {fmt(fee_h)} bps {hedge} taker fee, the {fmt(fee_m)} bps {maker} maker fee "
+            f"and a {args.reserve_bps:g} bps "
             f"reserve, hedge delay {args.hedge_delay_s:g} s"
             + (", ONE-SIDED (bid disabled)" if args.one_sided else "") + ")",
         )
@@ -892,6 +911,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="extra bps demanded by the gate (hedge slippage reserve)")
     parser.add_argument("--hedge-delay-s", type=float, default=1.0,
                         help="latency from fill to hedge")
+    parser.add_argument("--maker-fee-bps", default=None,
+                        help="override maker fees, e.g. HL:1.5,ASTER:0.2 (bps); default table in MAKER_FEE_BPS")
     parser.add_argument("--no-sensitivity", action="store_true",
                         help="skip the four re-runs at 0.5x / 2x cap and clip")
     parser.add_argument("--one-sided", action="store_true", help=argparse.SUPPRESS)
