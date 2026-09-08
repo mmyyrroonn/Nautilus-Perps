@@ -42,6 +42,27 @@ Accounting is average-cost matched per venue, so the total decomposes exactly:
     fees            taker fee on every hedge plus the maker venue fee (MAKER_FEE_BPS table)
     residual_mtm    the still-open q marked at the M mid and -q at the H mid
 
+A quote is re-priced whenever the maker touch moves, and on Lighter the touch of a
+listed perp moves ~50 times a minute, so the unconstrained replay above sends ~60
+order transactions a minute.  The venue allows 40 sendTx per minute per L1 address,
+shared across creates, modifies and cancels, so three knobs model the real budget:
+
+    --tx-per-min N     token bucket shared by both sides, capacity N, refilled
+                       continuously at N per minute.  Placing, re-pricing (one
+                       ``L2ModifyOrder``) or cancelling an order costs one token;
+                       with the bucket empty the resting order is left exactly as it
+                       is - same price, same remaining size, same queue position -
+                       and the action is retried at the next sample.  A stale order
+                       still fills under the rules above.
+    --requote-ticks K  re-price only once the touch is K ticks away from the touch we
+                       last quoted against.
+    --requote-min-s S  re-price a side at most every S seconds; a held quote that
+                       would lock the book is cancelled instead.
+
+Creates and modifies also spend Lighter's separate volume quota (1000 at account
+opening, +1 per 2 USD of filled volume, +1 free per 15 s); the summary reports the
+``quota ratio`` of what the quoting would spend against what the window allows.
+
 Read-only, stdlib only, streams every file once; loaders, book merge and table
 helpers come from ``maker_fill.py`` / ``opportunities.py``.
 
@@ -51,6 +72,7 @@ helpers come from ``maker_fill.py`` / ``opportunities.py``.
         [--max-inv-usd 2000] [--min-edge-bps 3] [--reserve-bps 0] \
         [--hedge-delay-s 1] [--no-sensitivity] \
         [--from 2026-09-07T14:00:00Z --to 2026-09-08T00:00:00Z] \
+        [--tx-per-min 40] [--requote-ticks 2] [--requote-min-s 3] \
         [--trace PONS:LIGHTER:HL --trace-n 8] [--md reports/stage1/inv.md]
 """
 
@@ -62,7 +84,7 @@ import statistics
 import sys
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -116,22 +138,47 @@ class Params:
     one_sided: bool = False
     maker_fee_bps: float = 0.0
     label: str = "base"
+    tx_per_min: float | None = None  # shared token bucket, None = unlimited
+    requote_ticks: int = 1  # re-price only once the touch moved this many ticks
+    requote_min_s: float = 0.0  # minimum seconds between two re-prices of one side
+
+    @property
+    def budgeted(self) -> bool:
+        """True while any transaction-budget knob is off its default."""
+        return (
+            self.tx_per_min is not None
+            or self.requote_ticks > 1
+            or self.requote_min_s > 0.0
+        )
+
+    def budget_note(self) -> str:
+        cap = "unlimited" if self.tx_per_min is None else f"{self.tx_per_min:g}/min"
+        return (
+            f"tx budget {cap}, re-price after {self.requote_ticks:g} tick(s) and at "
+            f"most every {self.requote_min_s:g} s"
+        )
 
     def variants(self) -> list[Params]:
-        """The four sensitivity runs: inventory cap and clip size, halved and doubled."""
+        """Sensitivity: cap and clip halved / doubled, then the transaction budget."""
         out: list[Params] = []
         for scale in (0.5, 2.0):
-            out.append(Params(
-                self.mode, self.order_usd, self.max_inv_usd * scale, self.min_edge_bps,
-                self.reserve_bps, self.hedge_delay_s, self.one_sided, self.maker_fee_bps,
-                f"max-inv x{scale:g}",
+            out.append(replace(
+                self, max_inv_usd=self.max_inv_usd * scale, label=f"max-inv x{scale:g}",
             ))
         for scale in (0.5, 2.0):
-            out.append(Params(
-                self.mode, self.order_usd * scale, self.max_inv_usd, self.min_edge_bps,
-                self.reserve_bps, self.hedge_delay_s, self.one_sided, self.maker_fee_bps,
-                f"order x{scale:g}",
+            out.append(replace(
+                self, order_usd=self.order_usd * scale, label=f"order x{scale:g}",
             ))
+        out += [
+            replace(self, tx_per_min=40.0, label="tx-per-min 40"),
+            replace(self, tx_per_min=20.0, label="tx-per-min 20"),
+            replace(self, tx_per_min=40.0, requote_min_s=3.0,
+                    label="requote-min-s 3 + tx 40"),
+            replace(self, tx_per_min=40.0, requote_ticks=2,
+                    label="requote-ticks 2 + tx 40"),
+            replace(self, tx_per_min=40.0, requote_min_s=5.0,
+                    label="requote-min-s 5 + tx 40"),
+        ]
         return out
 
 
@@ -225,6 +272,16 @@ class Run:
     hour_inv: dict[int, float] = field(default_factory=dict)  # hour -> last |q| USD
     q_final: float = 0.0
     flips: int = 0  # fills that carried the inventory across zero (see the docstring)
+    # transaction budget: every place / re-price / cancel we would send to the venue
+    tx_sent: int = 0
+    tx_create: int = 0
+    tx_modify: int = 0
+    tx_cancel: int = 0
+    tx_deferred: list[int] = field(default_factory=lambda: [0, 0])
+    tx_hour: dict[int, int] = field(default_factory=dict)  # hour -> transactions sent
+    stale_s: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    stale_any_s: float = 0.0  # time with at least one side off its intended price
+    live_s: float = 0.0  # time with at least one side resting: the stale denominator
 
     def fills(self, side: int) -> list[FillEvent]:
         want = side == ASK
@@ -261,6 +318,13 @@ def simulate(
     Sample ``i`` decides both quotes; the trades of ``(t_i, t_i+1]`` then hit them.
     A completed order is replaced only at the following sample, as a real venue
     would need at least one round trip to do.
+
+    Each intended place, re-price or cancel is one venue transaction.  With
+    ``p.tx_per_min`` set they are drawn from a token bucket shared by both sides; an
+    action that finds it empty is dropped for this sample - the order rests on
+    unchanged, keeping its price, its remaining size and its queue position - and is
+    reconsidered at the next sample.  ``p.requote_ticks`` and ``p.requote_min_s``
+    thin the re-pricing itself, before the bucket is ever consulted.
     """
     run = Run()
     n = len(books)
@@ -271,13 +335,32 @@ def simulate(
     ti = bisect.bisect_right(tt, books.t[0])  # trades before the first sample: ignored
     orders: list[_Order | None] = [None, None]
     live = [False, False]
+    stale = [False, False]
     q = 0.0
     oid = 0
+    # Token bucket: capacity ``cap``, refilled continuously at ``cap`` per minute.
+    cap = float(p.tx_per_min) if p.tx_per_min else 0.0
+    refill = cap / 60.0
+    tokens = cap
+    last_fill_t = books.t[0]
+    # Cheaper cadence: the touch we last quoted against, and when we last acted.
+    quoted = [0.0, 0.0]
+    last_act = [-1e18, -1e18]
+    min_move = (p.requote_ticks * tick - tick * 1e-6) if p.requote_ticks > 1 else 0.0
+    min_gap = p.requote_min_s
 
     for i in range(n):
         t = books.t[i]
         t_next = books.t[i + 1] if i + 1 < n else t + SAMPLE_S
         mid = books.mid[i]
+        dur = t_next - t
+        if cap > 0.0 and t > last_fill_t:
+            tokens += (t - last_fill_t) * refill
+            if tokens > cap:
+                tokens = cap
+            last_fill_t = t
+        hour = int(t // 3600.0)
+        stale[ASK] = stale[BID] = False
 
         for side in (ASK, BID):
             sell = side == ASK
@@ -320,19 +403,42 @@ def simulate(
                         size = p.order_usd / price
 
             order = orders[side]
+            want = 0  # 0 nothing, 1 place, 2 re-price (modify), 3 cancel
             if not ok:
                 if order is not None:
+                    want = 3
+            elif order is None:
+                want = 1
+            elif (
+                order.closing != closing
+                or (closing and order.base - order.filled > abs(q) + EPS)
+            ):
+                want = 2  # the side flipped, or the closing clip no longer fits |q|
+            elif order.price != price:
+                moved = min_move <= 0.0 or abs(touch - quoted[side]) >= min_move
+                ready = min_gap <= 0.0 or t - last_act[side] >= min_gap - EPS
+                if moved and ready:
+                    want = 2
+                elif (order.price <= opposite) if sell else (order.price >= opposite):
+                    want = 3  # the cadence would hold a quote that now locks the book
+            if want and cap > 0.0:
+                if tokens < 1.0:
+                    run.tx_deferred[side] += 1  # retried at the next sample
+                    want = 0
+                else:
+                    tokens -= 1.0
+            if want:
+                run.tx_sent += 1
+                run.tx_hour[hour] = run.tx_hour.get(hour, 0) + 1
+                if want == 3:
+                    run.tx_cancel += 1
                     _close(run, order, False)
                     orders[side] = None
-            else:
-                stale = (
-                    order is None
-                    or order.price != price
-                    or order.closing != closing
-                    or (closing and order.base - order.filled > abs(q) + EPS)
-                )
-                if stale:
-                    if order is not None:
+                else:
+                    if want == 1:
+                        run.tx_create += 1
+                    else:
+                        run.tx_modify += 1
                         _close(run, order, False)
                     oid += 1
                     orders[side] = _Order(
@@ -340,11 +446,22 @@ def simulate(
                         tob if p.mode == "join" else 0.0, size, t,
                     )
                     run.quotes[side] += 1
+                    quoted[side] = touch
+                    last_act[side] = t
             # The window flow is credited to the quote that was live when it opened:
             # an order completing mid-window is replaced only at the next sample.
-            live[side] = orders[side] is not None
+            resting = orders[side]
+            live[side] = resting is not None
             if live[side]:
-                run.quoting_s[side] += t_next - t
+                run.quoting_s[side] += dur
+                if not ok or resting.price != price:
+                    stale[side] = True  # resting away from what we would quote now
+                    run.stale_s[side] += dur
+
+        if live[ASK] or live[BID]:
+            run.live_s += dur
+            if stale[ASK] or stale[BID]:
+                run.stale_any_s += dur
 
         inv_usd = abs(q) * mid
         run.twa_num += inv_usd * (t_next - t)
@@ -625,8 +742,24 @@ SUMMARY_HEADERS = [
     "run", "total USD", "spread cap", "hedge cost", "fees", "resid mtm", "rt net",
     "rt bps", "rt bps-f", "rt bps-w", "trips", "fills A", "fills B", "USD A", "USD B",
     "rate A", "rate B", "max inv", "twa inv", "hold med", "hold p90", "H cov",
+    "tx/min", "deferred", "stale %", "quota ratio",
 ]
 SUMMARY_ALIGN = "l" + "r" * (len(SUMMARY_HEADERS) - 1)
+
+# Lighter's volume quota: 1000 at account opening, +1 per 2 USD filled, +1 per 15 s.
+QUOTA_BASE = 1000.0
+QUOTA_PER_USD = 0.5
+QUOTA_PER_MIN = 4.0
+
+
+def quota_ratio(run: Run, filled_usd: float) -> float | None:
+    """Creates + modifies over the quota the window itself grants."""
+    allowance = (
+        QUOTA_BASE + QUOTA_PER_USD * filled_usd + QUOTA_PER_MIN * run.twa_den / 60.0
+    )
+    if allowance <= 0.0:
+        return None
+    return (run.tx_create + run.tx_modify) / allowance
 
 
 def summary_row(res: Result, label: str) -> list[object]:
@@ -636,6 +769,8 @@ def summary_row(res: Result, label: str) -> list[object]:
     usd_a = sum(e.usd for e in ask)
     usd_b = sum(e.usd for e in bid)
     twa = run.twa_num / run.twa_den if run.twa_den > 0.0 else 0.0
+    tx_min = run.tx_sent / (run.twa_den / 60.0) if run.twa_den > 0.0 else None
+    stale = 100.0 * run.stale_any_s / run.live_s if run.live_s > 0.0 else None
     return [
         label,
         fmt(res.total, 1), fmt(res.spread_capture, 1), fmt(res.hedge_cost, 1),
@@ -647,12 +782,15 @@ def summary_row(res: Result, label: str) -> list[object]:
         fmt_usd(run.max_inv_usd), fmt_usd(twa),
         fmt(_median(res.hold_s), 1), fmt(_p90(res.hold_s), 1),
         _share([e.covered for e in run.events]),
+        fmt(tx_min, 1), run.tx_deferred[ASK] + run.tx_deferred[BID],
+        f"{stale:.0f}%" if stale is not None else "-",
+        fmt(quota_ratio(run, usd_a + usd_b), 2),
     ]
 
 
 def hourly_rows(res: Result) -> list[list[object]]:
     """Fills, filled notional, realised pnl and end-of-hour inventory, per UTC hour."""
-    buckets = sorted(set(res.hours) | set(res.run.hour_inv))
+    buckets = sorted(set(res.hours) | set(res.run.hour_inv) | set(res.run.tx_hour))
     rows: list[list[object]] = []
     for bucket in buckets:
         ask, bid, usd, pnl = res.hours.get(bucket, [0.0, 0.0, 0.0, 0.0])
@@ -660,6 +798,7 @@ def hourly_rows(res: Result) -> list[list[object]]:
         rows.append([
             stamp.strftime("%Y-%m-%d %H:00"), int(ask), int(bid), fmt_usd(usd),
             fmt(pnl, 1), fmt_usd(res.run.hour_inv.get(bucket)),
+            res.run.tx_hour.get(bucket, 0),
         ])
     return rows
 
@@ -732,7 +871,8 @@ def pair_block(
             mode=mode, order_usd=args.order_usd, max_inv_usd=args.max_inv_usd,
             min_edge_bps=args.min_edge_bps, reserve_bps=args.reserve_bps,
             hedge_delay_s=args.hedge_delay_s, one_sided=args.one_sided,
-            maker_fee_bps=fee_m,
+            maker_fee_bps=fee_m, tx_per_min=args.tx_per_min,
+            requote_ticks=args.requote_ticks, requote_min_s=args.requote_min_s,
         )
         res = run_pair(books, trades, fee_h=fee_h, p=base)
         run = res.run
@@ -742,7 +882,8 @@ def pair_block(
             f"the {fmt(fee_h)} bps {hedge} taker fee, the {fmt(fee_m)} bps {maker} maker fee "
             f"and a {args.reserve_bps:g} bps "
             f"reserve, hedge delay {args.hedge_delay_s:g} s"
-            + (", ONE-SIDED (bid disabled)" if args.one_sided else "") + ")",
+            + (", ONE-SIDED (bid disabled)" if args.one_sided else "")
+            + (f", {base.budget_note()}" if base.budgeted else "") + ")",
         )
         lines.append("")
         lines += table(SUMMARY_HEADERS, [summary_row(res, "base")], align=SUMMARY_ALIGN)
@@ -776,8 +917,9 @@ def pair_block(
         rows = hourly_rows(res)
         if rows:
             lines += table(
-                ["hour UTC", "fills A", "fills B", "filled USD", "USD pnl", "end inv USD"],
-                rows, align="lrrrrr",
+                ["hour UTC", "fills A", "fills B", "filled USD", "USD pnl",
+                 "end inv USD", "tx"],
+                rows, align="lrrrrrr",
             )
         else:
             lines.append("_no samples_")
@@ -913,8 +1055,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="latency from fill to hedge")
     parser.add_argument("--maker-fee-bps", default=None,
                         help="override maker fees, e.g. HL:1.5,ASTER:0.2 (bps); default table in MAKER_FEE_BPS")
+    parser.add_argument("--tx-per-min", type=float, default=None,
+                        help="venue transaction budget per minute, shared by both sides "
+                             "(token bucket, capacity = the same number); default unlimited")
+    parser.add_argument("--requote-ticks", type=int, default=1,
+                        help="re-price only once the touch moved this many ticks")
+    parser.add_argument("--requote-min-s", type=float, default=0.0,
+                        help="minimum seconds between two re-prices of one side")
     parser.add_argument("--no-sensitivity", action="store_true",
-                        help="skip the four re-runs at 0.5x / 2x cap and clip")
+                        help="skip the re-runs at 0.5x / 2x cap and clip and the tx budget")
     parser.add_argument("--one-sided", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--trace", default=None,
                         help="dump the first fills of one pair: SYMBOL:MAKER:HEDGE")
@@ -942,6 +1091,12 @@ def main() -> None:
         raise SystemExit(f"[inv] --quote takes join and/or improve, got {args.quote!r}")
     if args.order_usd <= 0.0 or args.max_inv_usd <= 0.0:
         raise SystemExit("[inv] --order-usd and --max-inv-usd must be positive")
+    if args.tx_per_min is not None and args.tx_per_min < 1.0:
+        raise SystemExit("[inv] --tx-per-min must be at least 1 (omit it for unlimited)")
+    if args.requote_ticks < 1:
+        raise SystemExit("[inv] --requote-ticks must be at least 1")
+    if args.requote_min_s < 0.0:
+        raise SystemExit("[inv] --requote-min-s cannot be negative")
     args.trace_match = _make_trace_match(args.trace)
     args.trace_mode = (args.trace_quote or args.quote_modes[0]).strip().lower()
     try:
@@ -978,7 +1133,12 @@ def main() -> None:
         f"quote {', '.join(args.quote_modes)}  |  order {args.order_usd:g} USD  |  "
         f"max inventory {args.max_inv_usd:g} USD  |  min edge {args.min_edge_bps:g} bps  |  "
         f"reserve {args.reserve_bps:g} bps  |  hedge delay {args.hedge_delay_s:g} s"
-        f"{window}",
+        + (f"  |  tx budget {args.tx_per_min:g}/min" if args.tx_per_min else "")
+        + (f"  |  requote after {args.requote_ticks:g} tick(s)"
+           if args.requote_ticks > 1 else "")
+        + (f"  |  requote at most every {args.requote_min_s:g} s"
+           if args.requote_min_s > 0.0 else "")
+        + f"{window}",
         "",
         "_Both sides rest at once on the maker venue and every fill is hedged taker on "
         "the hedge venue, so the hedge venue is held at minus the maker inventory. The "
@@ -1000,7 +1160,14 @@ def main() -> None:
         "aggressor USD printed while that side was resting. `max inv` / `twa inv` are "
         "the peak and the time-weighted mean of |inventory| in USD, `hold med/p90` how "
         "long a filled lot waits (FIFO) before an opposite fill offsets it, `H cov` how "
-        "often the hedge venue top of book covered the fill. The hourly `USD pnl` "
+        "often the hedge venue top of book covered the fill. `tx/min` is how many order "
+        "transactions - places, re-prices, cancels - the quoting would send to the "
+        "maker venue per minute, `deferred` how many times a wanted action found the "
+        "`--tx-per-min` bucket empty and was postponed a sample, `stale %` the share "
+        "of the time at least one side was resting away from the price we would quote "
+        "now, and `quota ratio` the creates plus modifies over Lighter's volume "
+        "quota for the window (1000 + filled USD / 2 + 4 per minute); above 1 the "
+        "quota runs out. The hourly `USD pnl` "
         "columns sum to `total USD` minus `resid mtm`. Minimum order size on the maker "
         "venue is not in the recordings and is not enforced._",
         "",
