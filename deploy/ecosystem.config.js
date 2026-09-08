@@ -40,7 +40,9 @@ function watchArgs(symbols) {
 }
 
 const STOCKS_SYMBOLS = ['NVDA', 'TSLA', 'HOOD', 'SNDK', 'MU', 'SPCX', 'GOLD1'];
-const CRYPTO_SYMBOLS = ['SOL', 'HYPE', 'ZEC', 'PONS', 'LIT', 'ASTER', 'DASH', 'PUMP', 'ARB'];
+const CRYPTO_SYMBOLS = ['SOL', 'HYPE', 'ZEC', 'PONS', 'LIT', 'ASTER', 'DASH', 'PUMP', 'ARB',
+  // 2026-09-08 screen candidates (ANSEM has no HL leg)
+  'ANSEM', 'XPL', 'MON', 'EIGEN', 'TIA'];
 
 function appDef(name, symbols) {
   return {
