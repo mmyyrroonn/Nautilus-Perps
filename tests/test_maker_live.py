@@ -30,6 +30,7 @@ import unittest
 from unittest import mock
 from datetime import datetime
 from datetime import timezone
+import dataclasses
 from dataclasses import replace as dc_replace
 from decimal import Decimal
 from pathlib import Path
@@ -249,6 +250,14 @@ class FakeFill:
         self.ts_event = 0
 
 
+class FakeDenied:
+    """Stand-in for an OrderDenied / OrderRejected event."""
+
+    def __init__(self, client_order_id, reason: str) -> None:
+        self.client_order_id = client_order_id
+        self.reason = reason
+
+
 class FakeQuote:
     def __init__(self, instrument_id, bid: str, ask: str,
                  bid_size: str = "500", ask_size: str = "500") -> None:
@@ -349,6 +358,9 @@ class MakerUnderTest(maker_live.LighterMaker):
         self._stub_clock = clock
         self.submitted: list[FakeOrder] = []
         self.cancelled: list[object] = []
+        # When True a cancel is recorded but the order stays OPEN in the cache, which is what
+        # a venue that has not confirmed yet looks like.  The stop sequence must wait for it.
+        self.cancel_is_silent = False
         self.modified: list[tuple] = []
         self.subscriptions: list[object] = []
 
@@ -381,8 +393,10 @@ class MakerUnderTest(maker_live.LighterMaker):
     def cancel_order(self, client_order_id, client_id=None, params=None) -> None:
         self.cancelled.append(client_order_id)
         order = self._stub_cache.orders.get(client_order_id)
-        if order is not None:
+        if order is not None and not self.cancel_is_silent:
             order.close("CANCELED")
+        elif order is not None:
+            order.status = FakeStatus("PENDING_CANCEL")
 
     def modify_order(self, client_order_id, quantity=None, price=None, trigger_price=None,
                      client_id=None, params=None) -> None:
@@ -404,8 +418,12 @@ def test_limits(**quote_overrides):
     itself says.
     """
     limits = load_limits(SHIPPED_LIMITS)
+    stop_keys = {f.name for f in dataclasses.fields(limits.stop)}
+    stop_overrides = {k: quote_overrides.pop(k) for k in list(quote_overrides)
+                      if k in stop_keys}
     quote = dc_replace(limits.quote, **{"placement": "improve", **quote_overrides})
-    return dc_replace(limits, quote=quote)
+    stop = dc_replace(limits.stop, **stop_overrides)
+    return dc_replace(limits, quote=quote, stop=stop)
 
 
 def build_strategy(
@@ -3016,7 +3034,7 @@ class TestPositionFlattener(unittest.TestCase):
         flat.clock.advance(maker_live.HEDGE_INFLIGHT_TIMEOUT_S + 1.0)
         self.sweep(flat)
         self.assertEqual(len(flat.submitted), 2, "a timeout re-queries before sending again")
-        self.assertEqual(flat._inflight, {})
+        self.assertTrue(all(b.inflight is None for b in flat._books.values()))
 
     def test_a_flat_book_finishes_immediately_without_ordering(self) -> None:
         flat = build_flattener([], venue=maker_live.VenuePosition(maker_live.FLAT, 0.0))
@@ -3429,8 +3447,6 @@ class TestCli(unittest.TestCase):
         self.assertEqual(testnet.hedge_id, "DOGEUSDT-PERP.ASTER")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class FakeCancel:
@@ -3495,3 +3511,325 @@ class TestHedgeRetryAfterUnfilledIoc(unittest.TestCase):
         strategy.clock.advance(maker_live.HEDGE_INFLIGHT_TIMEOUT_S + 1.0)
         strategy._pump_hedge(strategy.clock.timestamp_ns() / 1e9)
         self.assertEqual(len(strategy.submitted), 2, "the stale in-flight hedge was released and resent")
+
+
+# --------------------------------------------------------------------------- stop sequence
+
+
+class FakeTimeEvent:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class TestThroughMinimumClip(unittest.TestCase):
+    """A remainder the venue will not close exactly is closed by going through zero.
+
+    Lighter denied a 0.37 VVV close locally on 2026-09-10 - 164 denials in one flatten run -
+    because its minimum is 0.60.  The web UI closes it; the API path cannot.  Two legal orders
+    do what one illegal one could not: sell 0.97 (leaving exactly 0.60 SHORT), then buy 0.60.
+    """
+
+    LIGHTER = dict(bid=27.0, ask=27.0, slippage_bps=20.0, size_increment=0.01,
+                   min_qty=0.6, min_notional=0.0, max_notional_usd=47.5)
+    ASTER = dict(bid=100.0, ask=100.0, slippage_bps=20.0, size_increment=0.001,
+                 min_qty=0.0, min_notional=5.0, max_notional_usd=47.5)
+
+    def test_the_exact_close_is_what_is_tried_first(self) -> None:
+        clip = maker_live.plan_flatten_clip(side="LONG", qty=0.37, **self.LIGHTER)
+        self.assertAlmostEqual(clip.qty, 0.37, places=9)
+        self.assertFalse(clip.through_minimum)
+
+    def test_a_lighter_like_minimum_is_crossed_in_two_legal_clips(self) -> None:
+        first = maker_live.plan_flatten_clip(
+            side="LONG", qty=0.37, through_minimum=True, **self.LIGHTER,
+        )
+        self.assertTrue(first.sell)
+        self.assertAlmostEqual(first.qty, 0.97, places=9)  # 0.60 + 0.37
+        self.assertTrue(first.through_minimum)
+        self.assertGreaterEqual(first.qty, self.LIGHTER["min_qty"])
+        self.assertAlmostEqual(first.remaining_after, 0.6, places=9)
+        # ... and what it leaves is exactly the minimum, which closes normally.
+        second = maker_live.plan_flatten_clip(side="SHORT", qty=0.6, **self.LIGHTER)
+        self.assertFalse(second.sell)
+        self.assertAlmostEqual(second.qty, 0.6, places=9)
+        self.assertFalse(second.through_minimum)
+
+    def test_an_aster_like_notional_minimum_is_crossed_too(self) -> None:
+        clip = maker_live.plan_flatten_clip(
+            side="SHORT", qty=0.021, through_minimum=True, **self.ASTER,
+        )
+        self.assertFalse(clip.sell, "a short is closed by buying")
+        # 5 USD / 100.2 = 0.0499 -> 0.05 on the step, plus the 0.021 remainder.
+        self.assertAlmostEqual(clip.qty, 0.071, places=9)
+        self.assertGreater(clip.qty * clip.price, self.ASTER["min_notional"])
+        self.assertAlmostEqual(clip.remaining_after, 0.05, places=9)
+
+    def test_both_halves_stay_inside_the_hard_per_order_cap(self) -> None:
+        for kwargs in (self.LIGHTER, self.ASTER):
+            with self.subTest(venue=kwargs["min_qty"]):
+                clip = maker_live.plan_flatten_clip(
+                    side="LONG", qty=0.01, through_minimum=True, **kwargs,
+                )
+                self.assertLessEqual(clip.qty * clip.price,
+                                     maker_live.CAP_ORDER_NOTIONAL_USD)
+
+    def test_it_refuses_when_two_minimums_would_breach_the_cap(self) -> None:
+        expensive = dict(self.LIGHTER, bid=200.0, ask=200.0, min_qty=1.0)
+        self.assertIsNone(maker_live.plan_flatten_clip(
+            side="LONG", qty=0.5, through_minimum=True, **expensive,
+        ))
+
+    def test_only_a_min_size_reason_arms_the_fallback(self) -> None:
+        for reason in (
+            "quantity 0.37 invalid (< minimum trade size of 0.6)",
+            "MIN_QUANTITY: order size below the minimum",
+            "min_notional 5 USD not met",
+            "order too small",
+        ):
+            with self.subTest(reason=reason):
+                self.assertTrue(maker_live.is_min_size_denial(reason))
+        for reason in (
+            "", "price band exceeded", "insufficient margin",
+            "ReduceOnly Order is rejected", "notional exceeds the maximum",
+            "Too Many Requests",
+        ):
+            with self.subTest(reason=reason):
+                self.assertFalse(maker_live.is_min_size_denial(reason))
+
+
+class TestStopSequence(unittest.TestCase):
+    """cancel -> confirm -> flatten, the one path the deadline, the kill and SIGINT share."""
+
+    def build(self, *, mode: str = "live", q: float = 0.0, hedge_base: float = 0.0,
+              **limit_overrides):
+        limits = test_limits(placement="improve", **limit_overrides)
+        strategy = build_strategy(mode=mode, limits=limits)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        feed_books(strategy)
+        if q:
+            # A maker position, and the hedge that mirrors it, as a real session would hold.
+            strategy._q = q
+            strategy._pnl.maker_fill(q < 0, abs(q), 0.73)
+        if hedge_base:
+            strategy._pnl.hedge_fill(hedge_base < 0, abs(hedge_base), 0.73)
+        return strategy
+
+    @staticmethod
+    def tick(strategy, seconds: float = 1.0) -> None:
+        strategy.clock.advance(seconds)
+        feed_books(strategy)
+        strategy.on_time_event(FakeTimeEvent("maker-decide"))
+
+    @staticmethod
+    def quote_once(strategy) -> None:
+        strategy._decide()
+
+    # -- phase 1 ---------------------------------------------------------------------------
+
+    def test_the_deadline_starts_the_sequence_instead_of_exiting(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0)
+        strategy._finish("deadline")
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_CANCEL)
+        self.assertFalse(strategy.done_event.is_set(), "the run may not end before the flatten")
+
+    def test_the_kill_switch_runs_the_same_sequence(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0)
+        strategy._trigger_kill("max_loss_usd breached")
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_CANCEL)
+        self.assertEqual(strategy.kill_reason, "max_loss_usd breached")
+
+    def test_a_sigint_request_is_picked_up_on_the_next_tick(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0)
+        strategy.request_stop("sigint")
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_IDLE, "not on the caller thread")
+        self.tick(strategy)
+        self.assertEqual(strategy._stop_reason, "sigint")
+        self.assertNotEqual(strategy.stop_phase, maker_live.STOP_IDLE)
+
+    def test_it_waits_for_the_venue_and_re_sends_the_cancel(self) -> None:
+        strategy = self.build()
+        self.quote_once(strategy)
+        self.assertTrue(strategy.submitted)
+        strategy.cancel_is_silent = True  # the venue never confirms
+        strategy._finish("deadline")
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_CANCEL)
+
+        self.tick(strategy, 4.0)
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_CANCEL, "still waiting")
+        self.assertEqual(strategy._cancel_resends, 0, "under the re-send interval")
+        self.tick(strategy, 2.0)  # past CANCEL_RESEND_S
+        self.assertGreater(strategy._cancel_resends, 0)
+
+        # The venue finally confirms: the wait ends and the sequence moves on.
+        for order in strategy.submitted:
+            order.close("CANCELED")
+        self.tick(strategy)
+        self.assertNotEqual(strategy.stop_phase, maker_live.STOP_CANCEL)
+        self.assertIsNotNone(strategy._cancel_confirm_s)
+
+    def test_a_fill_during_the_wait_is_booked(self) -> None:
+        """The 2026-09-10 session lost one of these: the order filled after we had gone."""
+        strategy = self.build()
+        self.quote_once(strategy)
+        resting = strategy.submitted[0]
+        strategy.cancel_is_silent = True
+        strategy._finish("deadline")
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_CANCEL)
+
+        before_q, before_fills = strategy._q, strategy._state.fills
+        strategy.on_order_filled(FakeFill(
+            resting.client_order_id, MAKER_ID, resting.order_side,
+            str(resting.quantity), "0.73100",
+        ))
+        self.assertNotEqual(strategy._q, before_q, "the fill must move the inventory")
+        self.assertEqual(strategy._state.fills, before_fills + 1)
+
+    def test_an_unconfirmed_order_at_the_timeout_is_still_a_leftover(self) -> None:
+        strategy = self.build(cancel_confirm_s=5.0)
+        self.quote_once(strategy)
+        strategy.cancel_is_silent = True
+        strategy._finish("deadline")
+        self.tick(strategy, 6.0)  # past cancel_confirm_s
+        self.assertGreater(strategy._orders_unconfirmed, 0)
+        self.assertNotEqual(strategy.stop_phase, maker_live.STOP_CANCEL)
+        strategy.on_stop()
+        self.assertTrue(strategy.leftovers)
+        self.assertNotEqual(strategy.exit_code, maker_live.EXIT_OK)
+
+    # -- phase 2 ---------------------------------------------------------------------------
+
+    def test_it_closes_both_legs_and_exits_clean(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0)
+        strategy._finish("deadline")
+        self.tick(strategy)  # nothing rests, so the confirm wait ends at once
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_FLATTEN)
+        clips = list(strategy.submitted)
+        self.assertEqual(len(clips), 2, "one clip per leg, in flight together")
+        by_leg = {order.instrument_id: order for order in clips}
+        self.assertEqual(by_leg[MAKER_ID].order_side, OrderSide.BUY, "a short closes by buying")
+        self.assertEqual(by_leg[HEDGE_ID].order_side, OrderSide.SELL)
+
+        for instrument_id, order in by_leg.items():
+            strategy.on_order_filled(FakeFill(
+                order.client_order_id, instrument_id, order.order_side,
+                str(order.quantity), "0.73000",
+            ))
+        self.tick(strategy)
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_DONE)
+        self.assertEqual(strategy.stop_residuals, [])
+        self.assertTrue(strategy.done_event.is_set())
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_OK)
+
+    def test_one_clip_per_leg_at_a_time(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0)
+        strategy._finish("deadline")
+        self.tick(strategy)
+        sent = len(strategy.submitted)
+        self.tick(strategy)
+        self.assertEqual(len(strategy.submitted), sent, "nothing until the clip reports back")
+
+    def test_a_leg_left_open_exits_non_zero_with_the_reason(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0, flatten_timeout_s=10.0)
+        strategy._finish("deadline")
+        self.tick(strategy)
+        self.tick(strategy, 12.0)  # the clips never report; the flatten times out
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_DONE)
+        self.assertTrue(strategy.stop_residuals)
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_NOT_FLAT)
+        self.assertIn("position left open", strategy.exit_reason)
+
+    def test_flatten_on_stop_off_leaves_the_book_alone(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0, flatten_on_stop=False)
+        strategy._finish("deadline")
+        self.tick(strategy)
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_DONE)
+        self.assertEqual(strategy.submitted, [], "no clip may be sent")
+        self.assertIn("flatten_on_stop is off", " ".join(strategy._stop_notes))
+
+    def test_the_residual_delta_is_closed_by_the_flatten_not_hedged_first(self) -> None:
+        """Hedging the delta and THEN flattening is the double-hedge fixed on 2026-09-09."""
+        strategy = self.build(q=-30.0)  # unhedged: delta is armed
+        strategy._hedger.add(-30.0, strategy.clock.timestamp_ns() / 1e9)
+        hedge_fills_before = strategy._pnl.hedge_fills
+        strategy._finish("deadline")
+        self.tick(strategy)
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_FLATTEN)
+        self.assertEqual(strategy._pnl.hedge_fills, hedge_fills_before,
+                         "no separate hedge order before the flatten")
+        legs = {order.instrument_id for order in strategy.submitted}
+        self.assertIn(MAKER_ID, legs, "the maker leg is closed on the maker venue")
+
+    # -- the through-minimum fallback, end to end -------------------------------------------
+
+    def test_a_min_size_denial_switches_the_leg_to_the_through_minimum_close(self) -> None:
+        # 5 PONS against a 20 PONS venue minimum: the exact close is the one Lighter denies.
+        strategy = self.build(q=-5.0, hedge_base=30.0)
+        strategy._finish("deadline")
+        self.tick(strategy)
+        clip = next(o for o in strategy.submitted if o.instrument_id == MAKER_ID)
+        book = strategy._stop_books[MAKER_ID]
+        self.assertFalse(book.through_minimum)
+        self.assertAlmostEqual(float(clip.quantity.as_decimal()), 5.0, places=6)
+        strategy.on_order_denied(FakeDenied(
+            clip.client_order_id, "quantity 5 invalid (< minimum trade size of 20)",
+        ))
+        self.assertTrue(book.through_minimum)
+        self.assertEqual(strategy.failures, [], "a minimum is not a failure, it is a detour")
+        self.tick(strategy)
+        replacement = [o for o in strategy.submitted if o.instrument_id == MAKER_ID][-1]
+        self.assertAlmostEqual(float(replacement.quantity.as_decimal()), 25.0, places=6,
+                               msg="20 (the minimum) + 5 (the remainder), both legal")
+        self.assertGreaterEqual(float(replacement.quantity.as_decimal()), 20.0)
+
+    def test_another_denial_reason_does_not_arm_the_fallback(self) -> None:
+        strategy = self.build(q=-5.0, hedge_base=30.0)
+        strategy._finish("deadline")
+        self.tick(strategy)
+        clip = next(o for o in strategy.submitted if o.instrument_id == MAKER_ID)
+        strategy.on_order_denied(FakeDenied(clip.client_order_id, "price band exceeded"))
+        self.assertFalse(strategy._stop_books[MAKER_ID].through_minimum)
+        self.assertTrue(strategy.failures, "an unrelated denial is still a failure")
+
+    # -- reporting ---------------------------------------------------------------------------
+
+    def test_the_summary_carries_the_stop_block(self) -> None:
+        strategy = self.build(q=-30.0, hedge_base=30.0)
+        strategy._finish("deadline")
+        self.tick(strategy)
+        for order in list(strategy.submitted):
+            strategy.on_order_filled(FakeFill(
+                order.client_order_id, order.instrument_id, order.order_side,
+                str(order.quantity), "0.73000",
+            ))
+        self.tick(strategy)
+        summary = strategy.summary_line
+        self.assertIn("stop=[reason=deadline", summary)
+        self.assertIn("phase=done", summary)
+        self.assertIn("cancel_confirm=", summary)
+        self.assertIn("unconfirmed=0", summary)
+        self.assertIn("clips=1,fills=1", summary)
+        self.assertIn("cost_usd=", summary)
+        self.assertIn("exit_reason=[clean", summary)
+
+    def test_a_run_that_never_traded_does_not_run_the_sequence(self) -> None:
+        strategy = self.build()
+        strategy._finish("deadline")
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_IDLE)
+        self.assertTrue(strategy.done_event.is_set())
+        self.assertIn("stop=[not run]", strategy.summary_line)
+
+    # -- paper -------------------------------------------------------------------------------
+
+    def test_paper_mode_flattens_locally_and_exits_clean(self) -> None:
+        strategy = self.build(mode="paper", q=-30.0, hedge_base=30.0)
+        strategy._finish("deadline")
+        self.tick(strategy)
+        self.assertEqual(strategy.stop_phase, maker_live.STOP_DONE)
+        self.assertAlmostEqual(strategy._q, 0.0, places=9)
+        self.assertEqual(strategy.stop_residuals, [])
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_OK)
+        self.assertIn("fills=1", strategy.summary_line)
+
+
+if __name__ == "__main__":
+    unittest.main()

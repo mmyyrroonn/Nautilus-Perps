@@ -141,6 +141,23 @@ max_move_bps_per_min = 0
 # Hard FLOOR 1 s.
 vol_window_s = 60
 
+[stop]
+# How the run ends.  The deadline, the kill switch and SIGINT all follow the same sequence:
+# cancel -> WAIT for the venue to confirm every order terminal -> close both legs -> exit.
+#
+# Every mainnet session on 2026-09-10 exited with one order still PENDING_CANCEL ("LEFTOVER
+# ... NOT venue-confirmed") and once that order FILLED after the process was gone, so the
+# position was not what the summary said.  Wait this long for every order of ours to reach a
+# terminal state, re-sending a cancel every 5 s for anything still open; a fill reported
+# during the wait is booked like any other.  Hard FLOOR 5 s - longer is safer.
+cancel_confirm_s = 20.0
+# The cleanup used to hedge only the UNHEDGED delta, which leaves the hedged pair in place -
+# maker SHORT 1.55 against hedge LONG 1.55 - and the next session's start guard refuses it.
+# With this on, the stop closes BOTH legs to zero with the same IOC clips --flatten uses.
+flatten_on_stop = true
+# Hard FLOOR 10 s.
+flatten_timeout_s = 30.0
+
 [hedge]
 venue = "ASTER"
 # The hedge is a LIMIT IOC at the Aster touch offset by this much - never a MARKET order.

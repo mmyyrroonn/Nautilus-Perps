@@ -165,6 +165,62 @@ class TestDefaults(unittest.TestCase):
             load_limits(write_toml('[quote]\nclose_min_flip = "yes"\n'))
 
 
+# --------------------------------------------------------------------------- stop sequence
+
+
+class TestStopLimits(unittest.TestCase):
+    """``[stop]``: how the deadline, the kill switch and SIGINT end the run."""
+
+    @staticmethod
+    def stop_toml(*lines: str) -> Path:
+        return write_toml("\n".join(("[stop]", *lines)) + "\n")
+
+    def test_the_shipped_config_confirms_cancels_and_flattens(self) -> None:
+        stop = load_limits(REPO / "config" / "limits.toml").stop
+        self.assertEqual(stop.cancel_confirm_s, 20.0)
+        self.assertTrue(stop.flatten_on_stop)
+        self.assertEqual(stop.flatten_timeout_s, 30.0)
+
+    def test_the_defaults_match_the_shipped_values(self) -> None:
+        stop = load_limits(Path(tempfile.mkdtemp()) / "nope.toml").stop
+        self.assertEqual(stop.cancel_confirm_s, 20.0)
+        self.assertTrue(stop.flatten_on_stop)
+        self.assertEqual(stop.flatten_timeout_s, 30.0)
+
+    def test_both_waits_may_be_lengthened_but_not_shortened(self) -> None:
+        """Longer is the safer direction for both, so the rail is a floor."""
+        stop = load_limits(self.stop_toml(
+            "cancel_confirm_s = 60.0", "flatten_timeout_s = 120.0",
+        )).stop
+        self.assertEqual(stop.cancel_confirm_s, 60.0)
+        self.assertEqual(stop.flatten_timeout_s, 120.0)
+        for line in ("cancel_confirm_s = 4.9", "flatten_timeout_s = 9.9",
+                     "cancel_confirm_s = 0.0"):
+            with self.subTest(line=line), self.assertRaises(LimitsError):
+                load_limits(self.stop_toml(line))
+
+    def test_the_floors_are_module_constants(self) -> None:
+        self.assertEqual(live_limits.FLOOR_CANCEL_CONFIRM_S, 5.0)
+        self.assertEqual(live_limits.FLOOR_FLATTEN_TIMEOUT_S, 10.0)
+        self.assertEqual(live_limits.CANCEL_RESEND_S, 5.0)
+
+    def test_the_flatten_can_be_switched_off(self) -> None:
+        stop = load_limits(self.stop_toml("flatten_on_stop = false")).stop
+        self.assertFalse(stop.flatten_on_stop)
+        self.assertEqual(stop.budget_s, stop.cancel_confirm_s,
+                         "a run that does not flatten needs no flatten budget")
+
+    def test_the_budget_is_what_the_node_must_stay_up_for(self) -> None:
+        stop = load_limits(REPO / "config" / "limits.toml").stop
+        self.assertEqual(stop.budget_s, 50.0)
+
+    def test_the_report_describes_the_sequence(self) -> None:
+        report = load_limits(REPO / "config" / "limits.toml").report()
+        self.assertIn("stop.cancel_confirm_s", report)
+        self.assertIn("stop sequence:", report)
+        self.assertIn("close BOTH legs", report)
+
+
 # --------------------------------------------------------------------------- shipped file
 
 

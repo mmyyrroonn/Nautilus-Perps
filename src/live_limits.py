@@ -103,6 +103,11 @@ FLOOR_ANCHOR_EDGE_BPS = 3.0
 # deliberately no "off" value here: the 2026-09-07 / 09-08 replays showed an anchor on the raw
 # hedge mid is one-sided on this pair, so a live run may lengthen the estimate, never skip it.
 FLOOR_BASIS_WINDOW_S = 10.0
+# The stop sequence.  Longer is safer for both: more time to hear the venue confirm a cancel,
+# more time to get both legs flat.  Floors, therefore, not caps.
+FLOOR_CANCEL_CONFIRM_S = 5.0
+CANCEL_RESEND_S = 5.0  # how often an order still open during the confirm wait is re-cancelled
+FLOOR_FLATTEN_TIMEOUT_S = 10.0
 FLOOR_BASIS_MIN_N = 10
 # ... and the volatility limit additionally carries a cap, because for THAT knob a larger
 # number is the looser one: without it a config could raise max_move_bps_per_min to infinity
@@ -387,6 +392,33 @@ class QuoteLimits:
 
 
 @dataclass(frozen=True)
+class StopLimits:
+    """How the run ends: deadline, kill switch and SIGINT all follow this.
+
+    Every mainnet session on 2026-09-10 ended the same two ways.  One order was still
+    PENDING_CANCEL when the process exited ("LEFTOVER ... NOT venue-confirmed") and once it
+    FILLED after we were gone, so the position was not what the summary said it was.  And the
+    cleanup only hedged the unhedged delta, which leaves the hedged pair in place - a maker
+    SHORT against a hedge LONG - so the next session's start guard refused and the book had to
+    be flattened by hand.  The stop sequence fixes both: confirm every cancel with the venue
+    first, then close both legs.
+    """
+
+    # Seconds to wait for every order of ours to reach a terminal state after the cancels go
+    # out, re-sending a cancel every CANCEL_RESEND_S for anything still open.
+    cancel_confirm_s: float = 20.0
+    # Close both legs to zero before exiting.  False leaves the book for --flatten, which is
+    # what every session before 2026-09-10 did.
+    flatten_on_stop: bool = True
+    flatten_timeout_s: float = 30.0
+
+    @property
+    def budget_s(self) -> float:
+        """The longest the whole sequence can take, for the node's stop grace."""
+        return self.cancel_confirm_s + (self.flatten_timeout_s if self.flatten_on_stop else 0.0)
+
+
+@dataclass(frozen=True)
 class HedgeLimits:
     venue: str = "ASTER"
     slippage_bps: float = 20.0
@@ -412,6 +444,7 @@ class Limits:
     daily: DailyLimits = field(default_factory=DailyLimits)
     kill: KillLimits = field(default_factory=KillLimits)
     quote: QuoteLimits = field(default_factory=QuoteLimits)
+    stop: StopLimits = field(default_factory=StopLimits)
     hedge: HedgeLimits = field(default_factory=HedgeLimits)
     rows: tuple[Row, ...] = ()
     source: str = "built-in defaults (no file)"
@@ -493,6 +526,17 @@ class Limits:
             f"{FLOOR_MAX_MOVE_BPS_PER_MIN:g} bps (cap {CAP_MAX_MOVE_BPS_PER_MIN:g}). "
             f"They stop only the side that would GROW the inventory - the closing side keeps "
             f"quoting and the kill switch is unchanged",
+        )
+        lines.append(
+            f"  stop sequence: confirm every cancel with the venue for up to "
+            f"{self.stop.cancel_confirm_s:g} s (re-sending every {CANCEL_RESEND_S:g} s), then "
+            + (
+                f"close BOTH legs with IOC clips for up to {self.stop.flatten_timeout_s:g} s"
+                if self.stop.flatten_on_stop
+                else "leave the book in place for --flatten"
+            )
+            + f"; hard floors {FLOOR_CANCEL_CONFIRM_S:g} / {FLOOR_FLATTEN_TIMEOUT_S:g} s. "
+            f"The deadline, the kill switch and SIGINT all use it",
         )
         lines.append(
             f"  NOTE  [daily] counts FILL EVENTS ({self.daily.max_fills} base, "
@@ -630,6 +674,15 @@ def load_limits(path: Path | str | None = None, *, strict: bool = False) -> Limi
         ),
         vol_window_s=r.number("quote", "vol_window_s", 60.0, floor=FLOOR_GATE_WINDOW_S),
     )
+    stop = StopLimits(
+        cancel_confirm_s=r.number(
+            "stop", "cancel_confirm_s", 20.0, floor=FLOOR_CANCEL_CONFIRM_S,
+        ),
+        flatten_on_stop=r.flag("stop", "flatten_on_stop", True),
+        flatten_timeout_s=r.number(
+            "stop", "flatten_timeout_s", 30.0, floor=FLOOR_FLATTEN_TIMEOUT_S,
+        ),
+    )
     hedge = HedgeLimits(
         venue=r.text("hedge", "venue", "ASTER", ("ASTER", "NONE")),
         slippage_bps=r.number("hedge", "slippage_bps", 20.0),
@@ -679,6 +732,7 @@ def load_limits(path: Path | str | None = None, *, strict: bool = False) -> Limi
         daily=daily,
         kill=kill,
         quote=quote,
+        stop=stop,
         hedge=hedge,
         rows=tuple(rows),
         source=source,

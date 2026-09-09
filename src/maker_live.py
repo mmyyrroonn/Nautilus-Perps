@@ -90,11 +90,13 @@ Safety
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import functools
 import json
 import math
 import os
+import signal
 import sys
 import threading
 import time
@@ -127,6 +129,7 @@ from live_limits import CAP_TOTAL_NOTIONAL_USD  # noqa: E402
 from live_limits import Limits  # noqa: E402
 from live_limits import LimitsError  # noqa: E402
 from live_limits import load_limits  # noqa: E402
+from live_limits import CANCEL_RESEND_S  # noqa: E402
 from quote_gates import GateParams  # noqa: E402
 from quote_gates import QuoteGates  # noqa: E402
 from quote_placement import ANCHOR  # noqa: E402
@@ -189,6 +192,9 @@ EXIT_KILLED = 4
 # The venue is not flat (or carries an order we do not own) and --adopt-position was not
 # given, so the session refused to quote onto someone else's book.  Run --flatten first.
 EXIT_NOT_FLAT = 5
+
+# The stop sequence's phases (LighterMaker._stop_tick).
+STOP_IDLE, STOP_CANCEL, STOP_FLATTEN, STOP_DONE = "idle", "cancel", "flatten", "done"
 
 
 @dataclass(frozen=True)
@@ -1613,6 +1619,23 @@ class LighterMaker(Strategy):
         # not leftovers - the same session reported two FILLED orders as LEFTOVER at stop.
         self._known_closed: set = set()
         self._not_flat: str | None = None  # why the start guard refused, if it did
+        # -- the stop sequence (see _begin_stop).  Idle until the deadline, the kill switch
+        # or SIGINT asks for it; then it owns the decision timer until the run ends.
+        self._stop_phase = STOP_IDLE
+        self._stop_reason = ""
+        self._stop_requested: str | None = None  # set by the SIGINT handler, read on the tick
+        self._stopping_node = False  # True once on_stop() runs: no time left to be async
+        self._stop_started_t = 0.0
+        self._stop_phase_t = 0.0
+        self._stop_elapsed_s = 0.0
+        self._cancel_confirm_s: float | None = None
+        self._cancel_resends = 0
+        self._cancel_last_send_t = 0.0
+        self._orders_confirmed = 0
+        self._orders_unconfirmed = 0
+        self._stop_books: dict[Any, FlattenLeg] = {}
+        self._stop_orders: dict[Any, Any] = {}  # client_order_id -> instrument_id
+        self._stop_notes: list[str] = []
         self._adopted = False
         self._flat_checked = False
 
@@ -1657,7 +1680,30 @@ class LighterMaker(Strategy):
             return EXIT_FAILED
         if self._kill_reason is not None:
             return EXIT_KILLED
+        if self.stop_residuals:
+            # The sequence ran but a leg is still open by more than one venue step.  That is
+            # the book the next session's start guard will refuse, so it cannot be EXIT_OK.
+            return EXIT_NOT_FLAT
         return EXIT_OK
+
+    @property
+    def exit_reason(self) -> str:
+        """One line naming why the exit code is what it is."""
+        if self._not_flat is not None:
+            return f"not flat at start: {self._not_flat}"
+        if self._failures:
+            return f"{len(self._failures)} failure(s): {'; '.join(self._failures)}"
+        if self._leftovers:
+            return (
+                f"{len(self._leftovers)} order(s) not confirmed closed: "
+                f"{', '.join(self._leftovers)}"
+            )
+        if self._kill_reason is not None:
+            return f"kill switch: {self._kill_reason}"
+        residual = self.stop_residuals
+        if residual:
+            return f"position left open after the stop flatten: {', '.join(residual)}"
+        return "clean: every order confirmed and both legs flat"
 
     def _log_safe(self, level: str, message: str) -> None:
         """Log without letting a re-entrant borrow abort the caller (exec_probe pattern)."""
@@ -1832,8 +1878,9 @@ class LighterMaker(Strategy):
 
     @_guarded
     def on_stop(self) -> None:
-        """Freeze, cancel our quotes, hedge the residual, and report anything left open."""
+        """Freeze, finish whatever the stop sequence did not, and report anything left open."""
         self._frozen = True
+        self._stopping_node = True  # no event loop left: everything from here is synchronous
         self._log_safe("info", "[maker] stopping")
         self._run_cleanup("stop")
         outstanding = self._outstanding_orders()
@@ -1896,12 +1943,20 @@ class LighterMaker(Strategy):
     def on_time_event(self, event) -> None:
         name = event.name
         if name == "maker-decide":
-            self._decide()
+            if self._stop_phase in (STOP_CANCEL, STOP_FLATTEN):
+                self._stop_tick()
+            else:
+                self._decide()
         elif name == "maker-status":
             self._status()
 
     def _decide(self) -> None:
         """One 1 s sample: re-decide both sides, hedge what is pending, check the kill switch."""
+        if self._stop_requested is not None and not self._finished:
+            reason, self._stop_requested = self._stop_requested, None
+            self._log_safe("info", f"[maker] stop requested: {reason}")
+            self._finish(reason)
+            return
         if self._frozen or self._engine is None or self._pnl is None or self._kill is None:
             return
         t = self.clock.timestamp_ns() / 1e9
@@ -2438,16 +2493,35 @@ class LighterMaker(Strategy):
             self._on_maker_fill(sell, base, price, t, closing=closing)
         elif event.instrument_id == self._hedge_id:
             self._on_hedge_fill(sell, base, price, t, client_order_id=event.client_order_id)
+        self._book_stop_fill(event, sell=sell, base=base, price=price)
+
+    def _book_stop_fill(self, event, *, sell: bool, base: float, price: float) -> None:
+        """A fill on one of the stop sequence's own clips also moves that leg's book."""
+        instrument_id = self._stop_orders.get(event.client_order_id)
+        book = self._stop_books.get(instrument_id) if instrument_id is not None else None
+        if book is None:
+            return
+        book.fill(
+            sell=sell, base=base, price=price,
+            commission=getattr(event, "commission", None),
+        )
+        self._log_safe(
+            "info",
+            f"[maker] stop FILL {instrument_id} {'SELL' if sell else 'BUY'} {base:g} "
+            f"@ {price:.10g} -> left {book.remaining_signed:+g}",
+        )
 
     @_guarded
     def on_order_canceled(self, event) -> None:
         self._release_hedge(event.client_order_id, "canceled (IOC unfilled)")
+        self._release_stop_clip(event.client_order_id, "canceled (IOC remainder)")
         self._forget(event.client_order_id)
         self._recheck_cleanup()
 
     @_guarded
     def on_order_expired(self, event) -> None:
         self._release_hedge(event.client_order_id, "expired")
+        self._release_stop_clip(event.client_order_id, "expired")
         self._forget(event.client_order_id)
         self._recheck_cleanup()
 
@@ -2456,16 +2530,45 @@ class LighterMaker(Strategy):
         """A venue rejection; a Lighter 23000 throttles the bucket instead of failing."""
         reason = str(getattr(event, "reason", ""))
         self._forget(event.client_order_id)
+        book = self._release_stop_clip(event.client_order_id, f"rejected: {reason}")
+        if book is not None and book.note_denial(reason):
+            self._log_safe(
+                "warning",
+                f"[maker] stop: {book.instrument_id} exact close rejected as too small "
+                f"({reason}); switching to the through-minimum close",
+            )
+            return
         if self._is_rate_limit(reason):
             self._throttle(reason)
             return
         self._note_failure(f"OrderRejected {event.client_order_id} reason={reason}")
+
+    def _release_stop_clip(self, client_order_id, what: str) -> FlattenLeg | None:
+        instrument_id = self._stop_orders.get(client_order_id)
+        book = self._stop_books.get(instrument_id) if instrument_id is not None else None
+        if book is None:
+            return None
+        if book.inflight == client_order_id:
+            book.inflight = None
+        self._log_safe("info", f"[maker] stop clip {instrument_id} {what}")
+        return book
 
     @_guarded
     def on_order_denied(self, event) -> None:
         """A local denial (risk engine, validation).  Never widen anything in response."""
         reason = str(getattr(event, "reason", ""))
         self._forget(event.client_order_id)
+        book = self._release_stop_clip(event.client_order_id, f"denied: {reason}")
+        if book is not None and book.note_denial(reason):
+            # The adapter refused the exact close for being under the venue minimum - 164 of
+            # these in one 2026-09-10 flatten run.  Go through zero instead; both halves of
+            # that are above the minimum.  Not a failure: it is the only path the API offers.
+            self._log_safe(
+                "warning",
+                f"[maker] stop: {book.instrument_id} exact close denied as too small "
+                f"({reason}); switching to the through-minimum close",
+            )
+            return
         self._note_failure(f"OrderDenied {event.client_order_id} reason={reason}")
 
     @_guarded
@@ -2650,8 +2753,9 @@ class LighterMaker(Strategy):
             f"gate_closed_any={self._gates.closed_pct:.1f}% "
             f"{'ADOPTED ' if self._adopted else ''}"
             f"kill={self._kill_reason or 'none'} "
+            f"{self._stop_block()} "
             f"failures={len(self._failures)} leftovers={len(self._leftovers)} "
-            f"exit_code={self.exit_code}"
+            f"exit_code={self.exit_code} exit_reason=[{self.exit_reason}]"
         )
 
     # -- cleanup ---------------------------------------------------------------------------
@@ -2702,13 +2806,8 @@ class LighterMaker(Strategy):
                 out.append((client_order_id, order.status))
         return out
 
-    def _run_cleanup(self, trigger: str) -> None:
-        """Cancel our quotes, hedge whatever delta is left, and stop quoting.
-
-        Only orders this strategy created are touched - never an account-wide cancel.
-        """
-        self._frozen = True
-        t = self.clock.timestamp_ns() / 1e9
+    def _cancel_our_orders(self, trigger: str) -> None:
+        """Send a cancel for every quote this strategy is resting.  Never account-wide."""
         if self._engine is not None:
             for action in self._engine.cancel_all():
                 self._state.tx += 1
@@ -2726,7 +2825,21 @@ class LighterMaker(Strategy):
                     detail = f"{previous.ref}: {type(exc).__name__}: {exc}"
                     self._cancel_errors.append(detail)
                     self._note_failure(f"cleanup ({trigger}) could not cancel {detail}")
-        if self._hedger is not None and abs(self._hedger.delta) > EPS:
+        self._orders_confirmed = len(self._known_closed)
+
+    def _run_cleanup(self, trigger: str) -> None:
+        """The synchronous fallback: cancel, hedge the residual delta, stop quoting.
+
+        Used only when there is no time to run the proper sequence - the node is already
+        stopping (a hard SIGINT, a crash, the external deadline timer).  When the stop
+        sequence did run, it has already cancelled and flattened and this adds nothing.
+        """
+        self._frozen = True
+        t = self.clock.timestamp_ns() / 1e9
+        self._cancel_our_orders(trigger)
+        if self._stop_phase in (STOP_IDLE, STOP_CANCEL) and (
+            self._hedger is not None and abs(self._hedger.delta) > EPS
+        ):
             self._log_safe(
                 "warning",
                 f"[maker] cleanup ({trigger}): hedging residual delta "
@@ -2735,6 +2848,323 @@ class LighterMaker(Strategy):
             self._pump_hedge(t, force=True)
         if not self._outstanding_orders():
             self.cleanup_done_event.set()
+
+    # -- the stop sequence -------------------------------------------------------------------
+    #
+    # Every 2026-09-10 mainnet session ended the same two ways: one order still PENDING_CANCEL
+    # at exit ("LEFTOVER ... NOT venue-confirmed"), once filling after the process had gone,
+    # and a hedged pair left on the book (maker SHORT 1.55 against hedge LONG 1.55) that the
+    # next session's start guard refused.  The deadline, the kill switch and SIGINT now all run
+    # the same three phases on the ordinary 1 s decision timer, so venue reports keep arriving
+    # while it runs:
+    #
+    #   cancel   send a cancel for every resting quote, then WAIT until the venue has reported
+    #            every order of ours terminal, re-sending a cancel every CANCEL_RESEND_S.  A
+    #            fill that arrives during the wait is booked like any other fill.
+    #   flatten  close BOTH legs to zero with the same IOC clips --flatten uses, one in flight
+    #            per leg, our own fills as the truth.  The residual delta is hedged AS PART OF
+    #            this - never hedged first and then flattened, which is the double-hedge.
+    #   done     write the summary and let the node stop.
+
+    def request_stop(self, reason: str) -> None:
+        """Ask for the stop sequence from outside the event loop (the SIGINT handler).
+
+        Deliberately only sets a flag: the sequence itself must run on the strategy's own
+        thread, where the cache and the order factory are safe to touch.
+        """
+        if self._stop_requested is None and not self._finished:
+            self._stop_requested = reason
+
+    @property
+    def stop_phase(self) -> str:
+        return self._stop_phase
+
+    def _stop_budget_left(self, t: float, budget: float) -> float:
+        return budget - (t - self._stop_phase_t)
+
+    def _begin_stop(self, reason: str) -> bool:
+        """Start the asynchronous sequence.  False means the caller must clean up inline."""
+        if self._stop_phase != STOP_IDLE or self._stopping_node:
+            return False
+        if self._engine is None or self._cfg.connect_only:
+            return False
+        if self._not_flat is not None:
+            # The start guard refused to touch a book it does not own; closing it here would
+            # be exactly the thing it refused to do.  --flatten is the deliberate path.
+            return False
+        if self._orders_sent == 0 and abs(self._q) <= EPS and not self._outstanding_orders():
+            return False  # nothing was ever sent and nothing is held: no sequence to run
+        t = self.clock.timestamp_ns() / 1e9
+        self._frozen = True
+        self._stop_reason = reason
+        self._stop_started_t = t
+        self._log_safe("info", f"[maker] stop sequence ({reason}): cancelling every quote")
+        self._cancel_our_orders(f"stop:{reason}")
+        self._stop_phase = STOP_CANCEL
+        self._stop_phase_t = t
+        self._cancel_last_send_t = t
+        return True
+
+    def _stop_tick(self) -> None:
+        """One second of the sequence, driven by the ordinary decision timer."""
+        t = self.clock.timestamp_ns() / 1e9
+        if self._stop_phase == STOP_CANCEL:
+            self._cancel_confirm_tick(t)
+        elif self._stop_phase == STOP_FLATTEN:
+            self._flatten_tick(t)
+
+    # -- phase 1: confirm every cancel with the venue ----------------------------------------
+
+    def _cancel_confirm_tick(self, t: float) -> None:
+        outstanding = self._outstanding_orders()
+        waited = t - self._stop_phase_t
+        if not outstanding:
+            self._cancel_confirm_s = waited
+            self._log_safe(
+                "info",
+                f"[maker] stop: every order confirmed terminal after {waited:.1f} s "
+                f"({self._orders_confirmed} order(s), {self._cancel_resends} re-cancel(s))",
+            )
+            self._enter_flatten_phase(t)
+            return
+        if waited >= self._limits.stop.cancel_confirm_s:
+            # Out of time.  These stay LEFTOVER failures, exactly as before - the difference
+            # is that we waited 20 s for the venue rather than 0.
+            self._cancel_confirm_s = waited
+            self._orders_unconfirmed = len(outstanding)
+            names = ", ".join(f"{coid}={status}" for coid, status in outstanding)
+            self._stop_notes.append(
+                f"{len(outstanding)} order(s) unconfirmed after {waited:.1f} s: {names}",
+            )
+            self._log_safe(
+                "error",
+                f"[maker] stop: {len(outstanding)} order(s) still not confirmed terminal "
+                f"after {waited:.1f} s: {names}",
+            )
+            self._enter_flatten_phase(t)
+            return
+        if t - self._cancel_last_send_t >= CANCEL_RESEND_S:
+            self._cancel_last_send_t = t
+            for client_order_id, status in outstanding:
+                if not self._order_is_open(client_order_id):
+                    continue
+                try:
+                    self.cancel_order(client_order_id)
+                    self._cancel_resends += 1
+                    self._state.tx += 1
+                    self._log_safe(
+                        "info",
+                        f"[maker] stop: re-cancelling {client_order_id} (still {status})",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    if not self._cancel_refusal_is_benign(client_order_id, exc):
+                        self._log_safe(
+                            "warning",
+                            f"[maker] stop: re-cancel of {client_order_id} refused: {exc}",
+                        )
+
+    # -- phase 2: close both legs ------------------------------------------------------------
+
+    def _enter_flatten_phase(self, t: float) -> None:
+        if not self._limits.stop.flatten_on_stop:
+            self._stop_notes.append("flatten_on_stop is off; the book is left for --flatten")
+            self._end_stop(t)
+            return
+        self._stop_books = {}
+        for instrument_id, instrument, signed, label in (
+            (self._maker_id, self._maker_inst, self._q, "maker"),
+            (self._hedge_id, self._hedge_inst,
+             self._pnl.h.pos if self._pnl is not None else 0.0, "hedge"),
+        ):
+            if instrument is None:
+                continue
+            if label == "hedge" and not self._hedge_on:
+                continue
+            book = FlattenLeg(
+                instrument_id, instrument,
+                slippage_bps=self._limits.hedge.slippage_bps,
+                max_notional_usd=CAP_ORDER_NOTIONAL_USD * 0.95,
+            )
+            side = LONG if signed > 0.0 else SHORT if signed < 0.0 else FLAT
+            book.set_start(side, abs(signed))
+            self._stop_books[instrument_id] = book
+        self._cross_check_maker_leg()
+        summary = ", ".join(
+            f"{iid.symbol} {b.side} {abs(b.remaining_signed):g}"
+            for iid, b in self._stop_books.items()
+        ) or "nothing"
+        self._log_safe("info", f"[maker] stop: flattening {summary}")
+        self._stop_phase = STOP_FLATTEN
+        self._stop_phase_t = t
+        self._flatten_tick(t)
+
+    def _cross_check_maker_leg(self) -> None:
+        """Compare our own ``q`` with the cache and with Lighter's public account endpoint.
+
+        Advisory only: our own fills are what the clips are sized from, because the cache has
+        been caught reporting a position backwards.  A disagreement is logged and lands in the
+        summary so the operator can look, but it never stops the close - leaving the book open
+        because a second opinion was unavailable is the worse outcome.
+        """
+        book = self._stop_books.get(self._maker_id)
+        if book is None or self._paper:
+            return
+        cached_side, cached_qty, _avg = self._net_position(self._maker_id)
+        if cached_side != book.side or abs(cached_qty - abs(book.remaining_signed)) > (
+            max(book.step, 1e-9) + 1e-9
+        ):
+            note = (
+                f"maker cache says {cached_side} {cached_qty:g}, our fills say {book.side} "
+                f"{abs(book.remaining_signed):g}"
+            )
+            self._stop_notes.append(note)
+            self._log_safe("warning", f"[maker] stop: {note}")
+        if self._cfg.skip_cross_check:
+            return
+        venue = fetch_lighter_public_position(
+            self._cfg.env, self._cfg.account_index, self._plan.symbol, timeout=5.0,
+        )
+        if venue is None:
+            self._stop_notes.append("lighter public endpoint unreachable at stop")
+            return
+        agree, detail = positions_agree(
+            book.side, abs(book.remaining_signed), venue, book.step,
+        )
+        self._log_safe("info" if agree else "warning", f"[maker] stop cross-check: {detail}")
+        if not agree:
+            self._stop_notes.append(f"maker {detail}")
+
+    def _flatten_tick(self, t: float) -> None:
+        if all(book.flat for book in self._stop_books.values()):
+            self._log_safe("info", "[maker] stop: both legs flat by our own fills")
+            self._end_stop(t)
+            return
+        if t - self._stop_phase_t >= self._limits.stop.flatten_timeout_s:
+            left = ", ".join(
+                f"{iid.symbol}={book.remaining_signed:+g}"
+                for iid, book in self._stop_books.items() if not book.flat
+            )
+            self._stop_notes.append(f"flatten timed out with {left} left")
+            self._log_safe("error", f"[maker] stop: flatten timed out with {left} left")
+            self._end_stop(t)
+            return
+        for instrument_id, book in self._stop_books.items():
+            self._flatten_one(instrument_id, book, t)
+        if all(book.flat for book in self._stop_books.values()):
+            # Paper fills land inside the loop above, so the sequence can finish here rather
+            # than idling a whole second waiting for the next tick to notice.
+            self._log_safe("info", "[maker] stop: both legs flat by our own fills")
+            self._end_stop(t)
+
+    def _flatten_one(self, instrument_id, book: FlattenLeg, t: float) -> None:
+        if book.flat:
+            return
+        if book.inflight is not None:
+            if t - book.sent_t <= HEDGE_INFLIGHT_TIMEOUT_S:
+                return  # one clip per leg at a time
+            self._log_safe(
+                "warning",
+                f"[maker] stop: no terminal report for {book.inflight} after "
+                f"{HEDGE_INFLIGHT_TIMEOUT_S:g} s; releasing the leg",
+            )
+            book.inflight = None
+        bid, ask = (
+            (self._book.m_bid, self._book.m_ask) if instrument_id == self._maker_id
+            else (self._book.h_bid, self._book.h_ask)
+        )
+        clip = book.plan(bid, ask)
+        if clip is None:
+            note = book.describe_residual()
+            if note not in self._stop_notes:
+                self._stop_notes.append(note)
+                self._log_safe("warning", f"[maker] stop: {note}")
+            return
+        if self._paper:
+            self._paper_flatten_fill(instrument_id, book, clip, t)
+            return
+        instrument = book.instrument
+        try:
+            order = self.order_factory.limit(
+                instrument_id=instrument_id,
+                order_side=OrderSide.SELL if clip.sell else OrderSide.BUY,
+                quantity=instrument.make_qty(_dec(clip.qty)),
+                price=instrument.make_price(_dec(clip.price)),
+                time_in_force=TimeInForce.IOC,
+                # No reduce_only: both venues mishandled it (Lighter's sequencer rejected it,
+                # Aster returned -2022).  A clip is never larger than what is left, except the
+                # deliberate through-minimum one, which is logged as such.
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure(f"stop: could not build a clip for {instrument_id}: {exc!r}")
+            return
+        client = self._maker_client if instrument_id == self._maker_id else self._hedge_client
+        book.inflight = order.client_order_id
+        book.sent_t = t
+        book.clips += 1
+        self._stop_orders[order.client_order_id] = instrument_id
+        self._orders_sent += 1
+        self._log_safe("info", f"[maker] stop clip: {clip.describe(instrument_id)}")
+        self.submit_order(order, client_id=client)
+
+    def _paper_flatten_fill(self, instrument_id, book: FlattenLeg, clip, t: float) -> None:
+        """Paper mode: an IOC clip at the touch fills at the touch, immediately."""
+        if instrument_id == self._maker_id:
+            price = self._book.m_bid if clip.sell else self._book.m_ask
+        else:
+            price = self._book.h_bid if clip.sell else self._book.h_ask
+        if price <= 0.0:
+            return
+        book.clips += 1
+        book.fill(sell=clip.sell, base=clip.qty, price=price)
+        self._log_safe(
+            "info",
+            f"[maker] stop clip (paper): {clip.describe(instrument_id)} filled @ {price:.10g}",
+        )
+        if instrument_id == self._maker_id:
+            self._on_maker_fill(clip.sell, clip.qty, price, t, closing=True)
+        else:
+            self._on_hedge_fill(clip.sell, clip.qty, price, t)
+
+    # -- phase 3: done -----------------------------------------------------------------------
+
+    def _end_stop(self, t: float) -> None:
+        self._stop_phase = STOP_DONE
+        self._stop_elapsed_s = t - self._stop_started_t
+        self._complete_finish(self._stop_reason)
+
+    # -- reporting ---------------------------------------------------------------------------
+
+    @property
+    def stop_residuals(self) -> list[str]:
+        """Legs the stop sequence could not bring inside one venue step of flat."""
+        return [
+            f"{iid.symbol}={book.remaining_signed:+g}"
+            for iid, book in self._stop_books.items() if not book.flat
+        ]
+
+    def _stop_cost_usd(self) -> float:
+        """Cash given up closing both legs: the sum of the two legs' clip cash flows."""
+        return sum(book.cash for book in self._stop_books.values())
+
+    def _stop_block(self) -> str:
+        if self._stop_phase == STOP_IDLE:
+            return "stop=[not run]"
+        confirm = (
+            f"{self._cancel_confirm_s:.1f}s" if self._cancel_confirm_s is not None else "-"
+        )
+        legs = " ".join(
+            f"{iid.symbol}:clips={book.clips},fills={len(book.fills)},"
+            f"left={book.remaining_signed:+g}"
+            for iid, book in self._stop_books.items()
+        ) or "none"
+        notes = f" notes=[{'; '.join(self._stop_notes)}]" if self._stop_notes else ""
+        return (
+            f"stop=[reason={self._stop_reason} phase={self._stop_phase} "
+            f"took={self._stop_elapsed_s:.1f}s cancel_confirm={confirm} "
+            f"confirmed={self._orders_confirmed} unconfirmed={self._orders_unconfirmed} "
+            f"resent={self._cancel_resends} flatten={legs} "
+            f"cost_usd={self._stop_cost_usd():.4f}{notes}]"
+        )
 
     def _recheck_cleanup(self) -> None:
         if not self._frozen or self.cleanup_done_event.is_set():
@@ -2758,6 +3188,20 @@ class LighterMaker(Strategy):
             self._log_safe("warning", f"[maker] could not persist the daily state: {exc}")
 
     def _finish(self, reason: str) -> None:
+        """Begin ending the run.
+
+        When the stop sequence can run - there is still an event loop, so venue reports keep
+        arriving - it takes over and calls :meth:`_complete_finish` when it is done, up to
+        ``[stop] cancel_confirm_s + flatten_timeout_s`` later.  Otherwise the run ends inline,
+        which is what a hard stop gets.
+        """
+        if self._finished:
+            return
+        if self._begin_stop(reason):
+            return
+        self._complete_finish(reason)
+
+    def _complete_finish(self, reason: str) -> None:
         """End the run exactly once, always with a summary and always with the done signal."""
         if self._finished:
             return
@@ -2798,12 +3242,51 @@ class FlattenClip:
     qty: float
     price: float
     remaining_after: float
+    # True when this clip deliberately overshoots zero to satisfy the venue minimum: it
+    # leaves exactly the minimum on the OTHER side, which the next clip then closes.
+    through_minimum: bool = False
 
     def describe(self, instrument_id) -> str:
+        note = " THROUGH-MINIMUM" if self.through_minimum else ""
         return (
             f"{instrument_id} {'SELL' if self.sell else 'BUY'} {self.qty:g} @ {self.price:.10g} "
-            f"IOC reduce-only (leaves {self.remaining_after:g})"
+            f"IOC{note} (leaves {self.remaining_after:g})"
         )
+
+
+def venue_minimum_qty(price: float, *, min_qty: float, min_notional: float,
+                      size_increment: float) -> float:
+    """The smallest order the venue accepts at ``price``, rounded up to a whole step."""
+    need = max(0.0, min_qty)
+    if price > 0.0 and min_notional > 0.0:
+        need = max(need, min_notional / price)
+    if size_increment > 0.0:
+        need = math.ceil(need / size_increment - 1e-9) * size_increment
+    return need
+
+
+def is_min_size_denial(reason: str) -> bool:
+    """Whether a denial / rejection says the order was too SMALL for the venue.
+
+    This is the only reason that may trigger the through-minimum fallback.  A rejection for
+    any other cause (price band, margin, reduce-only, rate limit) must not, or a leg that
+    cannot trade at all would flip back and forth until the deadline.  The Lighter adapter
+    denied 164 orders in one 2026-09-10 flatten run with a local min-quantity message; the
+    strings below are what those look like across the two adapters and the Nautilus risk
+    engine.
+    """
+    text = (reason or "").lower()
+    if not text:
+        return False
+    if "reduce" in text or "notional exceeds" in text or "exceeds the maximum" in text:
+        return False
+    needles = (
+        "min_quantity", "min quantity", "minimum quantity", "minimum trade size",
+        "less than the minimum", "less than minimum", "below the minimum", "below minimum",
+        "min_notional", "min notional", "minimum notional", "too small",
+        "invalid quantity", "size too small",
+    )
+    return any(needle in text for needle in needles)
 
 
 def plan_flatten_clip(
@@ -2817,6 +3300,7 @@ def plan_flatten_clip(
     min_qty: float,
     min_notional: float,
     max_notional_usd: float,
+    through_minimum: bool = False,
 ) -> FlattenClip | None:
     """The next clip that reduces a ``side`` position of ``qty``, or ``None`` if none can go.
 
@@ -2832,9 +3316,18 @@ def plan_flatten_clip(
     would leave a remainder below the venue minimum - which could never then be closed - the
     split is shifted so the remainder is exactly the venue minimum instead.
 
+    ``through_minimum`` turns on the fallback for a remainder the venue will not accept as an
+    exact close.  Lighter denies a 0.37 VVV close locally when its minimum is 0.60 - the web
+    UI can close it, the API path cannot - so 164 such orders were denied in one 2026-09-10
+    flatten run and the dust stayed.  The way through is to overshoot: sell ``m + r`` (both
+    above the minimum), which leaves exactly ``m`` SHORT, then buy ``m`` back.  Two legal
+    orders instead of one illegal one.  It is off by default because the exact close must be
+    tried first - some venues do accept it - and is switched on by the CALLER only after the
+    venue has actually denied the exact clip for being too small (:func:`is_min_size_denial`).
+
     ``None`` means nothing legal can be sent: the position is flat, inside one venue step, or
-    what is left is below the venue minimum.  The caller reports that as a residual rather
-    than retrying forever.
+    what is left is below the venue minimum and the fallback is off or would not fit inside
+    ``max_notional_usd``.  The caller reports that as a residual rather than retrying forever.
     """
     step = size_increment if size_increment > 0.0 else 0.0
     want = abs(qty)
@@ -2849,6 +3342,23 @@ def plan_flatten_clip(
         return None
 
     max_qty = max_notional_usd / price if max_notional_usd > 0.0 else want
+    venue_min = venue_minimum_qty(
+        price, min_qty=min_qty, min_notional=min_notional, size_increment=step,
+    )
+
+    if through_minimum and want < venue_min - EPS:
+        # The exact close was refused for being too small.  Overshoot to exactly the venue
+        # minimum on the far side; the next pass closes that with a legal clip of its own.
+        clip = venue_min + want
+        if step > 0.0:
+            clip = math.ceil(clip / step - 1e-9) * step
+        if max_notional_usd > 0.0 and clip * price > max_notional_usd:
+            return None  # two minimums do not fit inside the per-order cap
+        return FlattenClip(
+            sell=sell, qty=clip, price=price,
+            remaining_after=clip - want, through_minimum=True,
+        )
+
     clip = min(want, max_qty)
     # Do not strand a remainder the venue would refuse to close.
     if want > max_qty and (want - max_qty) < min_qty:
@@ -2864,6 +3374,145 @@ def plan_flatten_clip(
     return FlattenClip(
         sell=sell, qty=clip, price=price, remaining_after=max(0.0, want - clip),
     )
+
+
+class FlattenLeg:
+    """One leg being closed to zero: where it started, what our fills did, the next clip.
+
+    Shared by :class:`PositionFlattener` (``--flatten``) and :class:`LighterMaker`'s stop
+    sequence, so the two cannot drift on what "flat" means, on how a clip is sized, or on the
+    through-minimum fallback.  It owns no venue access: the caller sends the order it returns
+    and hands back the fills.
+
+    ``remaining`` is the venue-confirmed START plus OUR OWN fills, and nothing else.  The
+    2026-09-09 run re-sent clips because the cached position had not moved yet after a fill;
+    our own fills are the only thing we can be sure of, so they are what decides when to stop.
+    """
+
+    def __init__(
+        self,
+        instrument_id,
+        instrument,
+        *,
+        slippage_bps: float,
+        max_notional_usd: float,
+        side: str = FLAT,
+        qty: float = 0.0,
+    ) -> None:
+        self.instrument_id = instrument_id
+        self.instrument = instrument
+        self.slippage_bps = slippage_bps
+        self.max_notional_usd = max_notional_usd
+        self.start_side = side
+        self.start_qty = qty
+        self.own_signed = 0.0
+        self.cash = 0.0
+        self.fees: dict[str, float] = {}
+        self.fills: list[tuple[bool, float, float]] = []  # (sell, base, price)
+        self.clips = 0
+        self.inflight: Any = None
+        self.sent_t = 0.0
+        # Armed only by a venue denial that says the order was too SMALL (is_min_size_denial).
+        self.through_minimum = False
+        self.residual: str | None = None
+
+    # -- venue facts -----------------------------------------------------------------------
+
+    @property
+    def step(self) -> float:
+        inc = getattr(self.instrument, "size_increment", None)
+        return float(inc.as_decimal()) if inc is not None else 0.0
+
+    @property
+    def min_qty(self) -> float:
+        value = getattr(self.instrument, "min_quantity", None)
+        return float(value.as_decimal()) if value is not None else 0.0
+
+    @property
+    def min_notional(self) -> float:
+        value = getattr(self.instrument, "min_notional", None)
+        return float(value.as_decimal()) if value is not None else 0.0
+
+    # -- what is left ----------------------------------------------------------------------
+
+    def set_start(self, side: str, qty: float) -> None:
+        """Seed (or re-seed) the venue-confirmed starting position.
+
+        Our own fills reset with it: a re-query already includes everything we have filled, so
+        counting them again would double them.
+        """
+        self.start_side = side
+        self.start_qty = qty
+        self.own_signed = 0.0
+
+    @property
+    def start_signed(self) -> float:
+        if self.start_side == LONG:
+            return self.start_qty
+        return -self.start_qty if self.start_side == SHORT else 0.0
+
+    @property
+    def remaining_signed(self) -> float:
+        return self.start_signed + self.own_signed
+
+    @property
+    def side(self) -> str:
+        remaining = self.remaining_signed
+        if abs(remaining) <= max(self.step, EPS):
+            return FLAT
+        return LONG if remaining > 0.0 else SHORT
+
+    @property
+    def flat(self) -> bool:
+        return self.side == FLAT
+
+    # -- events ----------------------------------------------------------------------------
+
+    def fill(self, *, sell: bool, base: float, price: float, commission=None) -> None:
+        """Book one of our own fills against this leg."""
+        self.own_signed += -base if sell else base
+        self.cash += base * price if sell else -base * price
+        self.fills.append((sell, base, price))
+        if commission is not None:
+            try:
+                code = commission.currency.code
+                self.fees[code] = self.fees.get(code, 0.0) + float(commission.as_decimal())
+            except Exception:  # noqa: BLE001 - a fee we cannot read is not worth failing over
+                pass
+
+    def note_denial(self, reason: str) -> bool:
+        """Arm the through-minimum fallback iff the venue said the clip was too small.
+
+        Returns True when this call armed it.  Any other denial - price band, margin,
+        reduce-only, rate limit - must leave it off: a leg that cannot trade at all would
+        otherwise flip back and forth across zero until the deadline.
+        """
+        if self.through_minimum or not is_min_size_denial(reason):
+            return False
+        self.through_minimum = True
+        return True
+
+    # -- the next order --------------------------------------------------------------------
+
+    def plan(self, bid: float, ask: float) -> FlattenClip | None:
+        return plan_flatten_clip(
+            side=self.side,
+            qty=abs(self.remaining_signed),
+            bid=bid,
+            ask=ask,
+            slippage_bps=self.slippage_bps,
+            size_increment=self.step,
+            min_qty=self.min_qty,
+            min_notional=self.min_notional,
+            max_notional_usd=self.max_notional_usd,
+            through_minimum=self.through_minimum,
+        )
+
+    def describe_residual(self) -> str:
+        return (
+            f"{self.instrument_id}: {self.side} {abs(self.remaining_signed):g} left but no "
+            f"legal clip (min_qty={self.min_qty:g} min_notional={self.min_notional:g})"
+        )
 
 
 class FlattenConfig(StrategyConfig):
@@ -2953,19 +3602,13 @@ class PositionFlattener(Strategy):
 
         self._book = BookSample(t=0.0)
         self._instruments: dict[Any, Any] = {}
-        # The venue-confirmed starting point, and our own fills against it.  `remaining` is
-        # computed from these two alone.
-        self._start_side: dict[Any, str] = {}
-        self._start_qty: dict[Any, float] = {}
-        self._own_signed: dict[Any, float] = {}
+        # One FlattenLeg per leg: the venue-confirmed starting point, our own fills against
+        # it, the clip planner and the through-minimum state.  Shared with the maker's stop
+        # sequence, so both mean the same thing by "flat".
+        self._books: dict[Any, FlattenLeg] = {}
         self._before: dict[Any, tuple[str, float]] = {}
-        self._inflight: dict[Any, Any] = {}
-        self._sent_t: dict[Any, float] = {}
         self._cross_checks: list[str] = []
         self._orders_sent = 0
-        self._fills: list[tuple[Any, bool, float, float]] = []
-        self._cash: dict[Any, float] = {}
-        self._fees: dict[str, float] = {}
         self._residuals: list[str] = []
         self._failures: list[str] = []
         self._refused: str | None = None
@@ -3013,10 +3656,7 @@ class PositionFlattener(Strategy):
         """True when every leg is inside one venue step of zero, by OUR OWN fill arithmetic."""
         if not self._calibrated:
             return False
-        return all(
-            abs(self._remaining_signed(iid)) <= max(self._step(iid), EPS)
-            for iid in self._legs()
-        )
+        return all(self._books[iid].flat for iid in self._legs() if iid in self._books)
 
     @property
     def exit_code(self) -> int:
@@ -3040,10 +3680,8 @@ class PositionFlattener(Strategy):
         return legs
 
     def _step(self, instrument_id) -> float:
-        instrument = self._instruments.get(instrument_id)
-        if instrument is None:
-            return 0.0
-        return float(instrument.size_increment.as_decimal())
+        book = self._books.get(instrument_id)
+        return book.step if book is not None else 0.0
 
     # -- what is left ----------------------------------------------------------------------
 
@@ -3054,16 +3692,12 @@ class PositionFlattener(Strategy):
         fill.  Our own fills are the only thing we can be sure of, so they are what decides
         when to stop.
         """
-        side = self._start_side.get(instrument_id, FLAT)
-        qty = self._start_qty.get(instrument_id, 0.0)
-        start = qty if side == LONG else -qty if side == SHORT else 0.0
-        return start + self._own_signed.get(instrument_id, 0.0)
+        book = self._books.get(instrument_id)
+        return book.remaining_signed if book is not None else 0.0
 
     def _remaining_side(self, instrument_id) -> str:
-        remaining = self._remaining_signed(instrument_id)
-        if abs(remaining) <= max(self._step(instrument_id), EPS):
-            return FLAT
-        return LONG if remaining > 0.0 else SHORT
+        book = self._books.get(instrument_id)
+        return book.side if book is not None else FLAT
 
     # -- lifecycle -------------------------------------------------------------------------
 
@@ -3078,8 +3712,13 @@ class PositionFlattener(Strategy):
                 self._finish("no-instrument")
                 return
             self._instruments[instrument_id] = instrument
-            self._cash[instrument_id] = 0.0
-            self._own_signed[instrument_id] = 0.0
+            self._books[instrument_id] = FlattenLeg(
+                instrument_id, instrument,
+                slippage_bps=self._limits.hedge.slippage_bps,
+                # The risk engine refuses anything above the HARD per-order cap; stay just
+                # inside it so a rounding step cannot push a clip over and have it denied.
+                max_notional_usd=CAP_ORDER_NOTIONAL_USD * 0.95,
+            )
 
         for instrument_id in self._legs():
             client = (
@@ -3184,9 +3823,7 @@ class PositionFlattener(Strategy):
                 return False
 
         for instrument_id, (side, qty) in reads.items():
-            self._start_side[instrument_id] = side
-            self._start_qty[instrument_id] = qty
-            self._own_signed[instrument_id] = 0.0
+            self._books[instrument_id].set_start(side, qty)
             if not self._before:
                 pass
             self._before.setdefault(instrument_id, (side, qty))
@@ -3207,9 +3844,7 @@ class PositionFlattener(Strategy):
             self._refused = f"cross-check failed on re-query for {instrument_id}: {detail}"
             self._log_safe("error", f"[flatten] REFUSING TO CONTINUE: {self._refused}")
             return
-        self._start_side[instrument_id] = side
-        self._start_qty[instrument_id] = qty
-        self._own_signed[instrument_id] = 0.0
+        self._books[instrument_id].set_start(side, qty)
 
     # -- the sweep -------------------------------------------------------------------------
 
@@ -3246,53 +3881,28 @@ class PositionFlattener(Strategy):
                 return
 
     def _sweep_one(self, instrument_id, t: float) -> None:
-        inflight = self._inflight.get(instrument_id)
-        if inflight is not None:
-            if t - self._sent_t.get(instrument_id, t) <= HEDGE_INFLIGHT_TIMEOUT_S:
+        book = self._books[instrument_id]
+        if book.inflight is not None:
+            if t - book.sent_t <= HEDGE_INFLIGHT_TIMEOUT_S:
                 return  # one clip per leg at a time
             self._log_safe(
                 "warning",
-                f"[flatten] {instrument_id}: no terminal report for {inflight} after "
+                f"[flatten] {instrument_id}: no terminal report for {book.inflight} after "
                 f"{HEDGE_INFLIGHT_TIMEOUT_S:g}s; re-querying the venue before sending more",
             )
-            self._inflight.pop(instrument_id, None)
+            book.inflight = None
             self._requery(instrument_id, t)
             return  # decide on the next tick, from the re-queried baseline
 
-        side = self._remaining_side(instrument_id)
+        side = book.side
         if side == FLAT:
             return
-        remaining = abs(self._remaining_signed(instrument_id))
+        remaining = abs(book.remaining_signed)
         instrument = self._instruments[instrument_id]
         bid, ask = self._touches(instrument_id)
-        min_qty = (
-            float(instrument.min_quantity.as_decimal())
-            if instrument.min_quantity is not None
-            else 0.0
-        )
-        min_notional = (
-            float(instrument.min_notional.as_decimal())
-            if instrument.min_notional is not None
-            else 0.0
-        )
-        clip = plan_flatten_clip(
-            side=side,
-            qty=remaining,
-            bid=bid,
-            ask=ask,
-            slippage_bps=self._limits.hedge.slippage_bps,
-            size_increment=float(instrument.size_increment.as_decimal()),
-            min_qty=min_qty,
-            min_notional=min_notional,
-            # The risk engine refuses anything above the HARD per-order cap; stay just inside
-            # it so a rounding step cannot push a clip over and have it denied.
-            max_notional_usd=CAP_ORDER_NOTIONAL_USD * 0.95,
-        )
+        clip = book.plan(bid, ask)
         if clip is None:
-            note = (
-                f"{instrument_id}: {side} {remaining:g} left but no legal clip "
-                f"(min_qty={min_qty:g} min_notional={min_notional:g})"
-            )
+            note = book.describe_residual()
             if note not in self._residuals:
                 self._residuals.append(note)
                 self._log_safe("warning", f"[flatten] {note}")
@@ -3314,8 +3924,9 @@ class PositionFlattener(Strategy):
             self._failures.append(f"{instrument_id}: could not build a clip: {exc!r}")
             return
         client = self._maker_client if instrument_id == self._maker_id else self._hedge_client
-        self._inflight[instrument_id] = order.client_order_id
-        self._sent_t[instrument_id] = t
+        book.inflight = order.client_order_id
+        book.sent_t = t
+        book.clips += 1
         self._orders_sent += 1
         self._log_safe(
             "info",
@@ -3331,21 +3942,11 @@ class PositionFlattener(Strategy):
         price = float(event.last_px.as_decimal())
         sell = event.order_side == OrderSide.SELL
         instrument_id = event.instrument_id
-        self._fills.append((instrument_id, sell, base, price))
-        # Our own fills are the truth for what is left.
-        self._own_signed[instrument_id] = self._own_signed.get(instrument_id, 0.0) + (
-            -base if sell else base
-        )
-        self._cash[instrument_id] = self._cash.get(instrument_id, 0.0) + (
-            base * price if sell else -base * price
-        )
         commission = getattr(event, "commission", None)
-        if commission is not None:
-            try:
-                code = commission.currency.code
-                self._fees[code] = self._fees.get(code, 0.0) + float(commission.as_decimal())
-            except Exception:  # noqa: BLE001
-                pass
+        # Our own fills are the truth for what is left.
+        book = self._books.get(instrument_id)
+        if book is not None:
+            book.fill(sell=sell, base=base, price=price, commission=commission)
         self._log_safe(
             "info",
             f"[flatten] FILL {instrument_id} {'SELL' if sell else 'BUY'} {base:g} @ {price:.10g}"
@@ -3353,11 +3954,13 @@ class PositionFlattener(Strategy):
             f"{self._remaining_signed(instrument_id):+g}",
         )
 
-    def _clear_inflight(self, event, what: str) -> None:
-        for instrument_id, coid in list(self._inflight.items()):
-            if coid == event.client_order_id:
-                self._inflight.pop(instrument_id, None)
+    def _clear_inflight(self, event, what: str) -> FlattenLeg | None:
+        for instrument_id, book in self._books.items():
+            if book.inflight == event.client_order_id:
+                book.inflight = None
                 self._log_safe("info", f"[flatten] {instrument_id} clip {what}")
+                return book
+        return None
 
     @_guarded
     def on_order_canceled(self, event) -> None:
@@ -3370,14 +3973,31 @@ class PositionFlattener(Strategy):
     @_guarded
     def on_order_rejected(self, event) -> None:
         reason = str(getattr(event, "reason", ""))
-        self._clear_inflight(event, f"rejected: {reason}")
+        book = self._clear_inflight(event, f"rejected: {reason}")
+        if book is not None and book.note_denial(reason):
+            self._log_safe(
+                "warning",
+                f"[flatten] {book.instrument_id}: exact close rejected as too small "
+                f"({reason}); switching to the through-minimum close",
+            )
+            return
         if reason:
             self._failures.append(f"clip rejected: {reason}")
 
     @_guarded
     def on_order_denied(self, event) -> None:
         reason = str(getattr(event, "reason", ""))
-        self._clear_inflight(event, f"denied: {reason}")
+        book = self._clear_inflight(event, f"denied: {reason}")
+        if book is not None and book.note_denial(reason):
+            # The venue refused the exact close for being below its minimum.  Go through zero
+            # instead: one clip that leaves exactly the minimum on the far side, then close
+            # that.  Not a failure - it is the only path the API offers.
+            self._log_safe(
+                "warning",
+                f"[flatten] {book.instrument_id}: exact close denied as too small "
+                f"({reason}); switching to the through-minimum close",
+            )
+            return
         if reason:
             self._failures.append(f"clip denied: {reason}")
 
@@ -3390,13 +4010,20 @@ class PositionFlattener(Strategy):
         after = " ".join(
             f"{iid.symbol}={self._remaining_signed(iid):+g}" for iid in self._legs()
         ) if self._calibrated else "unknown"
-        cash = " ".join(f"{iid.symbol}={value:+.6f}" for iid, value in self._cash.items())
-        fees = " ".join(f"{c}={v:g}" for c, v in sorted(self._fees.items())) or "none"
+        cash = " ".join(
+            f"{iid.symbol}={book.cash:+.6f}" for iid, book in self._books.items()
+        )
+        totals: dict[str, float] = {}
+        for book in self._books.values():
+            for code, value in book.fees.items():
+                totals[code] = totals.get(code, 0.0) + value
+        fees = " ".join(f"{c}={v:g}" for c, v in sorted(totals.items())) or "none"
         checks = "; ".join(self._cross_checks) or "none"
         return (
             f"[flatten] SUMMARY env={self._cfg.env} symbol={self._plan.symbol} "
             f"before=[{before}] remaining=[{after}] flat={self.flat} "
-            f"orders={self._orders_sent} fills={len(self._fills)} "
+            f"orders={self._orders_sent} "
+            f"fills={sum(len(b.fills) for b in self._books.values())} "
             f"cash=[{cash}] fees=[{fees}] "
             f"cross_checks=[{checks}] "
             f"refused={self._refused or 'no'} "
@@ -3944,12 +4571,17 @@ def main(argv: list[str] | None = None) -> int:
         attempt += 1
         node, strategy = build_node(rp)
         handle = node.handle()
-        timeout = remaining + 60.0
+        # The stop sequence runs INSIDE the node, on the decision timer, so the node has to
+        # stay up for it: quoting stops at the deadline, the sequence then has its own budget
+        # to confirm the cancels and close both legs, and only then does the process exit.
+        # The hard timer below is the backstop for a sequence that hangs.
+        stop_budget = limits.stop.budget_s + CLEANUP_GRACE_SECS
+        timeout = remaining + stop_budget + 60.0
         watchdog, watchdog_state = start_stop_watchdog(
             strategy.done_event, handle.stop, timeout,
             strategy.cleanup_done_event, CLEANUP_GRACE_SECS,
         )
-        deadline_timer = threading.Timer(max(1.0, remaining), handle.stop)
+        deadline_timer = threading.Timer(max(1.0, remaining + stop_budget), handle.stop)
         deadline_timer.daemon = True
         deadline_timer.start()
 
@@ -3960,6 +4592,30 @@ def main(argv: list[str] | None = None) -> int:
         )
         run_error: BaseException | None = None
         interrupted = False
+        previous_sigint = signal.getsignal(signal.SIGINT)
+
+        def _on_sigint(signum, frame) -> None:
+            """First Ctrl+C runs the stop sequence; a second one stops the node hard.
+
+            Stopping the node on the first one is what left an order PENDING_CANCEL and a
+            hedged pair on the book: the sequence needs the event loop alive to hear the
+            venue confirm anything.
+            """
+            if strategy.stop_phase == STOP_IDLE:
+                print(
+                    "[maker] interrupt: running the stop sequence (Ctrl+C again to stop now)",
+                    file=sys.stderr, flush=True,
+                )
+                strategy.request_stop("sigint")
+                return
+            print("[maker] second interrupt: stopping now", file=sys.stderr, flush=True)
+            signal.signal(signal.SIGINT, previous_sigint)
+            handle.stop()
+
+        try:
+            signal.signal(signal.SIGINT, _on_sigint)
+        except ValueError:  # pragma: no cover - not the main thread
+            pass
         try:
             node.run()
         except KeyboardInterrupt as exc:
@@ -3972,6 +4628,8 @@ def main(argv: list[str] | None = None) -> int:
             traceback.print_exc()
         finally:
             deadline_timer.cancel()
+            with contextlib.suppress(ValueError, TypeError):
+                signal.signal(signal.SIGINT, previous_sigint)
             strategy.done_event.set()
             watchdog.join(timeout=5.0)
 
