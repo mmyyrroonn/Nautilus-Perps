@@ -1263,6 +1263,7 @@ class MakerLiveConfig(StrategyConfig):
     _CUSTOM_FIELDS = (
         "plan", "limits", "mode", "env", "maker_client_id", "hedge_client_id",
         "fills_csv", "pnl_csv", "state_path", "hedge_enabled", "deadline_ts",
+        "connect_only",
     )
 
     def __new__(cls, *args: object, **kwargs: object) -> Self:
@@ -1285,6 +1286,7 @@ class MakerLiveConfig(StrategyConfig):
         state_path: Path,
         hedge_enabled: bool = True,
         deadline_ts: float = 0.0,
+        connect_only: bool = False,
         **_kwargs: object,
     ) -> None:
         """Initialize the configuration."""
@@ -1300,6 +1302,8 @@ class MakerLiveConfig(StrategyConfig):
         self.state_path = state_path
         self.hedge_enabled = hedge_enabled
         self.deadline_ts = deadline_ts
+        # Connect both venues, report balances / positions / open orders, never quote.
+        self.connect_only = connect_only
 
 
 class LighterMaker(Strategy):
@@ -1334,6 +1338,7 @@ class LighterMaker(Strategy):
         self._t_last_status = 0.0
         self._failures: list[str] = []
         self._frozen = False
+        self._t_last_report = 0.0
         self._finished = False
         self._kill_reason: str | None = None
         self._live_orders: dict[Any, int] = {}  # ClientOrderId -> side, our Lighter quotes
@@ -1521,7 +1526,7 @@ class LighterMaker(Strategy):
             )
         self.log.info("[maker] subscribed quotes + trades + managed deltas on both legs")
 
-        if not self._paper:
+        if not self._paper and not self._cfg.connect_only:
             # Nothing of ours may be resting when the first decision runs.
             self._cancel_stale_orders()
 
@@ -1661,6 +1666,13 @@ class LighterMaker(Strategy):
             self._finish("deadline")
             return
 
+        if self._cfg.connect_only:
+            # Read-only session: report the venue state every 30 s, never hedge or quote.
+            if t - self._t_last_report >= 30.0:
+                self._t_last_report = t
+                self._report_accounts()
+            return
+
         # Hedge before quoting: the delta gates the opening side.
         self._pump_hedge(t)
 
@@ -1679,6 +1691,49 @@ class LighterMaker(Strategy):
 
         for action in self._engine.step(self._book, self._q, opening_suspended=suspended):
             self._execute(action, t)
+
+    def _report_accounts(self) -> None:
+        """Log what each venue reports for this account: balances, positions, open orders."""
+        venues = [self._maker_id.venue]
+        if self._hedge_inst is not None:
+            venues.append(self._hedge_id.venue)
+        for venue in venues:
+            try:
+                account = self.portfolio.account(venue)
+            except Exception as exc:  # noqa: BLE001 - reporting must never raise
+                self._log_safe("warning", f"[connect-only] {venue}: portfolio.account failed: {exc!r}")
+                account = None
+            if account is None:
+                self._log_safe("warning", f"[connect-only] {venue}: no account state received yet")
+            else:
+                raw = account.balances()
+                items = list(raw.values()) if isinstance(raw, dict) else list(raw)
+                balances = ", ".join(
+                    f"{b.currency}={b.total} (free {b.free}, locked {b.locked})"
+                    for b in items
+                    if float(str(b.total).split()[0]) != 0.0
+                ) or "no non-zero balances"
+                self._log_safe("info", f"[connect-only] {venue} account {account.id}: {balances}")
+            try:
+                positions = self.cache.positions_open(venue=venue)
+                orders = self.cache.orders_open(venue=venue)
+            except Exception as exc:  # noqa: BLE001
+                self._log_safe("warning", f"[connect-only] {venue}: cache query failed: {exc!r}")
+                continue
+            for pos in positions:
+                self._log_safe(
+                    "info",
+                    f"[connect-only] {venue} position {pos.instrument_id} {pos.side} "
+                    f"qty={pos.quantity} avg_px={pos.avg_px_open}",
+                )
+            self._log_safe(
+                "info",
+                f"[connect-only] {venue}: {len(positions)} open position(s), "
+                f"{len(orders)} open order(s)"
+                + (": " + ", ".join(f"{o.instrument_id} {o.side} {o.quantity}@{o.price} {o.status}" for o in orders) if orders else ""),
+            )
+        mid_m, mid_h = self._marks()
+        self._log_safe("info", f"[connect-only] marks maker mid={mid_m:.6g} hedge mid={mid_h:.6g}")
 
     def _marks(self) -> tuple[float, float]:
         """(maker mid, hedge mid) - each leg is marked on its own venue."""
@@ -2209,6 +2264,7 @@ class RunPlan:
     deadline: datetime
     log_level: str = "INFO"
     connection_timeout_secs: int = DEFAULT_CONNECT_TIMEOUT_SECS
+    connect_only: bool = False
 
     @property
     def live(self) -> bool:
@@ -2314,6 +2370,7 @@ def build_node(rp: RunPlan):
         state_path=rp.state_path,
         hedge_enabled=rp.hedge_enabled,
         deadline_ts=rp.deadline.timestamp(),
+        connect_only=rp.connect_only,
     )
     strategy = LighterMaker(config)
     node.add_strategy(strategy)
@@ -2359,6 +2416,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="public data feeds only; fills and hedges are simulated locally")
     parser.add_argument("--live", action="store_true",
                         help="connect the execution clients and place real orders")
+    parser.add_argument("--connect-only", action="store_true",
+                        help="with --live: connect both exec clients, report balances / positions / "
+                             "open orders every 30 s, never place, modify or cancel an order")
     parser.add_argument("--confirm-mainnet", action="store_true",
                         help="required by --live --env mainnet; the user must also have said "
                              "上主网 in the current conversation (CLAUDE.md)")
@@ -2453,9 +2513,10 @@ def main(argv: list[str] | None = None) -> int:
         deadline=deadline,
         log_level=args.log_level,
         connection_timeout_secs=args.connection_timeout_secs,
+        connect_only=bool(args.connect_only),
     )
 
-    print(f"mode              : {mode}")
+    print(f"mode              : {mode}{'  (CONNECT-ONLY: no orders will be sent)' if args.connect_only else ''}")
     print(f"environment       : {args.env}")
     print(f"maker instrument  : {plan.maker_id}  (LIGHTER, post-only GTC)")
     print(f"hedge instrument  : {plan.hedge_id if hedge_enabled else '(disabled)'}"
