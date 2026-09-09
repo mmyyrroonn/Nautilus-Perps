@@ -57,6 +57,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from quote_placement import PLACEMENTS  # noqa: E402
+from quote_placement import BasisParams  # noqa: E402
 from quote_placement import describe as describe_placement  # noqa: E402
 
 
@@ -96,6 +97,12 @@ FLOOR_GATE_WINDOW_S = 1.0  # a window has to hold at least one second of samples
 # takes fewer, better fills, so the rail is again a floor: configuration may ask for more edge
 # than the shipped 12 bps, never for a quote pressed up against the touch.
 FLOOR_ANCHOR_EDGE_BPS = 3.0
+# The anchor's basis estimator.  A longer window and more samples are the SAFER settings - the
+# median is harder to move and the opening side waits longer - so both are floors.  There is
+# deliberately no "off" value here: the 2026-09-07 / 09-08 replays showed an anchor on the raw
+# hedge mid is one-sided on this pair, so a live run may lengthen the estimate, never skip it.
+FLOOR_BASIS_WINDOW_S = 10.0
+FLOOR_BASIS_MIN_N = 10
 # ... and the volatility limit additionally carries a cap, because for THAT knob a larger
 # number is the looser one: without it a config could raise max_move_bps_per_min to infinity
 # and disable the gate, which is exactly what the rest of this module promises cannot happen.
@@ -322,6 +329,12 @@ class QuoteLimits:
     # touch, and ``anchor_edge_bps`` is how far off it rests.
     placement: str = "improve"
     anchor_edge_bps: float = 12.0
+    # The anchor's fair mid: h_mid * (1 + median over basis_window_s of m_mid / h_mid - 1),
+    # usable only once basis_min_n samples have arrived.  See src/quote_placement.py.
+    basis_window_s: float = 300.0
+    basis_min_n: int = 30
+    # Lean both anchor prices by -anchor_skew_bps * (q / q_cap): a long book quotes lower.
+    anchor_skew_bps: float = 0.0
     # The two opening gates (src/quote_gates.py).  They stop the side that would GROW the
     # inventory; the closing side keeps quoting, and the kill switch is untouched by them.
     # Spread gate: the maker touch spread, smoothed over spread_window_s, must be at least
@@ -343,6 +356,11 @@ class QuoteLimits:
     def mode(self) -> str:
         """Deprecated alias for :attr:`placement`, kept for older call sites."""
         return self.placement
+
+    @property
+    def basis(self) -> BasisParams:
+        """The estimator ``quote_placement.BasisTracker`` is built from."""
+        return BasisParams(window_s=self.basis_window_s, min_n=self.basis_min_n)
 
 
 @dataclass(frozen=True)
@@ -426,7 +444,10 @@ class Limits:
         )
         lines.append(
             "  placement: "
-            + describe_placement(self.quote.placement, self.quote.anchor_edge_bps)
+            + describe_placement(
+                self.quote.placement, self.quote.anchor_edge_bps,
+                basis=self.quote.basis, skew_bps=self.quote.anchor_skew_bps,
+            )
             + (f" (hard floor {FLOOR_ANCHOR_EDGE_BPS:g} bps)"
                if self.quote.placement == "anchor" else ""),
         )
@@ -536,6 +557,11 @@ def load_limits(path: Path | str | None = None) -> Limits:
         anchor_edge_bps=r.number(
             "quote", "anchor_edge_bps", 12.0, floor=FLOOR_ANCHOR_EDGE_BPS,
         ),
+        basis_window_s=r.number(
+            "quote", "basis_window_s", 300.0, floor=FLOOR_BASIS_WINDOW_S,
+        ),
+        basis_min_n=r.count("quote", "basis_min_n", 30, minimum=FLOOR_BASIS_MIN_N),
+        anchor_skew_bps=r.number("quote", "anchor_skew_bps", 0.0),
         close_min_flip=r.flag("quote", "close_min_flip", True),
         min_spread_ratio=r.number(
             "quote", "min_spread_ratio", 2.0, floor=FLOOR_MIN_SPREAD_RATIO,

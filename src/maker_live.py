@@ -130,6 +130,8 @@ from live_limits import load_limits  # noqa: E402
 from quote_gates import GateParams  # noqa: E402
 from quote_gates import QuoteGates  # noqa: E402
 from quote_placement import ANCHOR  # noqa: E402
+from quote_placement import BasisParams  # noqa: E402
+from quote_placement import BasisTracker  # noqa: E402
 from quote_placement import label as placement_label  # noqa: E402
 from quote_placement import place  # noqa: E402
 from quote_placement import describe as describe_placement  # noqa: E402
@@ -496,7 +498,7 @@ class BookSample:
 class QuoteParams:
     """Every knob :class:`QuoteEngine` reads.  Built from :class:`live_limits.Limits`."""
 
-    placement: str  # "improve" (a tick inside), "join" (at the touch) or "anchor" (hedge mid)
+    placement: str  # "improve" (a tick inside), "join" (at the touch) or "anchor" (fair mid)
     anchor_edge_bps: float
     order_usd: float
     max_inv_usd: float
@@ -516,6 +518,8 @@ class QuoteParams:
     # than not quoting it.  Defaults to False here because that is what maker_inventory does -
     # from_limits() supplies the configured value (true in the shipped config).
     close_min_flip: bool = False
+    # The anchor's inventory lean, in bps of the fair mid at a full book; 0 = symmetric.
+    anchor_skew_bps: float = 0.0
 
     @classmethod
     def from_limits(
@@ -535,6 +539,7 @@ class QuoteParams:
         return cls(
             placement=q.placement,
             anchor_edge_bps=q.anchor_edge_bps,
+            anchor_skew_bps=q.anchor_skew_bps,
             order_usd=limits.order.max_notional_usd,
             # NOT limits.inventory.max_inventory_usd directly: the hedge doubles the
             # gross two-leg notional, so [exposure] normally binds first.  See
@@ -721,6 +726,8 @@ class QuoteEngine:
         *,
         opening_suspended: bool = False,
         opening_gated: bool = False,
+        basis: float = 0.0,
+        basis_ready: bool = True,
     ) -> list[Action]:
         """Decide both sides for this sample and return the transactions to send.
 
@@ -759,6 +766,9 @@ class QuoteEngine:
                     h_bid=book.h_bid, h_ask=book.h_ask,
                     tick=p.tick, decimals=p.decimals, tob=tob,
                     anchor_edge_bps=p.anchor_edge_bps,
+                    basis=basis,
+                    anchor_skew_bps=p.anchor_skew_bps,
+                    inv_frac=(q * mid / p.max_inv_usd) if p.max_inv_usd > 0.0 else 0.0,
                 )
                 price, queue = spot.price, spot.queue_ahead
                 if spot.locked:
@@ -777,7 +787,11 @@ class QuoteEngine:
                     raw = (price - hedge_px) if sell else (hedge_px - price)
                     edge = raw / mid * 1e4 - p.hedge_fee_bps - p.maker_fee_bps - p.reserve_bps
                     if edge < p.min_edge_bps:
+                        # Measured against the REAL hedge touch, which is what the hedge pays;
+                        # counted per side because an anchored quote on a basis pair gates
+                        # asymmetrically and the aggregate hides it.
                         self.counters["gated"] += 1
+                        self.counters["gated_ask" if sell else "gated_bid"] += 1
                         ok = False
                     elif abs(q) * price + p.order_usd > p.max_inv_usd + EPS:
                         self.counters["capped"] += 1
@@ -790,6 +804,13 @@ class QuoteEngine:
                         # The maker spread no longer pays for the hedge round trip, or the
                         # maker mid is running.  Same rule in maker_inventory.simulate().
                         self.counters["gate"] += 1
+                        ok = False
+                    elif p.placement == ANCHOR and not basis_ready:
+                        # The anchor's fair mid is not estimated yet.  The CLOSING side is
+                        # still quoted (off the partial estimate); only growing the book on a
+                        # guess is refused.  Only the anchor is centred on it, so only the
+                        # anchor waits - improve and join are untouched by the estimator.
+                        self.counters["basis_warmup"] += 1
                         ok = False
                     else:
                         size = p.order_usd / price
@@ -1549,6 +1570,11 @@ class LighterMaker(Strategy):
             hedge_fee_bps=ASTER_TAKER_FEE_BPS if self._hedge_on else 0.0,
             maker_fee_bps=LIGHTER_MAKER_FEE_BPS,
         ))
+        # The anchor's fair-mid estimator, updated on the same 1 s tick as the gates.
+        self._basis = BasisTracker(BasisParams(
+            window_s=self._limits.quote.basis_window_s,
+            min_n=self._limits.quote.basis_min_n,
+        ))
         self._maker_inst: Any = None
         self._hedge_inst: Any = None
         self._engine: QuoteEngine | None = None
@@ -1751,8 +1777,10 @@ class LighterMaker(Strategy):
             f"clip {self._engine.p.order_usd:g} USD",
         )
         self.log.info(
-            f"[maker] placement "
-            f"{describe_placement(self._engine.p.placement, self._engine.p.anchor_edge_bps)}",
+            "[maker] placement " + describe_placement(
+                self._engine.p.placement, self._engine.p.anchor_edge_bps,
+                basis=self._basis.p, skew_bps=self._engine.p.anchor_skew_bps,
+            ),
         )
         self.log.info(f"[maker] {self._gates.p.describe()}")
         self.log.info(
@@ -1949,6 +1977,12 @@ class LighterMaker(Strategy):
             dur=DECIDE_SECS,
         ):
             self._log_safe("info", f"[maker] {line}")
+        for line in self._basis.update(
+            t,
+            m_bid=self._book.m_bid, m_ask=self._book.m_ask,
+            h_bid=self._book.h_bid, h_ask=self._book.h_ask,
+        ):
+            self._log_safe("info", f"[maker] {line}")
 
         suspended = False
         if self._hedger is not None and mid_h > 0.0:
@@ -1962,6 +1996,8 @@ class LighterMaker(Strategy):
             self._book, self._q,
             opening_suspended=suspended,
             opening_gated=not self._gates.open,
+            basis=self._basis.basis,
+            basis_ready=self._basis.ready,
         ):
             self._execute(action, t)
 
@@ -2556,6 +2592,7 @@ class LighterMaker(Strategy):
             f"{self._state.tx}/{self._limits.daily.max_tx}tx  "
             f"place="
             f"{placement_label(self._engine.p.placement, self._engine.p.anchor_edge_bps)} "
+            f"basis={self._basis.basis_bps:+.1f} "
             f"{self._gates.status()}  | {margins}",
             flush=True,
         )
@@ -2584,6 +2621,8 @@ class LighterMaker(Strategy):
             f"[maker] SUMMARY mode={self._cfg.mode} env={self._cfg.env} "
             f"placement="
             f"{placement_label(self._engine.p.placement, self._engine.p.anchor_edge_bps)} "
+            f"basis_bps={self._basis.basis_bps:+.1f} "
+            f"basis_n={self._basis.n} "
             f"symbol={self._plan.symbol} ran={elapsed:.0f}s "
             f"fills_ask={pnl.fills[ASK]} fills_bid={pnl.fills[BID]} "
             f"filled_usd={pnl.filled_usd[ASK] + pnl.filled_usd[BID]:.2f} "
@@ -3813,8 +3852,10 @@ def main(argv: list[str] | None = None) -> int:
               f"{' unlocked' if unlocked else ' base'} "
               f"tx={loaded.tx}/{limits.daily.max_tx} "
               f"realized={loaded.realized_net_usd:.4f} USD){active}")
-    print(f"placement         : "
-          f"{describe_placement(limits.quote.placement, limits.quote.anchor_edge_bps)}")
+    print("placement         : " + describe_placement(
+        limits.quote.placement, limits.quote.anchor_edge_bps,
+        basis=limits.quote.basis, skew_bps=limits.quote.anchor_skew_bps,
+    ))
     print(f"risk engine       : bypass=False, max_notional_per_order="
           f"{CAP_ORDER_NOTIONAL_USD:g} USD (HARD cap) on "
           f"{[plan.maker_id] + ([plan.hedge_id] if hedge_enabled else [])}")

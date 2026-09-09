@@ -57,6 +57,8 @@ from quote_gates import GateParams  # noqa: E402
 from quote_gates import QuoteGates  # noqa: E402
 from quote_placement import PLACEMENTS  # noqa: E402
 from quote_placement import place  # noqa: E402
+from quote_placement import BasisParams  # noqa: E402
+from quote_placement import BasisTracker  # noqa: E402
 from nautilus_trader.model import ClientOrderId  # noqa: E402
 from nautilus_trader.model import CryptoPerpetual  # noqa: E402
 from nautilus_trader.model import Currency  # noqa: E402
@@ -529,7 +531,8 @@ def build_tape(n: int = 120, tob_scale: float = 1.0):
     return books, trades
 
 
-def replay_live(books, trades, params: QuoteParams, gates: QuoteGates | None = None):
+def replay_live(books, trades, params: QuoteParams, gates: QuoteGates | None = None,
+                basis: BasisTracker | None = None):
     """Replay the tape through QuoteEngine + PaperBroker exactly as ``simulate()`` does.
 
     Sample ``i`` decides both quotes; the trades of ``(t_i, t_i+1]`` then hit them.  ``gates``
@@ -561,7 +564,17 @@ def replay_live(books, trades, params: QuoteParams, gates: QuoteGates | None = N
                 mid=sample.mid, dur=t_next - t,
             )
             gated = not gates.open
-        engine.step(sample, q, opening_gated=gated)
+        if basis is not None:
+            basis.update(
+                t,
+                m_bid=sample.m_bid, m_ask=sample.m_ask,
+                h_bid=sample.h_bid, h_ask=sample.h_ask,
+            )
+        engine.step(
+            sample, q, opening_gated=gated,
+            basis=basis.basis if basis is not None else 0.0,
+            basis_ready=basis.ready if basis is not None else True,
+        )
         while ti < ntr and trades.t[ti] <= t_next:
             for fill in broker.on_trade(
                 trades.price[ti], trades.size[ti], trades.buy[ti] == 1, trades.t[ti],
@@ -602,6 +615,18 @@ GATE_KEYS = (
 )
 
 
+# The basis estimator's knobs.  Like the gates they live on maker_inventory.Params for the
+# replay and on a quote_placement.BasisParams for the live engine.
+BASIS_KEYS = ("basis_window_s", "basis_min_n")
+
+
+def live_basis(**over) -> BasisTracker | None:
+    """The live copy of the estimator ``simulate()`` builds from the same knobs."""
+    if not over:
+        return None
+    return BasisTracker(BasisParams(**over))
+
+
 def live_gates(**over) -> QuoteGates | None:
     """The live copy of the gates ``simulate()`` builds from the same knobs."""
     if not over:
@@ -629,13 +654,16 @@ class TestQuotingParity(unittest.TestCase):
     def _compare(self, placement: str, tob_scale: float = 1.0, min_incs: int = 20,
                  **over) -> None:
         gate = {k: over.pop(k) for k in list(over) if k in GATE_KEYS}
+        basis = {k: over.pop(k) for k in list(over) if k in BASIS_KEYS}
         books, trades = build_tape(tob_scale=tob_scale)
         run = maker_inventory.simulate(
             books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
-            p=sim_params(placement, **over, **gate),
+            p=sim_params(placement, **over, **gate, **basis),
         )
         engine, fills, q = replay_live(
             books, trades, live_params(placement, **over), live_gates(**gate),
+            live_basis(**{("window_s" if k == "basis_window_s" else "min_n"): v
+                          for k, v in basis.items()}),
         )
 
         with self.subTest("the tape must actually fill, or the test proves nothing"):
@@ -661,6 +689,9 @@ class TestQuotingParity(unittest.TestCase):
         self.assertEqual(sum(run.locked), engine.counters["locked"])
         self.assertEqual(sum(run.tx_deferred), engine.counters["deferred"])
         self.assertEqual(sum(run.gate_blocked), engine.counters["gate"])
+        self.assertEqual(sum(run.basis_blocked), engine.counters["basis_warmup"])
+        self.assertEqual(run.gated[ASK], engine.counters["gated_ask"])
+        self.assertEqual(run.gated[BID], engine.counters["gated_bid"])
 
     def test_improve_mode_matches(self) -> None:
         self._compare("improve")
@@ -735,6 +766,70 @@ class TestQuotingParity(unittest.TestCase):
             "anchor", anchor_edge_bps=5.0, min_spread_ratio=0.4, spread_window_s=5.0,
             max_move_bps_per_min=2.5, vol_window_s=6.0,
         )
+
+    def test_anchor_with_a_basis_matches(self) -> None:
+        """The estimator is stateful, so parity here also pins the warm-up and the window."""
+        self._compare("anchor", anchor_edge_bps=5.0, basis_window_s=30.0, basis_min_n=10)
+
+    def test_anchor_with_a_basis_and_a_skew_matches(self) -> None:
+        self._compare(
+            "anchor", anchor_edge_bps=5.0, basis_window_s=30.0, basis_min_n=10,
+            anchor_skew_bps=8.0,
+        )
+
+    def test_anchor_with_a_long_warm_up_opens_nothing_in_either_replay(self) -> None:
+        """min_n beyond the tape: never ready, so nothing is opened and nothing is sent.
+
+        Flat throughout means there is no closing side either, so this is the one anchor case
+        that produces no transactions at all - hence the direct comparison rather than
+        ``_compare``, which insists on a tape that trades.
+        """
+        books, trades = build_tape()
+        kwargs = dict(anchor_edge_bps=5.0, basis_window_s=300.0, basis_min_n=1000)
+        run = maker_inventory.simulate(
+            books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
+            p=sim_params("anchor", **kwargs),
+        )
+        engine, fills, q = replay_live(
+            books, trades, live_params("anchor", anchor_edge_bps=5.0),
+            None, live_basis(window_s=300.0, min_n=1000),
+        )
+        self.assertGreater(sum(run.basis_blocked), 0, "the warm-up must actually bite")
+        self.assertEqual((len(run.incs), run.tx_sent), (0, 0))
+        self.assertEqual((fills, engine.tx_sent), ([], 0))
+        self.assertEqual(sum(run.basis_blocked), engine.counters["basis_warmup"])
+
+    def test_the_basis_knobs_at_zero_reproduce_the_uncorrected_anchor(self) -> None:
+        books, trades = build_tape()
+        plain = maker_inventory.simulate(
+            books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
+            p=sim_params("anchor", anchor_edge_bps=5.0),
+        )
+        zeroed = maker_inventory.simulate(
+            books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
+            p=sim_params("anchor", anchor_edge_bps=5.0, basis_window_s=0.0,
+                         anchor_skew_bps=0.0),
+        )
+        self.assertEqual(plain.incs, zeroed.incs)
+        self.assertEqual(plain.tx_sent, zeroed.tx_sent)
+        self.assertEqual(sum(plain.basis_blocked), 0)
+        self.assertEqual(plain.basis_bps, [0.0] * len(books))
+
+    def test_the_basis_changes_the_anchor_it_is_applied_to(self) -> None:
+        """Guard the regression above: a basis that did nothing would make it vacuous."""
+        books, trades = build_tape()
+        common = dict(tick=TICK, decimals=DECIMALS, fee_h=FEE_H)
+        off = maker_inventory.simulate(
+            books, trades, p=sim_params("anchor", anchor_edge_bps=5.0), **common,
+        )
+        on = maker_inventory.simulate(
+            books, trades,
+            p=sim_params("anchor", anchor_edge_bps=5.0, basis_window_s=30.0,
+                         basis_min_n=10),
+            **common,
+        )
+        self.assertNotEqual(off.incs, on.incs)
+        self.assertNotEqual(off.basis_bps, on.basis_bps)
 
     def test_the_anchor_actually_rests_off_the_maker_touch(self) -> None:
         """Guard the cases above: an anchor that happened to equal improve proves nothing."""
@@ -960,6 +1055,14 @@ class TestQuoteEngineRestrictions(unittest.TestCase):
 # --------------------------------------------------------------------------- placement
 
 
+def _ceil_tick(price: float) -> float:
+    return round(math.ceil(price / TICK - 1e-6) * TICK, DECIMALS)
+
+
+def _floor_tick(price: float) -> float:
+    return round(math.floor(price / TICK + 1e-6) * TICK, DECIMALS)
+
+
 class TestPlacement(unittest.TestCase):
     """``quote_placement.place()``: the one copy of the pricing rule, unit by unit.
 
@@ -973,10 +1076,11 @@ class TestPlacement(unittest.TestCase):
 
     def at(self, placement: str, *, sell: bool, m_bid: float, m_ask: float,
            h_bid: float = 0.73490, h_ask: float = 0.73510, tob: float = 400.0,
-           edge: float = 12.0):
+           edge: float = 12.0, basis: float = 0.0, skew: float = 0.0, inv: float = 0.0):
         return place(
             placement, sell=sell, m_bid=m_bid, m_ask=m_ask, h_bid=h_bid, h_ask=h_ask,
             tick=TICK, decimals=DECIMALS, tob=tob, anchor_edge_bps=edge,
+            basis=basis, anchor_skew_bps=skew, inv_frac=inv,
         )
 
     # -- the two pre-existing rules, unchanged --------------------------------------------
@@ -1074,11 +1178,152 @@ class TestPlacement(unittest.TestCase):
         self.assertEqual(asks, sorted(asks))
         self.assertEqual(bids, sorted(bids, reverse=True))
 
+    # -- the basis term and the inventory skew ---------------------------------------------
+
+    def test_a_basis_moves_the_whole_anchor_and_keeps_it_symmetric(self) -> None:
+        """+25 bps of basis carries both quotes up by 25 bps; the edge around the fair mid is
+        unchanged, which is the entire point of the correction."""
+        wide = dict(m_bid=0.70000, m_ask=0.77000)
+        fair = 0.735 * 1.0025
+        ask = self.at("anchor", sell=True, basis=0.0025, **wide)
+        bid = self.at("anchor", sell=False, basis=0.0025, **wide)
+        self.assertAlmostEqual(ask.price, _ceil_tick(fair * 1.0012), places=9)
+        self.assertAlmostEqual(bid.price, _floor_tick(fair * 0.9988), places=9)
+        # ... and the mid of our own two quotes is the fair mid, to within a tick.
+        self.assertAlmostEqual((ask.price + bid.price) / 2.0, fair, delta=TICK)
+
+    def test_a_zero_basis_is_the_uncorrected_anchor(self) -> None:
+        """The b = 0 path must survive: it is what every anchor result before the basis used."""
+        wide = dict(m_bid=0.70000, m_ask=0.77000)
+        for sell in (True, False):
+            with self.subTest(sell=sell):
+                self.assertEqual(
+                    self.at("anchor", sell=sell, basis=0.0, **wide),
+                    self.at("anchor", sell=sell, **wide),
+                )
+        self.assertAlmostEqual(self.at("anchor", sell=True, **wide).price,
+                               self.ANCHOR_ASK, places=9)
+
+    def test_the_skew_pushes_a_long_book_down_and_a_short_book_up(self) -> None:
+        wide = dict(m_bid=0.70000, m_ask=0.77000)
+        flat_ask = self.at("anchor", sell=True, **wide).price
+        flat_bid = self.at("anchor", sell=False, **wide).price
+        long_ask = self.at("anchor", sell=True, skew=8.0, inv=1.0, **wide).price
+        long_bid = self.at("anchor", sell=False, skew=8.0, inv=1.0, **wide).price
+        short_ask = self.at("anchor", sell=True, skew=8.0, inv=-1.0, **wide).price
+        short_bid = self.at("anchor", sell=False, skew=8.0, inv=-1.0, **wide).price
+        self.assertLess(long_ask, flat_ask, "long: sell cheaper, so the ask is easier to hit")
+        self.assertLess(long_bid, flat_bid, "long: bid lower, so it is harder to get longer")
+        self.assertGreater(short_ask, flat_ask)
+        self.assertGreater(short_bid, flat_bid)
+
+    def test_the_skew_is_proportional_and_clamped_at_a_full_book(self) -> None:
+        wide = dict(m_bid=0.70000, m_ask=0.77000)
+        half = self.at("anchor", sell=True, skew=20.0, inv=0.5, **wide).price
+        full = self.at("anchor", sell=True, skew=20.0, inv=1.0, **wide).price
+        over = self.at("anchor", sell=True, skew=20.0, inv=4.0, **wide).price
+        flat = self.at("anchor", sell=True, skew=20.0, inv=0.0, **wide).price
+        self.assertLess(full, half)
+        self.assertLess(half, flat)
+        self.assertEqual(over, full, "an over-full book cannot lean further than a full one")
+
+    def test_a_zero_skew_ignores_the_inventory_entirely(self) -> None:
+        wide = dict(m_bid=0.70000, m_ask=0.77000)
+        for inv in (-1.0, 0.0, 0.7):
+            with self.subTest(inv=inv):
+                self.assertEqual(self.at("anchor", sell=True, inv=inv, **wide),
+                                 self.at("anchor", sell=True, **wide))
+
+    def test_improve_and_join_ignore_the_basis_and_the_skew(self) -> None:
+        book = dict(m_bid=0.73000, m_ask=0.73040)
+        for placement in ("improve", "join"):
+            for sell in (True, False):
+                with self.subTest(placement=placement, sell=sell):
+                    self.assertEqual(
+                        self.at(placement, sell=sell, basis=0.0025, skew=20.0, inv=1.0,
+                                **book),
+                        self.at(placement, sell=sell, **book),
+                    )
+
     def test_every_placement_name_is_handled(self) -> None:
         for placement in PLACEMENTS:
             with self.subTest(placement=placement):
                 placed = self.at(placement, sell=True, m_bid=0.73000, m_ask=0.74000)
                 self.assertGreater(placed.price, 0.0)
+
+
+class TestBasisTracker(unittest.TestCase):
+    """``quote_placement.BasisTracker``: the rolling median of ``m_mid / h_mid - 1``."""
+
+    def tracker(self, window_s: float = 300.0, min_n: int = 30) -> BasisTracker:
+        return BasisTracker(BasisParams(window_s=window_s, min_n=min_n))
+
+    @staticmethod
+    def push(tracker: BasisTracker, t: float, *, basis_bps: float, h_mid: float = 0.78):
+        """One sample with the maker mid exactly ``basis_bps`` above the hedge mid."""
+        m_mid = h_mid * (1.0 + basis_bps / 1e4)
+        return tracker.update(
+            t, m_bid=m_mid - 0.001, m_ask=m_mid + 0.001,
+            h_bid=h_mid - 0.0005, h_ask=h_mid + 0.0005,
+        )
+
+    def test_a_constant_basis_is_recovered_exactly(self) -> None:
+        tracker = self.tracker(min_n=3)
+        for i in range(5):
+            self.push(tracker, 1000.0 + i, basis_bps=25.0)
+        self.assertAlmostEqual(tracker.basis_bps, 25.0, places=6)
+        self.assertAlmostEqual(tracker.fair(0.78), 0.78 * 1.0025, places=12)
+
+    def test_it_is_a_median_so_one_dislocated_sample_cannot_move_it(self) -> None:
+        tracker = self.tracker(min_n=3)
+        for i in range(10):
+            self.push(tracker, 1000.0 + i, basis_bps=25.0)
+        self.push(tracker, 1010.0, basis_bps=900.0)
+        self.assertAlmostEqual(tracker.basis_bps, 25.0, places=6)
+        self.assertAlmostEqual(tracker.raw * 1e4, 900.0, places=6)
+
+    def test_the_window_forgets_samples_older_than_it(self) -> None:
+        tracker = self.tracker(window_s=10.0, min_n=3)
+        for i in range(10):
+            self.push(tracker, 1000.0 + i, basis_bps=25.0)
+        for i in range(10, 30):
+            self.push(tracker, 1000.0 + i, basis_bps=40.0)
+        self.assertAlmostEqual(tracker.basis_bps, 40.0, places=6)
+        self.assertLessEqual(tracker.n, 11)
+
+    def test_it_is_not_ready_until_min_n_samples_have_arrived(self) -> None:
+        tracker = self.tracker(min_n=30)
+        for i in range(29):
+            self.push(tracker, 1000.0 + i, basis_bps=25.0)
+            self.assertFalse(tracker.ready)
+        self.push(tracker, 1029.0, basis_bps=25.0)
+        self.assertTrue(tracker.ready)
+
+    def test_the_warm_up_and_the_ready_line_are_each_said_once(self) -> None:
+        tracker = self.tracker(min_n=3)
+        said = []
+        for i in range(10):
+            said += self.push(tracker, 1000.0 + i, basis_bps=25.0)
+        self.assertEqual(len(said), 2, "one warming-up line, one ready line, nothing else")
+        self.assertIn("basis warming up", said[0])
+        self.assertIn("basis ready", said[1])
+        self.assertIn("+25.0 bps", said[1])
+
+    def test_a_disabled_window_is_always_ready_at_a_zero_basis(self) -> None:
+        """``basis_window_s = 0`` is the uncorrected anchor, and must stay reachable."""
+        tracker = self.tracker(window_s=0.0)
+        for i in range(50):
+            self.assertEqual(self.push(tracker, 1000.0 + i, basis_bps=25.0), [])
+        self.assertTrue(tracker.ready)
+        self.assertEqual(tracker.basis, 0.0)
+        self.assertEqual(tracker.fair(0.78), 0.78)
+        self.assertEqual(tracker.n, 0)
+
+    def test_a_half_book_is_ignored(self) -> None:
+        tracker = self.tracker(min_n=1)
+        tracker.update(1000.0, m_bid=0.779, m_ask=0.781, h_bid=0.0, h_ask=0.0)
+        self.assertEqual(tracker.n, 0)
+        self.assertEqual(tracker.basis, 0.0)
 
 
 # --------------------------------------------------------------------------- gates
@@ -1927,9 +2172,10 @@ class TestStrategyPlacement(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return load_limits(path)
 
-    def _quote(self, strategy) -> None:
+    def _quote(self, strategy, seconds: int = 40) -> None:
+        """Long enough by default to clear the anchor's 30-sample basis warm-up."""
         strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
-        for _ in range(3):
+        for _ in range(seconds):
             feed_books(strategy)
             strategy._decide()
             strategy.clock.advance(1.0)
@@ -1941,22 +2187,35 @@ class TestStrategyPlacement(unittest.TestCase):
         # m_ask 0.73220 less one tick.
         self.assertAlmostEqual(strategy._engine.orders[ASK].price, 0.73219, places=9)
 
-    def test_anchor_prices_both_sides_off_the_hedge_mid(self) -> None:
-        """h_mid 0.72995 +/- 12 bps, rounded away from it, and inside the maker touch."""
+    def test_anchor_prices_both_sides_off_the_fair_mid(self) -> None:
+        """The fixture's basis is 0.73020 / 0.72995 - 1 = +3.4 bps, so the fair mid is the
+        maker mid 0.73020, and the two quotes sit 12 bps either side of THAT - not either
+        side of the hedge mid, which is where the uncorrected anchor put them."""
         strategy = build_strategy(limits=self._anchor_limits())
         self.assertEqual(strategy._engine.p.placement, "anchor")
         self.assertEqual(strategy._engine.p.anchor_edge_bps, 12.0)
         self._quote(strategy)
-        self.assertAlmostEqual(strategy._engine.orders[ASK].price, 0.73083, places=9)
-        self.assertAlmostEqual(strategy._engine.orders[BID].price, 0.72907, places=9)
+        self.assertAlmostEqual(strategy._basis.basis_bps, 3.4249, places=3)
+        self.assertAlmostEqual(strategy._engine.orders[ASK].price, 0.73108, places=9)
+        self.assertAlmostEqual(strategy._engine.orders[BID].price, 0.72932, places=9)
         # Strictly inside 0.72820 / 0.73220, so nothing is resting ahead of us.
         self.assertEqual(strategy._engine.orders[ASK].queue, 0.0)
+
+    def test_the_anchor_opens_nothing_until_the_basis_is_estimated(self) -> None:
+        strategy = build_strategy(limits=self._anchor_limits())
+        self._quote(strategy, seconds=5)
+        self.assertFalse(strategy._basis.ready)
+        self.assertEqual(strategy._engine.orders, [None, None])
+        self.assertGreater(strategy._engine.counters["basis_warmup"], 0)
+        self._quote(strategy, seconds=40)
+        self.assertTrue(strategy._basis.ready)
+        self.assertIsNotNone(strategy._engine.orders[ASK])
 
     def test_a_wider_anchor_edge_rests_further_out(self) -> None:
         strategy = build_strategy(limits=self._anchor_limits(edge=20.0))
         self._quote(strategy)
-        self.assertGreater(strategy._engine.orders[ASK].price, 0.73083)
-        self.assertLess(strategy._engine.orders[BID].price, 0.72907)
+        self.assertGreater(strategy._engine.orders[ASK].price, 0.73108)
+        self.assertLess(strategy._engine.orders[BID].price, 0.72932)
 
     def test_the_status_line_and_the_summary_name_the_placement(self) -> None:
         strategy = build_strategy(limits=self._anchor_limits())
@@ -1965,7 +2224,9 @@ class TestStrategyPlacement(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             strategy._status()
         self.assertIn("place=anchor 12", out.getvalue())
+        self.assertIn("basis=+3.4", out.getvalue())
         self.assertIn("placement=anchor 12", strategy.summary())
+        self.assertIn("basis_bps=+3.4", strategy.summary())
 
 
 class TestStrategyOpeningGates(unittest.TestCase):

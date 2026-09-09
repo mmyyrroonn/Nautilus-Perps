@@ -83,10 +83,21 @@ tx_per_min = 36.0
 #              never cross the Lighter book.  The quote stops following the venue we do not
 #              hedge on, so a Lighter-only jump cannot leave us resting at a price the hedge
 #              will not honour.
-placement = "improve"
-# How far off the hedge mid an "anchor" quote rests.  Bigger = further out = fewer, better
+placement = "anchor"
+# How far off the fair mid an "anchor" quote rests.  Bigger = further out = fewer, better
 # fills, so the rail is a FLOOR of 3 bps: configuration may demand more edge, never less.
-anchor_edge_bps = 12.0
+anchor_edge_bps = 20.0
+# The fair mid the anchor is centred on is NOT the raw hedge mid: Lighter's PONS mid trades a
+# median +28.8 bps (09-07) / +25.7 bps (09-08) ABOVE Aster's, and anchoring on Aster put the
+# ask inside Lighter's book and the bid where it could never fill - 10 to 20x more ask fills
+# than bid fills, inventory pinned at its cap.  So the centre is h_mid * (1 + b) with b the
+# rolling MEDIAN of (m_mid / h_mid - 1) over this window.  Floors: 10 s, and 10 samples.  The
+# opening side stays silent until basis_min_n samples have arrived.
+basis_window_s = 300
+basis_min_n = 30
+# Lean both anchor prices by -anchor_skew_bps * (q / q_cap) so a long book quotes lower on
+# both sides and works itself back to flat.  0 = symmetric around the fair mid.
+anchor_skew_bps = 0.0
 # Legacy spelling of the same choice, kept so an old file still means what it said: 1 =
 # improve by one tick, 0 = join the touch.  An explicit `placement` above always wins.
 improve_ticks = 1
@@ -122,9 +133,9 @@ max_wait_s = 5.0
 # and at least min_maker_spread_bps in absolute terms.  On 2026-09-09 the Lighter PONS spread
 # was 5.9 bps against a ~8.6 bps hedge round trip: nothing to capture, ~10 bps to pay.
 # Hard FLOOR 1.0 - a ratio under 1 means the spread does not even cover the hedge.
-min_spread_ratio = 2.0
+min_spread_ratio = 1.0
 # Hard FLOOR 5 bps.
-min_maker_spread_bps = 12.0
+min_maker_spread_bps = 5.0
 # Hard FLOOR 1 s.
 spread_window_s = 10
 #
@@ -134,6 +145,6 @@ spread_window_s = 10
 # market.  Stop opening while the maker mid's range over vol_window_s exceeds this.
 # Hard FLOOR 5 bps (a smaller limit would never open) and hard CAP 50 bps - for this knob a
 # LARGER number is the looser one, so it is the one gate key that also needs a cap.
-max_move_bps_per_min = 35.0
+max_move_bps_per_min = 50.0
 # Hard FLOOR 1 s.
 vol_window_s = 60

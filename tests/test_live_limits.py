@@ -205,11 +205,38 @@ class TestPlacement(unittest.TestCase):
         edge = load_limits(quote_toml("anchor_edge_bps = 3.0")).quote.anchor_edge_bps
         self.assertEqual(edge, FLOOR_ANCHOR_EDGE_BPS)
 
+    def test_the_shipped_config_estimates_the_basis(self) -> None:
+        quote = load_limits(REPO / "config" / "limits.toml").quote
+        self.assertEqual(quote.basis_window_s, 300.0)
+        self.assertEqual(quote.basis_min_n, 30)
+        self.assertEqual(quote.anchor_skew_bps, 0.0)
+        self.assertEqual(quote.basis.window_s, 300.0)
+        self.assertTrue(quote.basis.on)
+
+    def test_the_basis_estimate_may_be_lengthened_but_not_shortened(self) -> None:
+        """A longer window and more samples are the safer settings, so both are floors -
+        and there is no value that switches the estimate off: the 09-07 / 09-08 replays
+        showed an anchor on the raw hedge mid is one-sided on this pair."""
+        limits = load_limits(quote_toml("basis_window_s = 900", "basis_min_n = 120"))
+        self.assertEqual(limits.quote.basis_window_s, 900.0)
+        self.assertEqual(limits.quote.basis_min_n, 120)
+        for line in ("basis_window_s = 0", "basis_window_s = 9.9", "basis_min_n = 0",
+                     "basis_min_n = 9"):
+            with self.subTest(line=line), self.assertRaises(LimitsError):
+                load_limits(quote_toml(line))
+
+    def test_the_inventory_skew_is_off_by_default_and_can_be_set(self) -> None:
+        self.assertEqual(load_limits(quote_toml("anchor_skew_bps = 8.0")).quote.anchor_skew_bps,
+                         8.0)
+        with self.assertRaises(LimitsError):
+            load_limits(quote_toml("anchor_skew_bps = -1.0"))
+
     def test_the_report_names_the_placement(self) -> None:
         report = load_limits(quote_toml('placement = "anchor"')).report()
         self.assertIn("quote.placement", report)
         self.assertIn("quote.anchor_edge_bps", report)
-        self.assertIn("anchor 12 bps off the hedge mid", report)
+        self.assertIn("anchor 12 bps off a fair mid", report)
+        self.assertIn("basis: median of 300 s, at least 30 samples", report)
 
 
 # --------------------------------------------------------------------------- gates

@@ -120,6 +120,7 @@ from maker_fill import (  # noqa: E402  (needs sys.path above)
 )
 from quote_gates import GateParams, QuoteGates  # noqa: E402
 from quote_placement import ANCHOR, PLACEMENTS, place  # noqa: E402
+from quote_placement import BasisParams, BasisTracker  # noqa: E402
 from quote_placement import label as placement_label  # noqa: E402
 from opportunities import (  # noqa: E402
     SymbolFiles,
@@ -159,7 +160,12 @@ class Params:
     tx_per_min: float | None = None  # shared token bucket, None = unlimited
     requote_ticks: int = 1  # re-price only once the touch moved this many ticks
     requote_min_s: float = 0.0  # minimum seconds between two re-prices of one side
-    anchor_edge_bps: float = 0.0  # "anchor" only: bps off the hedge mid the quote rests at
+    anchor_edge_bps: float = 0.0  # "anchor" only: bps off the fair mid the quote rests at
+    # The anchor's fair mid: h_mid * (1 + median over basis_window_s of m_mid / h_mid - 1).
+    # 0 = no correction, i.e. the raw hedge mid every anchor result before 2026-09-10 used.
+    basis_window_s: float = 0.0
+    basis_min_n: int = 30
+    anchor_skew_bps: float = 0.0  # lean both anchor prices by -skew * (q / q_cap)
     # The two opening gates of ``quote_gates.GateParams``, shared with the live maker.
     # All zero = both off, which is the default: every result produced before they existed
     # reproduces exactly.
@@ -168,6 +174,10 @@ class Params:
     spread_window_s: float = 10.0
     max_move_bps_per_min: float = 0.0
     vol_window_s: float = 60.0
+
+    def basis(self) -> BasisParams:
+        """The estimator ``quote_placement.BasisTracker`` is built from."""
+        return BasisParams(window_s=self.basis_window_s, min_n=self.basis_min_n)
 
     def gates(self, fee_h: float) -> GateParams:
         """The gate knobs, with the fees the spread gate measures the hedge round trip by."""
@@ -335,6 +345,8 @@ class Run:
     gate_closed_s: float = 0.0  # either gate closed: what actually stopped opening
     gate_spread_closed_s: float = 0.0
     gate_vol_closed_s: float = 0.0
+    basis_blocked: list[int] = field(default_factory=lambda: [0, 0])  # basis not estimated yet
+    basis_bps: list[float] = field(default_factory=list)  # the estimate each sample quoted on
     gate_hour: dict[int, float] = field(default_factory=dict)  # hour -> seconds closed
     hour_s: dict[int, float] = field(default_factory=dict)  # hour -> seconds sampled
 
@@ -406,6 +418,7 @@ def simulate(
     # The opening gates, the same object the live maker runs (src/quote_gates.py).  With the
     # knobs at their 0 defaults both stay open for every sample and nothing below changes.
     gates = QuoteGates(p.gates(fee_h))
+    basis = BasisTracker(p.basis())
 
     for i in range(n):
         t = books.t[i]
@@ -427,6 +440,13 @@ def simulate(
             mid=mid, dur=dur,
         )
         gate_open = gates.open
+        basis.update(
+            t,
+            m_bid=books.m_bid[i], m_ask=books.m_ask[i],
+            h_bid=books.h_bid[i], h_ask=books.h_ask[i],
+        )
+        basis_ready = basis.ready
+        run.basis_bps.append(basis.basis_bps)
         run.hour_s[hour] = run.hour_s.get(hour, 0.0) + dur
         if not gate_open:
             run.gate_closed_s += dur
@@ -461,6 +481,9 @@ def simulate(
                     h_bid=books.h_bid[i], h_ask=books.h_ask[i],
                     tick=tick, decimals=decimals, tob=tob,
                     anchor_edge_bps=p.anchor_edge_bps,
+                    basis=basis.basis,
+                    anchor_skew_bps=p.anchor_skew_bps,
+                    inv_frac=(q * mid / p.max_inv_usd) if p.max_inv_usd > 0.0 else 0.0,
                 )
                 price, queue = spot.price, spot.queue_ahead
                 if spot.locked:
@@ -487,6 +510,12 @@ def simulate(
                         # The maker spread no longer pays for the hedge round trip, or the
                         # maker mid is running.  Same rule in maker_live.QuoteEngine.step().
                         run.gate_blocked[side] += 1
+                        ok = False
+                    elif p.placement == ANCHOR and not basis_ready:
+                        # The anchor's fair mid is not estimated yet: quote the closing side
+                        # off the partial estimate, but never grow the book on a guess.  Only
+                        # the anchor is centred on it, so only the anchor waits.
+                        run.basis_blocked[side] += 1
                         ok = False
                     else:
                         size = p.order_usd / price
@@ -836,6 +865,7 @@ SUMMARY_HEADERS = [
     "rt bps", "rt bps-f", "rt bps-w", "trips", "fills A", "fills B", "USD A", "USD B",
     "rate A", "rate B", "max inv", "twa inv", "hold med", "hold p90", "H cov",
     "tx/min", "deferred", "stale %", "quota ratio", "gate sp%", "gate vol%", "gate any%",
+    "gated A/B", "basis bps",
 ]
 SUMMARY_ALIGN = "ll" + "r" * (len(SUMMARY_HEADERS) - 2)
 
@@ -882,6 +912,8 @@ def summary_row(res: Result, label: str) -> list[object]:
         _time_share(run.gate_spread_closed_s, run.twa_den),
         _time_share(run.gate_vol_closed_s, run.twa_den),
         _time_share(run.gate_closed_s, run.twa_den),
+        f"{run.gated[ASK]}/{run.gated[BID]}",
+        fmt(_median(run.basis_bps), 1),
     ]
 
 
@@ -971,6 +1003,8 @@ def pair_block(
     for mode in args.placements:
         base = Params(
             placement=mode, anchor_edge_bps=args.anchor_edge_bps,
+            basis_window_s=args.basis_window_s, basis_min_n=args.basis_min_n,
+            anchor_skew_bps=args.anchor_skew_bps,
             order_usd=args.order_usd, max_inv_usd=args.max_inv_usd,
             min_edge_bps=args.min_edge_bps, reserve_bps=args.reserve_bps,
             hedge_delay_s=args.hedge_delay_s, one_sided=args.one_sided,
@@ -994,7 +1028,12 @@ def pair_block(
             + (", ONE-SIDED (bid disabled)" if args.one_sided else "")
             + (f", {base.budget_note()}" if base.budgeted else "")
             + (f", {base.gates(fee_h).describe()}"
-               if base.gates(fee_h).on else "") + ")",
+               if base.gates(fee_h).on else "")
+            + (f", basis median over {args.basis_window_s:g} s "
+               f"(at least {args.basis_min_n} samples)"
+               if mode == ANCHOR and base.basis().on else "")
+            + (f", inventory skew {args.anchor_skew_bps:g} bps"
+               if mode == ANCHOR and args.anchor_skew_bps else "") + ")",
         )
         lines.append("")
         lines += table(SUMMARY_HEADERS, [summary_row(res, "base")], align=SUMMARY_ALIGN)
@@ -1157,7 +1196,16 @@ def build_parser() -> argparse.ArgumentParser:
                              "maker touch), join (at it) and/or anchor (off the hedge mid); "
                              "--quote is the old spelling of the same flag")
     parser.add_argument("--anchor-edge-bps", type=float, default=12.0,
-                        help="anchor placement only: bps off the hedge mid the quote rests at")
+                        help="anchor placement only: bps off the fair mid the quote rests at")
+    parser.add_argument("--basis-window-s", type=float, default=300.0,
+                        help="anchor placement only: seconds of rolling median for the "
+                             "cross-venue basis the fair mid is carried across; 0 = no "
+                             "correction, i.e. the raw hedge mid")
+    parser.add_argument("--basis-min-n", type=int, default=30,
+                        help="samples the basis window must hold before the anchor may OPEN")
+    parser.add_argument("--anchor-skew-bps", type=float, default=0.0,
+                        help="anchor placement only: lean both prices by -skew * (q / q_cap) "
+                             "so inventory pushes the quote to the side that reduces it")
     parser.add_argument("--order-usd", type=float, default=500.0,
                         help="notional of one resting clip")
     parser.add_argument("--max-inv-usd", type=float, default=2000.0,
@@ -1222,6 +1270,8 @@ def main() -> None:
         )
     if args.anchor_edge_bps < 0.0:
         raise SystemExit("[inv] --anchor-edge-bps cannot be negative")
+    if args.basis_window_s < 0.0 or args.basis_min_n < 1:
+        raise SystemExit("[inv] --basis-window-s cannot be negative and --basis-min-n >= 1")
     if args.order_usd <= 0.0 or args.max_inv_usd <= 0.0:
         raise SystemExit("[inv] --order-usd and --max-inv-usd must be positive")
     if args.tx_per_min is not None and args.tx_per_min < 1.0:
@@ -1281,6 +1331,10 @@ def main() -> None:
         + (f"  |  spread gate {args.min_spread_ratio:g}x hedge cost and >= "
            f"{args.min_maker_spread_bps:g} bps over {args.spread_window_s:g} s"
            if args.min_spread_ratio > 0.0 or args.min_maker_spread_bps > 0.0 else "")
+        + (f"  |  basis median over {args.basis_window_s:g} s, >= {args.basis_min_n} samples"
+           if ANCHOR in args.placements and args.basis_window_s > 0.0 else "")
+        + (f"  |  anchor skew {args.anchor_skew_bps:g} bps"
+           if ANCHOR in args.placements and args.anchor_skew_bps else "")
         + (f"  |  volatility gate <= {args.max_move_bps_per_min:g} bps over "
            f"{args.vol_window_s:g} s"
            if args.max_move_bps_per_min > 0.0 else "")
@@ -1318,6 +1372,10 @@ def main() -> None:
         "(`--min-spread-ratio` / `--min-maker-spread-bps` and `--max-move-bps-per-min`, "
         "all off by default); while a gate is closed only the side that would SHRINK the "
         "inventory is quoted, and the hourly `gate%` is the combined share per hour. "
+        "`gated A/B` is how many samples each side's OPENING quote was refused by the "
+        "cross-venue edge gate, which is always measured against the real hedge touch - on a "
+        "pair with a persistent basis the two sides gate very differently. `basis bps` is the "
+        "median of the rolling basis estimate the anchor quoted on. "
         "The hourly `USD pnl` "
         "columns sum to `total USD` minus `resid mtm`. Minimum order size on the maker "
         "venue is not in the recordings and is not enforced._",
