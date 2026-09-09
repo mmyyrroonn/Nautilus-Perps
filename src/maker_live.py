@@ -2787,8 +2787,12 @@ def plan_flatten_clip(
         clip = max(0.0, want - min_qty)
     if step > 0.0:
         clip = math.floor(clip / step + 1e-9) * step
-    if clip <= EPS or clip < min_qty - EPS or clip * price < min_notional - EPS:
+    if clip <= EPS:
         return None
+    # A clip below the venue minimum is still sent: both venues accepted below-minimum
+    # CLOSE orders on 2026-09-09 (the user closed 2.3 PONS on Lighter and 3 PONS on Aster
+    # by hand). If a venue refuses, the flattener logs it and retries until the deadline
+    # instead of silently leaving dust behind.
     return FlattenClip(
         sell=sell, qty=clip, price=price, remaining_after=max(0.0, want - clip),
     )

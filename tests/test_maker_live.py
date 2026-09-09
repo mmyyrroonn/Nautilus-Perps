@@ -2214,11 +2214,17 @@ class TestFlattenPlanner(unittest.TestCase):
         self.assertIsNotNone(clip)
         self.assertGreaterEqual(clip.remaining_after, self.LIGHTER["min_qty"] - 1e-6)
 
-    def test_a_residual_under_the_venue_minimum_cannot_be_closed(self) -> None:
-        self.assertIsNone(maker_live.plan_flatten_clip(
+    def test_a_residual_under_the_venue_minimum_is_still_sent_as_a_close(self) -> None:
+        # 2026-09-09: both venues accepted below-minimum CLOSE orders (the user closed 2.3 PONS
+        # on Lighter and 3 PONS on Aster by hand), so the exact remainder goes out.
+        clip = maker_live.plan_flatten_clip(
             side=maker_live.SHORT, qty=5.0, bid=0.74700, ask=0.74800, slippage_bps=20.0,
             max_notional_usd=47.5, **self.LIGHTER,
-        ))
+        )
+        self.assertIsNotNone(clip)
+        self.assertFalse(clip.sell)
+        self.assertAlmostEqual(clip.qty, 5.0)
+        self.assertAlmostEqual(clip.remaining_after, 0.0)
 
     def test_no_touch_plans_nothing(self) -> None:
         self.assertIsNone(maker_live.plan_flatten_clip(
@@ -2476,15 +2482,14 @@ class TestPositionFlattener(unittest.TestCase):
         self.assertFalse(flat.flat)
         self.assertEqual(flat.exit_code, maker_live.EXIT_NOT_FLAT)
 
-    def test_a_residual_below_the_venue_minimum_is_reported(self) -> None:
+    def test_a_residual_below_the_venue_minimum_is_closed_with_an_exact_clip(self) -> None:
         flat = build_flattener(
             [FakePosition(MAKER_ID, -5.0, 0.74719)],
             venue=maker_live.VenuePosition(maker_live.SHORT, 5.0),
         )
         self.sweep(flat)
-        self.assertEqual(flat.submitted, [])
-        self.assertTrue(flat._residuals)
-        self.assertIn("no legal clip", flat._residuals[0])
+        self.assertEqual(len(flat.submitted), 1, "the exact remainder is sent as a close order")
+        self.assertAlmostEqual(float(flat.submitted[0].quantity), 5.0)
 
     def test_the_summary_records_the_cross_checks(self) -> None:
         flat = build_flattener(self.positions())
