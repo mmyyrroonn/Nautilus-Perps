@@ -111,6 +111,8 @@ class QuoteGates:
         self._mid: deque[tuple[float, float]] = deque()  # (t, maker mid)
         self.raw_spread_bps = 0.0  # this sample's maker touch spread
         self.spread_bps = 0.0  # ... smoothed over spread_window_s: what the gate reads
+        self.raw_hedge_bps = 0.0
+        self._hedge: deque[tuple[float, float]] = deque()
         self.hedge_bps = 0.0  # hedge venue touch spread, same denominator
         self.cost_bps = 0.0  # hedge round trip: hedge spread + both fees
         self.vol_bps = 0.0  # maker mid range over vol_window_s
@@ -181,7 +183,13 @@ class QuoteGates:
             self._trim(self._spread, t - p.spread_window_s)
             self.spread_bps = statistics.median([v for _, v in self._spread])
         if mid > 0.0 and h_ask > h_bid > 0.0:
-            self.hedge_bps = (h_ask - h_bid) / mid * 1e4
+            # The hedge book flickers far more than the maker book (Aster VVV alternated
+            # between 0.4 and 11 bps second to second on 2026-09-09, toggling the gate every
+            # second and churning cancels): smooth it with the same rolling median.
+            self.raw_hedge_bps = (h_ask - h_bid) / mid * 1e4
+            self._hedge.append((t, self.raw_hedge_bps))
+            self._trim(self._hedge, t - p.spread_window_s)
+            self.hedge_bps = statistics.median([v for _, v in self._hedge])
         # A hedge leg we cannot see costs at least its fees; never less, so the gate cannot
         # be talked into opening by a missing book.
         self.cost_bps = self.hedge_bps + p.hedge_fee_bps + p.maker_fee_bps
