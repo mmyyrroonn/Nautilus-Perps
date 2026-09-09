@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import sys
 import tomllib
+import warnings
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -121,6 +122,17 @@ class LimitsError(ValueError):
     """Raised when the file exists but cannot produce a usable set of limits."""
 
 
+class LimitsWarning(UserWarning):
+    """A key the loader never asked for - almost always one under the wrong table header.
+
+    The whole gate block lived under ``[hedge]`` from 2026-09-09 to 2026-09-10 because it had
+    been appended to the end of the file, below the ``[hedge]`` header.  ``tomllib`` parsed it
+    happily, ``r.number("quote", "min_spread_ratio", ...)`` never found it, and the run used
+    the built-in defaults while the file said something else - silently, for two days.  Any key
+    the resolver did not consume is now reported.
+    """
+
+
 # ------------------------------------------------------------------ resolution rows
 
 
@@ -169,8 +181,12 @@ class _Resolver:
     def __init__(self, data: dict, rows: list[Row]) -> None:
         self._data = data
         self._rows = rows
+        # Every (table, key) any resolver asked for, so the loader can name the ones the file
+        # holds that nobody read.  See LimitsWarning.
+        self.asked: set[tuple[str, str]] = set()
 
     def _raw(self, section: str, key: str, default):
+        self.asked.add((section, key))
         block = self._data.get(section)
         if block is None:
             return default
@@ -392,6 +408,8 @@ class Limits:
     hedge: HedgeLimits = field(default_factory=HedgeLimits)
     rows: tuple[Row, ...] = ()
     source: str = "built-in defaults (no file)"
+    # Keys the file holds that no resolver read - see LimitsWarning.  Rendered by report().
+    unexpected: tuple[str, ...] = ()
 
     @property
     def capped_rows(self) -> list[Row]:
@@ -421,6 +439,14 @@ class Limits:
         lines += [r.line() for r in self.rows]
         capped = self.capped_rows
         lines.append("")
+        if self.unexpected:
+            lines.append(
+                f"  !! {len(self.unexpected)} key(s) in the file were NOT read - almost "
+                f"always a key under the wrong table header, which silently leaves the "
+                f"built-in default in force:",
+            )
+            lines += [f"       {name}" for name in self.unexpected]
+            lines.append("")
         if capped:
             lines.append(
                 f"  {len(capped)} value(s) were LOWERED to their hard cap: "
@@ -489,12 +515,31 @@ def _placement(r: _Resolver) -> str:
     return asked
 
 
-def load_limits(path: Path | str | None = None) -> Limits:
+def _unexpected_keys(data: dict, asked: set[tuple[str, str]]) -> tuple[str, ...]:
+    """Every key the file holds that no resolver asked for, as ``[table] key`` strings.
+
+    This is the check that would have caught the misplaced gate block: the keys were under
+    ``[hedge]``, the resolver only ever asked for them under ``[quote]``, and nothing said so.
+    """
+    out: list[str] = []
+    for table, block in data.items():
+        if not isinstance(block, dict):
+            out.append(f"{table} (a value outside any table)")
+            continue
+        out += [f"[{table}] {key}" for key in block if (table, key) not in asked]
+    return tuple(out)
+
+
+def load_limits(path: Path | str | None = None, *, strict: bool = False) -> Limits:
     """Load ``config/limits.toml``; a missing file yields the built-in defaults.
 
     Every capped key passes through ``min(config, CAP)``: the file can only lower a limit.
     Raises :class:`LimitsError` when a present file is malformed - a limits file that cannot
     be parsed must stop the run, never silently fall back to something looser.
+
+    Any key the file holds that no resolver read is reported: a :class:`LimitsWarning` by
+    default (and printed by :meth:`Limits.report`, so the dry-run shows it), or a
+    :class:`LimitsError` with ``strict=True``.
     """
     target = Path(path) if path is not None else DEFAULT_PATH
     rows: list[Row] = []
@@ -608,6 +653,18 @@ def load_limits(path: Path | str | None = None) -> Limits:
             f"[exposure] max_total_notional_usd {exposure.max_total_notional_usd:g}",
         )
 
+    unexpected = _unexpected_keys(data, r.asked)
+    if unexpected:
+        detail = ", ".join(unexpected)
+        message = (
+            f"{target}: {len(unexpected)} key(s) were not read: {detail}. A key under the "
+            f"wrong table header parses fine and then does nothing - the built-in default "
+            f"stays in force.  Move it under the table the loader reads it from."
+        )
+        if strict:
+            raise LimitsError(message)
+        warnings.warn(message, LimitsWarning, stacklevel=2)
+
     return Limits(
         order=order,
         inventory=inventory,
@@ -618,6 +675,7 @@ def load_limits(path: Path | str | None = None) -> Limits:
         hedge=hedge,
         rows=tuple(rows),
         source=source,
+        unexpected=unexpected,
     )
 
 

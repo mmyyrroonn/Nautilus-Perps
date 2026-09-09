@@ -3792,7 +3792,7 @@ def main(argv: list[str] | None = None) -> int:
     hedge_enabled = args.hedge == "aster"
 
     try:
-        limits = load_limits(args.limits)
+        limits = load_limits(args.limits, strict=(mode == "live"))
     except LimitsError as exc:
         print(f"[maker] refusing to start: {exc}", file=sys.stderr)
         return EXIT_REFUSED

@@ -30,6 +30,7 @@ import unittest
 from unittest import mock
 from datetime import datetime
 from datetime import timezone
+from dataclasses import replace as dc_replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -388,6 +389,25 @@ class MakerUnderTest(maker_live.LighterMaker):
         self.modified.append((client_order_id, quantity, price))
 
 
+SHIPPED_LIMITS = REPO / "config" / "limits.toml"
+
+
+def test_limits(**quote_overrides):
+    """The shipped limits with the QUOTING choice pinned, for the strategy tests.
+
+    A strategy test must measure the strategy, not today's configuration.  When the shipped
+    ``placement`` became ``anchor`` on 2026-09-10, twenty-five tests that had nothing to do
+    with placement started failing - the anchor holds its opening quotes back for a 30-sample
+    basis warm-up, so nothing was quoted inside their three decision ticks.  Every caps,
+    budget, kill-switch and order-plumbing limit stays exactly as shipped; only the knobs that
+    decide WHERE a quote rests are pinned, and ``TestShippedConfig`` covers what the file
+    itself says.
+    """
+    limits = load_limits(SHIPPED_LIMITS)
+    quote = dc_replace(limits.quote, **{"placement": "improve", **quote_overrides})
+    return dc_replace(limits, quote=quote)
+
+
 def build_strategy(
     *,
     mode: str = "paper",
@@ -402,7 +422,7 @@ def build_strategy(
 ) -> MakerUnderTest:
     """A started-up strategy over stub surfaces, writing its CSVs into a temp directory."""
     out = out if out is not None else Path(tempfile.mkdtemp(prefix="maker-"))
-    limits = limits if limits is not None else load_limits(REPO / "config" / "limits.toml")
+    limits = limits if limits is not None else test_limits()
     clock = clock if clock is not None else FakeClock()
     plan = maker_live.SYMBOLS["mainnet"]["PONS"]
     config = maker_live.MakerLiveConfig(
@@ -2156,21 +2176,12 @@ class TestStrategyPlacement(unittest.TestCase):
 
     @staticmethod
     def _anchor_limits(edge: float = 12.0):
-        """The shipped limits file with its placement switched to anchor, loaded for real.
+        """The test limits with the placement switched to anchor at a named edge.
 
-        Editing the two keys in place (rather than building a Limits object by hand) keeps
-        the loader, its floors and its cross-checks in the path this test exercises.
+        The edge is pinned here rather than inherited from the shipped file: these tests
+        assert exact prices, so they have to own the number that produces them.
         """
-        path = Path(tempfile.mkdtemp(prefix="limits-")) / "limits.toml"
-        text = (REPO / "config" / "limits.toml").read_text(encoding="utf-8")
-        for old, new in (
-            ('placement = "improve"', 'placement = "anchor"'),
-            ("anchor_edge_bps = 12.0", f"anchor_edge_bps = {edge:g}"),
-        ):
-            assert text.count(old) == 1, f"{old!r} is no longer in config/limits.toml"
-            text = text.replace(old, new)
-        path.write_text(text, encoding="utf-8")
-        return load_limits(path)
+        return test_limits(placement="anchor", anchor_edge_bps=edge)
 
     def _quote(self, strategy, seconds: int = 40) -> None:
         """Long enough by default to clear the anchor's 30-sample basis warm-up."""
@@ -2180,8 +2191,8 @@ class TestStrategyPlacement(unittest.TestCase):
             strategy._decide()
             strategy.clock.advance(1.0)
 
-    def test_the_default_strategy_still_improves(self) -> None:
-        strategy = build_strategy()
+    def test_the_improve_fixture_quotes_a_tick_inside_the_touch(self) -> None:
+        strategy = build_strategy(limits=test_limits(placement="improve"))
         self.assertEqual(strategy._engine.p.placement, "improve")
         self._quote(strategy)
         # m_ask 0.73220 less one tick.
@@ -2230,7 +2241,18 @@ class TestStrategyPlacement(unittest.TestCase):
 
 
 class TestStrategyOpeningGates(unittest.TestCase):
-    """The gates as the running strategy applies them, under the shipped limits."""
+    """The gates as the running strategy applies them.
+
+    The gate numbers are pinned by the fixture below rather than taken from the shipped file:
+    these tests assert exactly which books open and close the gate, so they have to own the
+    thresholds that decide it.  ``TestShippedConfig`` covers what the file ships today.
+    """
+
+    GATES = dict(min_spread_ratio=2.0, min_maker_spread_bps=12.0, max_move_bps_per_min=25.0)
+
+    @classmethod
+    def limits(cls, **over):
+        return test_limits(**{**cls.GATES, **over})
 
     @staticmethod
     def _quote(strategy, *, seconds: int = 3, **book) -> None:
@@ -2241,15 +2263,15 @@ class TestStrategyOpeningGates(unittest.TestCase):
             strategy._decide()
             strategy.clock.advance(1.0)
 
-    def test_the_gates_are_built_from_the_shipped_limits(self) -> None:
-        params = build_strategy()._gates.p
+    def test_the_gates_are_built_from_the_limits(self) -> None:
+        params = build_strategy(limits=self.limits())._gates.p
         self.assertEqual(params.min_spread_ratio, 2.0)
         self.assertEqual(params.min_maker_spread_bps, 12.0)
         self.assertEqual(params.max_move_bps_per_min, 25.0)
         self.assertEqual(params.hedge_fee_bps, maker_live.ASTER_TAKER_FEE_BPS)
 
     def test_a_book_that_pays_for_the_hedge_quotes_normally(self) -> None:
-        strategy = build_strategy()
+        strategy = build_strategy(limits=self.limits())
         self._quote(strategy)
         self.assertTrue(strategy._gates.open)
         self.assertIsNotNone(strategy._engine.orders[ASK])
@@ -2257,7 +2279,7 @@ class TestStrategyOpeningGates(unittest.TestCase):
 
     def test_the_2026_09_09_book_stops_the_strategy_opening(self) -> None:
         """5.5 bps of maker spread against a 4 bps hedge touch: nothing may be opened."""
-        strategy = build_strategy()
+        strategy = build_strategy(limits=self.limits())
         self._quote(strategy, m_bid="0.73000", m_ask="0.73040")
         self.assertFalse(strategy._gates.open)
         self.assertEqual(strategy._engine.orders, [None, None])
@@ -2266,7 +2288,7 @@ class TestStrategyOpeningGates(unittest.TestCase):
 
     def test_the_closing_side_keeps_quoting_while_the_gate_is_closed(self) -> None:
         """Inventory taken on before the gate closed must still be workable off passively."""
-        strategy = build_strategy()
+        strategy = build_strategy(limits=self.limits())
         strategy._q = 40.0  # long on Lighter: the ask closes, the bid would open
         self._quote(strategy, m_bid="0.73000", m_ask="0.73040")
         ask = strategy._engine.orders[ASK]
@@ -2276,7 +2298,7 @@ class TestStrategyOpeningGates(unittest.TestCase):
 
     def test_a_resting_opening_quote_is_pulled_when_the_book_narrows(self) -> None:
         """Live mode, so the cancel is a real venue call and not just an engine bookkeeping."""
-        strategy = build_strategy(mode="live")
+        strategy = build_strategy(mode="live", limits=self.limits())
         self._quote(strategy, seconds=2)
         self.assertTrue(strategy.submitted, "the wide book must have put quotes out")
         cancels = len(strategy.cancelled)
@@ -2286,14 +2308,14 @@ class TestStrategyOpeningGates(unittest.TestCase):
         self.assertGreater(strategy._engine.tx_cancel, 0)
 
     def test_the_kill_switch_is_untouched_by_a_closed_gate(self) -> None:
-        strategy = build_strategy()
+        strategy = build_strategy(limits=self.limits())
         self._quote(strategy, m_bid="0.73000", m_ask="0.73040")
         self.assertFalse(strategy._gates.open)
         self.assertIsNone(strategy.kill_reason)
         self.assertEqual(strategy.exit_code, maker_live.EXIT_OK)
 
     def test_the_status_line_and_the_summary_report_the_gate(self) -> None:
-        strategy = build_strategy()
+        strategy = build_strategy(limits=self.limits())
         self._quote(strategy, seconds=2, m_bid="0.73000", m_ask="0.73040")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

@@ -110,16 +110,6 @@ improve_ticks = 1
 # what the offline simulator does.
 close_min_flip = true
 
-[hedge]
-venue = "ASTER"
-# The hedge is a LIMIT IOC at the Aster touch offset by this much - never a MARKET order.
-slippage_bps = 20.0
-# Residual delta below this notional waits instead of being hedged one dust order at a time.
-# 0 = use the Aster instrument's own min_notional (5 USD).
-aggregate_min_notional_usd = 5.0
-# ... but it never waits longer than this before rounding up to the venue minimum.
-max_wait_s = 5.0
-
 # --- opening gates ------------------------------------------------------------------
 # Added after the 2026-09-09 mainnet session and the 09-07 / 09-08 replays; the reasoning and
 # the numbers behind them are in src/quote_gates.py.  Both gate ONLY the side that would grow
@@ -148,3 +138,14 @@ spread_window_s = 10
 max_move_bps_per_min = 50.0
 # Hard FLOOR 1 s.
 vol_window_s = 60
+
+[hedge]
+venue = "ASTER"
+# The hedge is a LIMIT IOC at the Aster touch offset by this much - never a MARKET order.
+slippage_bps = 20.0
+# Residual delta below this notional waits instead of being hedged one dust order at a time.
+# 0 = use the Aster instrument's own min_notional (5 USD).
+aggregate_min_notional_usd = 5.0
+# ... but it never waits longer than this before rounding up to the venue minimum.
+max_wait_s = 5.0
+

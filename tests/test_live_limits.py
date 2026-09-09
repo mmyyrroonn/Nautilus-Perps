@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import tomllib
 import unittest
+import warnings
 from pathlib import Path
 
 
@@ -37,6 +39,7 @@ from live_limits import FLOOR_MIN_MAKER_SPREAD_BPS  # noqa: E402
 from live_limits import FLOOR_MIN_SPREAD_RATIO  # noqa: E402
 from live_limits import EXPOSURE_HEADROOM  # noqa: E402
 from live_limits import LimitsError  # noqa: E402
+from live_limits import LimitsWarning  # noqa: E402
 from live_limits import load_limits  # noqa: E402
 
 
@@ -162,16 +165,159 @@ class TestDefaults(unittest.TestCase):
             load_limits(write_toml('[quote]\nclose_min_flip = "yes"\n'))
 
 
+# --------------------------------------------------------------------------- shipped file
+
+
+class TestShippedConfig(unittest.TestCase):
+    """What ``config/limits.toml`` actually says must be what the loader actually uses.
+
+    The bug this class exists for: from 2026-09-09 to 2026-09-10 the whole opening-gate block
+    sat BELOW the ``[hedge]`` header, because it had been appended to the end of the file.
+    ``tomllib`` read it as ``hedge.min_spread_ratio`` and friends, ``r.number("quote", ...)``
+    never found it, and every run used the built-in defaults 2 / 12 / 10 / 25 / 60 while the
+    file said 1.0 / 5 / 10 / 50 / 60.  Nothing complained.
+
+    So these tests do not hard-code the shipped numbers where they can avoid it: they parse
+    the file independently with ``tomllib`` and require the loaded value to equal the parsed
+    one, key by key.  A key that drifts under the wrong table fails here.
+    """
+
+    SHIPPED = REPO / "config" / "limits.toml"
+
+    @classmethod
+    def parsed(cls) -> dict:
+        """The file as tomllib sees it - the loader's input, not its output."""
+        return tomllib.loads(cls.SHIPPED.read_text(encoding="utf-8"))
+
+    # Every [quote] key, and the QuoteLimits attribute the loader must land it on.  Listed
+    # explicitly so a new key has to be added here too.
+    QUOTE_KEYS = (
+        "edge_min_bps", "reserve_bps", "requote_min_s", "tx_per_min", "improve_ticks",
+        "placement", "anchor_edge_bps", "basis_window_s", "basis_min_n", "anchor_skew_bps",
+        "close_min_flip", "min_spread_ratio", "min_maker_spread_bps", "spread_window_s",
+        "max_move_bps_per_min", "vol_window_s",
+    )
+
+    def test_every_quote_key_in_the_file_reaches_the_loader(self) -> None:
+        quote = load_limits(self.SHIPPED).quote
+        block = self.parsed()["quote"]
+        for key in self.QUOTE_KEYS:
+            with self.subTest(key=key):
+                self.assertIn(key, block, f"[quote] {key} is missing from the shipped file")
+                got = getattr(quote, key)
+                want = block[key]
+                if isinstance(got, float):
+                    self.assertAlmostEqual(got, float(want), places=9)
+                else:
+                    self.assertEqual(got, want)
+
+    def test_the_five_gate_keys_are_under_quote_and_not_under_hedge(self) -> None:
+        """The exact shape of the 2026-09-10 bug, asserted directly."""
+        data = self.parsed()
+        gates = ("min_spread_ratio", "min_maker_spread_bps", "spread_window_s",
+                 "max_move_bps_per_min", "vol_window_s")
+        for key in gates:
+            with self.subTest(key=key):
+                self.assertIn(key, data["quote"])
+                self.assertNotIn(key, data["hedge"])
+
+    def test_the_shipped_file_has_no_key_the_loader_ignores(self) -> None:
+        limits = load_limits(self.SHIPPED)
+        self.assertEqual(limits.unexpected, ())
+        load_limits(self.SHIPPED, strict=True)  # must not raise
+
+    def test_no_quote_key_silently_falls_back_to_a_built_in_default(self) -> None:
+        """A misplaced key looks exactly like "the file did not mention it", so compare the
+        shipped load against the no-file load and require the file to have MOVED something."""
+        shipped = load_limits(self.SHIPPED).quote
+        builtin = load_limits(Path(tempfile.mkdtemp()) / "nope.toml").quote
+        differing = [k for k in self.QUOTE_KEYS
+                     if getattr(shipped, k) != getattr(builtin, k)]
+        self.assertTrue(differing, "the shipped file changes nothing - is it being read?")
+
+    def test_what_the_file_ships_today(self) -> None:
+        """The current operating point, so a change to it is a deliberate edit here too."""
+        quote = load_limits(self.SHIPPED).quote
+        self.assertEqual(quote.placement, "anchor")
+        self.assertEqual(quote.anchor_edge_bps, 20.0)
+        self.assertEqual(quote.anchor_skew_bps, 0.0)
+        self.assertEqual(quote.basis_window_s, 300.0)
+        self.assertEqual(quote.basis_min_n, 30)
+        self.assertEqual(quote.min_spread_ratio, 1.0)
+        self.assertEqual(quote.min_maker_spread_bps, 5.0)
+        self.assertEqual(quote.spread_window_s, 10.0)
+        self.assertEqual(quote.max_move_bps_per_min, 50.0)
+        self.assertEqual(quote.vol_window_s, 60.0)
+
+
+class TestMisplacedKeys(unittest.TestCase):
+    """A key under a table the loader never reads it from must be reported, not ignored."""
+
+    @staticmethod
+    def misplaced() -> Path:
+        """The 2026-09-10 file: the gate block appended below the [hedge] header."""
+        return write_toml("\n".join((
+            "[quote]", "edge_min_bps = 3.0",
+            "[hedge]", 'venue = "ASTER"',
+            "min_spread_ratio = 1.0", "min_maker_spread_bps = 5.0",
+            "max_move_bps_per_min = 50.0", "",
+        )))
+
+    def test_a_misplaced_key_is_named_rather_than_ignored(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            limits = load_limits(self.misplaced())
+        self.assertEqual(
+            set(limits.unexpected),
+            {"[hedge] min_spread_ratio", "[hedge] min_maker_spread_bps",
+             "[hedge] max_move_bps_per_min"},
+        )
+        self.assertEqual(len(caught), 1)
+        self.assertIs(caught[0].category, LimitsWarning)
+        self.assertIn("[hedge] min_spread_ratio", str(caught[0].message))
+
+    def test_the_misplaced_keys_did_not_reach_the_gates(self) -> None:
+        """The point of the warning: the run silently used the defaults, not the file."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", LimitsWarning)
+            quote = load_limits(self.misplaced()).quote
+        self.assertEqual(quote.min_spread_ratio, 2.0)  # the built-in, not the file's 1.0
+        self.assertEqual(quote.max_move_bps_per_min, 25.0)  # not the file's 50.0
+
+    def test_strict_refuses_to_load_at_all(self) -> None:
+        with self.assertRaises(LimitsError) as caught:
+            load_limits(self.misplaced(), strict=True)
+        self.assertIn("[hedge] min_spread_ratio", str(caught.exception))
+
+    def test_an_outright_unknown_key_is_reported_too(self) -> None:
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            limits = load_limits(quote_toml("edge_min_bps = 3.0", "typo_here = 1"))
+        self.assertEqual(limits.unexpected, ("[quote] typo_here",))
+
+    def test_the_report_shows_them_so_the_dry_run_does(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", LimitsWarning)
+            report = load_limits(self.misplaced()).report()
+        self.assertIn("were NOT read", report)
+        self.assertIn("[hedge] min_spread_ratio", report)
+
+    def test_a_clean_file_warns_about_nothing(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            limits = load_limits(quote_toml("edge_min_bps = 3.0"))
+        self.assertEqual(limits.unexpected, ())
+        self.assertEqual(caught, [])
+
+
 # --------------------------------------------------------------------------- placement
 
 
 class TestPlacement(unittest.TestCase):
     """``[quote] placement`` and the anchor edge, plus the legacy ``improve_ticks`` spelling."""
 
-    def test_the_shipped_config_still_improves(self) -> None:
-        quote = load_limits(REPO / "config" / "limits.toml").quote
-        self.assertEqual(quote.placement, "improve")
-        self.assertEqual(quote.anchor_edge_bps, 12.0)
+    def test_the_mode_alias_follows_the_placement(self) -> None:
+        quote = load_limits(quote_toml('placement = "anchor"')).quote
         self.assertEqual(quote.mode, quote.placement)
 
     def test_every_placement_can_be_asked_for(self) -> None:
@@ -205,12 +351,10 @@ class TestPlacement(unittest.TestCase):
         edge = load_limits(quote_toml("anchor_edge_bps = 3.0")).quote.anchor_edge_bps
         self.assertEqual(edge, FLOOR_ANCHOR_EDGE_BPS)
 
-    def test_the_shipped_config_estimates_the_basis(self) -> None:
-        quote = load_limits(REPO / "config" / "limits.toml").quote
-        self.assertEqual(quote.basis_window_s, 300.0)
-        self.assertEqual(quote.basis_min_n, 30)
-        self.assertEqual(quote.anchor_skew_bps, 0.0)
-        self.assertEqual(quote.basis.window_s, 300.0)
+    def test_the_basis_params_are_built_from_the_two_keys(self) -> None:
+        quote = load_limits(quote_toml("basis_window_s = 120", "basis_min_n = 40")).quote
+        self.assertEqual(quote.basis.window_s, 120.0)
+        self.assertEqual(quote.basis.min_n, 40)
         self.assertTrue(quote.basis.on)
 
     def test_the_basis_estimate_may_be_lengthened_but_not_shortened(self) -> None:
@@ -250,16 +394,8 @@ class TestOpeningGates(unittest.TestCase):
     operator who wrote 0.5 must be told the run will not do that, not have it corrected.
     """
 
-    def test_the_shipped_config_carries_both_gates(self) -> None:
-        quote = load_limits(REPO / "config" / "limits.toml").quote
-        self.assertEqual(quote.min_spread_ratio, 2.0)
-        self.assertEqual(quote.min_maker_spread_bps, 12.0)
-        self.assertEqual(quote.spread_window_s, 10.0)
-        self.assertEqual(quote.max_move_bps_per_min, 25.0)
-        self.assertEqual(quote.vol_window_s, 60.0)
-
-    def test_defaults_match_the_shipped_config(self) -> None:
-        """A run with no file at all must still gate, at the same numbers."""
+    def test_the_built_in_defaults_still_gate(self) -> None:
+        """A run with no file at all must still gate, at the built-in numbers."""
         quote = load_limits(Path(tempfile.mkdtemp()) / "nope.toml").quote
         self.assertEqual(quote.min_spread_ratio, 2.0)
         self.assertEqual(quote.min_maker_spread_bps, 12.0)
