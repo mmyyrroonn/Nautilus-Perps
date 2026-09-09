@@ -288,7 +288,9 @@ def crypto(base: str) -> dict[str, tuple[str, float]]:
 # list them, ranked by the weakest venue's 24h volume (SOL kept as a liquidity control).
 CRYPTO_SYMBOLS = ["BTC", "ETH", "SOL", "HYPE", "ZEC", "PONS", "LIT", "ASTER", "DASH", "PUMP", "ARB",
                   # 2026-09-08 Lighter maker-spread screen candidates (reports/lighter-screen-2026-09-08.md)
-                  "XPL", "MON", "EIGEN", "TIA"]
+                  "XPL", "MON", "EIGEN", "TIA",
+                  # 2026-09-09 quick screen (spreads move day to day; record before trading)
+                  "VVV", "ETHFI", "AERO", "ZRO", "USELESS"]
 
 
 def stock(base: str, aster_symbol: str) -> dict[str, tuple[str, float]]:
@@ -330,6 +332,12 @@ for _base in CRYPTO_SYMBOLS:  # main-dex crypto perps: always live, smoke-test t
     INSTRUMENTS[_base] = crypto(_base)
 # ANSEM (screen rank 1, 2026-09-08) has no Hyperliquid listing: Lighter, Lighter RH and
 # Aster only, so the HL leg is simply absent rather than failing the symbol.
+# FF (screen rank 2, 2026-09-09) has no Hyperliquid listing either.
+INSTRUMENTS["FF"] = {
+    "LIGHTER": ("FF-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
+    "ASTER": ("FFUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
+    **lighter_rh("FF"),
+}
 INSTRUMENTS["ANSEM"] = {
     "LIGHTER": ("ANSEM-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
     "ASTER": ("ANSEMUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
