@@ -33,6 +33,13 @@ moment the day gives its profit back - at which point a session already past 300
 on the next check.  The loss kill switch is untouched by any of this.  Both the fallbacks and
 the caps are chosen so that no configuration produces a budget a losing day can reach.
 
+**Opening gates.**  ``[quote] min_spread_ratio`` / ``min_maker_spread_bps`` and
+``max_move_bps_per_min`` are the two rails added after the 2026-09-09 mainnet session (see
+``src/quote_gates.py`` for the evidence).  Their hard rail is a FLOOR, not a cap, because for
+these keys the smaller number is the looser one; a file that asks for less than the floor is
+refused rather than quietly raised.  ``max_move_bps_per_min`` carries both, since a larger
+number loosens THAT gate.
+
 Read-only, stdlib only (``tomllib`` is 3.11+).
 """
 
@@ -64,6 +71,23 @@ CAP_DAILY_TX = 60_000
 CAP_LOSS_USD = 20.0
 CAP_TX_PER_MIN = 40.0  # Lighter allows 40 sendTx/min per L1 address; never quote above it
 
+# ------------------------------------------------------------------ opening-gate rails
+#
+# The two opening gates (src/quote_gates.py) are rails whose SAFE direction is upwards for the
+# spread knobs and downwards for the volatility knob, so they are guarded by FLOORS rather than
+# by caps: a configuration file may demand a wider spread or a quieter market than the shipped
+# numbers, never a narrower one or a faster one.  A value below the floor is refused outright
+# instead of being silently raised, because a gate that has been configured off is not a
+# smaller run - it is the 2026-09-09 mainnet session again.
+FLOOR_MIN_SPREAD_RATIO = 1.0  # below 1.0 the maker spread would not even cover the hedge
+FLOOR_MIN_MAKER_SPREAD_BPS = 5.0
+FLOOR_MAX_MOVE_BPS_PER_MIN = 5.0  # a limit under this would never let the gate open
+FLOOR_GATE_WINDOW_S = 1.0  # a window has to hold at least one second of samples
+# ... and the volatility limit additionally carries a cap, because for THAT knob a larger
+# number is the looser one: without it a config could raise max_move_bps_per_min to infinity
+# and disable the gate, which is exactly what the rest of this module promises cannot happen.
+CAP_MAX_MOVE_BPS_PER_MIN = 50.0
+
 # A fully hedged maker holds -q on the hedge venue, so the GROSS two-leg notional the
 # [exposure] cap measures is 2 * |inventory|.  The headroom leaves room for mid drift between
 # the two venues and for a rounded-up dust hedge, so the exposure kill stays a backstop
@@ -82,12 +106,19 @@ class LimitsError(ValueError):
 
 @dataclass(frozen=True)
 class Row:
-    """One resolved key: what the file asked for, the hard cap, and what is used."""
+    """One resolved key: what the file asked for, its hard rail, and what is used.
+
+    The rail is a cap for almost every key (``applied = min(configured, cap)``) and a floor for
+    the opening-gate knobs, where a SMALLER number is the looser one: a value under the floor is
+    refused by the loader, so ``applied`` always equals ``configured`` on those rows and the
+    report shows the rail as ``>=floor``.
+    """
 
     key: str
     configured: object
     cap: object | None
     applied: object
+    floor: object | None = None
 
     @property
     def capped(self) -> bool:
@@ -98,7 +129,12 @@ class Row:
         return f"{value:g}" if isinstance(value, float) else str(value)
 
     def line(self) -> str:
-        cap = "-" if self.cap is None else self._fmt(self.cap)
+        if self.cap is not None:
+            cap = self._fmt(self.cap)
+        elif self.floor is not None:
+            cap = ">=" + self._fmt(self.floor)
+        else:
+            cap = "-"
         got = self._fmt(self.configured)
         use = self._fmt(self.applied)
         mark = "  <- CAPPED" if self.capped else ""
@@ -131,15 +167,28 @@ class _Resolver:
         *,
         minimum: float | None = 0.0,
         allow_negative: bool = False,
+        floor: float | None = None,
     ) -> float:
+        """Resolve one numeric key.
+
+        ``cap`` is the usual hard rail and is APPLIED (``min(config, cap)``).  ``floor`` is the
+        rail for the keys where a smaller number is the looser one - the opening gates - and is
+        REFUSED rather than applied: silently raising such a value would hide from the operator
+        that the run is not doing what the file says.
+        """
         raw = self._raw(section, key, default)
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise LimitsError(f"[{section}] {key} must be a number, got {raw!r}")
         value = float(raw)
         if not allow_negative and minimum is not None and value < minimum:
             raise LimitsError(f"[{section}] {key} must be >= {minimum:g}, got {value:g}")
+        if floor is not None and value < floor:
+            raise LimitsError(
+                f"[{section}] {key} {value:g} is below the hard floor {floor:g}: this is an "
+                f"opening gate, and configuration may only tighten it",
+            )
         applied = min(value, cap) if cap is not None else value
-        self._rows.append(Row(f"{section}.{key}", value, cap, applied))
+        self._rows.append(Row(f"{section}.{key}", value, cap, applied, floor))
         return applied
 
     def count(
@@ -244,6 +293,17 @@ class QuoteLimits:
     requote_min_s: float = 3.0
     tx_per_min: float = 36.0
     improve_ticks: int = 1
+    # The two opening gates (src/quote_gates.py).  They stop the side that would GROW the
+    # inventory; the closing side keeps quoting, and the kill switch is untouched by them.
+    # Spread gate: the maker touch spread, smoothed over spread_window_s, must be at least
+    # min_spread_ratio times the hedge round-trip cost (hedge touch spread + both fees) AND at
+    # least min_maker_spread_bps.
+    min_spread_ratio: float = 2.0
+    min_maker_spread_bps: float = 12.0
+    spread_window_s: float = 10.0
+    # Volatility gate: the maker mid's range over vol_window_s must stay under this.
+    max_move_bps_per_min: float = 25.0
+    vol_window_s: float = 60.0
     # When a closing clip would be under the maker venue's minimum order, quote it AT that
     # minimum instead of not quoting at all.  A full fill then carries the position through
     # zero by (venue_min - |q|), which is itself under the venue minimum.  False reproduces
@@ -336,6 +396,16 @@ class Limits:
             f"{CAP_DAILY_FILLS_PROFITABLE}); it re-locks when realised net falls back to 0",
         )
         lines.append(
+            f"  opening gates: spread >= max({self.quote.min_spread_ratio:g} x hedge "
+            f"round-trip cost, {self.quote.min_maker_spread_bps:g} bps) on the median of the "
+            f"last {self.quote.spread_window_s:g} s, and the maker mid range over "
+            f"{self.quote.vol_window_s:g} s <= {self.quote.max_move_bps_per_min:g} bps; "
+            f"hard floors {FLOOR_MIN_SPREAD_RATIO:g} / {FLOOR_MIN_MAKER_SPREAD_BPS:g} bps / "
+            f"{FLOOR_MAX_MOVE_BPS_PER_MIN:g} bps (cap {CAP_MAX_MOVE_BPS_PER_MIN:g}). "
+            f"They stop only the side that would GROW the inventory - the closing side keeps "
+            f"quoting and the kill switch is unchanged",
+        )
+        lines.append(
             f"  NOTE  [daily] counts FILL EVENTS ({self.daily.max_fills} base, "
             f"{self.daily.max_fills_profitable} when profitable), not the 20 triggers/day of "
             f"PROMPT.md stage 3 - a maker prints many small fills, and a partially filled clip "
@@ -411,6 +481,20 @@ def load_limits(path: Path | str | None = None) -> Limits:
         tx_per_min=r.number("quote", "tx_per_min", 36.0, CAP_TX_PER_MIN, minimum=1.0),
         improve_ticks=r.count("quote", "improve_ticks", 1, 1, minimum=0),
         close_min_flip=r.flag("quote", "close_min_flip", True),
+        min_spread_ratio=r.number(
+            "quote", "min_spread_ratio", 2.0, floor=FLOOR_MIN_SPREAD_RATIO,
+        ),
+        min_maker_spread_bps=r.number(
+            "quote", "min_maker_spread_bps", 12.0, floor=FLOOR_MIN_MAKER_SPREAD_BPS,
+        ),
+        spread_window_s=r.number(
+            "quote", "spread_window_s", 10.0, floor=FLOOR_GATE_WINDOW_S,
+        ),
+        max_move_bps_per_min=r.number(
+            "quote", "max_move_bps_per_min", 25.0, CAP_MAX_MOVE_BPS_PER_MIN,
+            floor=FLOOR_MAX_MOVE_BPS_PER_MIN,
+        ),
+        vol_window_s=r.number("quote", "vol_window_s", 60.0, floor=FLOOR_GATE_WINDOW_S),
     )
     hedge = HedgeLimits(
         venue=r.text("hedge", "venue", "ASTER", ("ASTER", "NONE")),

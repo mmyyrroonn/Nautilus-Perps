@@ -53,6 +53,8 @@ from maker_live import PaperBroker  # noqa: E402
 from maker_live import PnLMonitor  # noqa: E402
 from maker_live import QuoteEngine  # noqa: E402
 from maker_live import QuoteParams  # noqa: E402
+from quote_gates import GateParams  # noqa: E402
+from quote_gates import QuoteGates  # noqa: E402
 from nautilus_trader.model import ClientOrderId  # noqa: E402
 from nautilus_trader.model import CryptoPerpetual  # noqa: E402
 from nautilus_trader.model import Currency  # noqa: E402
@@ -423,10 +425,24 @@ def build_strategy(
     return strategy
 
 
-def feed_books(strategy: MakerUnderTest, *, m_bid="0.73000", m_ask="0.73040",
+def feed_books(strategy: MakerUnderTest, *, m_bid="0.72820", m_ask="0.73220",
                h_bid="0.72980", h_ask="0.73010", h_bid_size="5000",
                h_ask_size="5000") -> None:
-    """Push one quote per leg so the strategy has a complete book sample."""
+    """Push one quote per leg so the strategy has a complete book sample.
+
+    The maker touch is 55 bps wide against a 4 bps hedge touch - the PONS book of the 09-07
+    recording, and a book the opening gates accept.  It has to be: the shipped
+    ``config/limits.toml`` refuses to open inventory under 12 bps of maker spread, so the
+    narrower 5.5 bps book this fixture used to carry (which is the 09-09 book the gates were
+    written to refuse) would leave every strategy test with nothing quoted at all.  Both maker
+    mid and cross-venue mid are unchanged from that older fixture, so the marks, the P&L and
+    the hedge arithmetic are the same numbers as before.
+
+    Note that a book wide enough to pass the spread gate necessarily leaves an opening edge on
+    BOTH sides - the gate demands ``maker spread >= 2 x (hedge spread + fees)``, and the two
+    opening edges sum to ``maker spread - hedge spread - 2 ticks - 2 fees`` - so the strategy
+    rests two quotes here where the old narrow fixture rested one.
+    """
     strategy.on_quote(FakeQuote(MAKER_ID, m_bid, m_ask))
     strategy.on_quote(FakeQuote(HEDGE_ID, h_bid, h_ask,
                                 bid_size=h_bid_size, ask_size=h_ask_size))
@@ -511,10 +527,12 @@ def build_tape(n: int = 120, tob_scale: float = 1.0):
     return books, trades
 
 
-def replay_live(books, trades, params: QuoteParams):
+def replay_live(books, trades, params: QuoteParams, gates: QuoteGates | None = None):
     """Replay the tape through QuoteEngine + PaperBroker exactly as ``simulate()`` does.
 
-    Sample ``i`` decides both quotes; the trades of ``(t_i, t_i+1]`` then hit them.
+    Sample ``i`` decides both quotes; the trades of ``(t_i, t_i+1]`` then hit them.  ``gates``
+    is the live side of the opening gates: ``simulate()`` builds its own from the same knobs,
+    so feeding both the same tape is what makes the gate decision checkable, not assumed.
     """
     engine = QuoteEngine(params)
     broker = PaperBroker(engine)
@@ -532,7 +550,16 @@ def replay_live(books, trades, params: QuoteParams):
             m_bid_size=books.m_bid_size[i], m_ask_size=books.m_ask_size[i],
             h_bid=books.h_bid[i], h_ask=books.h_ask[i],
         )
-        engine.step(sample, q)
+        gated = False
+        if gates is not None:
+            gates.update(
+                t,
+                m_bid=sample.m_bid, m_ask=sample.m_ask,
+                h_bid=sample.h_bid, h_ask=sample.h_ask,
+                mid=sample.mid, dur=t_next - t,
+            )
+            gated = not gates.open
+        engine.step(sample, q, opening_gated=gated)
         while ti < ntr and trades.t[ti] <= t_next:
             for fill in broker.on_trade(
                 trades.price[ti], trades.size[ti], trades.buy[ti] == 1, trades.t[ti],
@@ -564,6 +591,21 @@ def live_params(mode: str = "improve", **over) -> QuoteParams:
     return params
 
 
+# The opening-gate knobs.  They live on maker_inventory.Params for the replay and on a
+# quote_gates.GateParams for the live engine, so _compare() routes them to both.
+GATE_KEYS = (
+    "min_spread_ratio", "min_maker_spread_bps", "spread_window_s",
+    "max_move_bps_per_min", "vol_window_s",
+)
+
+
+def live_gates(**over) -> QuoteGates | None:
+    """The live copy of the gates ``simulate()`` builds from the same knobs."""
+    if not over:
+        return None
+    return QuoteGates(GateParams(hedge_fee_bps=FEE_H, maker_fee_bps=0.0, **over))
+
+
 def sim_params(mode: str = "improve", **over):
     kwargs = dict(SIM_KWARGS)
     kwargs.update(mode=mode, tx_per_min=36.0, requote_ticks=1, requote_min_s=3.0)
@@ -579,12 +621,15 @@ class TestQuotingParity(unittest.TestCase):
     """
 
     def _compare(self, mode: str, tob_scale: float = 1.0, **over) -> None:
+        gate = {k: over.pop(k) for k in list(over) if k in GATE_KEYS}
         books, trades = build_tape(tob_scale=tob_scale)
         run = maker_inventory.simulate(
             books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
-            p=sim_params(mode, **over),
+            p=sim_params(mode, **over, **gate),
         )
-        engine, fills, q = replay_live(books, trades, live_params(mode, **over))
+        engine, fills, q = replay_live(
+            books, trades, live_params(mode, **over), live_gates(**gate),
+        )
 
         with self.subTest("the tape must actually fill, or the test proves nothing"):
             self.assertGreater(len(run.incs), 20)
@@ -608,6 +653,7 @@ class TestQuotingParity(unittest.TestCase):
         self.assertEqual(sum(run.capped), engine.counters["capped"])
         self.assertEqual(sum(run.locked), engine.counters["locked"])
         self.assertEqual(sum(run.tx_deferred), engine.counters["deferred"])
+        self.assertEqual(sum(run.gate_blocked), engine.counters["gate"])
 
     def test_improve_mode_matches(self) -> None:
         self._compare("improve")
@@ -651,6 +697,60 @@ class TestQuotingParity(unittest.TestCase):
         """A cap this small keeps the closing side in play for most of the tape."""
         self._compare("improve", max_inv_usd=25.0)
 
+    # -- the opening gates ----------------------------------------------------------------
+    #
+    # The tape's maker touch spread is 0.55 / 0.62 / 0.69 bps against a 0.69 bps hedge spread
+    # plus the 0.9 bps hedge fee, and its mid ranges 1.6 to 2.9 bps over six seconds, so
+    # these thresholds sit inside both distributions and make each gate open and close instead
+    # of being trivially on or off for all 120 samples.
+
+    def test_matches_with_the_spread_gate_closing_and_reopening(self) -> None:
+        self._compare("improve", min_spread_ratio=0.4, spread_window_s=5.0)
+
+    def test_matches_with_the_maker_spread_floor_biting(self) -> None:
+        self._compare("improve", min_maker_spread_bps=0.65, spread_window_s=5.0)
+
+    def test_matches_with_the_volatility_gate_closing_and_reopening(self) -> None:
+        self._compare("improve", max_move_bps_per_min=2.5, vol_window_s=6.0)
+
+    def test_matches_with_both_gates_on(self) -> None:
+        self._compare(
+            "improve", min_spread_ratio=0.4, spread_window_s=5.0,
+            max_move_bps_per_min=2.5, vol_window_s=6.0,
+        )
+
+    def test_the_gates_actually_bite_on_this_tape(self) -> None:
+        """Guard the four cases above: a gate that never closes proves nothing."""
+        books, trades = build_tape()
+        gated = maker_inventory.simulate(
+            books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
+            p=sim_params("improve", min_spread_ratio=0.4, spread_window_s=5.0,
+                         max_move_bps_per_min=2.5, vol_window_s=6.0),
+        )
+        self.assertGreater(sum(gated.gate_blocked), 0)
+        self.assertGreater(gated.gate_spread_closed_s, 0.0)
+        self.assertLess(gated.gate_spread_closed_s, gated.twa_den)
+        self.assertGreater(gated.gate_vol_closed_s, 0.0)
+        self.assertLess(gated.gate_vol_closed_s, gated.twa_den)
+
+    def test_the_gate_knobs_at_zero_leave_the_replay_untouched(self) -> None:
+        """The offline default is 0/0/0, and it must reproduce the pre-gate results exactly."""
+        books, trades = build_tape()
+        plain = maker_inventory.simulate(
+            books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H, p=sim_params("improve"),
+        )
+        zeroed = maker_inventory.simulate(
+            books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
+            p=sim_params("improve", min_spread_ratio=0.0, min_maker_spread_bps=0.0,
+                         max_move_bps_per_min=0.0),
+        )
+        self.assertEqual(plain.incs, zeroed.incs)
+        self.assertEqual(plain.tx_sent, zeroed.tx_sent)
+        self.assertEqual(sum(plain.gate_blocked), 0)
+        self.assertEqual(plain.gate_closed_s, 0.0)
+        self.assertEqual(plain.gate_spread_closed_s, 0.0)
+        self.assertEqual(plain.gate_vol_closed_s, 0.0)
+
 
 # --------------------------------------------------------------------------- engine only
 
@@ -688,6 +788,30 @@ class TestQuoteEngineRestrictions(unittest.TestCase):
         by_side = {a.side: a.quote for a in actions}
         self.assertTrue(by_side[BID].closing, "short inventory -> the bid closes")
         self.assertFalse(by_side[ASK].closing, "and the ask opens on the cross-venue edge")
+
+    def test_the_opening_side_is_gated_but_the_closing_side_is_not(self) -> None:
+        """A closed opening gate may only ever remove the side that GROWS the inventory."""
+        engine = QuoteEngine(live_params())
+        actions = engine.step(self.sample(), q=0.0, opening_gated=True)
+        self.assertEqual(actions, [])
+        self.assertGreater(engine.counters["gate"], 0)
+
+        # Long: the ask now CLOSES, so a closed gate must not silence it.
+        engine = QuoteEngine(live_params())
+        actions = engine.step(self.sample(), q=40.0, opening_gated=True)
+        self.assertEqual([a.side for a in actions], [ASK])
+        self.assertTrue(actions[0].quote.closing)
+
+    def test_a_resting_opening_quote_is_cancelled_when_a_gate_closes(self) -> None:
+        """And the cancel is a real transaction, drawn from the same token bucket."""
+        engine = QuoteEngine(live_params())
+        engine.step(self.sample(), q=0.0)
+        self.assertIsNotNone(engine.orders[ASK])
+        cancels = engine.tx_cancel
+        actions = engine.step(self.sample(t=1001.0), q=0.0, opening_gated=True)
+        self.assertTrue(any(a.kind == maker_live.CANCEL for a in actions))
+        self.assertIsNone(engine.orders[ASK])
+        self.assertEqual(engine.tx_cancel, cancels + 1)
 
     def test_a_resting_quote_is_cancelled_when_the_gate_closes(self) -> None:
         engine = QuoteEngine(live_params())
@@ -748,6 +872,150 @@ class TestQuoteEngineRestrictions(unittest.TestCase):
         self.assertEqual(len(actions), 2)
         self.assertTrue(all(a.kind == maker_live.CANCEL for a in actions))
         self.assertEqual(engine.orders, [None, None])
+
+
+# --------------------------------------------------------------------------- gates
+
+
+class TestQuoteGates(unittest.TestCase):
+    """``quote_gates.QuoteGates``: the rule shared by the live maker and the replay.
+
+    The numbers come from the sessions that motivated it - a 46 bps Lighter touch on the
+    09-07 recording, 5.9 bps against an ~8 bps Aster touch plus a 0.9 bps taker fee on
+    2026-09-09 mainnet.
+    """
+
+    def gates(self, **over) -> QuoteGates:
+        base = dict(
+            min_spread_ratio=2.0, min_maker_spread_bps=12.0, spread_window_s=10.0,
+            hedge_fee_bps=0.9, maker_fee_bps=0.0,
+        )
+        base.update(over)
+        return QuoteGates(GateParams(**base))
+
+    @staticmethod
+    def push(gates: QuoteGates, t: float, *, maker_bps: float, hedge_bps: float = 7.7,
+             mid: float = 0.78, dur: float = 1.0) -> list[str]:
+        """One sample with both venues centred on ``mid`` and the touches given in bps."""
+        half_m = mid * maker_bps / 2e4
+        half_h = mid * hedge_bps / 2e4
+        return gates.update(
+            t, m_bid=mid - half_m, m_ask=mid + half_m,
+            h_bid=mid - half_h, h_ask=mid + half_h, mid=mid, dur=dur,
+        )
+
+    def test_a_wide_maker_spread_opens_the_gate(self) -> None:
+        gates = self.gates()
+        self.push(gates, 1000.0, maker_bps=46.0)
+        self.assertTrue(gates.open)
+        self.assertAlmostEqual(gates.spread_bps, 46.0, places=6)
+        self.assertAlmostEqual(gates.cost_bps, 7.7 + 0.9, places=6)
+
+    def test_the_2026_09_09_book_closes_the_gate(self) -> None:
+        gates = self.gates()
+        lines = self.push(gates, 1000.0, maker_bps=5.9)
+        self.assertFalse(gates.open)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("spread gate closed", lines[0])
+        self.assertIn("5.9 bps < 2 x 8.6 bps", lines[0])
+        self.assertIn("hedge 7.7 + fees 0.9", lines[0])
+
+    def test_the_absolute_floor_closes_the_gate_on_its_own(self) -> None:
+        """A 10 bps spread clears 2 x a cheap hedge and is still not worth quoting."""
+        gates = self.gates()
+        lines = self.push(gates, 1000.0, maker_bps=10.0, hedge_bps=0.5)
+        self.assertFalse(gates.open)
+        self.assertIn("floor 12 bps", lines[0])
+
+    def test_the_transition_is_announced_once_not_once_a_sample(self) -> None:
+        gates = self.gates()
+        self.push(gates, 1000.0, maker_bps=46.0)
+        said = 0
+        for i in range(1, 11):
+            said += len(self.push(gates, 1000.0 + i, maker_bps=5.9))
+        self.assertEqual(said, 1, "one line for the close, nothing for the ten samples after")
+        self.assertEqual(gates.transitions, 1)
+        # ... and one more when it re-opens, not one per sample either.
+        said = 0
+        for i in range(11, 40):
+            said += len(self.push(gates, 1000.0 + i, maker_bps=46.0))
+        self.assertEqual(said, 1)
+        self.assertIn("spread gate open", gates._spread_line())
+
+    def test_the_median_rides_out_a_single_wide_sample(self) -> None:
+        """The gate reads a rolling median precisely so one flickering print cannot open it."""
+        gates = self.gates(spread_window_s=10.0)
+        for i in range(9):
+            self.push(gates, 1000.0 + i, maker_bps=5.9)
+        self.assertFalse(gates.open)
+        self.push(gates, 1009.0, maker_bps=60.0)
+        self.assertFalse(gates.open, "one wide sample must not re-open the gate")
+        self.assertAlmostEqual(gates.raw_spread_bps, 60.0, places=6)
+
+    def test_the_window_forgets_samples_older_than_it(self) -> None:
+        gates = self.gates(spread_window_s=10.0)
+        for i in range(10):
+            self.push(gates, 1000.0 + i, maker_bps=5.9)
+        for i in range(10, 25):
+            self.push(gates, 1000.0 + i, maker_bps=46.0)
+        self.assertTrue(gates.open)
+        self.assertAlmostEqual(gates.spread_bps, 46.0, places=6)
+
+    def test_the_volatility_gate_closes_while_the_mid_runs(self) -> None:
+        gates = self.gates(
+            min_spread_ratio=0.0, min_maker_spread_bps=0.0,
+            max_move_bps_per_min=25.0, vol_window_s=60.0,
+        )
+        for i in range(10):
+            self.push(gates, 1000.0 + i, maker_bps=46.0, mid=0.78)
+        self.assertTrue(gates.open)
+        lines = self.push(gates, 1010.0, maker_bps=46.0, mid=0.78 * 1.004)  # a 40 bps jump
+        self.assertFalse(gates.open)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("volatility gate closed", lines[0])
+        self.assertGreater(gates.vol_bps, 25.0)
+        # Once the jump has aged out of the window the gate re-opens by itself.
+        lines = self.push(gates, 1090.0, maker_bps=46.0, mid=0.78 * 1.004)
+        self.assertTrue(gates.open)
+        self.assertIn("volatility gate open", lines[0])
+
+    def test_both_gates_must_be_open_to_open_inventory(self) -> None:
+        gates = self.gates(max_move_bps_per_min=25.0, vol_window_s=60.0)
+        self.push(gates, 1000.0, maker_bps=46.0, mid=0.78)
+        self.assertTrue(gates.open)
+        self.push(gates, 1001.0, maker_bps=46.0, mid=0.78 * 1.01)  # vol only
+        self.assertTrue(gates.spread_open)
+        self.assertFalse(gates.vol_open)
+        self.assertFalse(gates.open)
+
+    def test_knobs_at_zero_never_close_anything(self) -> None:
+        gates = QuoteGates(GateParams(hedge_fee_bps=0.9))
+        self.assertFalse(gates.p.on)
+        for i in range(20):
+            self.assertEqual(self.push(gates, 1000.0 + i, maker_bps=0.1, mid=0.78 * (1 + i)), [])
+        self.assertTrue(gates.open)
+        self.assertEqual(gates.closed_s, 0.0)
+
+    def test_the_closed_share_is_time_weighted(self) -> None:
+        # A window shorter than the sample spacing takes the median of one sample, so the
+        # share below is the raw book and not the smoothing.
+        gates = self.gates(spread_window_s=0.5)
+        for i in range(3):
+            self.push(gates, 1000.0 + i, maker_bps=46.0, dur=1.0)
+        for i in range(3, 5):
+            self.push(gates, 1000.0 + i, maker_bps=5.9, dur=1.0)
+        self.assertAlmostEqual(gates.total_s, 5.0, places=9)
+        self.assertAlmostEqual(gates.closed_pct, 40.0, places=6)
+        self.assertAlmostEqual(gates.spread_closed_pct, 40.0, places=6)
+        self.assertAlmostEqual(gates.vol_closed_pct, 0.0, places=6)
+        self.assertIn("gate=closed", gates.status())
+
+    def test_a_missing_hedge_book_never_talks_the_gate_open(self) -> None:
+        """With no hedge touch the round trip still costs its fees, never zero."""
+        gates = self.gates()
+        gates.update(1000.0, m_bid=0.77, m_ask=0.79, h_bid=0.0, h_ask=0.0, mid=0.78)
+        self.assertAlmostEqual(gates.cost_bps, 0.9, places=9)
+        self.assertTrue(gates.open)  # 256 bps of maker spread clears 2 x 0.9 and the floor
 
 
 # --------------------------------------------------------------------------- min clip
@@ -1431,6 +1699,86 @@ class TestPnLMonitor(unittest.TestCase):
 # --------------------------------------------------------------------------- strategy
 
 
+class TestStrategyOpeningGates(unittest.TestCase):
+    """The gates as the running strategy applies them, under the shipped limits."""
+
+    @staticmethod
+    def _quote(strategy, *, seconds: int = 3, **book) -> None:
+        """Run ``seconds`` decision ticks past the startup grace on the given book."""
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        for _ in range(seconds):
+            feed_books(strategy, **book)
+            strategy._decide()
+            strategy.clock.advance(1.0)
+
+    def test_the_gates_are_built_from_the_shipped_limits(self) -> None:
+        params = build_strategy()._gates.p
+        self.assertEqual(params.min_spread_ratio, 2.0)
+        self.assertEqual(params.min_maker_spread_bps, 12.0)
+        self.assertEqual(params.max_move_bps_per_min, 25.0)
+        self.assertEqual(params.hedge_fee_bps, maker_live.ASTER_TAKER_FEE_BPS)
+
+    def test_a_book_that_pays_for_the_hedge_quotes_normally(self) -> None:
+        strategy = build_strategy()
+        self._quote(strategy)
+        self.assertTrue(strategy._gates.open)
+        self.assertIsNotNone(strategy._engine.orders[ASK])
+        self.assertEqual(strategy._gates.closed_pct, 0.0)
+
+    def test_the_2026_09_09_book_stops_the_strategy_opening(self) -> None:
+        """5.5 bps of maker spread against a 4 bps hedge touch: nothing may be opened."""
+        strategy = build_strategy()
+        self._quote(strategy, m_bid="0.73000", m_ask="0.73040")
+        self.assertFalse(strategy._gates.open)
+        self.assertEqual(strategy._engine.orders, [None, None])
+        self.assertGreater(strategy._engine.counters["gate"], 0)
+        self.assertEqual(strategy._gates.closed_pct, 100.0)
+
+    def test_the_closing_side_keeps_quoting_while_the_gate_is_closed(self) -> None:
+        """Inventory taken on before the gate closed must still be workable off passively."""
+        strategy = build_strategy()
+        strategy._q = 40.0  # long on Lighter: the ask closes, the bid would open
+        self._quote(strategy, m_bid="0.73000", m_ask="0.73040")
+        ask = strategy._engine.orders[ASK]
+        self.assertIsNotNone(ask, "the closing ask must survive a closed gate")
+        self.assertTrue(ask.closing)
+        self.assertIsNone(strategy._engine.orders[BID], "but the opening bid must not")
+
+    def test_a_resting_opening_quote_is_pulled_when_the_book_narrows(self) -> None:
+        """Live mode, so the cancel is a real venue call and not just an engine bookkeeping."""
+        strategy = build_strategy(mode="live")
+        self._quote(strategy, seconds=2)
+        self.assertTrue(strategy.submitted, "the wide book must have put quotes out")
+        cancels = len(strategy.cancelled)
+        self._quote(strategy, seconds=2, m_bid="0.73000", m_ask="0.73040")
+        self.assertGreater(len(strategy.cancelled), cancels)
+        self.assertEqual(strategy._engine.orders, [None, None])
+        self.assertGreater(strategy._engine.tx_cancel, 0)
+
+    def test_the_kill_switch_is_untouched_by_a_closed_gate(self) -> None:
+        strategy = build_strategy()
+        self._quote(strategy, m_bid="0.73000", m_ask="0.73040")
+        self.assertFalse(strategy._gates.open)
+        self.assertIsNone(strategy.kill_reason)
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_OK)
+
+    def test_the_status_line_and_the_summary_report_the_gate(self) -> None:
+        strategy = build_strategy()
+        self._quote(strategy, seconds=2, m_bid="0.73000", m_ask="0.73040")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            strategy._status()
+        line = out.getvalue()
+        self.assertIn("spread L=", line)
+        self.assertIn("vol=", line)
+        self.assertIn("gate=closed", line)
+        summary = strategy.summary()
+        self.assertIn("gate=closed", summary)
+        self.assertIn("gate_closed_spread=100.0%", summary)
+        self.assertIn("gate_closed_vol=0.0%", summary)
+        self.assertIn("gate_closed_any=100.0%", summary)
+
+
 class TestStrategy(unittest.TestCase):
     """The wiring: fills move the inventory, arm the hedge, and stop the run when they must."""
 
@@ -1461,7 +1809,7 @@ class TestStrategy(unittest.TestCase):
         self.assertIsNotNone(strategy._engine.orders[ASK])
 
         # A BUY aggressor through our ask fills the resting sell.
-        strategy.on_trade(FakeTrade(MAKER_ID, "0.73040", "30", "BUY"))
+        strategy.on_trade(FakeTrade(MAKER_ID, "0.73220", "30", "BUY"))
         self.assertLess(strategy._q, 0.0, "a maker sell must leave us short")
         self.assertEqual(strategy._state.fills, 1)
         # The hedge is a BUY on Aster.  Aster's step is 1 PONS while Lighter's is 0.1, so a
@@ -1482,7 +1830,7 @@ class TestStrategy(unittest.TestCase):
         feed_books(strategy)
         strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
         strategy._decide()
-        strategy.on_trade(FakeTrade(MAKER_ID, "0.73040", "30", "BUY"))
+        strategy.on_trade(FakeTrade(MAKER_ID, "0.73220", "30", "BUY"))
         strategy._fills.close()
         rows = (out / "fills.csv").read_text(encoding="utf-8").strip().splitlines()
         self.assertEqual(rows[0].split(",")[:5], ["ts", "leg", "venue", "side", "kind"])
@@ -1586,7 +1934,7 @@ class TestStrategy(unittest.TestCase):
         strategy._decide()
         placed = len(strategy.submitted)
         strategy.clock.advance(strategy._limits.quote.requote_min_s + 1.0)
-        feed_books(strategy, m_bid="0.73010", m_ask="0.73050")
+        feed_books(strategy, m_bid="0.72830", m_ask="0.73230")
         strategy._decide()
         self.assertTrue(strategy.modified, "the touch moved, so the quote must be re-priced")
         self.assertEqual(len(strategy.submitted), placed, "a modify must not create an order")
@@ -1700,7 +2048,7 @@ class TestStrategy(unittest.TestCase):
         feed_books(strategy)
         strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
         strategy._decide()
-        strategy.on_trade(FakeTrade(MAKER_ID, "0.73040", "30", "BUY"))
+        strategy.on_trade(FakeTrade(MAKER_ID, "0.73220", "30", "BUY"))
         payload = json.loads((out / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["fills"], 1)
         self.assertGreater(payload["tx"], 0)
@@ -2330,9 +2678,14 @@ class TestStaleOrderReferences(unittest.TestCase):
         resting.close("FILLED")  # the venue filled it; no event reached us
 
         strategy.clock.advance(strategy._limits.quote.requote_min_s + 1.0)
-        feed_books(strategy, m_bid="0.73010", m_ask="0.73050")
+        feed_books(strategy, m_bid="0.72830", m_ask="0.73230")
         strategy._decide()
-        self.assertEqual(strategy.modified, [], "a dead order must not be re-priced")
+        # The OTHER side is alive and its touch moved, so a modify for it is expected; what
+        # must never be sent is one addressed to the order the venue has already filled.
+        self.assertNotIn(
+            resting.client_order_id, [cid for cid, _, _ in strategy.modified],
+            "a dead order must not be re-priced",
+        )
         self.assertEqual(strategy._stale_refs_dropped, 1)
 
         # And the next tick places a fresh order on that side.
@@ -2368,7 +2721,7 @@ class TestStaleOrderReferences(unittest.TestCase):
         strategy = self.armed()
         strategy.submitted[0].close("FILLED")
         strategy.clock.advance(strategy._limits.quote.requote_min_s + 1.0)
-        feed_books(strategy, m_bid="0.73010", m_ask="0.73050")
+        feed_books(strategy, m_bid="0.72830", m_ask="0.73230")
         strategy._decide()
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

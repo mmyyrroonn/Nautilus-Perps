@@ -28,7 +28,12 @@ from live_limits import CAP_LOSS_USD  # noqa: E402
 from live_limits import CAP_ORDER_NOTIONAL_USD  # noqa: E402
 from live_limits import CAP_TOTAL_NOTIONAL_USD  # noqa: E402
 from live_limits import CAP_TX_PER_MIN  # noqa: E402
+from live_limits import CAP_MAX_MOVE_BPS_PER_MIN  # noqa: E402
 from live_limits import CAP_UNHEDGED_USD  # noqa: E402
+from live_limits import FLOOR_GATE_WINDOW_S  # noqa: E402
+from live_limits import FLOOR_MAX_MOVE_BPS_PER_MIN  # noqa: E402
+from live_limits import FLOOR_MIN_MAKER_SPREAD_BPS  # noqa: E402
+from live_limits import FLOOR_MIN_SPREAD_RATIO  # noqa: E402
 from live_limits import EXPOSURE_HEADROOM  # noqa: E402
 from live_limits import LimitsError  # noqa: E402
 from live_limits import load_limits  # noqa: E402
@@ -43,6 +48,11 @@ def write_toml(text: str) -> Path:
     path = directory / "limits.toml"
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def quote_toml(*lines: str) -> Path:
+    """A temporary limits file holding nothing but a ``[quote]`` section."""
+    return write_toml("\n".join(("[quote]", *lines)) + "\n")
 
 
 # --------------------------------------------------------------------------- defaults
@@ -149,6 +159,91 @@ class TestDefaults(unittest.TestCase):
     def test_close_min_flip_must_be_a_boolean(self) -> None:
         with self.assertRaises(LimitsError):
             load_limits(write_toml('[quote]\nclose_min_flip = "yes"\n'))
+
+
+# --------------------------------------------------------------------------- gates
+
+
+class TestOpeningGates(unittest.TestCase):
+    """``[quote]`` opening gates: the file may tighten one, never switch one off.
+
+    Their rail is a FLOOR rather than a cap, because for these keys a SMALLER number is the
+    looser one, and a value under the floor is refused rather than silently raised - an
+    operator who wrote 0.5 must be told the run will not do that, not have it corrected.
+    """
+
+    def test_the_shipped_config_carries_both_gates(self) -> None:
+        quote = load_limits(REPO / "config" / "limits.toml").quote
+        self.assertEqual(quote.min_spread_ratio, 2.0)
+        self.assertEqual(quote.min_maker_spread_bps, 12.0)
+        self.assertEqual(quote.spread_window_s, 10.0)
+        self.assertEqual(quote.max_move_bps_per_min, 25.0)
+        self.assertEqual(quote.vol_window_s, 60.0)
+
+    def test_defaults_match_the_shipped_config(self) -> None:
+        """A run with no file at all must still gate, at the same numbers."""
+        quote = load_limits(Path(tempfile.mkdtemp()) / "nope.toml").quote
+        self.assertEqual(quote.min_spread_ratio, 2.0)
+        self.assertEqual(quote.min_maker_spread_bps, 12.0)
+        self.assertEqual(quote.max_move_bps_per_min, 25.0)
+
+    def test_the_file_may_tighten_every_gate(self) -> None:
+        limits = load_limits(quote_toml(
+            "min_spread_ratio = 3.5",
+            "min_maker_spread_bps = 20.0",
+            "max_move_bps_per_min = 10.0",
+            "spread_window_s = 30",
+            "vol_window_s = 120",
+        ))
+        self.assertEqual(limits.quote.min_spread_ratio, 3.5)
+        self.assertEqual(limits.quote.min_maker_spread_bps, 20.0)
+        self.assertEqual(limits.quote.max_move_bps_per_min, 10.0)
+        self.assertEqual(limits.quote.spread_window_s, 30.0)
+        self.assertEqual(limits.quote.vol_window_s, 120.0)
+
+    def test_a_spread_ratio_under_the_floor_is_refused(self) -> None:
+        with self.assertRaises(LimitsError) as caught:
+            load_limits(quote_toml("min_spread_ratio = 0.5"))
+        self.assertIn("hard floor", str(caught.exception))
+
+    def test_the_spread_gate_cannot_be_switched_off(self) -> None:
+        for key in ("min_spread_ratio", "min_maker_spread_bps"):
+            with self.subTest(key=key), self.assertRaises(LimitsError):
+                load_limits(quote_toml(f"{key} = 0.0"))
+
+    def test_a_maker_spread_floor_under_the_hard_floor_is_refused(self) -> None:
+        with self.assertRaises(LimitsError):
+            load_limits(quote_toml("min_maker_spread_bps = 4.9"))
+        limits = load_limits(quote_toml("min_maker_spread_bps = 5.0"))
+        self.assertEqual(limits.quote.min_maker_spread_bps, FLOOR_MIN_MAKER_SPREAD_BPS)
+
+    def test_a_volatility_limit_under_the_hard_floor_is_refused(self) -> None:
+        """Below 5 bps of range the gate would never open, which is not a usable run."""
+        with self.assertRaises(LimitsError):
+            load_limits(quote_toml("max_move_bps_per_min = 1.0"))
+
+    def test_the_volatility_limit_is_also_capped(self) -> None:
+        """For THIS knob a larger number is the looser one, so it needs a cap as well."""
+        limits = load_limits(quote_toml("max_move_bps_per_min = 5000.0"))
+        self.assertEqual(limits.quote.max_move_bps_per_min, CAP_MAX_MOVE_BPS_PER_MIN)
+
+    def test_a_window_must_hold_at_least_a_second(self) -> None:
+        for key in ("spread_window_s", "vol_window_s"):
+            with self.subTest(key=key), self.assertRaises(LimitsError):
+                load_limits(quote_toml(f"{key} = 0"))
+
+    def test_the_floors_are_module_constants(self) -> None:
+        self.assertEqual(FLOOR_MIN_SPREAD_RATIO, 1.0)
+        self.assertEqual(FLOOR_MIN_MAKER_SPREAD_BPS, 5.0)
+        self.assertEqual(FLOOR_MAX_MOVE_BPS_PER_MIN, 5.0)
+        self.assertEqual(FLOOR_GATE_WINDOW_S, 1.0)
+
+    def test_the_report_shows_the_gates_and_their_rails(self) -> None:
+        report = load_limits(REPO / "config" / "limits.toml").report()
+        self.assertIn("quote.min_spread_ratio", report)
+        self.assertIn("quote.max_move_bps_per_min", report)
+        self.assertIn(">=1", report)  # the floor is rendered in the cap column
+        self.assertIn("opening gates:", report)
 
 
 # --------------------------------------------------------------------------- lowering

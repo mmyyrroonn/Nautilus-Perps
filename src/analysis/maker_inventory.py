@@ -59,6 +59,19 @@ shared across creates, modifies and cancels, so three knobs model the real budge
     --requote-min-s S  re-price a side at most every S seconds; a held quote that
                        would lock the book is cancelled instead.
 
+Two OPENING gates, off by default and shared with the live maker (``src/quote_gates.py``),
+stop the replay taking on inventory in conditions the 2026-09-07 / 09-08 recordings and the
+09-09 mainnet session showed do not pay:
+
+    --min-spread-ratio R      the maker touch spread, as a rolling median over
+    --min-maker-spread-bps B  ``--spread-window-s``, must be at least R times the hedge
+                              round trip (hedge touch spread + both fees) and at least B bps.
+    --max-move-bps-per-min M  the maker mid's range over ``--vol-window-s`` must stay under
+                              M bps: a fast market picks a resting quote off.
+
+Both gate only the side that would GROW the inventory; the closing side keeps quoting.  With
+the defaults (0) they are inert and every earlier result reproduces exactly.
+
 Creates and modifies also spend Lighter's separate volume quota (1000 at account
 opening, +1 per 2 USD of filled volume, +1 free per 15 s); the summary reports the
 ``quota ratio`` of what the quoting would spend against what the window allows.
@@ -73,6 +86,8 @@ helpers come from ``maker_fill.py`` / ``opportunities.py``.
         [--hedge-delay-s 1] [--no-sensitivity] \
         [--from 2026-09-07T14:00:00Z --to 2026-09-08T00:00:00Z] \
         [--tx-per-min 40] [--requote-ticks 2] [--requote-min-s 3] \
+        [--min-spread-ratio 2 --min-maker-spread-bps 12 --spread-window-s 10] \
+        [--max-move-bps-per-min 25 --vol-window-s 60] \
         [--trace PONS:LIGHTER:HL --trace-n 8] [--md reports/stage1/inv.md]
 """
 
@@ -103,6 +118,7 @@ from maker_fill import (  # noqa: E402  (needs sys.path above)
     load_trades,
     merge_pair,
 )
+from quote_gates import GateParams, QuoteGates  # noqa: E402
 from opportunities import (  # noqa: E402
     SymbolFiles,
     discover,
@@ -141,6 +157,26 @@ class Params:
     tx_per_min: float | None = None  # shared token bucket, None = unlimited
     requote_ticks: int = 1  # re-price only once the touch moved this many ticks
     requote_min_s: float = 0.0  # minimum seconds between two re-prices of one side
+    # The two opening gates of ``quote_gates.GateParams``, shared with the live maker.
+    # All zero = both off, which is the default: every result produced before they existed
+    # reproduces exactly.
+    min_spread_ratio: float = 0.0
+    min_maker_spread_bps: float = 0.0
+    spread_window_s: float = 10.0
+    max_move_bps_per_min: float = 0.0
+    vol_window_s: float = 60.0
+
+    def gates(self, fee_h: float) -> GateParams:
+        """The gate knobs, with the fees the spread gate measures the hedge round trip by."""
+        return GateParams(
+            min_spread_ratio=self.min_spread_ratio,
+            min_maker_spread_bps=self.min_maker_spread_bps,
+            spread_window_s=self.spread_window_s,
+            max_move_bps_per_min=self.max_move_bps_per_min,
+            vol_window_s=self.vol_window_s,
+            hedge_fee_bps=fee_h,
+            maker_fee_bps=self.maker_fee_bps,
+        )
 
     @property
     def budgeted(self) -> bool:
@@ -178,6 +214,12 @@ class Params:
                     label="requote-ticks 2 + tx 40"),
             replace(self, tx_per_min=40.0, requote_min_s=5.0,
                     label="requote-min-s 5 + tx 40"),
+            # The two opening gates at the numbers config/limits.toml ships.
+            replace(self, min_spread_ratio=2.0, min_maker_spread_bps=12.0,
+                    label="spread gate 2.0/12"),
+            replace(self, max_move_bps_per_min=25.0, label="vol gate 25"),
+            replace(self, min_spread_ratio=2.0, min_maker_spread_bps=12.0,
+                    max_move_bps_per_min=25.0, label="both gates 2.0/12 + 25"),
         ]
         return out
 
@@ -282,6 +324,14 @@ class Run:
     stale_s: list[float] = field(default_factory=lambda: [0.0, 0.0])
     stale_any_s: float = 0.0  # time with at least one side off its intended price
     live_s: float = 0.0  # time with at least one side resting: the stale denominator
+    # opening gates (quote_gates): samples the opening side was refused, and the
+    # time-weighted share of the replay each gate spent closed
+    gate_blocked: list[int] = field(default_factory=lambda: [0, 0])
+    gate_closed_s: float = 0.0  # either gate closed: what actually stopped opening
+    gate_spread_closed_s: float = 0.0
+    gate_vol_closed_s: float = 0.0
+    gate_hour: dict[int, float] = field(default_factory=dict)  # hour -> seconds closed
+    hour_s: dict[int, float] = field(default_factory=dict)  # hour -> seconds sampled
 
     def fills(self, side: int) -> list[FillEvent]:
         want = side == ASK
@@ -348,6 +398,9 @@ def simulate(
     last_act = [-1e18, -1e18]
     min_move = (p.requote_ticks * tick - tick * 1e-6) if p.requote_ticks > 1 else 0.0
     min_gap = p.requote_min_s
+    # The opening gates, the same object the live maker runs (src/quote_gates.py).  With the
+    # knobs at their 0 defaults both stay open for every sample and nothing below changes.
+    gates = QuoteGates(p.gates(fee_h))
 
     for i in range(n):
         t = books.t[i]
@@ -361,6 +414,22 @@ def simulate(
             last_fill_t = t
         hour = int(t // 3600.0)
         stale[ASK] = stale[BID] = False
+
+        gates.update(
+            t,
+            m_bid=books.m_bid[i], m_ask=books.m_ask[i],
+            h_bid=books.h_bid[i], h_ask=books.h_ask[i],
+            mid=mid, dur=dur,
+        )
+        gate_open = gates.open
+        run.hour_s[hour] = run.hour_s.get(hour, 0.0) + dur
+        if not gate_open:
+            run.gate_closed_s += dur
+            run.gate_hour[hour] = run.gate_hour.get(hour, 0.0) + dur
+        if not gates.spread_open:
+            run.gate_spread_closed_s += dur
+        if not gates.vol_open:
+            run.gate_vol_closed_s += dur
 
         for side in (ASK, BID):
             sell = side == ASK
@@ -398,6 +467,11 @@ def simulate(
                         ok = False
                     elif abs(q) * price + p.order_usd > p.max_inv_usd + EPS:
                         run.capped[side] += 1
+                        ok = False
+                    elif not gate_open:
+                        # The maker spread no longer pays for the hedge round trip, or the
+                        # maker mid is running.  Same rule in maker_live.QuoteEngine.step().
+                        run.gate_blocked[side] += 1
                         ok = False
                     else:
                         size = p.order_usd / price
@@ -738,11 +812,16 @@ def _rate(usd: float, flow: float) -> str:
     return f"{100.0 * usd / flow:.2f}%" if flow > 0.0 else "-"
 
 
+def _time_share(closed_s: float, total_s: float) -> str:
+    """Time-weighted share of the replay a gate spent closed."""
+    return f"{100.0 * closed_s / total_s:.0f}%" if total_s > 0.0 else "-"
+
+
 SUMMARY_HEADERS = [
     "run", "total USD", "spread cap", "hedge cost", "fees", "resid mtm", "rt net",
     "rt bps", "rt bps-f", "rt bps-w", "trips", "fills A", "fills B", "USD A", "USD B",
     "rate A", "rate B", "max inv", "twa inv", "hold med", "hold p90", "H cov",
-    "tx/min", "deferred", "stale %", "quota ratio",
+    "tx/min", "deferred", "stale %", "quota ratio", "gate sp%", "gate vol%", "gate any%",
 ]
 SUMMARY_ALIGN = "l" + "r" * (len(SUMMARY_HEADERS) - 1)
 
@@ -785,12 +864,17 @@ def summary_row(res: Result, label: str) -> list[object]:
         fmt(tx_min, 1), run.tx_deferred[ASK] + run.tx_deferred[BID],
         f"{stale:.0f}%" if stale is not None else "-",
         fmt(quota_ratio(run, usd_a + usd_b), 2),
+        _time_share(run.gate_spread_closed_s, run.twa_den),
+        _time_share(run.gate_vol_closed_s, run.twa_den),
+        _time_share(run.gate_closed_s, run.twa_den),
     ]
 
 
 def hourly_rows(res: Result) -> list[list[object]]:
     """Fills, filled notional, realised pnl and end-of-hour inventory, per UTC hour."""
-    buckets = sorted(set(res.hours) | set(res.run.hour_inv) | set(res.run.tx_hour))
+    buckets = sorted(
+        set(res.hours) | set(res.run.hour_inv) | set(res.run.tx_hour) | set(res.run.hour_s),
+    )
     rows: list[list[object]] = []
     for bucket in buckets:
         ask, bid, usd, pnl = res.hours.get(bucket, [0.0, 0.0, 0.0, 0.0])
@@ -799,6 +883,9 @@ def hourly_rows(res: Result) -> list[list[object]]:
             stamp.strftime("%Y-%m-%d %H:00"), int(ask), int(bid), fmt_usd(usd),
             fmt(pnl, 1), fmt_usd(res.run.hour_inv.get(bucket)),
             res.run.tx_hour.get(bucket, 0),
+            _time_share(
+                res.run.gate_hour.get(bucket, 0.0), res.run.hour_s.get(bucket, 0.0),
+            ),
         ])
     return rows
 
@@ -873,6 +960,11 @@ def pair_block(
             hedge_delay_s=args.hedge_delay_s, one_sided=args.one_sided,
             maker_fee_bps=fee_m, tx_per_min=args.tx_per_min,
             requote_ticks=args.requote_ticks, requote_min_s=args.requote_min_s,
+            min_spread_ratio=args.min_spread_ratio,
+            min_maker_spread_bps=args.min_maker_spread_bps,
+            spread_window_s=args.spread_window_s,
+            max_move_bps_per_min=args.max_move_bps_per_min,
+            vol_window_s=args.vol_window_s,
         )
         res = run_pair(books, trades, fee_h=fee_h, p=base)
         run = res.run
@@ -883,7 +975,9 @@ def pair_block(
             f"and a {args.reserve_bps:g} bps "
             f"reserve, hedge delay {args.hedge_delay_s:g} s"
             + (", ONE-SIDED (bid disabled)" if args.one_sided else "")
-            + (f", {base.budget_note()}" if base.budgeted else "") + ")",
+            + (f", {base.budget_note()}" if base.budgeted else "")
+            + (f", {base.gates(fee_h).describe()}"
+               if base.gates(fee_h).on else "") + ")",
         )
         lines.append("")
         lines += table(SUMMARY_HEADERS, [summary_row(res, "base")], align=SUMMARY_ALIGN)
@@ -918,8 +1012,8 @@ def pair_block(
         if rows:
             lines += table(
                 ["hour UTC", "fills A", "fills B", "filled USD", "USD pnl",
-                 "end inv USD", "tx"],
-                rows, align="lrrrrrr",
+                 "end inv USD", "tx", "gate%"],
+                rows, align="lrrrrrrr",
             )
         else:
             lines.append("_no samples_")
@@ -1062,6 +1156,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="re-price only once the touch moved this many ticks")
     parser.add_argument("--requote-min-s", type=float, default=0.0,
                         help="minimum seconds between two re-prices of one side")
+    parser.add_argument("--min-spread-ratio", type=float, default=0.0,
+                        help="opening spread gate: the maker touch spread must be at least "
+                             "this multiple of the hedge round trip (hedge spread + both "
+                             "fees); 0 = off")
+    parser.add_argument("--min-maker-spread-bps", type=float, default=0.0,
+                        help="opening spread gate: absolute floor under the maker touch "
+                             "spread, in bps; 0 = off")
+    parser.add_argument("--spread-window-s", type=float, default=10.0,
+                        help="seconds the spread gate takes its rolling median over")
+    parser.add_argument("--max-move-bps-per-min", type=float, default=0.0,
+                        help="opening volatility gate: stop opening while the maker mid's "
+                             "range over --vol-window-s exceeds this many bps; 0 = off")
+    parser.add_argument("--vol-window-s", type=float, default=60.0,
+                        help="seconds the volatility gate measures the maker mid range over")
     parser.add_argument("--no-sensitivity", action="store_true",
                         help="skip the re-runs at 0.5x / 2x cap and clip and the tx budget")
     parser.add_argument("--one-sided", action="store_true", help=argparse.SUPPRESS)
@@ -1097,6 +1205,12 @@ def main() -> None:
         raise SystemExit("[inv] --requote-ticks must be at least 1")
     if args.requote_min_s < 0.0:
         raise SystemExit("[inv] --requote-min-s cannot be negative")
+    if args.min_spread_ratio < 0.0 or args.min_maker_spread_bps < 0.0:
+        raise SystemExit("[inv] the spread gate knobs cannot be negative (0 = off)")
+    if args.max_move_bps_per_min < 0.0:
+        raise SystemExit("[inv] --max-move-bps-per-min cannot be negative (0 = off)")
+    if args.spread_window_s <= 0.0 or args.vol_window_s <= 0.0:
+        raise SystemExit("[inv] --spread-window-s and --vol-window-s must be positive")
     args.trace_match = _make_trace_match(args.trace)
     args.trace_mode = (args.trace_quote or args.quote_modes[0]).strip().lower()
     try:
@@ -1138,6 +1252,12 @@ def main() -> None:
            if args.requote_ticks > 1 else "")
         + (f"  |  requote at most every {args.requote_min_s:g} s"
            if args.requote_min_s > 0.0 else "")
+        + (f"  |  spread gate {args.min_spread_ratio:g}x hedge cost and >= "
+           f"{args.min_maker_spread_bps:g} bps over {args.spread_window_s:g} s"
+           if args.min_spread_ratio > 0.0 or args.min_maker_spread_bps > 0.0 else "")
+        + (f"  |  volatility gate <= {args.max_move_bps_per_min:g} bps over "
+           f"{args.vol_window_s:g} s"
+           if args.max_move_bps_per_min > 0.0 else "")
         + f"{window}",
         "",
         "_Both sides rest at once on the maker venue and every fill is hedged taker on "
@@ -1167,7 +1287,12 @@ def main() -> None:
         "of the time at least one side was resting away from the price we would quote "
         "now, and `quota ratio` the creates plus modifies over Lighter's volume "
         "quota for the window (1000 + filled USD / 2 + 4 per minute); above 1 the "
-        "quota runs out. The hourly `USD pnl` "
+        "quota runs out. `gate sp%` / `gate vol%` / `gate any%` are the time-weighted "
+        "shares of the window each opening gate spent closed and the share either was "
+        "(`--min-spread-ratio` / `--min-maker-spread-bps` and `--max-move-bps-per-min`, "
+        "all off by default); while a gate is closed only the side that would SHRINK the "
+        "inventory is quoted, and the hourly `gate%` is the combined share per hour. "
+        "The hourly `USD pnl` "
         "columns sum to `total USD` minus `resid mtm`. Minimum order size on the maker "
         "venue is not in the recordings and is not enforced._",
         "",

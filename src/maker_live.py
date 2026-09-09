@@ -10,7 +10,10 @@ explicit consent) a mainnet session:
                    most |q|, so a closing order can never flip us through zero.
     opening side   the side that would GROW it must clear the cross-venue edge gate
                    (our price vs the hedge venue touch, after the hedge taker fee, the maker
-                   fee and a reserve) AND leave room under the inventory cap.
+                   fee and a reserve) AND leave room under the inventory cap AND find both
+                   opening gates open (:mod:`quote_gates`): the maker spread must pay for the
+                   hedge round trip, and the maker mid must not be running.  The closing side
+                   ignores all three, so inventory can always be worked off.
     improve        one tick inside the touch (queue ahead 0), unless that would lock the book.
     cadence        a side is re-priced at most every ``requote_min_s`` seconds, and every
                    place / re-price / cancel draws one token from a bucket refilled at
@@ -20,6 +23,8 @@ explicit consent) a mainnet session:
 Everything the live version adds on top of the simulator is a *restriction*, never a
 loosening: venue minimum sizes, the unhedged-delta suspension of the opening side, the
 per-order / inventory / exposure / daily caps of :mod:`live_limits`, and the kill switch.
+The opening gates are the exception to "live only": :mod:`quote_gates` holds the single
+implementation and the simulator imports the same one, so a gate cannot mean two things.
 
 Modes
 -----
@@ -117,6 +122,8 @@ from live_limits import CAP_TOTAL_NOTIONAL_USD  # noqa: E402
 from live_limits import Limits  # noqa: E402
 from live_limits import LimitsError  # noqa: E402
 from live_limits import load_limits  # noqa: E402
+from quote_gates import GateParams  # noqa: E402
+from quote_gates import QuoteGates  # noqa: E402
 
 
 try:  # Optional: load a local .env when python-dotenv is available.
@@ -590,6 +597,10 @@ class QuoteEngine:
     Differences from the simulator, all of them restrictions:
       * ``opening_suspended`` switches the opening side off while the unhedged delta is over
         its cap (the simulator hedges every fill instantly and has no such state);
+      * ``opening_gated`` switches the opening side off while either opening gate is closed
+        (:class:`quote_gates.QuoteGates`).  The simulator has the same gates and passes the
+        same flag, so this one is NOT a live-only restriction - it is threaded through the
+        signature the same way ``opening_suspended`` is so the parity test can drive both;
       * ``min_size`` / ``min_notional`` / ``size_increment`` enforce the venue minimums the
         simulator explicitly does not model.
     With those neutral (0 / False) the decisions are identical, which
@@ -695,6 +706,7 @@ class QuoteEngine:
         q: float,
         *,
         opening_suspended: bool = False,
+        opening_gated: bool = False,
     ) -> list[Action]:
         """Decide both sides for this sample and return the transactions to send.
 
@@ -749,6 +761,11 @@ class QuoteEngine:
                     elif opening_suspended:
                         # Live-only: the unhedged delta is over its cap, so stop GROWING it.
                         self.counters["suspended"] += 1
+                        ok = False
+                    elif opening_gated:
+                        # The maker spread no longer pays for the hedge round trip, or the
+                        # maker mid is running.  Same rule in maker_inventory.simulate().
+                        self.counters["gate"] += 1
                         ok = False
                     else:
                         size = p.order_usd / price
@@ -1497,6 +1514,17 @@ class LighterMaker(Strategy):
         self._hedge_client = ClientId.from_str(config.hedge_client_id)
 
         self._book = BookSample(t=0.0)
+        # The opening gates.  Built here rather than in on_start because they need nothing
+        # from the venue: the limits and the two fee constants are all the rule reads.
+        self._gates = QuoteGates(GateParams(
+            min_spread_ratio=self._limits.quote.min_spread_ratio,
+            min_maker_spread_bps=self._limits.quote.min_maker_spread_bps,
+            spread_window_s=self._limits.quote.spread_window_s,
+            max_move_bps_per_min=self._limits.quote.max_move_bps_per_min,
+            vol_window_s=self._limits.quote.vol_window_s,
+            hedge_fee_bps=ASTER_TAKER_FEE_BPS if self._hedge_on else 0.0,
+            maker_fee_bps=LIGHTER_MAKER_FEE_BPS,
+        ))
         self._maker_inst: Any = None
         self._hedge_inst: Any = None
         self._engine: QuoteEngine | None = None
@@ -1698,6 +1726,7 @@ class LighterMaker(Strategy):
             f"exposure cap {self._limits.exposure.max_total_notional_usd:g} over 2 legs); "
             f"clip {self._engine.p.order_usd:g} USD",
         )
+        self.log.info(f"[maker] {self._gates.p.describe()}")
         self.log.info(
             f"[maker] daily budget carried in: fills={self._state.fills}/"
             f"{self._limits.daily.max_fills} tx={self._state.tx}/{self._limits.daily.max_tx} "
@@ -1880,6 +1909,19 @@ class LighterMaker(Strategy):
                 self._finish("not-flat")
                 return
 
+        # The opening gates.  Updated once the book is ready and the grace has passed, so the
+        # reported closed share measures the part of the session we would have been quoting.
+        for line in self._gates.update(
+            t,
+            m_bid=self._book.m_bid,
+            m_ask=self._book.m_ask,
+            h_bid=self._book.h_bid,
+            h_ask=self._book.h_ask,
+            mid=self._book.mid,
+            dur=DECIDE_SECS,
+        ):
+            self._log_safe("info", f"[maker] {line}")
+
         suspended = False
         if self._hedger is not None and mid_h > 0.0:
             suspended = (
@@ -1888,7 +1930,11 @@ class LighterMaker(Strategy):
         elif self._hedge_on and self._hedger is None:
             suspended = True  # hedging was requested but no hedge instrument: never open
 
-        for action in self._engine.step(self._book, self._q, opening_suspended=suspended):
+        for action in self._engine.step(
+            self._book, self._q,
+            opening_suspended=suspended,
+            opening_gated=not self._gates.open,
+        ):
             self._execute(action, t)
 
     # -- start guard ------------------------------------------------------------------------
@@ -2479,7 +2525,8 @@ class LighterMaker(Strategy):
             f"stale {self._stale_refs_dropped}  "
             f"day {self._state.fills}/{self._kill.fill_cap}f"
             f"{' UNLOCKED' if self._kill.fill_cap_unlocked else ''} "
-            f"{self._state.tx}/{self._limits.daily.max_tx}tx  | {margins}",
+            f"{self._state.tx}/{self._limits.daily.max_tx}tx  "
+            f"{self._gates.status()}  | {margins}",
             flush=True,
         )
         self._pnl_csv.write([
@@ -2525,6 +2572,11 @@ class LighterMaker(Strategy):
             f"{'(unlocked)' if self._kill and self._kill.fill_cap_unlocked else '(base)'} "
             f"day_tx={self._state.tx}/{self._limits.daily.max_tx} "
             f"[{counters}] stale_refs_dropped={self._stale_refs_dropped} "
+            f"spread_bps={self._gates.spread_bps:.1f} hedge_bps={self._gates.hedge_bps:.1f} "
+            f"vol_bps={self._gates.vol_bps:.1f} gate={self._gates.state} "
+            f"gate_closed_spread={self._gates.spread_closed_pct:.1f}% "
+            f"gate_closed_vol={self._gates.vol_closed_pct:.1f}% "
+            f"gate_closed_any={self._gates.closed_pct:.1f}% "
             f"{'ADOPTED ' if self._adopted else ''}"
             f"kill={self._kill_reason or 'none'} "
             f"failures={len(self._failures)} leftovers={len(self._leftovers)} "
