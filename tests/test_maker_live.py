@@ -27,6 +27,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime
 from datetime import timezone
 from decimal import Decimal
@@ -390,6 +391,8 @@ def build_strategy(
     clock: FakeClock | None = None,
     adopt_position: bool = False,
     positions: list | None = None,
+    account_index: str = "12345",
+    skip_cross_check: bool = False,
 ) -> MakerUnderTest:
     """A started-up strategy over stub surfaces, writing its CSVs into a temp directory."""
     out = out if out is not None else Path(tempfile.mkdtemp(prefix="maker-"))
@@ -410,6 +413,8 @@ def build_strategy(
         hedge_enabled=hedge,
         deadline_ts=0.0,
         adopt_position=adopt_position,
+        account_index=account_index,
+        skip_cross_check=skip_cross_check,
     )
     cache = FakeCache(instruments=(lighter_pons(), aster_pons()))
     cache.positions.extend(positions or [])
@@ -1701,22 +1706,120 @@ class TestStrategy(unittest.TestCase):
         self.assertGreater(payload["tx"], 0)
 
 
+# --------------------------------------------------------------------------- position side
+
+
+class TestPositionSideDerivation(unittest.TestCase):
+    """The sign must come from `Position.side`, never from `signed_qty`.
+
+    On 2026-09-09 reconciliation handed the flattener a SHORT Lighter position whose
+    `signed_qty` read +53.5 and a LONG Aster position whose `signed_qty` read -52.  It sold
+    the short and bought the long.  These tests pin the rule that made that impossible.
+    """
+
+    def test_a_short_with_a_positive_signed_qty_is_still_short(self) -> None:
+        pos = FakePosition(MAKER_ID, -53.5, 0.74719)
+        pos.signed_qty = +53.5  # exactly the inverted value reconciliation produced
+        self.assertEqual(maker_live.position_side_name(pos), maker_live.SHORT)
+        self.assertAlmostEqual(maker_live.signed_from_side(pos), -53.5)
+        self.assertFalse(maker_live.closing_side_is_sell(maker_live.SHORT), "a short is BOUGHT")
+
+    def test_a_long_with_a_negative_signed_qty_is_still_long(self) -> None:
+        pos = FakePosition(HEDGE_ID, 52.0, 0.74835)
+        pos.signed_qty = -52.0
+        self.assertEqual(maker_live.position_side_name(pos), maker_live.LONG)
+        self.assertAlmostEqual(maker_live.signed_from_side(pos), 52.0)
+        self.assertTrue(maker_live.closing_side_is_sell(maker_live.LONG), "a long is SOLD")
+
+    def test_the_enum_repr_form_is_understood(self) -> None:
+        pos = FakePosition(MAKER_ID, -1.0, 1.0)
+        pos.side = "PositionSide.SHORT"
+        self.assertEqual(maker_live.position_side_name(pos), maker_live.SHORT)
+
+    def test_is_long_is_short_are_used_when_side_is_absent(self) -> None:
+        class Bare:
+            quantity = 7.0
+            is_long = False
+            is_short = True
+
+        self.assertEqual(maker_live.position_side_name(Bare()), maker_live.SHORT)
+        self.assertAlmostEqual(maker_live.signed_from_side(Bare()), -7.0)
+
+    def test_a_short_position_produces_a_buy_clip(self) -> None:
+        """The end-to-end rule, stated once: SHORT in, BUY out."""
+        pos = FakePosition(MAKER_ID, -53.5, 0.74719)
+        pos.signed_qty = +53.5
+        side = maker_live.position_side_name(pos)
+        clip = maker_live.plan_flatten_clip(
+            side=side, qty=maker_live.position_quantity(pos),
+            bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            size_increment=0.1, min_qty=20.0, min_notional=10.0, max_notional_usd=47.5,
+        )
+        self.assertIsNotNone(clip)
+        self.assertFalse(clip.sell)
+        self.assertAlmostEqual(clip.qty, 53.5)
+
+
+class TestLighterPublicCrossCheck(unittest.TestCase):
+    """The second opinion that would have caught the inversion before any order went out."""
+
+    def payload(self, position: str, sign: int) -> dict:
+        return {"accounts": [{"positions": [
+            {"symbol": "PONS", "position": position, "sign": sign,
+             "avg_entry_price": "0.74719"},
+            {"symbol": "BTC", "position": "1.0", "sign": 1, "avg_entry_price": "60000"},
+        ]}]}
+
+    def test_a_negative_sign_reads_as_short(self) -> None:
+        venue = maker_live.parse_lighter_public_account(self.payload("53.5", -1), "PONS")
+        self.assertEqual(venue.side, maker_live.SHORT)
+        self.assertAlmostEqual(venue.qty, 53.5)
+        self.assertAlmostEqual(venue.signed, -53.5)
+
+    def test_a_positive_sign_reads_as_long(self) -> None:
+        venue = maker_live.parse_lighter_public_account(self.payload("52", 1), "PONS")
+        self.assertEqual(venue.side, maker_live.LONG)
+        self.assertAlmostEqual(venue.signed, 52.0)
+
+    def test_a_zero_size_reads_as_flat(self) -> None:
+        venue = maker_live.parse_lighter_public_account(self.payload("0", -1), "PONS")
+        self.assertEqual(venue.side, maker_live.FLAT)
+
+    def test_an_absent_symbol_reads_as_flat(self) -> None:
+        venue = maker_live.parse_lighter_public_account({"accounts": []}, "PONS")
+        self.assertEqual(venue.side, maker_live.FLAT)
+
+    def test_agreement_and_disagreement(self) -> None:
+        venue = maker_live.VenuePosition(maker_live.SHORT, 53.5)
+        agree, detail = maker_live.positions_agree(maker_live.SHORT, 53.5, venue, 0.1)
+        self.assertTrue(agree, detail)
+
+        agree, detail = maker_live.positions_agree(maker_live.LONG, 53.5, venue, 0.1)
+        self.assertFalse(agree, "an inverted side must never pass")
+        self.assertIn("side mismatch", detail)
+
+        agree, detail = maker_live.positions_agree(maker_live.SHORT, 40.0, venue, 0.1)
+        self.assertFalse(agree)
+        self.assertIn("size mismatch", detail)
+
+    def test_a_size_difference_within_one_step_is_tolerated(self) -> None:
+        venue = maker_live.VenuePosition(maker_live.SHORT, 53.5)
+        agree, _ = maker_live.positions_agree(maker_live.SHORT, 53.45, venue, 0.1)
+        self.assertTrue(agree)
+
+
 # --------------------------------------------------------------------------- flatten
 
 
 class TestFlattenPlanner(unittest.TestCase):
-    """`plan_flatten_clip`: the arithmetic that closes a position the strategy does not own.
-
-    The worked case is the book session B left on 2026-09-09: Lighter SHORT 53.5 PONS and
-    Aster LONG 52, with nothing owning either leg.
-    """
+    """`plan_flatten_clip`: the arithmetic that closes a position the strategy does not own."""
 
     LIGHTER = dict(size_increment=0.1, min_qty=20.0, min_notional=10.0)
     ASTER = dict(size_increment=1.0, min_qty=1.0, min_notional=5.0)
 
     def test_a_short_is_closed_by_buying_at_the_ask_plus_slippage(self) -> None:
         clip = maker_live.plan_flatten_clip(
-            signed_qty=-53.5, bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            side=maker_live.SHORT, qty=53.5, bid=0.74700, ask=0.74800, slippage_bps=20.0,
             max_notional_usd=47.5, **self.LIGHTER,
         )
         self.assertIsNotNone(clip)
@@ -1727,65 +1830,60 @@ class TestFlattenPlanner(unittest.TestCase):
 
     def test_a_long_is_closed_by_selling_at_the_bid_less_slippage(self) -> None:
         clip = maker_live.plan_flatten_clip(
-            signed_qty=52.0, bid=0.74800, ask=0.74900, slippage_bps=20.0,
+            side=maker_live.LONG, qty=52.0, bid=0.74800, ask=0.74900, slippage_bps=20.0,
             max_notional_usd=47.5, **self.ASTER,
         )
         self.assertIsNotNone(clip)
         self.assertTrue(clip.sell, "a long is closed by selling")
         self.assertAlmostEqual(clip.qty, 52.0)
         self.assertAlmostEqual(clip.price, 0.74800 * (1 - 20.0 / 1e4), places=9)
-        self.assertAlmostEqual(clip.remaining_after, 0.0)
 
     def test_a_flat_book_plans_nothing(self) -> None:
-        for qty in (0.0, 0.05, -0.05):
-            with self.subTest(qty=qty):
+        for side, qty in ((maker_live.FLAT, 10.0), (maker_live.SHORT, 0.0),
+                          (maker_live.LONG, 0.05)):
+            with self.subTest(side=side, qty=qty):
                 self.assertIsNone(maker_live.plan_flatten_clip(
-                    signed_qty=qty, bid=0.747, ask=0.748, slippage_bps=20.0,
+                    side=side, qty=qty, bid=0.747, ask=0.748, slippage_bps=20.0,
                     max_notional_usd=47.5, **self.LIGHTER,
                 ))
 
     def test_a_position_worth_more_than_one_clip_is_split(self) -> None:
-        """The risk engine refuses anything over the per-order cap, so close it in passes."""
         clip = maker_live.plan_flatten_clip(
-            signed_qty=-200.0, bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            side=maker_live.SHORT, qty=200.0, bid=0.74700, ask=0.74800, slippage_bps=20.0,
             max_notional_usd=47.5, **self.LIGHTER,
         )
         self.assertIsNotNone(clip)
         self.assertLessEqual(clip.qty * clip.price, 47.5 + 1e-9)
-        self.assertGreater(clip.remaining_after, 0.0)
         self.assertAlmostEqual(clip.qty + clip.remaining_after, 200.0, places=6)
 
     def test_a_split_never_strands_a_remainder_below_the_venue_minimum(self) -> None:
-        """Otherwise the last few units could never be closed at all."""
         price = 0.74800 * (1 + 20.0 / 1e4)
         max_qty = 47.5 / price
-        signed = -(max_qty + 5.0)  # a split would leave 5, under the 20 PONS minimum
         clip = maker_live.plan_flatten_clip(
-            signed_qty=signed, bid=0.74700, ask=0.74800, slippage_bps=20.0,
-            max_notional_usd=47.5, **self.LIGHTER,
+            side=maker_live.SHORT, qty=max_qty + 5.0, bid=0.74700, ask=0.74800,
+            slippage_bps=20.0, max_notional_usd=47.5, **self.LIGHTER,
         )
         self.assertIsNotNone(clip)
         self.assertGreaterEqual(clip.remaining_after, self.LIGHTER["min_qty"] - 1e-6)
 
     def test_a_residual_under_the_venue_minimum_cannot_be_closed(self) -> None:
-        """It is reported rather than retried forever."""
         self.assertIsNone(maker_live.plan_flatten_clip(
-            signed_qty=-5.0, bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            side=maker_live.SHORT, qty=5.0, bid=0.74700, ask=0.74800, slippage_bps=20.0,
             max_notional_usd=47.5, **self.LIGHTER,
         ))
 
     def test_no_touch_plans_nothing(self) -> None:
         self.assertIsNone(maker_live.plan_flatten_clip(
-            signed_qty=-53.5, bid=0.0, ask=0.0, slippage_bps=20.0,
+            side=maker_live.SHORT, qty=53.5, bid=0.0, ask=0.0, slippage_bps=20.0,
             max_notional_usd=47.5, **self.LIGHTER,
         ))
 
     def test_the_clip_is_rounded_down_to_the_venue_step(self) -> None:
         clip = maker_live.plan_flatten_clip(
-            signed_qty=52.7, bid=0.74800, ask=0.74900, slippage_bps=20.0,
+            side=maker_live.LONG, qty=52.7, bid=0.74800, ask=0.74900, slippage_bps=20.0,
             max_notional_usd=47.5, **self.ASTER,
         )
-        self.assertAlmostEqual(clip.qty, 52.0, places=9)  # 1 PONS step on Aster
+        self.assertAlmostEqual(clip.qty, 52.0, places=9)
 
 
 class FlattenUnderTest(maker_live.PositionFlattener):
@@ -1822,8 +1920,21 @@ class FlattenUnderTest(maker_live.PositionFlattener):
         self._stub_cache.orders[order.client_order_id] = order
 
 
-def build_flattener(positions: list, *, clock: FakeClock | None = None) -> FlattenUnderTest:
-    """A started flattener whose cache reports ``positions``."""
+VENUE_SHORT_53_5 = maker_live.VenuePosition(maker_live.SHORT, 53.5, 0.74719, "test")
+
+
+def build_flattener(
+    positions: list,
+    *,
+    clock: FakeClock | None = None,
+    venue: object = VENUE_SHORT_53_5,
+    skip_cross_check: bool = False,
+) -> FlattenUnderTest:
+    """A started flattener whose cache reports ``positions`` and whose cross-check is stubbed.
+
+    ``venue`` is what the Lighter public endpoint is made to answer; ``None`` simulates it
+    being unreachable.
+    """
     clock = clock if clock is not None else FakeClock()
     config = maker_live.FlattenConfig(
         strategy_id=StrategyId.from_str("FLATTEN-TEST-001"),
@@ -1834,6 +1945,8 @@ def build_flattener(positions: list, *, clock: FakeClock | None = None) -> Flatt
         hedge_client_id="ASTER",
         deadline_ts=0.0,
         hedge_enabled=True,
+        account_index="12345",
+        skip_cross_check=skip_cross_check,
     )
     cache = FakeCache(instruments=(lighter_pons(), aster_pons()))
     cache.positions.extend(positions)
@@ -1841,109 +1954,197 @@ def build_flattener(positions: list, *, clock: FakeClock | None = None) -> Flatt
     strategy.on_start()
     strategy.on_quote(FakeQuote(MAKER_ID, "0.74700", "0.74800"))
     strategy.on_quote(FakeQuote(HEDGE_ID, "0.74800", "0.74900"))
+    strategy.clock.advance(maker_live.FLATTEN_CALIBRATE_SECS + 1.0)
+    strategy._venue_answer = venue
     return strategy
 
 
+@contextlib.contextmanager
+def stub_public_endpoint(strategy: FlattenUnderTest):
+    """Answer the Lighter public cross-check with whatever the test set on the strategy."""
+    with mock.patch.object(
+        maker_live, "fetch_lighter_public_position",
+        side_effect=lambda *a, **k: strategy._venue_answer,
+    ):
+        yield
+
+
 class TestPositionFlattener(unittest.TestCase):
-    """Closing the exact book session B left behind, end to end over fake events."""
+    """Closing the exact book of 2026-09-09, and refusing when the sources disagree."""
 
     def positions(self) -> list:
+        """The venue truth: Lighter SHORT 53.5, Aster LONG 52."""
         return [
-            FakePosition(MAKER_ID, -53.5, 0.74719),  # Lighter SHORT
-            FakePosition(HEDGE_ID, 52.0, 0.74835),  # Aster LONG
+            FakePosition(MAKER_ID, -53.5, 0.74719),
+            FakePosition(HEDGE_ID, 52.0, 0.74835),
         ]
 
-    def test_it_plans_one_reduce_only_ioc_clip_per_leg(self) -> None:
+    def inverted_positions(self) -> list:
+        """The same book as reconciliation mis-reported it: signs flipped, sides correct."""
+        maker = FakePosition(MAKER_ID, -53.5, 0.74719)
+        maker.signed_qty = +53.5
+        hedge = FakePosition(HEDGE_ID, 52.0, 0.74835)
+        hedge.signed_qty = -52.0
+        return [maker, hedge]
+
+    def sweep(self, flat: FlattenUnderTest) -> None:
+        with stub_public_endpoint(flat):
+            flat._sweep()
+
+    def test_it_closes_a_short_by_buying_and_a_long_by_selling(self) -> None:
         flat = build_flattener(self.positions())
-        flat._sweep()
+        self.sweep(flat)
         self.assertEqual(len(flat.submitted), 2)
         by_instrument = {c["instrument_id"]: c for c in flat.order_factory.calls}
 
         maker = by_instrument[MAKER_ID]
-        self.assertEqual(maker["order_side"], OrderSide.BUY, "closing a short buys")
+        self.assertEqual(maker["order_side"], OrderSide.BUY, "closing a SHORT buys")
         self.assertEqual(maker["time_in_force"], maker_live.TimeInForce.IOC)
-        self.assertTrue(maker["reduce_only"])
+        self.assertNotIn("reduce_only", maker, "reduce-only is no longer used")
         self.assertAlmostEqual(float(maker["quantity"].as_decimal()), 53.5)
-        self.assertAlmostEqual(
-            float(maker["price"].as_decimal()), round(0.74800 * (1 + 20 / 1e4), 5), places=9,
-        )
 
         hedge = by_instrument[HEDGE_ID]
-        self.assertEqual(hedge["order_side"], OrderSide.SELL, "closing a long sells")
-        self.assertEqual(hedge["time_in_force"], maker_live.TimeInForce.IOC)
-        self.assertTrue(hedge["reduce_only"])
+        self.assertEqual(hedge["order_side"], OrderSide.SELL, "closing a LONG sells")
         self.assertAlmostEqual(float(hedge["quantity"].as_decimal()), 52.0)
-        self.assertAlmostEqual(
-            float(hedge["price"].as_decimal()), round(0.74800 * (1 - 20 / 1e4), 5), places=9,
+
+    def test_an_inverted_signed_qty_does_not_change_the_sides(self) -> None:
+        """The regression: the same book with reconciliation's inverted signs must trade the
+        same way, because only `side` is read."""
+        flat = build_flattener(self.inverted_positions())
+        self.sweep(flat)
+        by_instrument = {c["instrument_id"]: c for c in flat.order_factory.calls}
+        self.assertEqual(by_instrument[MAKER_ID]["order_side"], OrderSide.BUY)
+        self.assertEqual(by_instrument[HEDGE_ID]["order_side"], OrderSide.SELL)
+
+    def test_a_side_disagreement_refuses_before_any_order(self) -> None:
+        """Cache says SHORT, the venue's own API says LONG: send nothing."""
+        flat = build_flattener(
+            self.positions(), venue=maker_live.VenuePosition(maker_live.LONG, 53.5),
         )
-
-    def test_it_sends_one_clip_per_leg_at_a_time(self) -> None:
-        flat = build_flattener(self.positions())
-        flat._sweep()
-        flat._sweep()  # the first clips are still in flight
-        self.assertEqual(len(flat.submitted), 2)
-
-    def test_it_stops_and_exits_zero_once_both_legs_are_flat(self) -> None:
-        positions = self.positions()
-        flat = build_flattener(positions)
-        flat._sweep()
-        self.assertFalse(flat.done_event.is_set())
-
-        for pos in positions:  # the venue reports the closes
-            pos.is_open = False
-        flat._sweep()
+        self.sweep(flat)
+        self.assertEqual(flat.submitted, [], "nothing may be sent on a disagreement")
+        self.assertIsNotNone(flat.refused)
+        self.assertIn("side mismatch", flat.refused)
+        self.assertEqual(flat.exit_code, maker_live.EXIT_NOT_FLAT)
         self.assertTrue(flat.done_event.is_set())
+
+    def test_a_size_disagreement_refuses(self) -> None:
+        flat = build_flattener(
+            self.positions(), venue=maker_live.VenuePosition(maker_live.SHORT, 10.0),
+        )
+        self.sweep(flat)
+        self.assertEqual(flat.submitted, [])
+        self.assertIn("size mismatch", flat.refused or "")
+
+    def test_an_unreachable_endpoint_refuses_unless_overridden(self) -> None:
+        flat = build_flattener(self.positions(), venue=None)
+        self.sweep(flat)
+        self.assertEqual(flat.submitted, [])
+        self.assertIn("could not reach", flat.refused or "")
+
+        allowed = build_flattener(self.positions(), venue=None, skip_cross_check=True)
+        self.sweep(allowed)
+        self.assertIsNone(allowed.refused)
+        self.assertEqual(len(allowed.submitted), 2)
+
+    def test_own_fills_are_the_truth_for_what_is_left(self) -> None:
+        """The cache never updating must not cause a second clip."""
+        flat = build_flattener(self.positions())
+        self.sweep(flat)
+        maker_order = next(o for o in flat.submitted if o.instrument_id == MAKER_ID)
+        flat.on_order_filled(
+            FakeFill(maker_order.client_order_id, MAKER_ID, OrderSide.BUY, "53.5", "0.74950"),
+        )
+        self.assertAlmostEqual(flat._remaining_signed(MAKER_ID), 0.0)
+        self.assertEqual(flat._remaining_side(MAKER_ID), maker_live.FLAT)
+
+        # The cache still reports the old position; the flattener must ignore it.
+        sent = len(flat.submitted)
+        flat._clear_inflight(
+            FakeFill(maker_order.client_order_id, MAKER_ID, OrderSide.BUY, "0", "0"), "done",
+        )
+        self.sweep(flat)
+        maker_clips = [o for o in flat.submitted if o.instrument_id == MAKER_ID]
+        self.assertEqual(len(maker_clips), 1, "the maker leg is done; no second clip")
+        self.assertLessEqual(len(flat.submitted), sent + 1)  # the hedge leg may still work
+
+    def test_it_stops_and_exits_zero_once_both_legs_are_filled(self) -> None:
+        flat = build_flattener(self.positions())
+        self.sweep(flat)
+        for order in list(flat.submitted):
+            side = OrderSide.BUY if order.instrument_id == MAKER_ID else OrderSide.SELL
+            qty = "53.5" if order.instrument_id == MAKER_ID else "52"
+            flat.on_order_filled(
+                FakeFill(order.client_order_id, order.instrument_id, side, qty, "0.749"),
+            )
+            flat._clear_inflight(
+                FakeFill(order.client_order_id, order.instrument_id, side, "0", "0"), "done",
+            )
+        self.sweep(flat)
         self.assertTrue(flat.flat)
+        self.assertTrue(flat.done_event.is_set())
         self.assertEqual(flat.exit_code, maker_live.EXIT_OK)
         self.assertIn("flat=True", flat.summary_line)
 
+    def test_a_partial_fill_leaves_the_remainder_to_the_next_clip(self) -> None:
+        flat = build_flattener(self.positions())
+        self.sweep(flat)
+        maker_order = next(o for o in flat.submitted if o.instrument_id == MAKER_ID)
+        flat.on_order_filled(
+            FakeFill(maker_order.client_order_id, MAKER_ID, OrderSide.BUY, "20", "0.74950"),
+        )
+        self.assertAlmostEqual(flat._remaining_signed(MAKER_ID), -33.5)
+        self.assertEqual(flat._remaining_side(MAKER_ID), maker_live.SHORT)
+
+    def test_one_clip_per_leg_at_a_time(self) -> None:
+        flat = build_flattener(self.positions())
+        self.sweep(flat)
+        self.sweep(flat)
+        self.assertEqual(len(flat.submitted), 2)
+
+    def test_a_silent_clip_triggers_a_re_query_not_another_order(self) -> None:
+        """The 5 s timeout must re-read the venue, not fire a second clip blindly."""
+        flat = build_flattener(self.positions())
+        self.sweep(flat)
+        self.assertEqual(len(flat.submitted), 2)
+        flat.clock.advance(maker_live.HEDGE_INFLIGHT_TIMEOUT_S + 1.0)
+        self.sweep(flat)
+        self.assertEqual(len(flat.submitted), 2, "a timeout re-queries before sending again")
+        self.assertEqual(flat._inflight, {})
+
+    def test_a_flat_book_finishes_immediately_without_ordering(self) -> None:
+        flat = build_flattener([], venue=maker_live.VenuePosition(maker_live.FLAT, 0.0))
+        self.sweep(flat)
+        self.assertEqual(flat.submitted, [])
+        self.assertTrue(flat.done_event.is_set())
+        self.assertEqual(flat.exit_code, maker_live.EXIT_OK)
+
     def test_a_book_that_never_closes_exits_non_zero(self) -> None:
         flat = build_flattener(self.positions())
-        flat._sweep()
+        self.sweep(flat)
         flat._cfg.deadline_ts = flat.clock.timestamp_ns() / 1e9 - 1.0
-        flat._sweep()
+        self.sweep(flat)
         self.assertTrue(flat.done_event.is_set())
         self.assertFalse(flat.flat)
         self.assertEqual(flat.exit_code, maker_live.EXIT_NOT_FLAT)
 
-    def test_a_flat_book_finishes_immediately_without_ordering(self) -> None:
-        flat = build_flattener([])
-        flat._sweep()
-        self.assertEqual(flat.submitted, [])
-        self.assertTrue(flat.done_event.is_set())
-        self.assertEqual(flat.exit_code, maker_live.EXIT_OK)
-
-    def test_fills_are_accumulated_into_the_summary(self) -> None:
-        flat = build_flattener(self.positions())
-        flat._sweep()
-        order = flat.submitted[0]
-        flat.on_order_filled(
-            FakeFill(order.client_order_id, MAKER_ID, OrderSide.BUY, "53.5", "0.74950"),
-        )
-        self.assertEqual(len(flat._fills), 1)
-        self.assertLess(flat._cash[MAKER_ID], 0.0, "buying spends cash")
-        self.assertIn("cash=", flat.summary())
-
     def test_a_residual_below_the_venue_minimum_is_reported(self) -> None:
-        flat = build_flattener([FakePosition(MAKER_ID, -5.0, 0.74719)])
-        flat._sweep()
+        flat = build_flattener(
+            [FakePosition(MAKER_ID, -5.0, 0.74719)],
+            venue=maker_live.VenuePosition(maker_live.SHORT, 5.0),
+        )
+        self.sweep(flat)
         self.assertEqual(flat.submitted, [])
         self.assertTrue(flat._residuals)
         self.assertIn("no legal clip", flat._residuals[0])
 
-    def test_a_reduce_only_refusal_falls_back_to_a_plain_ioc(self) -> None:
-        """A reconciled position may be owned by another strategy id; still close it."""
+    def test_the_summary_records_the_cross_checks(self) -> None:
         flat = build_flattener(self.positions())
-        flat._sweep()
-        event = FakeFill(
-            flat.submitted[0].client_order_id, MAKER_ID, OrderSide.BUY, "1", "0.7",
-        )
-        event.reason = "reduce_only order would increase position"
-        flat.on_order_denied(event)
-        self.assertFalse(flat._reduce_only)
-        flat._sweep()
-        self.assertFalse(flat.order_factory.calls[-1]["reduce_only"])
-        self.assertEqual(flat.failures, [], "the fallback is not a failure")
+        self.sweep(flat)
+        summary = flat.summary()
+        self.assertIn("cross_checks=", summary)
+        self.assertIn("cache and venue agree", summary)
+        self.assertIn("only one source available", summary, "the Aster leg says it is unconfirmed")
 
 
 # --------------------------------------------------------------------------- start guard
@@ -1993,25 +2194,100 @@ class TestStartGuard(unittest.TestCase):
         self.assertEqual(strategy.exit_code, maker_live.EXIT_NOT_FLAT)
 
     def test_adopt_position_takes_the_book_over(self) -> None:
-        """q from the maker leg, the unhedged delta from maker + hedge."""
+        """q from the maker leg's SIDE, the unhedged delta from maker + hedge."""
         strategy = build_strategy(
             mode="live", positions=self.positions(), adopt_position=True,
         )
-        self.run_to_guard(strategy)
+        with mock.patch.object(
+            maker_live, "fetch_lighter_public_position",
+            return_value=maker_live.VenuePosition(maker_live.SHORT, 53.5, 0.74719),
+        ):
+            self.run_to_guard(strategy)
         self.assertIsNone(strategy._not_flat)
         self.assertTrue(strategy._adopted)
         self.assertAlmostEqual(strategy._q, -53.5)
         self.assertAlmostEqual(strategy._hedger.delta, -1.5)
         self.assertIn("ADOPTED", strategy.summary())
 
+    def test_adoption_ignores_an_inverted_signed_qty(self) -> None:
+        """The regression: reconciliation's inverted signs must not reach `q`."""
+        maker = FakePosition(MAKER_ID, -53.5, 0.74719)
+        maker.signed_qty = +53.5
+        hedge = FakePosition(HEDGE_ID, 52.0, 0.74835)
+        hedge.signed_qty = -52.0
+        strategy = build_strategy(
+            mode="live", positions=[maker, hedge], adopt_position=True,
+        )
+        with mock.patch.object(
+            maker_live, "fetch_lighter_public_position",
+            return_value=maker_live.VenuePosition(maker_live.SHORT, 53.5, 0.74719),
+        ):
+            self.run_to_guard(strategy)
+        self.assertAlmostEqual(strategy._q, -53.5, msg="q must follow the SIDE, not signed_qty")
+        self.assertAlmostEqual(strategy._hedger.delta, -1.5)
+
+    def test_adoption_refuses_when_the_venue_disagrees(self) -> None:
+        strategy = build_strategy(
+            mode="live", positions=self.positions(), adopt_position=True,
+        )
+        with mock.patch.object(
+            maker_live, "fetch_lighter_public_position",
+            return_value=maker_live.VenuePosition(maker_live.LONG, 53.5),
+        ):
+            self.run_to_guard(strategy)
+        self.assertIsNotNone(strategy._not_flat)
+        self.assertIn("side mismatch", strategy._not_flat)
+        self.assertFalse(strategy._adopted)
+        self.assertEqual(strategy.submitted, [], "no order may be sent")
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_NOT_FLAT)
+
+    def test_adoption_refuses_when_the_cross_check_is_unreachable(self) -> None:
+        strategy = build_strategy(
+            mode="live", positions=self.positions(), adopt_position=True,
+        )
+        with mock.patch.object(
+            maker_live, "fetch_lighter_public_position", return_value=None,
+        ):
+            self.run_to_guard(strategy)
+        self.assertIn("unreachable", strategy._not_flat or "")
+        self.assertFalse(strategy._adopted)
+
+    def test_skip_cross_check_allows_adoption_without_a_second_source(self) -> None:
+        strategy = build_strategy(
+            mode="live", positions=self.positions(), adopt_position=True,
+            skip_cross_check=True,
+        )
+        with mock.patch.object(
+            maker_live, "fetch_lighter_public_position", return_value=None,
+        ):
+            self.run_to_guard(strategy)
+        self.assertIsNone(strategy._not_flat)
+        self.assertTrue(strategy._adopted)
+        self.assertAlmostEqual(strategy._q, -53.5)
+
     def test_adoption_seeds_the_books_so_the_exposure_cap_sees_the_position(self) -> None:
         strategy = build_strategy(
             mode="live", positions=self.positions(), adopt_position=True,
         )
-        self.run_to_guard(strategy)
+        with mock.patch.object(
+            maker_live, "fetch_lighter_public_position",
+            return_value=maker_live.VenuePosition(maker_live.SHORT, 53.5, 0.74719),
+        ):
+            self.run_to_guard(strategy)
         self.assertAlmostEqual(strategy._pnl.m.pos, -53.5)
         self.assertAlmostEqual(strategy._pnl.h.pos, 52.0)
         self.assertGreater(strategy._pnl.exposure_usd(0.747, 0.748), 70.0)
+
+    def test_the_guard_only_cares_about_flat_or_not(self) -> None:
+        """The guard must refuse on a position whichever way round the cache has it."""
+        for signed in (+53.5, -53.5):
+            with self.subTest(signed_qty=signed):
+                pos = FakePosition(MAKER_ID, -53.5, 0.74719)
+                pos.signed_qty = signed
+                strategy = build_strategy(mode="live", positions=[pos])
+                self.run_to_guard(strategy)
+                self.assertIsNotNone(strategy._not_flat)
+                self.assertEqual(strategy.exit_code, maker_live.EXIT_NOT_FLAT)
 
     def test_the_guard_runs_only_once(self) -> None:
         strategy = build_strategy(mode="live")

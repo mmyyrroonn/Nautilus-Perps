@@ -64,6 +64,10 @@ Safety
 * A kill-switch breach, the ``--minutes`` / ``--until`` deadline and SIGINT all run the same
   cleanup: cancel our quotes, hedge the residual delta IOC, print the summary.  An order left
   unconfirmed at shutdown exits non-zero with the leftover list (``exec_probe`` pattern).
+* ``--flatten`` closes an inherited book: reconciliation OFF, the closing side taken from
+  ``Position.side``, the Lighter leg cross-checked against the venue's own public account
+  endpoint before anything is sent, no reduce-only flag, and the flattener's own fills - not
+  the cache - deciding when it is done.  See :class:`PositionFlattener` for why.
 * Hedges are LIMIT IOC, priced at the Aster touch offset by ``slippage_bps`` so a moving
   touch cannot fill us arbitrarily far away - never MARKET.  The offset is protection, not an
   expected cost: paper mode therefore fills a hedge at the touch itself, not at the limit.
@@ -85,6 +89,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.request
 from collections import Counter
 from collections import deque
 from collections.abc import Callable
@@ -211,6 +216,161 @@ def resolve_plan(env: str, symbol: str) -> SymbolPlan:
             f"[maker] {symbol!r} is not mapped for --env {env}; known: {sorted(table)}",
         )
     return plan
+
+
+# ------------------------------------------------------------------ position side
+
+# 2026-09-09: a `--flatten` run read `Position.signed_qty` from a cache populated by
+# RECONCILIATION and got the sign inverted on BOTH venues (Lighter was SHORT 53.5 and read
+# +53.5; Aster was LONG 52 and read -52).  It then sent the closing clips the wrong way round.
+# Every static mapping in the adapters and in the core report conversion checks out (see the
+# investigation notes in the module docstring), so the inversion comes from reconciliation's
+# own position reconstruction, not from a field we can trust.  The rule now is: NEVER read a
+# signed quantity from a cached position.  Read the SIDE, which the venue states explicitly,
+# and derive the sign from it.
+
+LONG, SHORT, FLAT = "LONG", "SHORT", "FLAT"
+
+
+def position_side_name(pos: Any) -> str:
+    """``LONG`` / ``SHORT`` / ``FLAT`` for a cached position, ignoring any signed quantity.
+
+    ``Position.side`` is the venue's own statement of direction and survived reconciliation
+    correctly in every observed case; ``signed_qty`` did not.  ``is_long`` / ``is_short`` are
+    consulted only as a fallback for objects that do not expose ``side``.
+    """
+    side = getattr(pos, "side", None)
+    if side is not None:
+        text = str(side).upper().rsplit(".", 1)[-1].strip()
+        if text in (LONG, SHORT, FLAT):
+            return text
+    if bool(getattr(pos, "is_long", False)):
+        return LONG
+    if bool(getattr(pos, "is_short", False)):
+        return SHORT
+    return FLAT
+
+
+def position_quantity(pos: Any) -> float:
+    """The absolute open size of a cached position."""
+    try:
+        return abs(float(getattr(pos, "quantity", 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def signed_from_side(pos: Any) -> float:
+    """Signed base derived from the position SIDE, never from ``signed_qty``."""
+    name = position_side_name(pos)
+    qty = position_quantity(pos)
+    if name == LONG:
+        return qty
+    if name == SHORT:
+        return -qty
+    return 0.0
+
+
+def closing_side_is_sell(side_name: str) -> bool:
+    """A long is closed by selling, a short by buying."""
+    return side_name == LONG
+
+
+# ------------------------------------------------------------------ venue cross-check
+
+LIGHTER_PUBLIC_HTTP = {
+    "mainnet": "https://mainnet.zklighter.elliot.ai",
+    "testnet": "https://testnet.zklighter.elliot.ai",
+}
+
+
+@dataclass(frozen=True)
+class VenuePosition:
+    """One venue's own statement of a position, read straight from its public API."""
+
+    side: str
+    qty: float
+    avg_px: float = 0.0
+    source: str = ""
+
+    @property
+    def signed(self) -> float:
+        return self.qty if self.side == LONG else -self.qty if self.side == SHORT else 0.0
+
+
+def parse_lighter_public_account(payload: dict, symbol: str) -> VenuePosition:
+    """Read ``symbol``'s position out of a Lighter ``/api/v1/account`` response.
+
+    The public endpoint states direction as a separate ``sign`` field (-1 short, 1 long) next
+    to an unsigned ``position`` size, which is why it is a usable second opinion: there is no
+    signed quantity to get backwards.
+    """
+    wanted = symbol.upper()
+    accounts = payload.get("accounts") or []
+    for account in accounts:
+        for position in account.get("positions") or ():
+            if str(position.get("symbol", "")).upper() != wanted:
+                continue
+            try:
+                qty = abs(float(position.get("position", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                qty = 0.0
+            try:
+                sign = int(float(position.get("sign", 0) or 0))
+            except (TypeError, ValueError):
+                sign = 0
+            try:
+                avg = float(position.get("avg_entry_price", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                avg = 0.0
+            if qty <= 0.0:
+                return VenuePosition(FLAT, 0.0, avg, "lighter-public")
+            return VenuePosition(SHORT if sign < 0 else LONG, qty, avg, "lighter-public")
+    return VenuePosition(FLAT, 0.0, 0.0, "lighter-public")
+
+
+def fetch_lighter_public_position(
+    env: str, account_index: str, symbol: str, *, timeout: float = 15.0,
+) -> VenuePosition | None:
+    """Ask Lighter's PUBLIC account endpoint what it is carrying; ``None`` if unreachable.
+
+    Public and unauthenticated - it takes the account index, not a key - so it is a cheap,
+    independent second opinion on a number the local cache has already been caught getting
+    backwards.
+    """
+    base = LIGHTER_PUBLIC_HTTP.get(env)
+    if not base or not account_index:
+        return None
+    url = f"{base}/api/v1/account?by=index&value={account_index}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            payload = json.load(response)
+    except Exception:  # noqa: BLE001 - unreachable is not a disagreement; the caller decides
+        return None
+    try:
+        return parse_lighter_public_account(payload, symbol)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def positions_agree(
+    cached_side: str, cached_qty: float, venue: VenuePosition, step: float,
+) -> tuple[bool, str]:
+    """Whether the cache and the venue's own API tell the same story.
+
+    Returns ``(agree, detail)``.  A side mismatch is never tolerated - that is the exact
+    failure this check exists for.  Sizes may differ by up to one venue step.
+    """
+    if cached_side != venue.side:
+        return False, (
+            f"side mismatch: cache says {cached_side}, venue says {venue.side}"
+        )
+    tolerance = max(step, 1e-9)
+    if abs(cached_qty - venue.qty) > tolerance + 1e-9:
+        return False, (
+            f"size mismatch: cache says {cached_qty:g}, venue says {venue.qty:g} "
+            f"(tolerance {tolerance:g})"
+        )
+    return True, f"cache and venue agree: {venue.side} {venue.qty:g}"
 
 
 # ------------------------------------------------------------------ accounting
@@ -1270,7 +1430,7 @@ class MakerLiveConfig(StrategyConfig):
     _CUSTOM_FIELDS = (
         "plan", "limits", "mode", "env", "maker_client_id", "hedge_client_id",
         "fills_csv", "pnl_csv", "state_path", "hedge_enabled", "deadline_ts",
-        "connect_only", "adopt_position",
+        "connect_only", "adopt_position", "account_index", "skip_cross_check",
     )
 
     def __new__(cls, *args: object, **kwargs: object) -> Self:
@@ -1295,6 +1455,8 @@ class MakerLiveConfig(StrategyConfig):
         deadline_ts: float = 0.0,
         connect_only: bool = False,
         adopt_position: bool = False,
+        account_index: str = "",
+        skip_cross_check: bool = False,
         **_kwargs: object,
     ) -> None:
         """Initialize the configuration."""
@@ -1314,6 +1476,9 @@ class MakerLiveConfig(StrategyConfig):
         self.connect_only = connect_only
         # Take an existing book over instead of refusing to start on it.
         self.adopt_position = adopt_position
+        # Lighter account index for the public position cross-check (not a secret, never printed).
+        self.account_index = account_index
+        self.skip_cross_check = skip_cross_check
 
 
 class LighterMaker(Strategy):
@@ -1728,29 +1893,32 @@ class LighterMaker(Strategy):
 
     # -- start guard ------------------------------------------------------------------------
 
-    def _net_position(self, instrument_id) -> tuple[float, float]:
-        """(signed base, average open price) the cache holds for ``instrument_id``.
+    def _net_position(self, instrument_id) -> tuple[str, float, float]:
+        """(side, quantity, average open price) the cache holds for ``instrument_id``.
 
-        Reconciliation can attach a recovered position to a different strategy id, so this
-        deliberately asks for the instrument rather than for our own strategy: what matters is
-        what the VENUE is carrying, not who Nautilus thinks opened it.
+        By INSTRUMENT, because reconciliation can attach a recovered position to a different
+        strategy id: what matters is what the venue carries, not who Nautilus thinks opened
+        it.  By SIDE, because on 2026-09-09 reconciliation produced positions whose
+        ``signed_qty`` was inverted on both venues while ``side`` stayed correct.  Nothing
+        here reads a signed quantity.
         """
-        signed = 0.0
+        net = 0.0
         weighted = 0.0
         try:
             positions = self.cache.positions_open(instrument_id=instrument_id)
         except Exception:  # noqa: BLE001
-            return 0.0, 0.0
+            return FLAT, 0.0, 0.0
         for pos in positions or ():
+            signed = signed_from_side(pos)
             try:
-                qty = float(pos.signed_qty)
-                px = float(pos.avg_px_open or 0.0)
-            except Exception:  # noqa: BLE001
-                continue
-            signed += qty
-            weighted += abs(qty) * px
-        avg = weighted / abs(signed) if abs(signed) > EPS else 0.0
-        return signed, avg
+                px = float(getattr(pos, "avg_px_open", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                px = 0.0
+            net += signed
+            weighted += abs(signed) * px
+        if abs(net) <= EPS:
+            return FLAT, 0.0, 0.0
+        return (LONG if net > 0.0 else SHORT), abs(net), weighted / abs(net)
 
     def _foreign_open_orders(self, instrument_id) -> list:
         """Open orders on ``instrument_id`` that this session did not place."""
@@ -1769,24 +1937,28 @@ class LighterMaker(Strategy):
         inventory and exposure caps would be measuring the wrong number.  So a live session
         starts only from a flat book, unless the operator says otherwise.
         """
-        maker_qty, maker_avg = self._net_position(self._maker_id)
-        hedge_qty, hedge_avg = (
-            self._net_position(self._hedge_id) if self._hedge_inst is not None else (0.0, 0.0)
+        maker_side, maker_qty, maker_avg = self._net_position(self._maker_id)
+        hedge_side, hedge_qty, hedge_avg = (
+            self._net_position(self._hedge_id)
+            if self._hedge_inst is not None
+            else (FLAT, 0.0, 0.0)
         )
         foreign = self._foreign_open_orders(self._maker_id)
-        dirty = abs(maker_qty) > EPS or abs(hedge_qty) > EPS or bool(foreign)
+        # For the GUARD only flat / not-flat matters, and that survives a sign inversion:
+        # a position is a position whichever way round the cache has it.
+        dirty = maker_qty > EPS or hedge_qty > EPS or bool(foreign)
         if not dirty:
             self._log_safe("info", "[maker] start guard: both venues flat, no foreign orders")
             return True
 
-        for label, qty, avg, instrument in (
-            ("maker", maker_qty, maker_avg, self._maker_id),
-            ("hedge", hedge_qty, hedge_avg, self._hedge_id),
+        for label, side, qty, avg, instrument in (
+            ("maker", maker_side, maker_qty, maker_avg, self._maker_id),
+            ("hedge", hedge_side, hedge_qty, hedge_avg, self._hedge_id),
         ):
-            if abs(qty) > EPS:
+            if qty > EPS:
                 self._log_safe(
                     "warning",
-                    f"[maker] start guard: {label} {instrument} carries {qty:+.6g} base "
+                    f"[maker] start guard: {label} {instrument} carries {side} {qty:g} "
                     f"@ {avg:.8g}",
                 )
         for order in foreign:
@@ -1799,8 +1971,8 @@ class LighterMaker(Strategy):
 
         if not self._cfg.adopt_position:
             reason = (
-                f"venue is not flat at start: maker {maker_qty:+.6g}, hedge {hedge_qty:+.6g}, "
-                f"{len(foreign)} foreign open order(s)"
+                f"venue is not flat at start: maker {maker_side} {maker_qty:g}, "
+                f"hedge {hedge_side} {hedge_qty:g}, {len(foreign)} foreign open order(s)"
             )
             self._not_flat = reason
             message = (
@@ -1811,26 +1983,56 @@ class LighterMaker(Strategy):
             self._log_safe("error", message)
             return False
 
-        # --adopt-position: take the book over rather than refusing.
+        # --adopt-position: take the book over rather than refusing.  The sign we are about
+        # to trade on has to be confirmed against the venue itself first - adopting an
+        # inverted position would make the closing side grow the book instead of shrinking it.
+        venue = fetch_lighter_public_position(
+            self._cfg.env, self._cfg.account_index, self._plan.symbol,
+        )
+        if venue is None:
+            if not self._cfg.skip_cross_check:
+                self._not_flat = (
+                    "cannot adopt: the Lighter public account endpoint was unreachable, so "
+                    "the cached side is unconfirmed (pass --skip-cross-check to override)"
+                )
+                self._log_safe("error", f"[maker] REFUSING TO ADOPT: {self._not_flat}")
+                return False
+            self._log_safe(
+                "warning",
+                "[maker] adopting WITHOUT a venue cross-check (--skip-cross-check)",
+            )
+        else:
+            agree, detail = positions_agree(
+                maker_side, maker_qty, venue, float(self._engine.p.size_increment),
+            )
+            self._log_safe("info" if agree else "error", f"[maker] adopt cross-check: {detail}")
+            if not agree:
+                self._not_flat = f"cannot adopt: {detail}"
+                print(f"[maker] REFUSING TO ADOPT: {detail}", file=sys.stderr, flush=True)
+                return False
+
+        maker_signed = maker_qty if maker_side == LONG else -maker_qty
+        hedge_signed = hedge_qty if hedge_side == LONG else -hedge_qty
         self._adopted = True
-        self._q = maker_qty
+        self._q = maker_signed
         if self._hedger is not None:
             # delta is signed maker base not yet offset on the hedge venue, i.e. what a fully
             # hedged book would carry as zero: maker + hedge.
-            self._hedger.delta = maker_qty + hedge_qty
+            self._hedger.delta = maker_signed + hedge_signed
             self._hedger.waiting_since = None
         if self._pnl is not None:
             # Seed the average-cost books at the venue's own open prices, so the exposure cap
             # and the mark-to-market see the adopted position instead of starting from flat.
-            if abs(maker_qty) > EPS and maker_avg > 0.0:
-                self._pnl.m.trade(maker_qty, maker_avg, 0.0)
-            if abs(hedge_qty) > EPS and hedge_avg > 0.0:
-                self._pnl.h.trade(hedge_qty, hedge_avg, 0.0)
+            if abs(maker_signed) > EPS and maker_avg > 0.0:
+                self._pnl.m.trade(maker_signed, maker_avg, 0.0)
+            if abs(hedge_signed) > EPS and hedge_avg > 0.0:
+                self._pnl.h.trade(hedge_signed, hedge_avg, 0.0)
         self._log_safe(
             "warning",
-            f"[maker] ADOPTING the existing book: q={self._q:+.6g} base on {self._maker_id}, "
-            f"hedge {hedge_qty:+.6g} on {self._hedge_id}, unhedged delta "
-            f"{(maker_qty + hedge_qty):+.6g}. The closing side will work this down; the "
+            f"[maker] ADOPTING the existing book: q={self._q:+.6g} base on {self._maker_id} "
+            f"({maker_side} {maker_qty:g}), hedge {hedge_signed:+.6g} on {self._hedge_id} "
+            f"({hedge_side} {hedge_qty:g}), unhedged delta "
+            f"{(maker_signed + hedge_signed):+.6g}. The closing side will work this down; the "
             f"opening side stays subject to the usual gates and caps.",
         )
         if foreign:
@@ -2483,7 +2685,8 @@ class FlattenClip:
 
 def plan_flatten_clip(
     *,
-    signed_qty: float,
+    side: str,
+    qty: float,
     bid: float,
     ask: float,
     slippage_bps: float,
@@ -2492,8 +2695,11 @@ def plan_flatten_clip(
     min_notional: float,
     max_notional_usd: float,
 ) -> FlattenClip | None:
-    """The next clip that reduces ``signed_qty`` toward zero, or ``None`` if none can be sent.
+    """The next clip that reduces a ``side`` position of ``qty``, or ``None`` if none can go.
 
+    ``side`` is ``LONG`` or ``SHORT`` as the VENUE states it - deliberately not a signed
+    quantity.  A cached signed quantity was what inverted both legs on 2026-09-09; taking the
+    side explicitly means a caller cannot make that mistake without saying the wrong word.
     A long is closed by selling at the bid less the slippage allowance, a short by buying at
     the ask plus it - the same protective limit the hedge uses, so a moving touch cannot fill
     the order arbitrarily far away.
@@ -2503,15 +2709,15 @@ def plan_flatten_clip(
     would leave a remainder below the venue minimum - which could never then be closed - the
     split is shifted so the remainder is exactly the venue minimum instead.
 
-    ``None`` means nothing legal can be sent: either the position is already inside one venue
-    step, or what is left is below the venue minimum.  The caller reports that as a residual
-    rather than retrying forever.
+    ``None`` means nothing legal can be sent: the position is flat, inside one venue step, or
+    what is left is below the venue minimum.  The caller reports that as a residual rather
+    than retrying forever.
     """
     step = size_increment if size_increment > 0.0 else 0.0
-    want = abs(signed_qty)
-    if want <= EPS or (step > 0.0 and want < step):
+    want = abs(qty)
+    if side not in (LONG, SHORT) or want <= EPS or (step > 0.0 and want < step):
         return None
-    sell = signed_qty > 0.0  # long -> sell to close
+    sell = closing_side_is_sell(side)
     touch = bid if sell else ask
     if touch <= 0.0:
         return None
@@ -2520,16 +2726,16 @@ def plan_flatten_clip(
         return None
 
     max_qty = max_notional_usd / price if max_notional_usd > 0.0 else want
-    qty = min(want, max_qty)
+    clip = min(want, max_qty)
     # Do not strand a remainder the venue would refuse to close.
     if want > max_qty and (want - max_qty) < min_qty:
-        qty = max(0.0, want - min_qty)
+        clip = max(0.0, want - min_qty)
     if step > 0.0:
-        qty = math.floor(qty / step + 1e-9) * step
-    if qty <= EPS or qty < min_qty - EPS or qty * price < min_notional - EPS:
+        clip = math.floor(clip / step + 1e-9) * step
+    if clip <= EPS or clip < min_qty - EPS or clip * price < min_notional - EPS:
         return None
     return FlattenClip(
-        sell=sell, qty=qty, price=price, remaining_after=max(0.0, want - qty),
+        sell=sell, qty=clip, price=price, remaining_after=max(0.0, want - clip),
     )
 
 
@@ -2538,7 +2744,7 @@ class FlattenConfig(StrategyConfig):
 
     _CUSTOM_FIELDS = (
         "plan", "limits", "env", "maker_client_id", "hedge_client_id", "deadline_ts",
-        "hedge_enabled",
+        "hedge_enabled", "account_index", "skip_cross_check",
     )
 
     def __new__(cls, *args: object, **kwargs: object) -> Self:
@@ -2557,6 +2763,8 @@ class FlattenConfig(StrategyConfig):
         hedge_client_id: str,
         deadline_ts: float = 0.0,
         hedge_enabled: bool = True,
+        account_index: str = "",
+        skip_cross_check: bool = False,
         **_kwargs: object,
     ) -> None:
         """Initialize the configuration."""
@@ -2568,6 +2776,16 @@ class FlattenConfig(StrategyConfig):
         self.hedge_client_id = hedge_client_id
         self.deadline_ts = deadline_ts
         self.hedge_enabled = hedge_enabled
+        # Lighter account index for the public cross-check.  Not a secret (it is not a key),
+        # and never printed.
+        self.account_index = account_index
+        self.skip_cross_check = skip_cross_check
+
+
+# Seconds after start before the first position read, so the account WebSocket snapshot has
+# arrived.  The exec client's connect already waits for the positions stream, so this is
+# slack, not a race fix.
+FLATTEN_CALIBRATE_SECS = 3.0
 
 
 class PositionFlattener(Strategy):
@@ -2575,15 +2793,24 @@ class PositionFlattener(Strategy):
 
     This exists because a session can die owning a position: on 2026-09-09 an instance was
     killed 17 s after placing an order, the order later filled, and the venues were left with
-    a hedged basis (Lighter short 53.5 PONS, Aster long 52) that no strategy owned.  The maker
-    refuses to start on a book like that, and this is the tool that clears it.
+    a hedged basis (Lighter short 53.5 PONS, Aster long 52) that no strategy owned.
 
-    Each pass reads the position the CACHE reports for the instrument - not for this strategy,
-    because reconciliation may have attached it to another id - and sends one reduce-only
-    LIMIT IOC clip per leg at the touch offset by ``[hedge] slippage_bps``.  IOC leaves nothing
-    resting, so a pass that fills partially simply sends less next second.  It retries once a
-    second until both legs are flat or the deadline expires, and exits non-zero unless both
-    ended flat.
+    The first version of this made that worse.  It ran with reconciliation ON and read
+    ``Position.signed_qty`` from the cache; reconciliation had reconstructed both positions
+    with the sign inverted, so it sold a short and bought a long, and after the reduce-only
+    flag was dropped it re-opened both legs at a worse price.  Everything below is shaped by
+    that failure:
+
+    * reconciliation is OFF - the WebSocket account snapshot populates the cache directly, and
+      that path reported both legs correctly the whole time;
+    * the closing side comes from ``Position.side``, never from a signed quantity;
+    * before a single order goes out, the Lighter leg is cross-checked against the venue's own
+      PUBLIC account endpoint, and a disagreement refuses the run outright;
+    * no reduce-only flag - both venues mishandled or rejected it, and a clip sized to at most
+      the position cannot overshoot anyway;
+    * once running, the flattener's OWN fills are the truth for what is left.  It never
+      re-sends because a cached position failed to update, which is what turned one wrong clip
+      into three.
     """
 
     def __init__(self, config: FlattenConfig) -> None:
@@ -2599,19 +2826,25 @@ class PositionFlattener(Strategy):
 
         self._book = BookSample(t=0.0)
         self._instruments: dict[Any, Any] = {}
-        self._before: dict[Any, tuple[float, float]] = {}
-        self._after: dict[Any, tuple[float, float]] = {}
-        self._inflight: dict[Any, Any] = {}  # instrument_id -> client_order_id in flight
+        # The venue-confirmed starting point, and our own fills against it.  `remaining` is
+        # computed from these two alone.
+        self._start_side: dict[Any, str] = {}
+        self._start_qty: dict[Any, float] = {}
+        self._own_signed: dict[Any, float] = {}
+        self._before: dict[Any, tuple[str, float]] = {}
+        self._inflight: dict[Any, Any] = {}
         self._sent_t: dict[Any, float] = {}
+        self._cross_checks: list[str] = []
         self._orders_sent = 0
         self._fills: list[tuple[Any, bool, float, float]] = []
         self._cash: dict[Any, float] = {}
         self._fees: dict[str, float] = {}
         self._residuals: list[str] = []
         self._failures: list[str] = []
+        self._refused: str | None = None
+        self._calibrated = False
         self._started_t = 0.0
         self._finished = False
-        self._reduce_only = True  # dropped if the venue refuses reduce-only orders
         self._data_seen = 0
         self.summary_line = ""
         self.done_event = threading.Event()
@@ -2645,12 +2878,23 @@ class PositionFlattener(Strategy):
         return self._data_seen > 0
 
     @property
+    def refused(self) -> str | None:
+        return self._refused
+
+    @property
     def flat(self) -> bool:
-        """True when every leg we were asked to close is inside one venue step of zero."""
-        return all(abs(qty) <= self._step(iid) for iid, (qty, _) in self._after.items())
+        """True when every leg is inside one venue step of zero, by OUR OWN fill arithmetic."""
+        if not self._calibrated:
+            return False
+        return all(
+            abs(self._remaining_signed(iid)) <= max(self._step(iid), EPS)
+            for iid in self._legs()
+        )
 
     @property
     def exit_code(self) -> int:
+        if self._refused is not None:
+            return EXIT_NOT_FLAT
         if self._failures:
             return EXIT_FAILED
         return EXIT_OK if self._finished and self.flat else EXIT_NOT_FLAT
@@ -2674,11 +2918,31 @@ class PositionFlattener(Strategy):
             return 0.0
         return float(instrument.size_increment.as_decimal())
 
+    # -- what is left ----------------------------------------------------------------------
+
+    def _remaining_signed(self, instrument_id) -> float:
+        """Start (venue-confirmed) plus our own fills.  The cache is never consulted here.
+
+        The 2026-09-09 run re-sent clips because the cached position did not move after a
+        fill.  Our own fills are the only thing we can be sure of, so they are what decides
+        when to stop.
+        """
+        side = self._start_side.get(instrument_id, FLAT)
+        qty = self._start_qty.get(instrument_id, 0.0)
+        start = qty if side == LONG else -qty if side == SHORT else 0.0
+        return start + self._own_signed.get(instrument_id, 0.0)
+
+    def _remaining_side(self, instrument_id) -> str:
+        remaining = self._remaining_signed(instrument_id)
+        if abs(remaining) <= max(self._step(instrument_id), EPS):
+            return FLAT
+        return LONG if remaining > 0.0 else SHORT
+
     # -- lifecycle -------------------------------------------------------------------------
 
     @_guarded
     def on_start(self) -> None:
-        """Load both instruments, subscribe to quotes, record the starting positions."""
+        """Load both instruments and subscribe; positions are read at the first sweep."""
         for instrument_id in self._legs():
             instrument = self.cache.instrument(instrument_id)
             if instrument is None:
@@ -2688,6 +2952,7 @@ class PositionFlattener(Strategy):
                 return
             self._instruments[instrument_id] = instrument
             self._cash[instrument_id] = 0.0
+            self._own_signed[instrument_id] = 0.0
 
         for instrument_id in self._legs():
             client = (
@@ -2695,30 +2960,19 @@ class PositionFlattener(Strategy):
             )
             self.subscribe_quotes(instrument_id, client_id=client)
 
-        for instrument_id in self._legs():
-            self._before[instrument_id] = self._net_position(instrument_id)
-            self._after[instrument_id] = self._before[instrument_id]
-            qty, avg = self._before[instrument_id]
-            self._log_safe(
-                "info",
-                f"[flatten] {instrument_id} starts at {qty:+.6g} base @ {avg:.8g}",
-            )
-
         self._started_t = self.clock.timestamp_ns() / 1e9
         self.clock.set_timer(
             "flatten-sweep", timedelta(seconds=1.0), start_time=self.clock.utc_now(),
         )
         self._log_safe(
             "info",
-            f"[flatten] reduce-only LIMIT IOC at the touch +/- "
-            f"{self._limits.hedge.slippage_bps:g} bps, at most "
-            f"{CAP_ORDER_NOTIONAL_USD:g} USD per clip, retrying once a second",
+            f"[flatten] LIMIT IOC at the touch +/- {self._limits.hedge.slippage_bps:g} bps, "
+            f"at most {CAP_ORDER_NOTIONAL_USD:g} USD per clip, no reduce-only flag, "
+            f"reconciliation OFF; the closing side comes from Position.side",
         )
 
     @_guarded
     def on_stop(self) -> None:
-        for instrument_id in self._legs():
-            self._after[instrument_id] = self._net_position(instrument_id)
         if not self.summary_line:
             self.summary_line = self.summary()
         self._log_safe("info", self.summary_line)
@@ -2740,24 +2994,95 @@ class PositionFlattener(Strategy):
             return self._book.m_bid, self._book.m_ask
         return self._book.h_bid, self._book.h_ask
 
-    def _net_position(self, instrument_id) -> tuple[float, float]:
-        """(signed base, average open price) the cache reports for this INSTRUMENT."""
-        signed = 0.0
-        weighted = 0.0
+    # -- reading the venue -----------------------------------------------------------------
+
+    def _cached_position(self, instrument_id) -> tuple[str, float]:
+        """(side, qty) the cache reports for this INSTRUMENT, taken from the SIDE field.
+
+        Deliberately by instrument rather than by strategy: after a crash the position is not
+        attached to us.  Deliberately by side rather than by signed quantity: see the class
+        docstring.
+        """
+        net = 0.0
         try:
             positions = self.cache.positions_open(instrument_id=instrument_id)
         except Exception:  # noqa: BLE001
-            return 0.0, 0.0
+            return FLAT, 0.0
         for pos in positions or ():
-            try:
-                qty = float(pos.signed_qty)
-                px = float(pos.avg_px_open or 0.0)
-            except Exception:  # noqa: BLE001
-                continue
-            signed += qty
-            weighted += abs(qty) * px
-        avg = weighted / abs(signed) if abs(signed) > EPS else 0.0
-        return signed, avg
+            net += signed_from_side(pos)
+        if abs(net) <= EPS:
+            return FLAT, 0.0
+        return (LONG if net > 0.0 else SHORT), abs(net)
+
+    def _cross_check(self, instrument_id, side: str, qty: float) -> tuple[bool, str]:
+        """Confirm a leg against a second, independent source before trading on it."""
+        if instrument_id != self._maker_id:
+            note = (
+                f"{instrument_id}: only one source available (local cache); Aster exposes no "
+                f"cheap unauthenticated position endpoint, so this leg is unconfirmed"
+            )
+            return True, note
+        venue = fetch_lighter_public_position(
+            self._cfg.env, self._cfg.account_index, self._plan.symbol,
+        )
+        if venue is None:
+            if self._cfg.skip_cross_check:
+                return True, f"{instrument_id}: public cross-check unavailable, SKIPPED by flag"
+            return False, (
+                f"{instrument_id}: could not reach the Lighter public account endpoint and "
+                f"--skip-cross-check was not given; refusing to trade on one source"
+            )
+        agree, detail = positions_agree(side, qty, venue, self._step(instrument_id))
+        return agree, f"{instrument_id}: {detail}"
+
+    def _calibrate(self, t: float) -> bool:
+        """Read both legs, confirm them, and fix the starting point.  False = refuse."""
+        reads: dict[Any, tuple[str, float]] = {}
+        for instrument_id in self._legs():
+            reads[instrument_id] = self._cached_position(instrument_id)
+
+        for instrument_id, (side, qty) in reads.items():
+            agree, detail = self._cross_check(instrument_id, side, qty)
+            self._cross_checks.append(detail)
+            level = "info" if agree else "error"
+            self._log_safe(level, f"[flatten] cross-check {detail}")
+            if not agree:
+                self._refused = f"cross-check failed for {instrument_id}: {detail}"
+                message = (
+                    f"[flatten] REFUSING TO TRADE: {self._refused}. Nothing was sent. "
+                    f"Verify the venue by hand before retrying."
+                )
+                print(message, file=sys.stderr, flush=True)
+                self._log_safe("error", message)
+                return False
+
+        for instrument_id, (side, qty) in reads.items():
+            self._start_side[instrument_id] = side
+            self._start_qty[instrument_id] = qty
+            self._own_signed[instrument_id] = 0.0
+            if not self._before:
+                pass
+            self._before.setdefault(instrument_id, (side, qty))
+            self._log_safe(
+                "info", f"[flatten] {instrument_id} starts at {side} {qty:g}",
+            )
+        self._calibrated = True
+        return True
+
+    def _requery(self, instrument_id, t: float) -> None:
+        """Re-baseline one leg from the venue after a clip went unreported."""
+        side, qty = self._cached_position(instrument_id)
+        agree, detail = self._cross_check(instrument_id, side, qty)
+        self._log_safe(
+            "info" if agree else "warning", f"[flatten] re-query {detail}",
+        )
+        if not agree:
+            self._refused = f"cross-check failed on re-query for {instrument_id}: {detail}"
+            self._log_safe("error", f"[flatten] REFUSING TO CONTINUE: {self._refused}")
+            return
+        self._start_side[instrument_id] = side
+        self._start_qty[instrument_id] = qty
+        self._own_signed[instrument_id] = 0.0
 
     # -- the sweep -------------------------------------------------------------------------
 
@@ -2770,34 +3095,47 @@ class PositionFlattener(Strategy):
         if self._finished:
             return
         t = self.clock.timestamp_ns() / 1e9
-        for instrument_id in self._legs():
-            self._after[instrument_id] = self._net_position(instrument_id)
+
+        if not self._calibrated:
+            if t - self._started_t < FLATTEN_CALIBRATE_SECS:
+                return
+            if not self._calibrate(t):
+                self._finish("refused")
+                return
 
         if self._cfg.deadline_ts and t >= self._cfg.deadline_ts:
             self._log_safe("warning", "[flatten] deadline reached")
             self._finish("deadline")
             return
         if self.flat:
-            self._log_safe("info", "[flatten] every leg is flat")
+            self._log_safe("info", "[flatten] every leg is flat by our own fills")
             self._finish("flat")
             return
 
         for instrument_id in self._legs():
             self._sweep_one(instrument_id, t)
+            if self._refused is not None:
+                self._finish("refused")
+                return
 
     def _sweep_one(self, instrument_id, t: float) -> None:
         inflight = self._inflight.get(instrument_id)
         if inflight is not None:
             if t - self._sent_t.get(instrument_id, t) <= HEDGE_INFLIGHT_TIMEOUT_S:
-                return  # one IOC per leg at a time
+                return  # one clip per leg at a time
             self._log_safe(
                 "warning",
                 f"[flatten] {instrument_id}: no terminal report for {inflight} after "
-                f"{HEDGE_INFLIGHT_TIMEOUT_S:g}s; sending another clip",
+                f"{HEDGE_INFLIGHT_TIMEOUT_S:g}s; re-querying the venue before sending more",
             )
             self._inflight.pop(instrument_id, None)
+            self._requery(instrument_id, t)
+            return  # decide on the next tick, from the re-queried baseline
 
-        signed, _avg = self._after.get(instrument_id, (0.0, 0.0))
+        side = self._remaining_side(instrument_id)
+        if side == FLAT:
+            return
+        remaining = abs(self._remaining_signed(instrument_id))
         instrument = self._instruments[instrument_id]
         bid, ask = self._touches(instrument_id)
         min_qty = (
@@ -2811,7 +3149,8 @@ class PositionFlattener(Strategy):
             else 0.0
         )
         clip = plan_flatten_clip(
-            signed_qty=signed,
+            side=side,
+            qty=remaining,
             bid=bid,
             ask=ask,
             slippage_bps=self._limits.hedge.slippage_bps,
@@ -2823,14 +3162,13 @@ class PositionFlattener(Strategy):
             max_notional_usd=CAP_ORDER_NOTIONAL_USD * 0.95,
         )
         if clip is None:
-            if abs(signed) > self._step(instrument_id):
-                note = (
-                    f"{instrument_id}: {signed:+.6g} base left but no legal clip "
-                    f"(min_qty={min_qty:g} min_notional={min_notional:g})"
-                )
-                if note not in self._residuals:
-                    self._residuals.append(note)
-                    self._log_safe("warning", f"[flatten] {note}")
+            note = (
+                f"{instrument_id}: {side} {remaining:g} left but no legal clip "
+                f"(min_qty={min_qty:g} min_notional={min_notional:g})"
+            )
+            if note not in self._residuals:
+                self._residuals.append(note)
+                self._log_safe("warning", f"[flatten] {note}")
             return
 
         try:
@@ -2840,7 +3178,10 @@ class PositionFlattener(Strategy):
                 quantity=instrument.make_qty(_dec(clip.qty)),
                 price=instrument.make_price(_dec(clip.price)),
                 time_in_force=TimeInForce.IOC,
-                reduce_only=self._reduce_only,
+                # NO reduce_only: Lighter's sequencer rejected it and Aster returned
+                # -2022 ReduceOnly Order is rejected, while the engine could not apply the
+                # resulting fills to a mis-signed position.  A clip is never larger than what
+                # is left, so it can only flatten.
             )
         except Exception as exc:  # noqa: BLE001
             self._failures.append(f"{instrument_id}: could not build a clip: {exc!r}")
@@ -2849,7 +3190,10 @@ class PositionFlattener(Strategy):
         self._inflight[instrument_id] = order.client_order_id
         self._sent_t[instrument_id] = t
         self._orders_sent += 1
-        self._log_safe("info", f"[flatten] sending {clip.describe(instrument_id)}")
+        self._log_safe(
+            "info",
+            f"[flatten] closing {side} {remaining:g}: {clip.describe(instrument_id)}",
+        )
         self.submit_order(order, client_id=client)
 
     # -- order events ----------------------------------------------------------------------
@@ -2861,6 +3205,10 @@ class PositionFlattener(Strategy):
         sell = event.order_side == OrderSide.SELL
         instrument_id = event.instrument_id
         self._fills.append((instrument_id, sell, base, price))
+        # Our own fills are the truth for what is left.
+        self._own_signed[instrument_id] = self._own_signed.get(instrument_id, 0.0) + (
+            -base if sell else base
+        )
         self._cash[instrument_id] = self._cash.get(instrument_id, 0.0) + (
             base * price if sell else -base * price
         )
@@ -2874,7 +3222,8 @@ class PositionFlattener(Strategy):
         self._log_safe(
             "info",
             f"[flatten] FILL {instrument_id} {'SELL' if sell else 'BUY'} {base:g} @ {price:.10g}"
-            f" commission={commission}",
+            f" commission={commission} -> remaining "
+            f"{self._remaining_signed(instrument_id):+g}",
         )
 
     def _clear_inflight(self, event, what: str) -> None:
@@ -2895,50 +3244,35 @@ class PositionFlattener(Strategy):
     def on_order_rejected(self, event) -> None:
         reason = str(getattr(event, "reason", ""))
         self._clear_inflight(event, f"rejected: {reason}")
-        self._handle_reduce_only_refusal(reason)
+        if reason:
+            self._failures.append(f"clip rejected: {reason}")
 
     @_guarded
     def on_order_denied(self, event) -> None:
         reason = str(getattr(event, "reason", ""))
         self._clear_inflight(event, f"denied: {reason}")
-        self._handle_reduce_only_refusal(reason)
-
-    def _handle_reduce_only_refusal(self, reason: str) -> None:
-        """Fall back to a plain IOC when the venue will not take a reduce-only order.
-
-        The position may be attached to another strategy id after reconciliation, which some
-        venues and the local risk checks treat as "nothing to reduce".  Dropping the flag is
-        safe here because every clip is sized to at most the position it is closing, so the
-        worst case is flattening exactly rather than overshooting.
-        """
-        if not self._reduce_only or "REDUCE" not in reason.upper():
-            if reason:
-                self._failures.append(f"clip refused: {reason}")
-            return
-        self._reduce_only = False
-        self._log_safe(
-            "warning",
-            f"[flatten] the venue refused a reduce-only clip ({reason}); retrying without the "
-            f"flag - clips are sized to the position, so they cannot overshoot it",
-        )
+        if reason:
+            self._failures.append(f"clip denied: {reason}")
 
     # -- finish ----------------------------------------------------------------------------
 
     def summary(self) -> str:
         before = " ".join(
-            f"{iid.symbol}={qty:+.6g}@{avg:.8g}" for iid, (qty, avg) in self._before.items()
-        )
+            f"{iid.symbol}={side} {qty:g}" for iid, (side, qty) in self._before.items()
+        ) or "not read"
         after = " ".join(
-            f"{iid.symbol}={qty:+.6g}" for iid, (qty, _) in self._after.items()
-        )
+            f"{iid.symbol}={self._remaining_signed(iid):+g}" for iid in self._legs()
+        ) if self._calibrated else "unknown"
         cash = " ".join(f"{iid.symbol}={value:+.6f}" for iid, value in self._cash.items())
-        fees = " ".join(f"{code}={value:g}" for code, value in sorted(self._fees.items())) or "none"
+        fees = " ".join(f"{c}={v:g}" for c, v in sorted(self._fees.items())) or "none"
+        checks = "; ".join(self._cross_checks) or "none"
         return (
             f"[flatten] SUMMARY env={self._cfg.env} symbol={self._plan.symbol} "
-            f"before=[{before}] after=[{after}] flat={self.flat} "
+            f"before=[{before}] remaining=[{after}] flat={self.flat} "
             f"orders={self._orders_sent} fills={len(self._fills)} "
             f"cash=[{cash}] fees=[{fees}] "
-            f"reduce_only={self._reduce_only} "
+            f"cross_checks=[{checks}] "
+            f"refused={self._refused or 'no'} "
             f"residuals={len(self._residuals)}"
             + (f" ({'; '.join(self._residuals)})" if self._residuals else "")
             + f" failures={len(self._failures)} exit_code={self.exit_code}"
@@ -2949,10 +3283,10 @@ class PositionFlattener(Strategy):
             return
         self._finished = True
         try:
-            for instrument_id in self._legs():
-                self._after[instrument_id] = self._net_position(instrument_id)
             self.summary_line = self.summary()
-            self._log_safe("error" if self._failures else "info", self.summary_line)
+            self._log_safe(
+                "error" if (self._failures or self._refused) else "info", self.summary_line,
+            )
         finally:
             if not self.summary_line:
                 self.summary_line = f"[flatten] SUMMARY reason={reason} result=unknown"
@@ -3030,6 +3364,16 @@ def aster_credentials_present(env: str) -> bool:
     return bool(os.environ.get(f"{prefix}SIGNER_PRIVATE_KEY"))
 
 
+def lighter_account_index(env: str) -> str:
+    """The Lighter account index for the PUBLIC cross-check endpoint.
+
+    An index, not a key: it identifies the account on an unauthenticated endpoint.  It is
+    still never printed, only reported as set / not set.
+    """
+    prefix = "LIGHTER_" if env == "mainnet" else "LIGHTER_TESTNET_"
+    return str(os.environ.get(f"{prefix}ACCOUNT_INDEX", "") or "").strip()
+
+
 def lighter_credentials_present(env: str) -> bool:
     prefix = "LIGHTER_" if env == "mainnet" else "LIGHTER_TESTNET_"
     return all(
@@ -3055,6 +3399,7 @@ class RunPlan:
     connect_only: bool = False
     flatten: bool = False
     adopt_position: bool = False
+    skip_cross_check: bool = False
 
     @property
     def live(self) -> bool:
@@ -3124,7 +3469,10 @@ def build_node(rp: RunPlan):
         .with_timeout_connection(rp.connection_timeout_secs)
         .with_delay_post_stop_secs(2)
     )
-    if rp.live or rp.flatten:
+    # Reconciliation is deliberately OFF for --flatten.  On 2026-09-09 it reconstructed both
+    # legs with inverted signs and the flattener traded on them; the WebSocket account
+    # snapshot, which is what fills the cache with reconciliation off, was correct throughout.
+    if rp.live and not rp.flatten:
         builder = builder.with_reconciliation(reconciliation=True).with_exec_engine_config(
             LiveExecutionEngineConfig(
                 reconciliation_lookback_mins=60,
@@ -3157,6 +3505,8 @@ def build_node(rp: RunPlan):
             hedge_client_id=hedge_venue,
             deadline_ts=rp.deadline.timestamp(),
             hedge_enabled=rp.hedge_enabled,
+            account_index=lighter_account_index(rp.env),
+            skip_cross_check=rp.skip_cross_check,
         )
         flattener = PositionFlattener(flat_config)
         node.add_strategy(flattener)
@@ -3177,6 +3527,8 @@ def build_node(rp: RunPlan):
         deadline_ts=rp.deadline.timestamp(),
         connect_only=rp.connect_only,
         adopt_position=rp.adopt_position,
+        account_index=lighter_account_index(rp.env),
+        skip_cross_check=rp.skip_cross_check,
     )
     strategy = LighterMaker(config)
     node.add_strategy(strategy)
@@ -3224,13 +3576,18 @@ def build_parser() -> argparse.ArgumentParser:
                         help="connect the execution clients and place real orders")
     parser.add_argument("--flatten", action="store_true",
                         help="with --live: close whatever position the venues carry on both "
-                             "legs with reduce-only LIMIT IOC clips, then exit. No quoting "
+                             "legs with LIMIT IOC clips, then exit. No quoting "
                              "and no hedging logic; use it after a session died owning a "
                              "position")
     parser.add_argument("--adopt-position", action="store_true",
                         help="with --live: instead of refusing to start on a non-flat book, "
                              "take it over - q is seeded from the maker position and the "
                              "unhedged delta from (maker + hedge)")
+    parser.add_argument("--skip-cross-check", action="store_true",
+                        help="proceed even when the Lighter PUBLIC account endpoint cannot be "
+                             "reached to confirm the cached position. Only use this after "
+                             "verifying the venue by hand: the cross-check exists because a "
+                             "cached position was once inverted on both venues")
     parser.add_argument("--connect-only", action="store_true",
                         help="with --live: connect both exec clients, report balances / positions / "
                              "open orders every 30 s, never place, modify or cancel an order")
@@ -3337,10 +3694,11 @@ def main(argv: list[str] | None = None) -> int:
         connect_only=bool(args.connect_only),
         flatten=bool(args.flatten),
         adopt_position=bool(args.adopt_position),
+        skip_cross_check=bool(args.skip_cross_check),
     )
 
     if args.flatten:
-        note = "  (FLATTEN: close the venues' positions with reduce-only IOC, no quoting)"
+        note = "  (FLATTEN: close the venues' positions with LIMIT IOC clips, no quoting)"
     elif args.connect_only:
         note = "  (CONNECT-ONLY: no orders will be sent)"
     else:
@@ -3379,12 +3737,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.flatten:
         print(f"flatten legs      : {plan.maker_id}"
               + (f", {plan.hedge_id}" if hedge_enabled else "")
-              + "  (reduce-only LIMIT IOC at the touch, retried every second)")
+              + "  (LIMIT IOC at the touch, one clip per leg, retried every second)")
         print(f"flatten limit     : touch +/- {limits.hedge.slippage_bps:g} bps, at most "
               f"{CAP_ORDER_NOTIONAL_USD:g} USD per clip (HARD cap); a bigger position is "
               f"closed in several clips")
         print(f"flatten deadline  : {deadline.isoformat(timespec='seconds')} "
               f"(exit 0 only if both legs end flat)")
+    if args.flatten or args.adopt_position:
+        index_set = bool(lighter_account_index(args.env))
+        print(f"venue cross-check : Lighter PUBLIC /api/v1/account "
+              f"(account index {'set' if index_set else 'NOT SET'})"
+              + ("  [SKIPPED by --skip-cross-check]" if args.skip_cross_check else "")
+              + "; ASTER has no cheap unauthenticated position endpoint, so that leg rests on "
+                "the local cache alone")
+        print("position sign     : taken from Position.side, never from signed_qty "
+              "(reconciliation inverted it on both venues 2026-09-09)")
+    if args.flatten:
+        print("reconciliation    : OFF for --flatten (the WS account snapshot is the source)")
+        print("reduce-only       : NOT used (both venues mishandled it; clips are sized to the "
+              "position so they cannot overshoot)")
     if args.adopt_position:
         print("adopt position    : YES - a non-flat book will be taken over instead of refused")
     print(f"lighter creds set : {lighter_credentials_present(args.env)}")
