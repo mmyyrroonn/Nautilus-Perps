@@ -204,6 +204,7 @@ class _Resolver:
         minimum: float | None = 0.0,
         allow_negative: bool = False,
         floor: float | None = None,
+        zero_off: bool = False,
     ) -> float:
         """Resolve one numeric key.
 
@@ -216,6 +217,12 @@ class _Resolver:
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise LimitsError(f"[{section}] {key} must be a number, got {raw!r}")
         value = float(raw)
+        if zero_off and value == 0.0:
+            # An explicit 0 switches this gate OFF. Deliberately allowed for the volatility
+            # gate only: under the anchor placement it only subtracts (offline sweep
+            # 2026-09-09) and its 60 s horizon does not match a 3 s requote cycle.
+            self._rows.append(Row(f"{section}.{key}", value, cap, 0.0, floor))
+            return 0.0
         if not allow_negative and minimum is not None and value < minimum:
             raise LimitsError(f"[{section}] {key} must be >= {minimum:g}, got {value:g}")
         if floor is not None and value < floor:
@@ -619,7 +626,7 @@ def load_limits(path: Path | str | None = None, *, strict: bool = False) -> Limi
         ),
         max_move_bps_per_min=r.number(
             "quote", "max_move_bps_per_min", 25.0, CAP_MAX_MOVE_BPS_PER_MIN,
-            floor=FLOOR_MAX_MOVE_BPS_PER_MIN,
+            floor=FLOOR_MAX_MOVE_BPS_PER_MIN, zero_off=True,
         ),
         vol_window_s=r.number("quote", "vol_window_s", 60.0, floor=FLOOR_GATE_WINDOW_S),
     )

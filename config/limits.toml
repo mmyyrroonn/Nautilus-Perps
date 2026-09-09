@@ -135,7 +135,9 @@ spread_window_s = 10
 # market.  Stop opening while the maker mid's range over vol_window_s exceeds this.
 # Hard FLOOR 5 bps (a smaller limit would never open) and hard CAP 50 bps - for this knob a
 # LARGER number is the looser one, so it is the one gate key that also needs a cap.
-max_move_bps_per_min = 50.0
+# 0 = OFF (decision 2026-09-09: under the anchor placement the volatility gate only
+# subtracts, and a 60 s range does not match the 3 s requote cycle). 5..50 re-enables it.
+max_move_bps_per_min = 0
 # Hard FLOOR 1 s.
 vol_window_s = 60
 

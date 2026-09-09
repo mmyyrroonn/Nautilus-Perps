@@ -246,7 +246,7 @@ class TestShippedConfig(unittest.TestCase):
         self.assertEqual(quote.min_spread_ratio, 1.0)
         self.assertEqual(quote.min_maker_spread_bps, 5.0)
         self.assertEqual(quote.spread_window_s, 10.0)
-        self.assertEqual(quote.max_move_bps_per_min, 50.0)
+        self.assertEqual(quote.max_move_bps_per_min, 0.0)  # 0 = volatility gate off
         self.assertEqual(quote.vol_window_s, 60.0)
 
 
