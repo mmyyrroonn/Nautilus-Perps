@@ -68,9 +68,35 @@ function appDef(name, symbols) {
   };
 }
 
+// Live maker (src/maker_live.py). Mainnet orders: only after the user's explicit go.
+//   MAKER_MINUTES=15 MAKER_SYMBOL=PONS pm2 start deploy/ecosystem.config.js --only maker
+//   pm2 stop maker   -> SIGINT -> the strategy cancels its orders, hedges the residual, exits
+const MAKER_SCRIPT = 'src/maker_live.py';
+const makerApp = {
+  name: 'maker',
+  script: MAKER_SCRIPT,
+  interpreter: INTERPRETER,
+  cwd: REPO_ROOT,
+  args: [
+    '--live', '--env', process.env.MAKER_ENV || 'mainnet',
+    '--symbol', process.env.MAKER_SYMBOL || 'PONS',
+    '--confirm-mainnet',
+    '--minutes', process.env.MAKER_MINUTES || '15',
+    '--out', 'reports/live',
+  ],
+  autorestart: false,
+  max_restarts: 0,
+  kill_timeout: 45000, // pm2 stop: SIGINT, then up to 45 s for cancel-on-stop + residual hedge
+  out_file: 'logs/pm2-maker.out.log',
+  error_file: 'logs/pm2-maker.err.log',
+  time: true,
+  env: { PYTHONUNBUFFERED: '1' },
+};
+
 module.exports = {
   apps: [
     appDef('stocks', STOCKS_SYMBOLS),
     appDef('crypto', CRYPTO_SYMBOLS),
+    makerApp,
   ],
 };

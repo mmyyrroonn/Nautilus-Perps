@@ -135,6 +135,10 @@ ASTER_TAKER_FEE_BPS = 0.9
 
 # Sampling / reporting cadence.
 DECIDE_SECS = 1.0  # the maker_inventory sample interval: both sides are re-decided once a second
+# An IOC hedge is terminal within one venue round trip. If no fill / cancel report for it has
+# arrived after this long, the in-flight bookkeeping is released so the delta is re-hedged
+# rather than sitting unhedged until the hedge_fail_s kill fires (2026-09-09 mainnet lesson).
+HEDGE_INFLIGHT_TIMEOUT_S = 5.0
 STATUS_SECS = 60.0
 STARTUP_GRACE_SECS = 15.0  # both books must be up before the first quote is allowed out
 MAINNET_COUNTDOWN_SECS = 10.0
@@ -1348,6 +1352,8 @@ class LighterMaker(Strategy):
         self._cancel_errors: list[str] = []
         self._last_checks: list[KillCheck] = []
         self._pending_hedge_qty = 0.0  # hedge base already sent but not yet reported filled
+        self._hedge_inflight: dict[Any, float] = {}  # client_order_id -> base still unreported
+        self._hedge_sent_t = 0.0  # when the in-flight hedge order was sent
         self._orders_sent = 0  # real orders submitted; a retry is only safe while this is 0
         self._data_seen = 0  # quote/trade messages received, for the connect-failure test
 
@@ -1831,6 +1837,7 @@ class LighterMaker(Strategy):
 
     def _on_hedge_fill(
         self, sell: bool, base: float, price: float, t: float, *, partial: bool = False,
+        client_order_id=None,
     ) -> None:
         """One hedge-venue fill: shrink the unhedged delta and book the taker leg."""
         if self._pnl is None:
@@ -1840,6 +1847,12 @@ class LighterMaker(Strategy):
             # Selling ``base`` on the hedge venue removes ``base`` of long maker exposure.
             self._hedger.settle(-base if sell else base, t)
         self._pending_hedge_qty = max(0.0, self._pending_hedge_qty - base)
+        if client_order_id is not None and client_order_id in self._hedge_inflight:
+            left = self._hedge_inflight[client_order_id] - base
+            if left <= EPS:
+                self._hedge_inflight.pop(client_order_id, None)
+            else:
+                self._hedge_inflight[client_order_id] = left
         self._state.realized_net_usd = self._state_realized_at_start + self._pnl.realized_net()
         delta = self._hedger.delta if self._hedger is not None else 0.0
         self._fills.write([
@@ -1855,7 +1868,16 @@ class LighterMaker(Strategy):
         if self._hedger is None or (self._frozen and not force):
             return
         if self._pending_hedge_qty > EPS and not force:
-            return  # one hedge order in flight at a time
+            if t - self._hedge_sent_t > HEDGE_INFLIGHT_TIMEOUT_S:
+                self._log_safe(
+                    "warning",
+                    f"[maker] hedge in flight for {t - self._hedge_sent_t:.1f} s without a "
+                    f"terminal report ({self._pending_hedge_qty:g} base); releasing and re-planning",
+                )
+                self._pending_hedge_qty = 0.0
+                self._hedge_inflight.clear()
+            else:
+                return  # one hedge order in flight at a time
         plan = self._hedger.plan(t, self._book.h_bid, self._book.h_ask, force=force)
         if plan is None:
             return
@@ -1876,6 +1898,8 @@ class LighterMaker(Strategy):
             )
             self._hedge_orders.append(order.client_order_id)
             self._pending_hedge_qty += plan.qty
+            self._hedge_inflight[order.client_order_id] = plan.qty
+            self._hedge_sent_t = t
             self._orders_sent += 1
             self._log_safe(
                 "info",
@@ -1929,15 +1953,17 @@ class LighterMaker(Strategy):
                     self._engine.drop(side)
             self._on_maker_fill(sell, base, price, t, closing=closing)
         elif event.instrument_id == self._hedge_id:
-            self._on_hedge_fill(sell, base, price, t)
+            self._on_hedge_fill(sell, base, price, t, client_order_id=event.client_order_id)
 
     @_guarded
     def on_order_canceled(self, event) -> None:
+        self._release_hedge(event.client_order_id, "canceled (IOC unfilled)")
         self._forget(event.client_order_id)
         self._recheck_cleanup()
 
     @_guarded
     def on_order_expired(self, event) -> None:
+        self._release_hedge(event.client_order_id, "expired")
         self._forget(event.client_order_id)
         self._recheck_cleanup()
 
@@ -1990,7 +2016,21 @@ class LighterMaker(Strategy):
             f"{self._engine.capacity:g}/min for {THROTTLE_SECS:g}s",
         )
 
+    def _release_hedge(self, client_order_id, what: str) -> None:
+        """A hedge order ended without (fully) filling: free its unfilled base for re-hedging."""
+        left = self._hedge_inflight.pop(client_order_id, None)
+        if left is None:
+            return
+        self._pending_hedge_qty = max(0.0, self._pending_hedge_qty - left)
+        delta = self._hedger.delta if self._hedger is not None else 0.0
+        self._log_safe(
+            "warning",
+            f"[maker] hedge {client_order_id} {what} with {left:g} base unfilled; "
+            f"delta {delta:g} will be re-hedged at the next decision",
+        )
+
     def _forget(self, client_order_id) -> None:
+        self._release_hedge(client_order_id, "ended")
         side = self._live_orders.pop(client_order_id, None)
         if side is None or self._engine is None:
             return

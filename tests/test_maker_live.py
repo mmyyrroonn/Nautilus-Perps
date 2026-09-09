@@ -1713,3 +1713,67 @@ class TestCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeCancel:
+    """Stand-in for an OrderCanceled / OrderExpired event."""
+
+    def __init__(self, client_order_id, instrument_id) -> None:
+        self.client_order_id = client_order_id
+        self.instrument_id = instrument_id
+        self.ts_event = 0
+
+
+class TestHedgeRetryAfterUnfilledIoc(unittest.TestCase):
+    """2026-09-09 mainnet: an IOC hedge that cancelled unfilled blocked every later hedge for
+    30 s until the hedge_fail kill fired, because the in-flight quantity was only released on
+    fills. A cancel / expiry / rejection must release it, and a report that never arrives must
+    time out."""
+
+    def _live_with_delta(self):
+        strategy = build_strategy(mode="live")
+        feed_books(strategy)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        strategy._hedger.add(-30.0, strategy.clock.timestamp_ns() / 1e9)  # 30 base short on the maker
+        strategy._hedger.waiting_since = None
+        return strategy
+
+    def test_an_unfilled_ioc_cancel_releases_the_hedge_and_the_next_tick_resends(self) -> None:
+        strategy = self._live_with_delta()
+        strategy.clock.advance(1.0)
+        strategy._pump_hedge(strategy.clock.timestamp_ns() / 1e9)
+        self.assertEqual(len(strategy.submitted), 1, "the first hedge IOC goes out")
+        first = strategy.submitted[0]
+        self.assertGreater(strategy._pending_hedge_qty, 0.0)
+        strategy.clock.advance(1.0)
+        strategy._pump_hedge(strategy.clock.timestamp_ns() / 1e9)
+        self.assertEqual(len(strategy.submitted), 1, "while in flight nothing else is sent")
+        strategy.on_order_canceled(FakeCancel(first.client_order_id, strategy._hedge_id))
+        self.assertEqual(strategy._pending_hedge_qty, 0.0, "the cancel released the in-flight base")
+        strategy.clock.advance(1.0)
+        strategy._pump_hedge(strategy.clock.timestamp_ns() / 1e9)
+        self.assertEqual(len(strategy.submitted), 2, "the delta is re-hedged on the next tick")
+        self.assertIsNone(strategy.kill_reason)
+
+    def test_a_partial_fill_then_cancel_releases_only_the_remainder(self) -> None:
+        strategy = self._live_with_delta()
+        strategy.clock.advance(1.0)
+        strategy._pump_hedge(strategy.clock.timestamp_ns() / 1e9)
+        first = strategy.submitted[0]
+        sent = strategy._pending_hedge_qty
+        strategy.on_order_filled(
+            FakeFill(first.client_order_id, strategy._hedge_id, OrderSide.BUY, "10", "0.73040"),
+        )
+        self.assertAlmostEqual(strategy._pending_hedge_qty, sent - 10.0)
+        strategy.on_order_canceled(FakeCancel(first.client_order_id, strategy._hedge_id))
+        self.assertEqual(strategy._pending_hedge_qty, 0.0)
+        self.assertAlmostEqual(strategy._hedger.delta, -20.0, places=6)
+
+    def test_a_report_that_never_arrives_times_out(self) -> None:
+        strategy = self._live_with_delta()
+        strategy.clock.advance(1.0)
+        strategy._pump_hedge(strategy.clock.timestamp_ns() / 1e9)
+        self.assertEqual(len(strategy.submitted), 1)
+        strategy.clock.advance(maker_live.HEDGE_INFLIGHT_TIMEOUT_S + 1.0)
+        strategy._pump_hedge(strategy.clock.timestamp_ns() / 1e9)
+        self.assertEqual(len(strategy.submitted), 2, "the stale in-flight hedge was released and resent")
