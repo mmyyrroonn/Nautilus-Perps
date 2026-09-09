@@ -203,6 +203,9 @@ class SymbolPlan:
 SYMBOLS: dict[str, dict[str, SymbolPlan]] = {
     "mainnet": {
         "PONS": SymbolPlan("PONS", "PONS-PERP.LIGHTER", "PONSUSDT-PERP.ASTER"),
+        # 2026-09-09 screen: Lighter ~25 bps vs Aster ~7 bps, 6.7M USD/day on Lighter.
+        # Lighter min 0.60 VVV (~16 USD at 26), price 4 dp, size 2 dp; Aster step 0.01, min 5 USD.
+        "VVV": SymbolPlan("VVV", "VVV-PERP.LIGHTER", "VVVUSDT-PERP.ASTER"),
     },
     "testnet": {
         "DOGE": SymbolPlan(
