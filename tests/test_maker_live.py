@@ -23,6 +23,7 @@ import contextlib
 import io
 import json
 import math
+import os
 import sys
 import tempfile
 import unittest
@@ -69,6 +70,60 @@ MAKER_ID = InstrumentId.from_str("PONS-PERP.LIGHTER")
 HEDGE_ID = InstrumentId.from_str("PONSUSDT-PERP.ASTER")
 TICK = 1e-5
 DECIMALS = 5
+
+
+# --------------------------------------------------------------------------- safety
+
+
+_CREDENTIAL_PREFIXES = ("LIGHTER_", "ASTER_", "HYPERLIQUID_")
+_SCRUBBED: dict[str, str] = {}
+
+
+def setUpModule() -> None:
+    """Remove every venue credential from this process before any test runs.
+
+    ``maker_live`` calls ``dotenv.load_dotenv()`` at import time, so in a worktree that has a
+    real ``.env`` the credentials are simply present.  A test that invokes ``main()`` with
+    ``--live --confirm-mainnet`` to prove it refuses WITHOUT keys then stops refusing: it sails
+    past the guard, sleeps through the mainnet countdown and starts connecting to the real
+    venue.  That happened here on 2026-09-09; the connect attempts timed out before the
+    strategy started, so nothing was ordered, but the test suite must never be one working
+    network away from a live session.
+
+    Scrubbing at module scope makes the credential guards deterministic - they refuse in every
+    worktree, with or without a .env - and removes any path from the unit tests to a venue.
+    """
+    for key in list(os.environ):
+        if key.startswith(_CREDENTIAL_PREFIXES):
+            _SCRUBBED[key] = os.environ.pop(key)
+
+
+def tearDownModule() -> None:
+    os.environ.update(_SCRUBBED)
+    _SCRUBBED.clear()
+
+
+class TestCredentialsAreScrubbedForTheSuite(unittest.TestCase):
+    """The suite must be unable to reach a venue even in a worktree holding a real .env."""
+
+    def test_no_venue_credential_is_visible_to_the_tests(self) -> None:
+        leaked = [k for k in os.environ if k.startswith(_CREDENTIAL_PREFIXES)]
+        self.assertEqual(leaked, [], f"credentials visible to the test process: {leaked}")
+
+    def test_the_credential_helpers_report_absent(self) -> None:
+        for env in ("mainnet", "testnet"):
+            self.assertFalse(maker_live.lighter_credentials_present(env))
+            self.assertFalse(maker_live.aster_credentials_present(env))
+
+    def test_a_live_mainnet_invocation_cannot_get_past_the_guards(self) -> None:
+        """Belt and braces: with the flag AND scrubbed keys, main() still refuses."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = maker_live.main(
+                ["--live", "--env", "mainnet", "--symbol", "PONS", "--confirm-mainnet"],
+            )
+        self.assertEqual(code, maker_live.EXIT_REFUSED)
+        self.assertNotIn("starting node", out.getvalue() + err.getvalue())
 
 
 # --------------------------------------------------------------------------- fixtures
@@ -159,12 +214,15 @@ class FakeOrder:
 
     def __init__(self, client_order_id, quantity, price, side, **kw) -> None:
         self.client_order_id = client_order_id
+        self.instrument_id = kw.get("instrument_id", MAKER_ID)
+        self.strategy_id = kw.get("strategy_id", "MAKER-TEST-001")
+        self.filled_qty = Quantity.from_str(kw.get("filled_qty", "0"))
         self.quantity = quantity
         self.price = price
         self.order_side = side
+        self.side = side  # real Nautilus orders expose `.side`; keep the stub in step
         self.status = FakeStatus(kw.get("status", "ACCEPTED"))
         self.is_closed = kw.get("is_closed", False)
-        self.filled_qty = Quantity.from_str("0")
 
     def close(self, status: str = "CANCELED") -> None:
         self.status = FakeStatus(status)
@@ -208,10 +266,25 @@ class FakeTrade:
         self.ts_init = 0
 
 
+class FakePosition:
+    """Stand-in for a reconciled Position: what the VENUE carries, whoever opened it."""
+
+    def __init__(self, instrument_id, signed_qty: float, avg_px_open: float,
+                 strategy_id: str = "OTHER-001") -> None:
+        self.instrument_id = instrument_id
+        self.signed_qty = signed_qty
+        self.quantity = abs(signed_qty)
+        self.avg_px_open = avg_px_open
+        self.strategy_id = strategy_id
+        self.side = "LONG" if signed_qty > 0 else "SHORT"
+        self.is_open = True
+
+
 class FakeCache:
     def __init__(self, instruments=()) -> None:
         self.instruments = {inst.id: inst for inst in instruments}
         self.orders: dict[object, FakeOrder] = {}
+        self.positions: list[FakePosition] = []
 
     def instrument(self, instrument_id):
         return self.instruments.get(instrument_id)
@@ -220,7 +293,17 @@ class FakeCache:
         return self.orders.get(client_order_id)
 
     def orders_open(self, instrument_id=None, **_kw):
-        return [o for o in self.orders.values() if not o.is_closed]
+        return [
+            o for o in self.orders.values()
+            if not o.is_closed
+            and (instrument_id is None or o.instrument_id == instrument_id)
+        ]
+
+    def positions_open(self, instrument_id=None, **_kw):
+        return [
+            p for p in self.positions
+            if p.is_open and (instrument_id is None or p.instrument_id == instrument_id)
+        ]
 
 
 class FakeOrderFactory:
@@ -236,6 +319,7 @@ class FakeOrderFactory:
             kwargs["quantity"],
             kwargs["price"],
             kwargs["order_side"],
+            instrument_id=kwargs.get("instrument_id", MAKER_ID),
         )
 
 
@@ -304,6 +388,8 @@ def build_strategy(
     limits=None,
     out: Path | None = None,
     clock: FakeClock | None = None,
+    adopt_position: bool = False,
+    positions: list | None = None,
 ) -> MakerUnderTest:
     """A started-up strategy over stub surfaces, writing its CSVs into a temp directory."""
     out = out if out is not None else Path(tempfile.mkdtemp(prefix="maker-"))
@@ -323,8 +409,10 @@ def build_strategy(
         state_path=out / "state.json",
         hedge_enabled=hedge,
         deadline_ts=0.0,
+        adopt_position=adopt_position,
     )
     cache = FakeCache(instruments=(lighter_pons(), aster_pons()))
+    cache.positions.extend(positions or [])
     strategy = MakerUnderTest(config, cache, FakeOrderFactory(), clock)
     strategy.on_start()
     return strategy
@@ -1611,6 +1699,450 @@ class TestStrategy(unittest.TestCase):
         payload = json.loads((out / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["fills"], 1)
         self.assertGreater(payload["tx"], 0)
+
+
+# --------------------------------------------------------------------------- flatten
+
+
+class TestFlattenPlanner(unittest.TestCase):
+    """`plan_flatten_clip`: the arithmetic that closes a position the strategy does not own.
+
+    The worked case is the book session B left on 2026-09-09: Lighter SHORT 53.5 PONS and
+    Aster LONG 52, with nothing owning either leg.
+    """
+
+    LIGHTER = dict(size_increment=0.1, min_qty=20.0, min_notional=10.0)
+    ASTER = dict(size_increment=1.0, min_qty=1.0, min_notional=5.0)
+
+    def test_a_short_is_closed_by_buying_at_the_ask_plus_slippage(self) -> None:
+        clip = maker_live.plan_flatten_clip(
+            signed_qty=-53.5, bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            max_notional_usd=47.5, **self.LIGHTER,
+        )
+        self.assertIsNotNone(clip)
+        self.assertFalse(clip.sell, "a short is closed by buying")
+        self.assertAlmostEqual(clip.qty, 53.5)
+        self.assertAlmostEqual(clip.price, 0.74800 * (1 + 20.0 / 1e4), places=9)
+        self.assertAlmostEqual(clip.remaining_after, 0.0)
+
+    def test_a_long_is_closed_by_selling_at_the_bid_less_slippage(self) -> None:
+        clip = maker_live.plan_flatten_clip(
+            signed_qty=52.0, bid=0.74800, ask=0.74900, slippage_bps=20.0,
+            max_notional_usd=47.5, **self.ASTER,
+        )
+        self.assertIsNotNone(clip)
+        self.assertTrue(clip.sell, "a long is closed by selling")
+        self.assertAlmostEqual(clip.qty, 52.0)
+        self.assertAlmostEqual(clip.price, 0.74800 * (1 - 20.0 / 1e4), places=9)
+        self.assertAlmostEqual(clip.remaining_after, 0.0)
+
+    def test_a_flat_book_plans_nothing(self) -> None:
+        for qty in (0.0, 0.05, -0.05):
+            with self.subTest(qty=qty):
+                self.assertIsNone(maker_live.plan_flatten_clip(
+                    signed_qty=qty, bid=0.747, ask=0.748, slippage_bps=20.0,
+                    max_notional_usd=47.5, **self.LIGHTER,
+                ))
+
+    def test_a_position_worth_more_than_one_clip_is_split(self) -> None:
+        """The risk engine refuses anything over the per-order cap, so close it in passes."""
+        clip = maker_live.plan_flatten_clip(
+            signed_qty=-200.0, bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            max_notional_usd=47.5, **self.LIGHTER,
+        )
+        self.assertIsNotNone(clip)
+        self.assertLessEqual(clip.qty * clip.price, 47.5 + 1e-9)
+        self.assertGreater(clip.remaining_after, 0.0)
+        self.assertAlmostEqual(clip.qty + clip.remaining_after, 200.0, places=6)
+
+    def test_a_split_never_strands_a_remainder_below_the_venue_minimum(self) -> None:
+        """Otherwise the last few units could never be closed at all."""
+        price = 0.74800 * (1 + 20.0 / 1e4)
+        max_qty = 47.5 / price
+        signed = -(max_qty + 5.0)  # a split would leave 5, under the 20 PONS minimum
+        clip = maker_live.plan_flatten_clip(
+            signed_qty=signed, bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            max_notional_usd=47.5, **self.LIGHTER,
+        )
+        self.assertIsNotNone(clip)
+        self.assertGreaterEqual(clip.remaining_after, self.LIGHTER["min_qty"] - 1e-6)
+
+    def test_a_residual_under_the_venue_minimum_cannot_be_closed(self) -> None:
+        """It is reported rather than retried forever."""
+        self.assertIsNone(maker_live.plan_flatten_clip(
+            signed_qty=-5.0, bid=0.74700, ask=0.74800, slippage_bps=20.0,
+            max_notional_usd=47.5, **self.LIGHTER,
+        ))
+
+    def test_no_touch_plans_nothing(self) -> None:
+        self.assertIsNone(maker_live.plan_flatten_clip(
+            signed_qty=-53.5, bid=0.0, ask=0.0, slippage_bps=20.0,
+            max_notional_usd=47.5, **self.LIGHTER,
+        ))
+
+    def test_the_clip_is_rounded_down_to_the_venue_step(self) -> None:
+        clip = maker_live.plan_flatten_clip(
+            signed_qty=52.7, bid=0.74800, ask=0.74900, slippage_bps=20.0,
+            max_notional_usd=47.5, **self.ASTER,
+        )
+        self.assertAlmostEqual(clip.qty, 52.0, places=9)  # 1 PONS step on Aster
+
+
+class FlattenUnderTest(maker_live.PositionFlattener):
+    """The production flattener over stub surfaces."""
+
+    def __new__(cls, config, *_args: object, **_kwargs: object):
+        return super().__new__(cls, config)
+
+    def __init__(self, config, cache, factory, clock) -> None:
+        super().__init__(config)
+        self._stub_cache = cache
+        self._stub_factory = factory
+        self._stub_clock = clock
+        self.submitted: list = []
+        self.subscriptions: list = []
+
+    @property
+    def cache(self):
+        return self._stub_cache
+
+    @property
+    def order_factory(self):
+        return self._stub_factory
+
+    @property
+    def clock(self):
+        return self._stub_clock
+
+    def subscribe_quotes(self, instrument_id, client_id=None, params=None) -> None:
+        self.subscriptions.append(instrument_id)
+
+    def submit_order(self, order, position_id=None, client_id=None, params=None) -> None:
+        self.submitted.append(order)
+        self._stub_cache.orders[order.client_order_id] = order
+
+
+def build_flattener(positions: list, *, clock: FakeClock | None = None) -> FlattenUnderTest:
+    """A started flattener whose cache reports ``positions``."""
+    clock = clock if clock is not None else FakeClock()
+    config = maker_live.FlattenConfig(
+        strategy_id=StrategyId.from_str("FLATTEN-TEST-001"),
+        plan=maker_live.SYMBOLS["mainnet"]["PONS"],
+        limits=load_limits(REPO / "config" / "limits.toml"),
+        env="mainnet",
+        maker_client_id="LIGHTER",
+        hedge_client_id="ASTER",
+        deadline_ts=0.0,
+        hedge_enabled=True,
+    )
+    cache = FakeCache(instruments=(lighter_pons(), aster_pons()))
+    cache.positions.extend(positions)
+    strategy = FlattenUnderTest(config, cache, FakeOrderFactory(), clock)
+    strategy.on_start()
+    strategy.on_quote(FakeQuote(MAKER_ID, "0.74700", "0.74800"))
+    strategy.on_quote(FakeQuote(HEDGE_ID, "0.74800", "0.74900"))
+    return strategy
+
+
+class TestPositionFlattener(unittest.TestCase):
+    """Closing the exact book session B left behind, end to end over fake events."""
+
+    def positions(self) -> list:
+        return [
+            FakePosition(MAKER_ID, -53.5, 0.74719),  # Lighter SHORT
+            FakePosition(HEDGE_ID, 52.0, 0.74835),  # Aster LONG
+        ]
+
+    def test_it_plans_one_reduce_only_ioc_clip_per_leg(self) -> None:
+        flat = build_flattener(self.positions())
+        flat._sweep()
+        self.assertEqual(len(flat.submitted), 2)
+        by_instrument = {c["instrument_id"]: c for c in flat.order_factory.calls}
+
+        maker = by_instrument[MAKER_ID]
+        self.assertEqual(maker["order_side"], OrderSide.BUY, "closing a short buys")
+        self.assertEqual(maker["time_in_force"], maker_live.TimeInForce.IOC)
+        self.assertTrue(maker["reduce_only"])
+        self.assertAlmostEqual(float(maker["quantity"].as_decimal()), 53.5)
+        self.assertAlmostEqual(
+            float(maker["price"].as_decimal()), round(0.74800 * (1 + 20 / 1e4), 5), places=9,
+        )
+
+        hedge = by_instrument[HEDGE_ID]
+        self.assertEqual(hedge["order_side"], OrderSide.SELL, "closing a long sells")
+        self.assertEqual(hedge["time_in_force"], maker_live.TimeInForce.IOC)
+        self.assertTrue(hedge["reduce_only"])
+        self.assertAlmostEqual(float(hedge["quantity"].as_decimal()), 52.0)
+        self.assertAlmostEqual(
+            float(hedge["price"].as_decimal()), round(0.74800 * (1 - 20 / 1e4), 5), places=9,
+        )
+
+    def test_it_sends_one_clip_per_leg_at_a_time(self) -> None:
+        flat = build_flattener(self.positions())
+        flat._sweep()
+        flat._sweep()  # the first clips are still in flight
+        self.assertEqual(len(flat.submitted), 2)
+
+    def test_it_stops_and_exits_zero_once_both_legs_are_flat(self) -> None:
+        positions = self.positions()
+        flat = build_flattener(positions)
+        flat._sweep()
+        self.assertFalse(flat.done_event.is_set())
+
+        for pos in positions:  # the venue reports the closes
+            pos.is_open = False
+        flat._sweep()
+        self.assertTrue(flat.done_event.is_set())
+        self.assertTrue(flat.flat)
+        self.assertEqual(flat.exit_code, maker_live.EXIT_OK)
+        self.assertIn("flat=True", flat.summary_line)
+
+    def test_a_book_that_never_closes_exits_non_zero(self) -> None:
+        flat = build_flattener(self.positions())
+        flat._sweep()
+        flat._cfg.deadline_ts = flat.clock.timestamp_ns() / 1e9 - 1.0
+        flat._sweep()
+        self.assertTrue(flat.done_event.is_set())
+        self.assertFalse(flat.flat)
+        self.assertEqual(flat.exit_code, maker_live.EXIT_NOT_FLAT)
+
+    def test_a_flat_book_finishes_immediately_without_ordering(self) -> None:
+        flat = build_flattener([])
+        flat._sweep()
+        self.assertEqual(flat.submitted, [])
+        self.assertTrue(flat.done_event.is_set())
+        self.assertEqual(flat.exit_code, maker_live.EXIT_OK)
+
+    def test_fills_are_accumulated_into_the_summary(self) -> None:
+        flat = build_flattener(self.positions())
+        flat._sweep()
+        order = flat.submitted[0]
+        flat.on_order_filled(
+            FakeFill(order.client_order_id, MAKER_ID, OrderSide.BUY, "53.5", "0.74950"),
+        )
+        self.assertEqual(len(flat._fills), 1)
+        self.assertLess(flat._cash[MAKER_ID], 0.0, "buying spends cash")
+        self.assertIn("cash=", flat.summary())
+
+    def test_a_residual_below_the_venue_minimum_is_reported(self) -> None:
+        flat = build_flattener([FakePosition(MAKER_ID, -5.0, 0.74719)])
+        flat._sweep()
+        self.assertEqual(flat.submitted, [])
+        self.assertTrue(flat._residuals)
+        self.assertIn("no legal clip", flat._residuals[0])
+
+    def test_a_reduce_only_refusal_falls_back_to_a_plain_ioc(self) -> None:
+        """A reconciled position may be owned by another strategy id; still close it."""
+        flat = build_flattener(self.positions())
+        flat._sweep()
+        event = FakeFill(
+            flat.submitted[0].client_order_id, MAKER_ID, OrderSide.BUY, "1", "0.7",
+        )
+        event.reason = "reduce_only order would increase position"
+        flat.on_order_denied(event)
+        self.assertFalse(flat._reduce_only)
+        flat._sweep()
+        self.assertFalse(flat.order_factory.calls[-1]["reduce_only"])
+        self.assertEqual(flat.failures, [], "the fallback is not a failure")
+
+
+# --------------------------------------------------------------------------- start guard
+
+
+class TestStartGuard(unittest.TestCase):
+    """A live session must not quote onto a book it does not own."""
+
+    def positions(self) -> list:
+        return [
+            FakePosition(MAKER_ID, -53.5, 0.74719),
+            FakePosition(HEDGE_ID, 52.0, 0.74835),
+        ]
+
+    def run_to_guard(self, strategy: MakerUnderTest) -> None:
+        feed_books(strategy)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        strategy._decide()
+
+    def test_a_flat_book_starts_normally(self) -> None:
+        strategy = build_strategy(mode="live")
+        self.run_to_guard(strategy)
+        self.assertIsNone(strategy._not_flat)
+        self.assertTrue(strategy.submitted, "a flat book quotes as usual")
+
+    def test_a_position_refuses_the_session(self) -> None:
+        strategy = build_strategy(mode="live", positions=self.positions())
+        self.run_to_guard(strategy)
+        self.assertIsNotNone(strategy._not_flat)
+        self.assertEqual(strategy.submitted, [], "no order may be sent")
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_NOT_FLAT)
+        self.assertTrue(strategy.done_event.is_set())
+
+    def test_a_hedge_only_position_also_refuses(self) -> None:
+        strategy = build_strategy(mode="live", positions=[FakePosition(HEDGE_ID, 52.0, 0.748)])
+        self.run_to_guard(strategy)
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_NOT_FLAT)
+
+    def test_a_foreign_open_order_refuses(self) -> None:
+        strategy = build_strategy(mode="live")
+        strategy.cache.orders[ClientOrderId("O-OTHER")] = FakeOrder(
+            ClientOrderId("O-OTHER"), Quantity.from_str("20"), Price.from_str("0.74"),
+            OrderSide.SELL, instrument_id=MAKER_ID, strategy_id="SOMEONE-ELSE",
+        )
+        self.run_to_guard(strategy)
+        self.assertIsNotNone(strategy._not_flat)
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_NOT_FLAT)
+
+    def test_adopt_position_takes_the_book_over(self) -> None:
+        """q from the maker leg, the unhedged delta from maker + hedge."""
+        strategy = build_strategy(
+            mode="live", positions=self.positions(), adopt_position=True,
+        )
+        self.run_to_guard(strategy)
+        self.assertIsNone(strategy._not_flat)
+        self.assertTrue(strategy._adopted)
+        self.assertAlmostEqual(strategy._q, -53.5)
+        self.assertAlmostEqual(strategy._hedger.delta, -1.5)
+        self.assertIn("ADOPTED", strategy.summary())
+
+    def test_adoption_seeds_the_books_so_the_exposure_cap_sees_the_position(self) -> None:
+        strategy = build_strategy(
+            mode="live", positions=self.positions(), adopt_position=True,
+        )
+        self.run_to_guard(strategy)
+        self.assertAlmostEqual(strategy._pnl.m.pos, -53.5)
+        self.assertAlmostEqual(strategy._pnl.h.pos, 52.0)
+        self.assertGreater(strategy._pnl.exposure_usd(0.747, 0.748), 70.0)
+
+    def test_the_guard_runs_only_once(self) -> None:
+        strategy = build_strategy(mode="live")
+        self.run_to_guard(strategy)
+        self.assertTrue(strategy._flat_checked)
+        placed = len(strategy.submitted)
+        strategy.clock.advance(1.0)
+        strategy._decide()
+        self.assertGreaterEqual(len(strategy.submitted), placed)
+
+    def test_paper_mode_never_runs_the_guard(self) -> None:
+        strategy = build_strategy(mode="paper", positions=self.positions())
+        self.run_to_guard(strategy)
+        self.assertIsNone(strategy._not_flat)
+
+
+# --------------------------------------------------------------------------- stale refs
+
+
+class TestStaleOrderReferences(unittest.TestCase):
+    """A Quote pointing at an order that has already ended must never be modified.
+
+    Session B (2026-09-09) logged `Cannot create command ModifyOrder: state is Filled` every
+    three seconds for its whole life: the engine held a Quote whose order had filled, so the
+    ask side re-priced a dead order forever and never placed again.
+    """
+
+    def armed(self) -> MakerUnderTest:
+        strategy = build_strategy(mode="live")
+        feed_books(strategy)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        strategy._decide()
+        self.assertTrue(strategy.submitted)
+        return strategy
+
+    def test_a_filled_order_is_dropped_instead_of_modified(self) -> None:
+        strategy = self.armed()
+        resting = strategy.submitted[0]
+        placed = len(strategy.submitted)
+        resting.close("FILLED")  # the venue filled it; no event reached us
+
+        strategy.clock.advance(strategy._limits.quote.requote_min_s + 1.0)
+        feed_books(strategy, m_bid="0.73010", m_ask="0.73050")
+        strategy._decide()
+        self.assertEqual(strategy.modified, [], "a dead order must not be re-priced")
+        self.assertEqual(strategy._stale_refs_dropped, 1)
+
+        # And the next tick places a fresh order on that side.
+        strategy.clock.advance(1.0)
+        strategy._decide()
+        self.assertGreater(len(strategy.submitted), placed)
+
+    def test_a_cancel_for_a_closed_order_is_not_sent(self) -> None:
+        strategy = self.armed()
+        resting = strategy.submitted[0]
+        resting.close("CANCELED")
+        cancels = len(strategy.cancelled)
+        # Close the gate so the engine wants to cancel the resting quote.
+        feed_books(strategy, h_bid="0.99000", h_ask="0.99100")
+        strategy.clock.advance(1.0)
+        strategy._decide()
+        self.assertEqual(len(strategy.cancelled), cancels)
+        self.assertGreaterEqual(strategy._stale_refs_dropped, 1)
+
+    def test_a_fill_to_the_full_quantity_drops_the_quote(self) -> None:
+        strategy = self.armed()
+        resting = strategy.submitted[0]
+        side = strategy._live_orders[resting.client_order_id]
+        resting.filled_qty = resting.quantity
+        strategy.on_order_filled(
+            FakeFill(resting.client_order_id, MAKER_ID, resting.order_side,
+                     str(resting.quantity), "0.73030"),
+        )
+        self.assertIsNone(strategy._engine.orders[side])
+        self.assertNotIn(resting.client_order_id, strategy._live_orders)
+
+    def test_the_counter_reaches_the_status_line(self) -> None:
+        strategy = self.armed()
+        strategy.submitted[0].close("FILLED")
+        strategy.clock.advance(strategy._limits.quote.requote_min_s + 1.0)
+        feed_books(strategy, m_bid="0.73010", m_ask="0.73050")
+        strategy._decide()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            strategy._status()
+        self.assertIn("stale 1", out.getvalue())
+
+
+class TestClosedOrderCleanup(unittest.TestCase):
+    """A cancel refused because the order already ended is not a leftover."""
+
+    def armed(self) -> MakerUnderTest:
+        strategy = build_strategy(mode="live")
+        feed_books(strategy)
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        strategy._decide()
+        return strategy
+
+    def test_a_refused_cancel_on_a_filled_order_is_not_a_leftover(self) -> None:
+        strategy = self.armed()
+        resting = strategy.submitted[0]
+
+        def refuse(client_order_id, client_id=None, params=None):
+            raise RuntimeError("Cannot cancel order: state is Filled, Limit(...)")
+
+        strategy.cancel_order = refuse  # type: ignore[method-assign]
+        # The cache still shows it open, so only the refusal text can retire it.
+        strategy.on_stop()
+        self.assertEqual(strategy.leftovers, [])
+        self.assertEqual(strategy.cancel_errors, [])
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_OK)
+        self.assertIn(resting.client_order_id, strategy._known_closed)
+
+    def test_a_genuine_pending_cancel_is_still_a_leftover(self) -> None:
+        strategy = self.armed()
+        strategy.submitted[0].status = FakeStatus("PENDING_CANCEL")
+        strategy.cancel_order = lambda *a, **k: None  # type: ignore[method-assign]
+        strategy.on_stop()
+        self.assertTrue(strategy.leftovers)
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_FAILED)
+
+    def test_an_unrelated_cancel_failure_is_still_a_failure(self) -> None:
+        strategy = self.armed()
+
+        def refuse(client_order_id, client_id=None, params=None):
+            raise RuntimeError("connection reset by peer")
+
+        strategy.cancel_order = refuse  # type: ignore[method-assign]
+        strategy.on_stop()
+        self.assertTrue(strategy.cancel_errors)
+        self.assertEqual(strategy.exit_code, maker_live.EXIT_FAILED)
 
 
 # --------------------------------------------------------------------------- cli

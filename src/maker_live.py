@@ -163,6 +163,9 @@ EXIT_FAILED = 1
 EXIT_REFUSED = 2
 EXIT_TIMEOUT = 3
 EXIT_KILLED = 4
+# The venue is not flat (or carries an order we do not own) and --adopt-position was not
+# given, so the session refused to quote onto someone else's book.  Run --flatten first.
+EXIT_NOT_FLAT = 5
 
 
 @dataclass(frozen=True)
@@ -1267,7 +1270,7 @@ class MakerLiveConfig(StrategyConfig):
     _CUSTOM_FIELDS = (
         "plan", "limits", "mode", "env", "maker_client_id", "hedge_client_id",
         "fills_csv", "pnl_csv", "state_path", "hedge_enabled", "deadline_ts",
-        "connect_only",
+        "connect_only", "adopt_position",
     )
 
     def __new__(cls, *args: object, **kwargs: object) -> Self:
@@ -1291,6 +1294,7 @@ class MakerLiveConfig(StrategyConfig):
         hedge_enabled: bool = True,
         deadline_ts: float = 0.0,
         connect_only: bool = False,
+        adopt_position: bool = False,
         **_kwargs: object,
     ) -> None:
         """Initialize the configuration."""
@@ -1308,6 +1312,8 @@ class MakerLiveConfig(StrategyConfig):
         self.deadline_ts = deadline_ts
         # Connect both venues, report balances / positions / open orders, never quote.
         self.connect_only = connect_only
+        # Take an existing book over instead of refusing to start on it.
+        self.adopt_position = adopt_position
 
 
 class LighterMaker(Strategy):
@@ -1356,6 +1362,16 @@ class LighterMaker(Strategy):
         self._hedge_sent_t = 0.0  # when the in-flight hedge order was sent
         self._orders_sent = 0  # real orders submitted; a retry is only safe while this is 0
         self._data_seen = 0  # quote/trade messages received, for the connect-failure test
+        # Quotes whose venue order had already ended when we went to re-price or cancel it.
+        # Session B (2026-09-09) spent its whole life sending ModifyOrder for an order that
+        # had FILLED, so the ask side never re-placed; this counts every time that is caught.
+        self._stale_refs_dropped = 0
+        # Orders whose cancel was refused because they had already ended.  They are closed,
+        # not leftovers - the same session reported two FILLED orders as LEFTOVER at stop.
+        self._known_closed: set = set()
+        self._not_flat: str | None = None  # why the start guard refused, if it did
+        self._adopted = False
+        self._flat_checked = False
 
         self._fills = CsvSink(config.fills_csv, FILLS_HEADER)
         self._pnl_csv = CsvSink(config.pnl_csv, PNL_HEADER)
@@ -1392,6 +1408,8 @@ class LighterMaker(Strategy):
 
     @property
     def exit_code(self) -> int:
+        if self._not_flat is not None and not self._leftovers and not self._failures:
+            return EXIT_NOT_FLAT
         if self._leftovers or self._failures:
             return EXIT_FAILED
         if self._kill_reason is not None:
@@ -1532,9 +1550,10 @@ class LighterMaker(Strategy):
             )
         self.log.info("[maker] subscribed quotes + trades + managed deltas on both legs")
 
-        if not self._paper and not self._cfg.connect_only:
-            # Nothing of ours may be resting when the first decision runs.
-            self._cancel_stale_orders()
+        # The pre-existing-order cancel is deliberately NOT done here any more: the start
+        # guard has to see the book as the venue left it before anything is cancelled, and
+        # reconciliation may still be filling the cache at on_start.  _check_flat() runs at
+        # the end of the startup grace and cancels what it decides to adopt.
 
         now = self.clock.utc_now()
         self._started_t = self.clock.timestamp_ns() / 1e9
@@ -1558,7 +1577,8 @@ class LighterMaker(Strategy):
             try:
                 self.cancel_order(order.client_order_id)
             except Exception as exc:  # noqa: BLE001
-                self._cancel_errors.append(f"{order.client_order_id}: {exc}")
+                if not self._cancel_refusal_is_benign(order.client_order_id, exc):
+                    self._cancel_errors.append(f"{order.client_order_id}: {exc}")
 
     @_guarded
     def on_stop(self) -> None:
@@ -1687,6 +1707,14 @@ class LighterMaker(Strategy):
         if t - self._started_t < STARTUP_GRACE_SECS:
             return  # both books must have settled before the first quote goes out
 
+        if not self._flat_checked:
+            # Runs once, after the grace period so reconciliation has had time to populate
+            # the cache, and before any order has been sent.
+            self._flat_checked = True
+            if not self._paper and not self._check_flat():
+                self._finish("not-flat")
+                return
+
         suspended = False
         if self._hedger is not None and mid_h > 0.0:
             suspended = (
@@ -1697,6 +1725,122 @@ class LighterMaker(Strategy):
 
         for action in self._engine.step(self._book, self._q, opening_suspended=suspended):
             self._execute(action, t)
+
+    # -- start guard ------------------------------------------------------------------------
+
+    def _net_position(self, instrument_id) -> tuple[float, float]:
+        """(signed base, average open price) the cache holds for ``instrument_id``.
+
+        Reconciliation can attach a recovered position to a different strategy id, so this
+        deliberately asks for the instrument rather than for our own strategy: what matters is
+        what the VENUE is carrying, not who Nautilus thinks opened it.
+        """
+        signed = 0.0
+        weighted = 0.0
+        try:
+            positions = self.cache.positions_open(instrument_id=instrument_id)
+        except Exception:  # noqa: BLE001
+            return 0.0, 0.0
+        for pos in positions or ():
+            try:
+                qty = float(pos.signed_qty)
+                px = float(pos.avg_px_open or 0.0)
+            except Exception:  # noqa: BLE001
+                continue
+            signed += qty
+            weighted += abs(qty) * px
+        avg = weighted / abs(signed) if abs(signed) > EPS else 0.0
+        return signed, avg
+
+    def _foreign_open_orders(self, instrument_id) -> list:
+        """Open orders on ``instrument_id`` that this session did not place."""
+        try:
+            orders = self.cache.orders_open(instrument_id=instrument_id)
+        except Exception:  # noqa: BLE001
+            return []
+        return [o for o in (orders or []) if o.client_order_id not in self._live_orders]
+
+    def _check_flat(self) -> bool:
+        """Refuse to quote onto a book we do not own; return True when it is safe to start.
+
+        Session B (2026-09-09) left Lighter short 53.5 PONS hedged by 52 on Aster and no
+        strategy owning either leg.  A fresh session quoting on top of that would treat the
+        inherited basis as its own inventory the moment a closing fill arrived, and the
+        inventory and exposure caps would be measuring the wrong number.  So a live session
+        starts only from a flat book, unless the operator says otherwise.
+        """
+        maker_qty, maker_avg = self._net_position(self._maker_id)
+        hedge_qty, hedge_avg = (
+            self._net_position(self._hedge_id) if self._hedge_inst is not None else (0.0, 0.0)
+        )
+        foreign = self._foreign_open_orders(self._maker_id)
+        dirty = abs(maker_qty) > EPS or abs(hedge_qty) > EPS or bool(foreign)
+        if not dirty:
+            self._log_safe("info", "[maker] start guard: both venues flat, no foreign orders")
+            return True
+
+        for label, qty, avg, instrument in (
+            ("maker", maker_qty, maker_avg, self._maker_id),
+            ("hedge", hedge_qty, hedge_avg, self._hedge_id),
+        ):
+            if abs(qty) > EPS:
+                self._log_safe(
+                    "warning",
+                    f"[maker] start guard: {label} {instrument} carries {qty:+.6g} base "
+                    f"@ {avg:.8g}",
+                )
+        for order in foreign:
+            self._log_safe(
+                "warning",
+                f"[maker] start guard: open order we do not own on {order.instrument_id}: "
+                f"{order.client_order_id} {order.side} {order.quantity}@{order.price} "
+                f"{order.status} (strategy {order.strategy_id})",
+            )
+
+        if not self._cfg.adopt_position:
+            reason = (
+                f"venue is not flat at start: maker {maker_qty:+.6g}, hedge {hedge_qty:+.6g}, "
+                f"{len(foreign)} foreign open order(s)"
+            )
+            self._not_flat = reason
+            message = (
+                f"[maker] REFUSING TO QUOTE: {reason}. "
+                f"run --flatten first (or pass --adopt-position to take the book over)"
+            )
+            print(message, file=sys.stderr, flush=True)
+            self._log_safe("error", message)
+            return False
+
+        # --adopt-position: take the book over rather than refusing.
+        self._adopted = True
+        self._q = maker_qty
+        if self._hedger is not None:
+            # delta is signed maker base not yet offset on the hedge venue, i.e. what a fully
+            # hedged book would carry as zero: maker + hedge.
+            self._hedger.delta = maker_qty + hedge_qty
+            self._hedger.waiting_since = None
+        if self._pnl is not None:
+            # Seed the average-cost books at the venue's own open prices, so the exposure cap
+            # and the mark-to-market see the adopted position instead of starting from flat.
+            if abs(maker_qty) > EPS and maker_avg > 0.0:
+                self._pnl.m.trade(maker_qty, maker_avg, 0.0)
+            if abs(hedge_qty) > EPS and hedge_avg > 0.0:
+                self._pnl.h.trade(hedge_qty, hedge_avg, 0.0)
+        self._log_safe(
+            "warning",
+            f"[maker] ADOPTING the existing book: q={self._q:+.6g} base on {self._maker_id}, "
+            f"hedge {hedge_qty:+.6g} on {self._hedge_id}, unhedged delta "
+            f"{(maker_qty + hedge_qty):+.6g}. The closing side will work this down; the "
+            f"opening side stays subject to the usual gates and caps.",
+        )
+        if foreign:
+            self._log_safe(
+                "warning",
+                f"[maker] cancelling {len(foreign)} adopted open order(s): their fills would "
+                f"desynchronise the inventory this session tracks",
+            )
+            self._cancel_stale_orders()
+        return True
 
     def _report_accounts(self) -> None:
         """Log what each venue reports for this account: balances, positions, open orders."""
@@ -1763,6 +1907,9 @@ class LighterMaker(Strategy):
             if action.kind == CANCEL:
                 previous = action.previous
                 if previous is not None and previous.ref is not None:
+                    if not self._order_is_open(previous.ref):
+                        self._drop_stale(action.side, previous.ref, "cancel")
+                        return
                     self.cancel_order(previous.ref)
                 return
             if action.kind == MODIFY and action.previous is not None and action.quote is not None:
@@ -1777,6 +1924,11 @@ class LighterMaker(Strategy):
                 # it must be checked on testnet before mainnet.  The position is never derived
                 # from this number: `q` comes only from OrderFilled events.
                 ref = action.previous.ref
+                if ref is not None and not self._order_is_open(ref):
+                    # The order this quote points at has ended.  Drop the quote instead of
+                    # re-pricing a dead order; the next tick places a fresh one.
+                    self._drop_stale(action.side, ref, "modify")
+                    return
                 if ref is not None:
                     action.quote.ref = ref
                     self.modify_order(
@@ -1949,8 +2101,28 @@ class LighterMaker(Strategy):
             closing = quote.closing if quote is not None else None
             if quote is not None and quote.ref == event.client_order_id:
                 quote.filled += base
-                if quote.filled >= quote.base - EPS:
+                # Prefer the venue's own view: a modify can change the resting quantity out
+                # from under our local accumulation, and a quote left pointing at a fully
+                # filled order is exactly what stalled session B.
+                done = quote.filled >= quote.base - EPS
+                cached = None
+                try:
+                    cached = self.cache.order(event.client_order_id)
+                except Exception:  # noqa: BLE001
+                    cached = None
+                if cached is not None:
+                    try:
+                        done = (
+                            float(cached.filled_qty.as_decimal())
+                            >= float(cached.quantity.as_decimal()) - EPS
+                            or cached.is_closed
+                        )
+                    except Exception:  # noqa: BLE001 - fall back to the local count
+                        pass
+                if done:
                     self._engine.drop(side)
+                    self._live_orders.pop(event.client_order_id, None)
+                    self._known_closed.add(event.client_order_id)
             self._on_maker_fill(sell, base, price, t, closing=closing)
         elif event.instrument_id == self._hedge_id:
             self._on_hedge_fill(sell, base, price, t, client_order_id=event.client_order_id)
@@ -2029,6 +2201,47 @@ class LighterMaker(Strategy):
             f"delta {delta:g} will be re-hedged at the next decision",
         )
 
+    _CLOSED_STATES = ("FILLED", "CANCELED", "EXPIRED", "REJECTED", "DENIED")
+
+    def _order_is_open(self, client_order_id) -> bool:
+        """Whether the venue still holds this order, per the local cache.
+
+        A resting :class:`Quote` keeps a ``ref`` to the order it believes is live.  If that
+        order has since filled or been cancelled, sending it a modify is not just useless -
+        it is silently fatal to the side: the venue refuses with "state is Filled", the
+        engine still thinks the quote rests, and the side never places again.  Every modify
+        and every cancel is checked through here first.
+        """
+        if client_order_id is None:
+            return False
+        if client_order_id in self._known_closed:
+            return False
+        try:
+            order = self.cache.order(client_order_id)
+        except Exception:  # noqa: BLE001 - "we cannot tell" is not "it is open"
+            return False
+        if order is None:
+            return False
+        try:
+            if order.is_closed:
+                return False
+            return str(order.status).upper().rsplit(".", 1)[-1] not in self._CLOSED_STATES
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _drop_stale(self, side: int, client_order_id, what: str) -> None:
+        """Forget a Quote whose venue order has already ended; the next tick re-places it."""
+        self._stale_refs_dropped += 1
+        if self._engine is not None:
+            self._engine.drop(side)
+        self._live_orders.pop(client_order_id, None)
+        self._known_closed.add(client_order_id)
+        self._log_safe(
+            "warning",
+            f"[maker] {what} for {client_order_id} skipped: the order is no longer open; "
+            f"dropped the quote so side {side} places a fresh one next tick",
+        )
+
     def _forget(self, client_order_id) -> None:
         self._release_hedge(client_order_id, "ended")
         side = self._live_orders.pop(client_order_id, None)
@@ -2061,6 +2274,7 @@ class LighterMaker(Strategy):
             f"delta={delta:.4g} ({abs(delta) * mid_h:.2f} USD)  "
             f"trips={pnl.trips} ewma={'-' if ewma is None else f'{ewma:.2f}'} bps  "
             f"net={net:.4f} USD  tx/min={tx_min:.1f} tokens={self._engine.tokens:.1f}  "
+            f"stale {self._stale_refs_dropped}  "
             f"day {self._state.fills}/{self._kill.fill_cap}f"
             f"{' UNLOCKED' if self._kill.fill_cap_unlocked else ''} "
             f"{self._state.tx}/{self._limits.daily.max_tx}tx  | {margins}",
@@ -2108,12 +2322,42 @@ class LighterMaker(Strategy):
             f"{self._kill.fill_cap if self._kill else self._limits.daily.max_fills}"
             f"{'(unlocked)' if self._kill and self._kill.fill_cap_unlocked else '(base)'} "
             f"day_tx={self._state.tx}/{self._limits.daily.max_tx} "
-            f"[{counters}] kill={self._kill_reason or 'none'} "
+            f"[{counters}] stale_refs_dropped={self._stale_refs_dropped} "
+            f"{'ADOPTED ' if self._adopted else ''}"
+            f"kill={self._kill_reason or 'none'} "
             f"failures={len(self._failures)} leftovers={len(self._leftovers)} "
             f"exit_code={self.exit_code}"
         )
 
     # -- cleanup ---------------------------------------------------------------------------
+
+    def _cancel_refusal_is_benign(self, client_order_id, exc: Exception) -> bool:
+        """Whether a refused cancel means the order had already ended rather than stayed live.
+
+        Session B (2026-09-09) finished by reporting two orders as LEFTOVER whose cancels were
+        refused with "Cannot cancel order: state is Filled".  They had filled - the run was
+        clean, the report was not.  A refusal naming a terminal state, or a cache that already
+        shows the order closed, retires the order instead of failing the run.  Anything else
+        (a real PENDING_CANCEL that the venue never confirmed) still counts as a leftover.
+        """
+        if not self._order_is_open(client_order_id):
+            self._known_closed.add(client_order_id)
+            self._log_safe(
+                "info",
+                f"[maker] cancel for {client_order_id} refused because it had already ended; "
+                f"treating it as closed",
+            )
+            return True
+        text = str(exc).upper()
+        if "STATE IS" in text and any(state in text for state in self._CLOSED_STATES):
+            self._known_closed.add(client_order_id)
+            self._log_safe(
+                "info",
+                f"[maker] venue refused the cancel for {client_order_id} as already "
+                f"terminal ({exc}); treating it as closed",
+            )
+            return True
+        return False
 
     def _outstanding_orders(self) -> list[tuple[Any, Any]]:
         """``(client_order_id, status)`` for every order of ours not confirmed closed."""
@@ -2121,6 +2365,8 @@ class LighterMaker(Strategy):
         if self._paper:
             return out
         for client_order_id in list(self._live_orders) + list(self._hedge_orders):
+            if client_order_id in self._known_closed:
+                continue
             try:
                 order = self.cache.order(client_order_id)
             except Exception:
@@ -2144,9 +2390,14 @@ class LighterMaker(Strategy):
                 previous = action.previous
                 if self._paper or previous is None or previous.ref is None:
                     continue
+                if not self._order_is_open(previous.ref):
+                    self._known_closed.add(previous.ref)
+                    continue  # already ended; nothing to cancel and nothing to report
                 try:
                     self.cancel_order(previous.ref)
                 except Exception as exc:  # noqa: BLE001
+                    if self._cancel_refusal_is_benign(previous.ref, exc):
+                        continue
                     detail = f"{previous.ref}: {type(exc).__name__}: {exc}"
                     self._cancel_errors.append(detail)
                     self._note_failure(f"cleanup ({trigger}) could not cancel {detail}")
@@ -2209,6 +2460,503 @@ def _dec(value: float) -> Decimal:
 
 def _iso(t: float) -> str:
     return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="milliseconds")
+
+
+# ------------------------------------------------------------------ flatten
+
+
+@dataclass(frozen=True)
+class FlattenClip:
+    """One reduce-only IOC order that takes a position closer to flat."""
+
+    sell: bool
+    qty: float
+    price: float
+    remaining_after: float
+
+    def describe(self, instrument_id) -> str:
+        return (
+            f"{instrument_id} {'SELL' if self.sell else 'BUY'} {self.qty:g} @ {self.price:.10g} "
+            f"IOC reduce-only (leaves {self.remaining_after:g})"
+        )
+
+
+def plan_flatten_clip(
+    *,
+    signed_qty: float,
+    bid: float,
+    ask: float,
+    slippage_bps: float,
+    size_increment: float,
+    min_qty: float,
+    min_notional: float,
+    max_notional_usd: float,
+) -> FlattenClip | None:
+    """The next clip that reduces ``signed_qty`` toward zero, or ``None`` if none can be sent.
+
+    A long is closed by selling at the bid less the slippage allowance, a short by buying at
+    the ask plus it - the same protective limit the hedge uses, so a moving touch cannot fill
+    the order arbitrarily far away.
+
+    The clip is capped by ``max_notional_usd`` because the risk engine refuses anything above
+    it, so a position worth more than one clip is closed in several passes.  When splitting
+    would leave a remainder below the venue minimum - which could never then be closed - the
+    split is shifted so the remainder is exactly the venue minimum instead.
+
+    ``None`` means nothing legal can be sent: either the position is already inside one venue
+    step, or what is left is below the venue minimum.  The caller reports that as a residual
+    rather than retrying forever.
+    """
+    step = size_increment if size_increment > 0.0 else 0.0
+    want = abs(signed_qty)
+    if want <= EPS or (step > 0.0 and want < step):
+        return None
+    sell = signed_qty > 0.0  # long -> sell to close
+    touch = bid if sell else ask
+    if touch <= 0.0:
+        return None
+    price = touch * (1.0 - slippage_bps / 1e4) if sell else touch * (1.0 + slippage_bps / 1e4)
+    if price <= 0.0:
+        return None
+
+    max_qty = max_notional_usd / price if max_notional_usd > 0.0 else want
+    qty = min(want, max_qty)
+    # Do not strand a remainder the venue would refuse to close.
+    if want > max_qty and (want - max_qty) < min_qty:
+        qty = max(0.0, want - min_qty)
+    if step > 0.0:
+        qty = math.floor(qty / step + 1e-9) * step
+    if qty <= EPS or qty < min_qty - EPS or qty * price < min_notional - EPS:
+        return None
+    return FlattenClip(
+        sell=sell, qty=qty, price=price, remaining_after=max(0.0, want - qty),
+    )
+
+
+class FlattenConfig(StrategyConfig):
+    """Configuration for :class:`PositionFlattener`."""
+
+    _CUSTOM_FIELDS = (
+        "plan", "limits", "env", "maker_client_id", "hedge_client_id", "deadline_ts",
+        "hedge_enabled",
+    )
+
+    def __new__(cls, *args: object, **kwargs: object) -> Self:
+        """Create a new instance, hiding the custom fields from the pyo3 base config."""
+        for name in cls._CUSTOM_FIELDS:
+            kwargs.pop(name, None)
+        return super().__new__(cls, *args, **kwargs)
+
+    def __init__(
+        self,
+        *,
+        plan: SymbolPlan,
+        limits: Limits,
+        env: str,
+        maker_client_id: str,
+        hedge_client_id: str,
+        deadline_ts: float = 0.0,
+        hedge_enabled: bool = True,
+        **_kwargs: object,
+    ) -> None:
+        """Initialize the configuration."""
+        super().__init__()
+        self.plan = plan
+        self.limits = limits
+        self.env = env
+        self.maker_client_id = maker_client_id
+        self.hedge_client_id = hedge_client_id
+        self.deadline_ts = deadline_ts
+        self.hedge_enabled = hedge_enabled
+
+
+class PositionFlattener(Strategy):
+    """Close whatever the two venues are carrying, then stop.  No quoting, no hedging.
+
+    This exists because a session can die owning a position: on 2026-09-09 an instance was
+    killed 17 s after placing an order, the order later filled, and the venues were left with
+    a hedged basis (Lighter short 53.5 PONS, Aster long 52) that no strategy owned.  The maker
+    refuses to start on a book like that, and this is the tool that clears it.
+
+    Each pass reads the position the CACHE reports for the instrument - not for this strategy,
+    because reconciliation may have attached it to another id - and sends one reduce-only
+    LIMIT IOC clip per leg at the touch offset by ``[hedge] slippage_bps``.  IOC leaves nothing
+    resting, so a pass that fills partially simply sends less next second.  It retries once a
+    second until both legs are flat or the deadline expires, and exits non-zero unless both
+    ended flat.
+    """
+
+    def __init__(self, config: FlattenConfig) -> None:
+        super().__init__(config)
+        self._cfg = config
+        self._limits: Limits = config.limits
+        self._plan: SymbolPlan = config.plan
+        self._maker_id = InstrumentId.from_str(config.plan.maker_id)
+        self._hedge_id = InstrumentId.from_str(config.plan.hedge_id)
+        self._maker_client = ClientId.from_str(config.maker_client_id)
+        self._hedge_client = ClientId.from_str(config.hedge_client_id)
+        self._hedge_enabled = config.hedge_enabled
+
+        self._book = BookSample(t=0.0)
+        self._instruments: dict[Any, Any] = {}
+        self._before: dict[Any, tuple[float, float]] = {}
+        self._after: dict[Any, tuple[float, float]] = {}
+        self._inflight: dict[Any, Any] = {}  # instrument_id -> client_order_id in flight
+        self._sent_t: dict[Any, float] = {}
+        self._orders_sent = 0
+        self._fills: list[tuple[Any, bool, float, float]] = []
+        self._cash: dict[Any, float] = {}
+        self._fees: dict[str, float] = {}
+        self._residuals: list[str] = []
+        self._failures: list[str] = []
+        self._started_t = 0.0
+        self._finished = False
+        self._reduce_only = True  # dropped if the venue refuses reduce-only orders
+        self._data_seen = 0
+        self.summary_line = ""
+        self.done_event = threading.Event()
+        self.cleanup_done_event = threading.Event()
+        self.cleanup_done_event.set()  # the flattener rests nothing, so there is no cleanup
+
+    # -- results ---------------------------------------------------------------------------
+
+    @property
+    def failures(self) -> list[str]:
+        return list(self._failures)
+
+    @property
+    def leftovers(self) -> list[str]:
+        return []
+
+    @property
+    def cancel_errors(self) -> list[str]:
+        return []
+
+    @property
+    def kill_reason(self) -> str | None:
+        return None
+
+    @property
+    def orders_sent(self) -> int:
+        return self._orders_sent
+
+    @property
+    def received(self) -> bool:
+        return self._data_seen > 0
+
+    @property
+    def flat(self) -> bool:
+        """True when every leg we were asked to close is inside one venue step of zero."""
+        return all(abs(qty) <= self._step(iid) for iid, (qty, _) in self._after.items())
+
+    @property
+    def exit_code(self) -> int:
+        if self._failures:
+            return EXIT_FAILED
+        return EXIT_OK if self._finished and self.flat else EXIT_NOT_FLAT
+
+    def _log_safe(self, level: str, message: str) -> None:
+        flat = " | ".join(message.splitlines())
+        try:
+            getattr(self.log, level)(flat)
+        except RuntimeError:
+            print(message, file=sys.stderr, flush=True)
+
+    def _legs(self) -> list[Any]:
+        legs = [self._maker_id]
+        if self._hedge_enabled:
+            legs.append(self._hedge_id)
+        return legs
+
+    def _step(self, instrument_id) -> float:
+        instrument = self._instruments.get(instrument_id)
+        if instrument is None:
+            return 0.0
+        return float(instrument.size_increment.as_decimal())
+
+    # -- lifecycle -------------------------------------------------------------------------
+
+    @_guarded
+    def on_start(self) -> None:
+        """Load both instruments, subscribe to quotes, record the starting positions."""
+        for instrument_id in self._legs():
+            instrument = self.cache.instrument(instrument_id)
+            if instrument is None:
+                self._failures.append(f"instrument {instrument_id} not in the cache")
+                self._log_safe("error", f"[flatten] instrument {instrument_id} not loaded")
+                self._finish("no-instrument")
+                return
+            self._instruments[instrument_id] = instrument
+            self._cash[instrument_id] = 0.0
+
+        for instrument_id in self._legs():
+            client = (
+                self._maker_client if instrument_id == self._maker_id else self._hedge_client
+            )
+            self.subscribe_quotes(instrument_id, client_id=client)
+
+        for instrument_id in self._legs():
+            self._before[instrument_id] = self._net_position(instrument_id)
+            self._after[instrument_id] = self._before[instrument_id]
+            qty, avg = self._before[instrument_id]
+            self._log_safe(
+                "info",
+                f"[flatten] {instrument_id} starts at {qty:+.6g} base @ {avg:.8g}",
+            )
+
+        self._started_t = self.clock.timestamp_ns() / 1e9
+        self.clock.set_timer(
+            "flatten-sweep", timedelta(seconds=1.0), start_time=self.clock.utc_now(),
+        )
+        self._log_safe(
+            "info",
+            f"[flatten] reduce-only LIMIT IOC at the touch +/- "
+            f"{self._limits.hedge.slippage_bps:g} bps, at most "
+            f"{CAP_ORDER_NOTIONAL_USD:g} USD per clip, retrying once a second",
+        )
+
+    @_guarded
+    def on_stop(self) -> None:
+        for instrument_id in self._legs():
+            self._after[instrument_id] = self._net_position(instrument_id)
+        if not self.summary_line:
+            self.summary_line = self.summary()
+        self._log_safe("info", self.summary_line)
+
+    # -- market data -----------------------------------------------------------------------
+
+    @_guarded
+    def on_quote(self, quote) -> None:
+        self._data_seen += 1
+        if quote.instrument_id == self._maker_id:
+            self._book.m_bid = float(quote.bid_price)
+            self._book.m_ask = float(quote.ask_price)
+        elif quote.instrument_id == self._hedge_id:
+            self._book.h_bid = float(quote.bid_price)
+            self._book.h_ask = float(quote.ask_price)
+
+    def _touches(self, instrument_id) -> tuple[float, float]:
+        if instrument_id == self._maker_id:
+            return self._book.m_bid, self._book.m_ask
+        return self._book.h_bid, self._book.h_ask
+
+    def _net_position(self, instrument_id) -> tuple[float, float]:
+        """(signed base, average open price) the cache reports for this INSTRUMENT."""
+        signed = 0.0
+        weighted = 0.0
+        try:
+            positions = self.cache.positions_open(instrument_id=instrument_id)
+        except Exception:  # noqa: BLE001
+            return 0.0, 0.0
+        for pos in positions or ():
+            try:
+                qty = float(pos.signed_qty)
+                px = float(pos.avg_px_open or 0.0)
+            except Exception:  # noqa: BLE001
+                continue
+            signed += qty
+            weighted += abs(qty) * px
+        avg = weighted / abs(signed) if abs(signed) > EPS else 0.0
+        return signed, avg
+
+    # -- the sweep -------------------------------------------------------------------------
+
+    @_guarded
+    def on_time_event(self, event) -> None:
+        if event.name == "flatten-sweep":
+            self._sweep()
+
+    def _sweep(self) -> None:
+        if self._finished:
+            return
+        t = self.clock.timestamp_ns() / 1e9
+        for instrument_id in self._legs():
+            self._after[instrument_id] = self._net_position(instrument_id)
+
+        if self._cfg.deadline_ts and t >= self._cfg.deadline_ts:
+            self._log_safe("warning", "[flatten] deadline reached")
+            self._finish("deadline")
+            return
+        if self.flat:
+            self._log_safe("info", "[flatten] every leg is flat")
+            self._finish("flat")
+            return
+
+        for instrument_id in self._legs():
+            self._sweep_one(instrument_id, t)
+
+    def _sweep_one(self, instrument_id, t: float) -> None:
+        inflight = self._inflight.get(instrument_id)
+        if inflight is not None:
+            if t - self._sent_t.get(instrument_id, t) <= HEDGE_INFLIGHT_TIMEOUT_S:
+                return  # one IOC per leg at a time
+            self._log_safe(
+                "warning",
+                f"[flatten] {instrument_id}: no terminal report for {inflight} after "
+                f"{HEDGE_INFLIGHT_TIMEOUT_S:g}s; sending another clip",
+            )
+            self._inflight.pop(instrument_id, None)
+
+        signed, _avg = self._after.get(instrument_id, (0.0, 0.0))
+        instrument = self._instruments[instrument_id]
+        bid, ask = self._touches(instrument_id)
+        min_qty = (
+            float(instrument.min_quantity.as_decimal())
+            if instrument.min_quantity is not None
+            else 0.0
+        )
+        min_notional = (
+            float(instrument.min_notional.as_decimal())
+            if instrument.min_notional is not None
+            else 0.0
+        )
+        clip = plan_flatten_clip(
+            signed_qty=signed,
+            bid=bid,
+            ask=ask,
+            slippage_bps=self._limits.hedge.slippage_bps,
+            size_increment=float(instrument.size_increment.as_decimal()),
+            min_qty=min_qty,
+            min_notional=min_notional,
+            # The risk engine refuses anything above the HARD per-order cap; stay just inside
+            # it so a rounding step cannot push a clip over and have it denied.
+            max_notional_usd=CAP_ORDER_NOTIONAL_USD * 0.95,
+        )
+        if clip is None:
+            if abs(signed) > self._step(instrument_id):
+                note = (
+                    f"{instrument_id}: {signed:+.6g} base left but no legal clip "
+                    f"(min_qty={min_qty:g} min_notional={min_notional:g})"
+                )
+                if note not in self._residuals:
+                    self._residuals.append(note)
+                    self._log_safe("warning", f"[flatten] {note}")
+            return
+
+        try:
+            order = self.order_factory.limit(
+                instrument_id=instrument_id,
+                order_side=OrderSide.SELL if clip.sell else OrderSide.BUY,
+                quantity=instrument.make_qty(_dec(clip.qty)),
+                price=instrument.make_price(_dec(clip.price)),
+                time_in_force=TimeInForce.IOC,
+                reduce_only=self._reduce_only,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._failures.append(f"{instrument_id}: could not build a clip: {exc!r}")
+            return
+        client = self._maker_client if instrument_id == self._maker_id else self._hedge_client
+        self._inflight[instrument_id] = order.client_order_id
+        self._sent_t[instrument_id] = t
+        self._orders_sent += 1
+        self._log_safe("info", f"[flatten] sending {clip.describe(instrument_id)}")
+        self.submit_order(order, client_id=client)
+
+    # -- order events ----------------------------------------------------------------------
+
+    @_guarded
+    def on_order_filled(self, event) -> None:
+        base = float(event.last_qty.as_decimal())
+        price = float(event.last_px.as_decimal())
+        sell = event.order_side == OrderSide.SELL
+        instrument_id = event.instrument_id
+        self._fills.append((instrument_id, sell, base, price))
+        self._cash[instrument_id] = self._cash.get(instrument_id, 0.0) + (
+            base * price if sell else -base * price
+        )
+        commission = getattr(event, "commission", None)
+        if commission is not None:
+            try:
+                code = commission.currency.code
+                self._fees[code] = self._fees.get(code, 0.0) + float(commission.as_decimal())
+            except Exception:  # noqa: BLE001
+                pass
+        self._log_safe(
+            "info",
+            f"[flatten] FILL {instrument_id} {'SELL' if sell else 'BUY'} {base:g} @ {price:.10g}"
+            f" commission={commission}",
+        )
+
+    def _clear_inflight(self, event, what: str) -> None:
+        for instrument_id, coid in list(self._inflight.items()):
+            if coid == event.client_order_id:
+                self._inflight.pop(instrument_id, None)
+                self._log_safe("info", f"[flatten] {instrument_id} clip {what}")
+
+    @_guarded
+    def on_order_canceled(self, event) -> None:
+        self._clear_inflight(event, "canceled (IOC remainder)")
+
+    @_guarded
+    def on_order_expired(self, event) -> None:
+        self._clear_inflight(event, "expired")
+
+    @_guarded
+    def on_order_rejected(self, event) -> None:
+        reason = str(getattr(event, "reason", ""))
+        self._clear_inflight(event, f"rejected: {reason}")
+        self._handle_reduce_only_refusal(reason)
+
+    @_guarded
+    def on_order_denied(self, event) -> None:
+        reason = str(getattr(event, "reason", ""))
+        self._clear_inflight(event, f"denied: {reason}")
+        self._handle_reduce_only_refusal(reason)
+
+    def _handle_reduce_only_refusal(self, reason: str) -> None:
+        """Fall back to a plain IOC when the venue will not take a reduce-only order.
+
+        The position may be attached to another strategy id after reconciliation, which some
+        venues and the local risk checks treat as "nothing to reduce".  Dropping the flag is
+        safe here because every clip is sized to at most the position it is closing, so the
+        worst case is flattening exactly rather than overshooting.
+        """
+        if not self._reduce_only or "REDUCE" not in reason.upper():
+            if reason:
+                self._failures.append(f"clip refused: {reason}")
+            return
+        self._reduce_only = False
+        self._log_safe(
+            "warning",
+            f"[flatten] the venue refused a reduce-only clip ({reason}); retrying without the "
+            f"flag - clips are sized to the position, so they cannot overshoot it",
+        )
+
+    # -- finish ----------------------------------------------------------------------------
+
+    def summary(self) -> str:
+        before = " ".join(
+            f"{iid.symbol}={qty:+.6g}@{avg:.8g}" for iid, (qty, avg) in self._before.items()
+        )
+        after = " ".join(
+            f"{iid.symbol}={qty:+.6g}" for iid, (qty, _) in self._after.items()
+        )
+        cash = " ".join(f"{iid.symbol}={value:+.6f}" for iid, value in self._cash.items())
+        fees = " ".join(f"{code}={value:g}" for code, value in sorted(self._fees.items())) or "none"
+        return (
+            f"[flatten] SUMMARY env={self._cfg.env} symbol={self._plan.symbol} "
+            f"before=[{before}] after=[{after}] flat={self.flat} "
+            f"orders={self._orders_sent} fills={len(self._fills)} "
+            f"cash=[{cash}] fees=[{fees}] "
+            f"reduce_only={self._reduce_only} "
+            f"residuals={len(self._residuals)}"
+            + (f" ({'; '.join(self._residuals)})" if self._residuals else "")
+            + f" failures={len(self._failures)} exit_code={self.exit_code}"
+        )
+
+    def _finish(self, reason: str) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        try:
+            for instrument_id in self._legs():
+                self._after[instrument_id] = self._net_position(instrument_id)
+            self.summary_line = self.summary()
+            self._log_safe("error" if self._failures else "info", self.summary_line)
+        finally:
+            if not self.summary_line:
+                self.summary_line = f"[flatten] SUMMARY reason={reason} result=unknown"
+            self.done_event.set()
 
 
 # ------------------------------------------------------------------ node wiring
@@ -2305,6 +3053,8 @@ class RunPlan:
     log_level: str = "INFO"
     connection_timeout_secs: int = DEFAULT_CONNECT_TIMEOUT_SECS
     connect_only: bool = False
+    flatten: bool = False
+    adopt_position: bool = False
 
     @property
     def live(self) -> bool:
@@ -2374,7 +3124,7 @@ def build_node(rp: RunPlan):
         .with_timeout_connection(rp.connection_timeout_secs)
         .with_delay_post_stop_secs(2)
     )
-    if rp.live:
+    if rp.live or rp.flatten:
         builder = builder.with_reconciliation(reconciliation=True).with_exec_engine_config(
             LiveExecutionEngineConfig(
                 reconciliation_lookback_mins=60,
@@ -2397,6 +3147,21 @@ def build_node(rp: RunPlan):
             builder = builder.add_exec_client(hedge_venue, *aster_exec)
     node = builder.build()
 
+    if rp.flatten:
+        flat_config = FlattenConfig(
+            strategy_id=StrategyId.from_str(f"FLATTEN-{rp.plan.symbol}"),
+            plan=rp.plan,
+            limits=rp.limits,
+            env=rp.env,
+            maker_client_id=maker_venue,
+            hedge_client_id=hedge_venue,
+            deadline_ts=rp.deadline.timestamp(),
+            hedge_enabled=rp.hedge_enabled,
+        )
+        flattener = PositionFlattener(flat_config)
+        node.add_strategy(flattener)
+        return node, flattener
+
     config = MakerLiveConfig(
         strategy_id=StrategyId.from_str(f"MAKER-LIVE-{rp.plan.symbol}"),
         plan=rp.plan,
@@ -2411,6 +3176,7 @@ def build_node(rp: RunPlan):
         hedge_enabled=rp.hedge_enabled,
         deadline_ts=rp.deadline.timestamp(),
         connect_only=rp.connect_only,
+        adopt_position=rp.adopt_position,
     )
     strategy = LighterMaker(config)
     node.add_strategy(strategy)
@@ -2456,6 +3222,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="public data feeds only; fills and hedges are simulated locally")
     parser.add_argument("--live", action="store_true",
                         help="connect the execution clients and place real orders")
+    parser.add_argument("--flatten", action="store_true",
+                        help="with --live: close whatever position the venues carry on both "
+                             "legs with reduce-only LIMIT IOC clips, then exit. No quoting "
+                             "and no hedging logic; use it after a session died owning a "
+                             "position")
+    parser.add_argument("--adopt-position", action="store_true",
+                        help="with --live: instead of refusing to start on a non-flat book, "
+                             "take it over - q is seeded from the maker position and the "
+                             "unhedged delta from (maker + hedge)")
     parser.add_argument("--connect-only", action="store_true",
                         help="with --live: connect both exec clients, report balances / positions / "
                              "open orders every 30 s, never place, modify or cancel an order")
@@ -2523,6 +3298,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     mode = resolve_mode(args, parser)
+    if args.flatten and args.connect_only:
+        parser.error("--flatten and --connect-only cannot be combined")
+    if args.flatten and mode == "paper":
+        parser.error("--flatten needs --live (or --dry-run to inspect the configuration)")
+    if args.adopt_position and args.flatten:
+        parser.error("--adopt-position is for a quoting session; --flatten closes instead")
     plan = resolve_plan(args.env, args.symbol)
     hedge_enabled = args.hedge == "aster"
 
@@ -2554,9 +3335,17 @@ def main(argv: list[str] | None = None) -> int:
         log_level=args.log_level,
         connection_timeout_secs=args.connection_timeout_secs,
         connect_only=bool(args.connect_only),
+        flatten=bool(args.flatten),
+        adopt_position=bool(args.adopt_position),
     )
 
-    print(f"mode              : {mode}{'  (CONNECT-ONLY: no orders will be sent)' if args.connect_only else ''}")
+    if args.flatten:
+        note = "  (FLATTEN: close the venues' positions with reduce-only IOC, no quoting)"
+    elif args.connect_only:
+        note = "  (CONNECT-ONLY: no orders will be sent)"
+    else:
+        note = ""
+    print(f"mode              : {mode}{note}")
     print(f"environment       : {args.env}")
     print(f"maker instrument  : {plan.maker_id}  (LIGHTER, post-only GTC)")
     print(f"hedge instrument  : {plan.hedge_id if hedge_enabled else '(disabled)'}"
@@ -2587,6 +3376,17 @@ def main(argv: list[str] | None = None) -> int:
           f"{limits.daily.profit_gate_usd:g} USD with a non-negative trip EWMA "
           f"(hard caps {CAP_DAILY_FILLS} / {CAP_DAILY_FILLS_PROFITABLE}); "
           f"re-locks at realised net <= 0")
+    if args.flatten:
+        print(f"flatten legs      : {plan.maker_id}"
+              + (f", {plan.hedge_id}" if hedge_enabled else "")
+              + "  (reduce-only LIMIT IOC at the touch, retried every second)")
+        print(f"flatten limit     : touch +/- {limits.hedge.slippage_bps:g} bps, at most "
+              f"{CAP_ORDER_NOTIONAL_USD:g} USD per clip (HARD cap); a bigger position is "
+              f"closed in several clips")
+        print(f"flatten deadline  : {deadline.isoformat(timespec='seconds')} "
+              f"(exit 0 only if both legs end flat)")
+    if args.adopt_position:
+        print("adopt position    : YES - a non-flat book will be taken over instead of refused")
     print(f"lighter creds set : {lighter_credentials_present(args.env)}")
     print(f"aster creds set   : {aster_credentials_present(args.env)}")
     print()
