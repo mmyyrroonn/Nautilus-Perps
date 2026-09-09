@@ -55,6 +55,8 @@ from maker_live import QuoteEngine  # noqa: E402
 from maker_live import QuoteParams  # noqa: E402
 from quote_gates import GateParams  # noqa: E402
 from quote_gates import QuoteGates  # noqa: E402
+from quote_placement import PLACEMENTS  # noqa: E402
+from quote_placement import place  # noqa: E402
 from nautilus_trader.model import ClientOrderId  # noqa: E402
 from nautilus_trader.model import CryptoPerpetual  # noqa: E402
 from nautilus_trader.model import Currency  # noqa: E402
@@ -577,9 +579,10 @@ SIM_KWARGS = dict(
 FEE_H = 0.9
 
 
-def live_params(mode: str = "improve", **over) -> QuoteParams:
+def live_params(placement: str = "improve", **over) -> QuoteParams:
     base = dict(
-        mode=mode, order_usd=20.0, max_inv_usd=45.0, min_edge_bps=3.0, reserve_bps=0.0,
+        placement=placement, anchor_edge_bps=0.0,
+        order_usd=20.0, max_inv_usd=45.0, min_edge_bps=3.0, reserve_bps=0.0,
         maker_fee_bps=0.0, hedge_fee_bps=FEE_H, tick=TICK, decimals=DECIMALS,
         requote_min_s=3.0, tx_per_min=36.0,
     )
@@ -606,9 +609,12 @@ def live_gates(**over) -> QuoteGates | None:
     return QuoteGates(GateParams(hedge_fee_bps=FEE_H, maker_fee_bps=0.0, **over))
 
 
-def sim_params(mode: str = "improve", **over):
+def sim_params(placement: str = "improve", **over):
     kwargs = dict(SIM_KWARGS)
-    kwargs.update(mode=mode, tx_per_min=36.0, requote_ticks=1, requote_min_s=3.0)
+    kwargs.update(
+        placement=placement, anchor_edge_bps=0.0,
+        tx_per_min=36.0, requote_ticks=1, requote_min_s=3.0,
+    )
     kwargs.update(over)
     return maker_inventory.Params(**kwargs)
 
@@ -620,19 +626,20 @@ class TestQuotingParity(unittest.TestCase):
     two must agree on every transaction and every fill increment.
     """
 
-    def _compare(self, mode: str, tob_scale: float = 1.0, **over) -> None:
+    def _compare(self, placement: str, tob_scale: float = 1.0, min_incs: int = 20,
+                 **over) -> None:
         gate = {k: over.pop(k) for k in list(over) if k in GATE_KEYS}
         books, trades = build_tape(tob_scale=tob_scale)
         run = maker_inventory.simulate(
             books, trades, tick=TICK, decimals=DECIMALS, fee_h=FEE_H,
-            p=sim_params(mode, **over, **gate),
+            p=sim_params(placement, **over, **gate),
         )
         engine, fills, q = replay_live(
-            books, trades, live_params(mode, **over), live_gates(**gate),
+            books, trades, live_params(placement, **over), live_gates(**gate),
         )
 
         with self.subTest("the tape must actually fill, or the test proves nothing"):
-            self.assertGreater(len(run.incs), 20)
+            self.assertGreaterEqual(len(run.incs), min_incs)
             self.assertGreater(run.tx_sent, 20)
 
         sim_fills = [
@@ -696,6 +703,82 @@ class TestQuotingParity(unittest.TestCase):
     def test_matches_at_a_tiny_inventory_cap(self) -> None:
         """A cap this small keeps the closing side in play for most of the tape."""
         self._compare("improve", max_inv_usd=25.0)
+
+    # -- the placements -------------------------------------------------------------------
+    #
+    # The tape's maker touch is only ~5.5 bps wide, so an anchor much beyond 5 bps off the
+    # hedge mid rests outside it and stops filling.  That is the point of the placement, and
+    # both cases are worth pinning: one that trades and one that only quotes.
+
+    def test_anchor_matches(self) -> None:
+        self._compare("anchor", anchor_edge_bps=5.0)
+
+    def test_anchor_matches_with_a_thin_book(self) -> None:
+        """A thin top of book lets the queue-ahead branch of an at/outside anchor fill."""
+        self._compare("anchor", tob_scale=0.02, anchor_edge_bps=5.0)
+
+    def test_anchor_matches_when_it_rests_outside_the_touch_and_never_fills(self) -> None:
+        self._compare("anchor", anchor_edge_bps=12.0, min_incs=0)
+
+    def test_anchor_matches_without_a_requote_cadence(self) -> None:
+        self._compare("anchor", anchor_edge_bps=5.0, requote_min_s=0.0)
+
+    def test_anchor_matches_with_a_tight_transaction_budget(self) -> None:
+        """A bucket this small defers most of the re-prices; both replays must defer the same
+        ones, so the fills that do get through are few."""
+        self._compare(
+            "anchor", anchor_edge_bps=5.0, tx_per_min=14.0, requote_min_s=0.0, min_incs=3,
+        )
+
+    def test_anchor_matches_with_both_gates_on(self) -> None:
+        self._compare(
+            "anchor", anchor_edge_bps=5.0, min_spread_ratio=0.4, spread_window_s=5.0,
+            max_move_bps_per_min=2.5, vol_window_s=6.0,
+        )
+
+    def test_the_anchor_actually_rests_off_the_maker_touch(self) -> None:
+        """Guard the cases above: an anchor that happened to equal improve proves nothing."""
+        books, trades = build_tape()
+        inside = at = outside = 0
+        for i in range(len(books)):
+            spot = place(
+                "anchor", sell=True, m_bid=books.m_bid[i], m_ask=books.m_ask[i],
+                h_bid=books.h_bid[i], h_ask=books.h_ask[i], tick=TICK, decimals=DECIMALS,
+                tob=books.m_ask_size[i], anchor_edge_bps=5.0,
+            )
+            self.assertGreater(spot.price, books.m_bid[i], "an ask may never cross the bid")
+            if spot.price < books.m_ask[i] - TICK / 2:
+                inside += 1
+            elif spot.price < books.m_ask[i] + TICK / 2:
+                at += 1
+            else:
+                outside += 1
+        for name, count in (("inside", inside), ("at", at), ("outside", outside)):
+            with self.subTest(where=name):
+                self.assertGreater(count, 0, "the tape must exercise this branch")
+
+    def test_improve_and_join_are_unchanged_by_the_placement_refactor(self) -> None:
+        """``place()`` must reproduce the two literal expressions it replaced, sample by
+        sample - that is what makes "byte-identical" checkable rather than asserted."""
+        books, trades = build_tape()
+        for i in range(len(books)):
+            for sell in (True, False):
+                touch = books.m_ask[i] if sell else books.m_bid[i]
+                opposite = books.m_bid[i] if sell else books.m_ask[i]
+                tob = books.m_ask_size[i] if sell else books.m_bid_size[i]
+                kw = dict(
+                    sell=sell, m_bid=books.m_bid[i], m_ask=books.m_ask[i],
+                    h_bid=books.h_bid[i], h_ask=books.h_ask[i],
+                    tick=TICK, decimals=DECIMALS, tob=tob,
+                )
+                want_px = round(touch - TICK if sell else touch + TICK, DECIMALS)
+                want_lock = (want_px <= opposite) if sell else (want_px >= opposite)
+                got = place("improve", **kw)
+                self.assertEqual((got.price, got.queue_ahead, got.locked),
+                                 (want_px, 0.0, want_lock))
+                got = place("join", **kw)
+                self.assertEqual((got.price, got.queue_ahead, got.locked),
+                                 (round(touch, DECIMALS), tob, False))
 
     # -- the opening gates ----------------------------------------------------------------
     #
@@ -874,6 +957,130 @@ class TestQuoteEngineRestrictions(unittest.TestCase):
         self.assertEqual(engine.orders, [None, None])
 
 
+# --------------------------------------------------------------------------- placement
+
+
+class TestPlacement(unittest.TestCase):
+    """``quote_placement.place()``: the one copy of the pricing rule, unit by unit.
+
+    Numbers are on the PONS grid: tick 1e-5, five decimals.  A hedge mid of 0.735 with a
+    12 bps anchor edge gives an ask of 0.735882 and a bid of 0.734118 before rounding, which
+    is what every anchor case below starts from.
+    """
+
+    ANCHOR_ASK = 0.73589  # ceil(0.735882 / 1e-5) * 1e-5 - rounded AWAY from the hedge mid
+    ANCHOR_BID = 0.73411  # floor(0.734118 / 1e-5) * 1e-5 - likewise
+
+    def at(self, placement: str, *, sell: bool, m_bid: float, m_ask: float,
+           h_bid: float = 0.73490, h_ask: float = 0.73510, tob: float = 400.0,
+           edge: float = 12.0):
+        return place(
+            placement, sell=sell, m_bid=m_bid, m_ask=m_ask, h_bid=h_bid, h_ask=h_ask,
+            tick=TICK, decimals=DECIMALS, tob=tob, anchor_edge_bps=edge,
+        )
+
+    # -- the two pre-existing rules, unchanged --------------------------------------------
+
+    def test_improve_rests_one_tick_inside_with_no_queue(self) -> None:
+        ask = self.at("improve", sell=True, m_bid=0.73000, m_ask=0.73040)
+        self.assertAlmostEqual(ask.price, 0.73039, places=9)
+        self.assertEqual(ask.queue_ahead, 0.0)
+        self.assertFalse(ask.locked)
+        bid = self.at("improve", sell=False, m_bid=0.73000, m_ask=0.73040)
+        self.assertAlmostEqual(bid.price, 0.73001, places=9)
+
+    def test_improve_locks_in_a_one_tick_book(self) -> None:
+        for sell in (True, False):
+            with self.subTest(sell=sell):
+                self.assertTrue(
+                    self.at("improve", sell=sell, m_bid=0.73000, m_ask=0.73001).locked,
+                )
+
+    def test_join_rests_at_the_touch_behind_the_whole_top_of_book(self) -> None:
+        ask = self.at("join", sell=True, m_bid=0.73000, m_ask=0.73040, tob=400.0)
+        self.assertAlmostEqual(ask.price, 0.73040, places=9)
+        self.assertEqual(ask.queue_ahead, 400.0)
+        self.assertFalse(ask.locked)
+
+    # -- anchor ---------------------------------------------------------------------------
+
+    def test_anchor_prices_off_the_hedge_mid_and_rounds_away_from_it(self) -> None:
+        """Ceil the ask, floor the bid: rounding may only ever ADD edge, never give it away."""
+        wide = dict(m_bid=0.73000, m_ask=0.74000)
+        ask = self.at("anchor", sell=True, **wide)
+        bid = self.at("anchor", sell=False, **wide)
+        self.assertAlmostEqual(ask.price, self.ANCHOR_ASK, places=9)
+        self.assertAlmostEqual(bid.price, self.ANCHOR_BID, places=9)
+        self.assertGreater(ask.price, 0.735 * (1 + 12.0 / 1e4))
+        self.assertLess(bid.price, 0.735 * (1 - 12.0 / 1e4))
+        # ... and both are on the venue grid.
+        for placed in (ask, bid):
+            self.assertAlmostEqual(placed.price / TICK, round(placed.price / TICK), places=6)
+
+    def test_a_price_already_on_a_tick_is_not_pushed_a_whole_tick_further(self) -> None:
+        """0.7350 * (1 + 20 bps) = 0.73647 exactly; ceil must leave it alone."""
+        ask = self.at("anchor", sell=True, m_bid=0.73000, m_ask=0.74000, edge=20.0)
+        self.assertAlmostEqual(ask.price, 0.73647, places=9)
+
+    def test_anchor_inside_the_touch_has_no_queue_ahead(self) -> None:
+        wide = dict(m_bid=0.73000, m_ask=0.74000)
+        self.assertEqual(self.at("anchor", sell=True, **wide).queue_ahead, 0.0)
+        self.assertEqual(self.at("anchor", sell=False, **wide).queue_ahead, 0.0)
+
+    def test_anchor_exactly_at_the_touch_queues_behind_the_top_of_book(self) -> None:
+        ask = self.at("anchor", sell=True, m_bid=0.73000, m_ask=self.ANCHOR_ASK, tob=400.0)
+        self.assertAlmostEqual(ask.price, self.ANCHOR_ASK, places=9)
+        self.assertEqual(ask.queue_ahead, 400.0)
+        bid = self.at("anchor", sell=False, m_bid=self.ANCHOR_BID, m_ask=0.74000, tob=400.0)
+        self.assertAlmostEqual(bid.price, self.ANCHOR_BID, places=9)
+        self.assertEqual(bid.queue_ahead, 400.0)
+
+    def test_anchor_outside_the_touch_is_charged_the_whole_top_of_book(self) -> None:
+        """The recordings only carry the top of book, so an unknown queue is a full one."""
+        ask = self.at("anchor", sell=True, m_bid=0.73000, m_ask=0.73500, tob=400.0)
+        self.assertAlmostEqual(ask.price, self.ANCHOR_ASK, places=9)
+        self.assertGreater(ask.price, 0.73500)
+        self.assertEqual(ask.queue_ahead, 400.0)
+
+    def test_anchor_never_crosses_the_maker_book(self) -> None:
+        """A maker book far above the hedge mid clamps the ask to one tick above the bid."""
+        ask = self.at("anchor", sell=True, m_bid=0.74000, m_ask=0.74100)
+        self.assertAlmostEqual(ask.price, 0.74001, places=9)
+        self.assertGreater(ask.price, 0.74000, "an ask at or below the bid would take")
+        self.assertEqual(ask.queue_ahead, 0.0, "0.74001 is strictly inside 0.74000/0.74100")
+        # ... and a maker book far below clamps the bid to one tick under the ask.
+        bid = self.at("anchor", sell=False, m_bid=0.72000, m_ask=0.72100)
+        self.assertAlmostEqual(bid.price, 0.72099, places=9)
+        self.assertLess(bid.price, 0.72100)
+        self.assertEqual(bid.queue_ahead, 0.0)
+
+    def test_anchor_quotes_a_one_tick_book_that_improve_refuses(self) -> None:
+        for sell in (True, False):
+            with self.subTest(sell=sell):
+                placed = self.at("anchor", sell=sell, m_bid=0.73000, m_ask=0.73001)
+                self.assertFalse(placed.locked)
+        self.assertTrue(self.at("improve", sell=True, m_bid=0.73000, m_ask=0.73001).locked)
+
+    def test_anchor_refuses_without_a_hedge_book(self) -> None:
+        """No hedge mid, no anchor - falling back to the maker touch is the bug it avoids."""
+        placed = self.at("anchor", sell=True, m_bid=0.73000, m_ask=0.74000,
+                         h_bid=0.0, h_ask=0.0)
+        self.assertTrue(placed.locked)
+
+    def test_a_bigger_edge_rests_further_out_on_both_sides(self) -> None:
+        wide = dict(m_bid=0.70000, m_ask=0.77000)
+        asks = [self.at("anchor", sell=True, edge=e, **wide).price for e in (8, 12, 16, 20)]
+        bids = [self.at("anchor", sell=False, edge=e, **wide).price for e in (8, 12, 16, 20)]
+        self.assertEqual(asks, sorted(asks))
+        self.assertEqual(bids, sorted(bids, reverse=True))
+
+    def test_every_placement_name_is_handled(self) -> None:
+        for placement in PLACEMENTS:
+            with self.subTest(placement=placement):
+                placed = self.at(placement, sell=True, m_bid=0.73000, m_ask=0.74000)
+                self.assertGreater(placed.price, 0.0)
+
+
 # --------------------------------------------------------------------------- gates
 
 
@@ -1040,9 +1247,9 @@ class TestCloseMinFlip(unittest.TestCase):
     def test_off_by_default_in_quote_params(self) -> None:
         """The dataclass default reproduces the simulator; the config supplies the live value."""
         self.assertFalse(QuoteParams(
-            mode="improve", order_usd=20.0, max_inv_usd=45.0, min_edge_bps=3.0,
-            reserve_bps=0.0, maker_fee_bps=0.0, hedge_fee_bps=0.9, tick=TICK,
-            decimals=DECIMALS,
+            placement="improve", anchor_edge_bps=0.0, order_usd=20.0, max_inv_usd=45.0,
+            min_edge_bps=3.0, reserve_bps=0.0, maker_fee_bps=0.0, hedge_fee_bps=0.9,
+            tick=TICK, decimals=DECIMALS,
         ).close_min_flip)
         limits = load_limits(REPO / "config" / "limits.toml")
         self.assertTrue(limits.quote.close_min_flip)
@@ -1697,6 +1904,68 @@ class TestPnLMonitor(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- strategy
+
+
+class TestStrategyPlacement(unittest.TestCase):
+    """The placement as the running strategy applies it."""
+
+    @staticmethod
+    def _anchor_limits(edge: float = 12.0):
+        """The shipped limits file with its placement switched to anchor, loaded for real.
+
+        Editing the two keys in place (rather than building a Limits object by hand) keeps
+        the loader, its floors and its cross-checks in the path this test exercises.
+        """
+        path = Path(tempfile.mkdtemp(prefix="limits-")) / "limits.toml"
+        text = (REPO / "config" / "limits.toml").read_text(encoding="utf-8")
+        for old, new in (
+            ('placement = "improve"', 'placement = "anchor"'),
+            ("anchor_edge_bps = 12.0", f"anchor_edge_bps = {edge:g}"),
+        ):
+            assert text.count(old) == 1, f"{old!r} is no longer in config/limits.toml"
+            text = text.replace(old, new)
+        path.write_text(text, encoding="utf-8")
+        return load_limits(path)
+
+    def _quote(self, strategy) -> None:
+        strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
+        for _ in range(3):
+            feed_books(strategy)
+            strategy._decide()
+            strategy.clock.advance(1.0)
+
+    def test_the_default_strategy_still_improves(self) -> None:
+        strategy = build_strategy()
+        self.assertEqual(strategy._engine.p.placement, "improve")
+        self._quote(strategy)
+        # m_ask 0.73220 less one tick.
+        self.assertAlmostEqual(strategy._engine.orders[ASK].price, 0.73219, places=9)
+
+    def test_anchor_prices_both_sides_off_the_hedge_mid(self) -> None:
+        """h_mid 0.72995 +/- 12 bps, rounded away from it, and inside the maker touch."""
+        strategy = build_strategy(limits=self._anchor_limits())
+        self.assertEqual(strategy._engine.p.placement, "anchor")
+        self.assertEqual(strategy._engine.p.anchor_edge_bps, 12.0)
+        self._quote(strategy)
+        self.assertAlmostEqual(strategy._engine.orders[ASK].price, 0.73083, places=9)
+        self.assertAlmostEqual(strategy._engine.orders[BID].price, 0.72907, places=9)
+        # Strictly inside 0.72820 / 0.73220, so nothing is resting ahead of us.
+        self.assertEqual(strategy._engine.orders[ASK].queue, 0.0)
+
+    def test_a_wider_anchor_edge_rests_further_out(self) -> None:
+        strategy = build_strategy(limits=self._anchor_limits(edge=20.0))
+        self._quote(strategy)
+        self.assertGreater(strategy._engine.orders[ASK].price, 0.73083)
+        self.assertLess(strategy._engine.orders[BID].price, 0.72907)
+
+    def test_the_status_line_and_the_summary_name_the_placement(self) -> None:
+        strategy = build_strategy(limits=self._anchor_limits())
+        self._quote(strategy)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            strategy._status()
+        self.assertIn("place=anchor 12", out.getvalue())
+        self.assertIn("placement=anchor 12", strategy.summary())
 
 
 class TestStrategyOpeningGates(unittest.TestCase):

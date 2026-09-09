@@ -119,6 +119,8 @@ from maker_fill import (  # noqa: E402  (needs sys.path above)
     merge_pair,
 )
 from quote_gates import GateParams, QuoteGates  # noqa: E402
+from quote_placement import ANCHOR, PLACEMENTS, place  # noqa: E402
+from quote_placement import label as placement_label  # noqa: E402
 from opportunities import (  # noqa: E402
     SymbolFiles,
     discover,
@@ -145,7 +147,7 @@ MAKER_FEE_BPS = {"LIGHTER": 0.0, "LIGHTER_RH": 0.0, "ASTER": 0.0, "HL": 1.5}
 class Params:
     """One replay of the knobs.  ``label`` names the row in the sensitivity table."""
 
-    mode: str
+    placement: str  # "improve" | "join" | "anchor"; see src/quote_placement.py
     order_usd: float
     max_inv_usd: float
     min_edge_bps: float
@@ -157,6 +159,7 @@ class Params:
     tx_per_min: float | None = None  # shared token bucket, None = unlimited
     requote_ticks: int = 1  # re-price only once the touch moved this many ticks
     requote_min_s: float = 0.0  # minimum seconds between two re-prices of one side
+    anchor_edge_bps: float = 0.0  # "anchor" only: bps off the hedge mid the quote rests at
     # The two opening gates of ``quote_gates.GateParams``, shared with the live maker.
     # All zero = both off, which is the default: every result produced before they existed
     # reproduces exactly.
@@ -220,6 +223,8 @@ class Params:
             replace(self, max_move_bps_per_min=25.0, label="vol gate 25"),
             replace(self, min_spread_ratio=2.0, min_maker_spread_bps=12.0,
                     max_move_bps_per_min=25.0, label="both gates 2.0/12 + 25"),
+            # And the placement the maker switched to after being picked off on improve.
+            replace(self, placement=ANCHOR, anchor_edge_bps=12.0, label="anchor 12"),
         ]
         return out
 
@@ -444,16 +449,26 @@ def simulate(
             if p.one_sided and not sell:
                 ok = False
             price = 0.0
+            queue = 0.0
+            level = touch  # the level the re-price cadence measures movement against
             closing = False
             size = 0.0
             if ok:
-                if p.mode == "improve":
-                    price = round(touch - tick if sell else touch + tick, decimals)
-                    if (price <= opposite) if sell else (price >= opposite):
-                        run.locked[side] += 1  # one tick inside would lock the book
-                        ok = False
-                else:
-                    price = round(touch, decimals)
+                spot = place(
+                    p.placement,
+                    sell=sell,
+                    m_bid=books.m_bid[i], m_ask=books.m_ask[i],
+                    h_bid=books.h_bid[i], h_ask=books.h_ask[i],
+                    tick=tick, decimals=decimals, tob=tob,
+                    anchor_edge_bps=p.anchor_edge_bps,
+                )
+                price, queue = spot.price, spot.queue_ahead
+                if spot.locked:
+                    run.locked[side] += 1  # improve one tick inside would cross
+                    ok = False
+                elif p.placement == ANCHOR:
+                    # An anchor quote does not track the touch, so neither does its cadence.
+                    level = price
             if ok:
                 closing = (q > EPS) if sell else (q < -EPS)
                 if closing:
@@ -489,7 +504,7 @@ def simulate(
             ):
                 want = 2  # the side flipped, or the closing clip no longer fits |q|
             elif order.price != price:
-                moved = min_move <= 0.0 or abs(touch - quoted[side]) >= min_move
+                moved = min_move <= 0.0 or abs(level - quoted[side]) >= min_move
                 ready = min_gap <= 0.0 or t - last_act[side] >= min_gap - EPS
                 if moved and ready:
                     want = 2
@@ -516,11 +531,10 @@ def simulate(
                         _close(run, order, False)
                     oid += 1
                     orders[side] = _Order(
-                        oid, sell, closing, price,
-                        tob if p.mode == "join" else 0.0, size, t,
+                        oid, sell, closing, price, queue, size, t,
                     )
                     run.quotes[side] += 1
-                    quoted[side] = touch
+                    quoted[side] = level
                     last_act[side] = t
             # The window flow is credited to the quote that was live when it opened:
             # an order completing mid-window is replaced only at the next sample.
@@ -818,12 +832,12 @@ def _time_share(closed_s: float, total_s: float) -> str:
 
 
 SUMMARY_HEADERS = [
-    "run", "total USD", "spread cap", "hedge cost", "fees", "resid mtm", "rt net",
+    "run", "placement", "total USD", "spread cap", "hedge cost", "fees", "resid mtm", "rt net",
     "rt bps", "rt bps-f", "rt bps-w", "trips", "fills A", "fills B", "USD A", "USD B",
     "rate A", "rate B", "max inv", "twa inv", "hold med", "hold p90", "H cov",
     "tx/min", "deferred", "stale %", "quota ratio", "gate sp%", "gate vol%", "gate any%",
 ]
-SUMMARY_ALIGN = "l" + "r" * (len(SUMMARY_HEADERS) - 1)
+SUMMARY_ALIGN = "ll" + "r" * (len(SUMMARY_HEADERS) - 2)
 
 # Lighter's volume quota: 1000 at account opening, +1 per 2 USD filled, +1 per 15 s.
 QUOTA_BASE = 1000.0
@@ -852,6 +866,7 @@ def summary_row(res: Result, label: str) -> list[object]:
     stale = 100.0 * run.stale_any_s / run.live_s if run.live_s > 0.0 else None
     return [
         label,
+        placement_label(res.params.placement, res.params.anchor_edge_bps),
         fmt(res.total, 1), fmt(res.spread_capture, 1), fmt(res.hedge_cost, 1),
         fmt(res.fees, 1), fmt(res.residual_mtm, 1), fmt(res.round_trip_net, 1),
         fmt(_median(res.rt_bps)), fmt(_median(res.rt_bps_net)), fmt(res.rt_bps_agg),
@@ -953,9 +968,10 @@ def pair_block(
         + (f", {books.unmatched} unmatched" if books.unmatched else "") + ")",
         "",
     ]
-    for mode in args.quote_modes:
+    for mode in args.placements:
         base = Params(
-            mode=mode, order_usd=args.order_usd, max_inv_usd=args.max_inv_usd,
+            placement=mode, anchor_edge_bps=args.anchor_edge_bps,
+            order_usd=args.order_usd, max_inv_usd=args.max_inv_usd,
             min_edge_bps=args.min_edge_bps, reserve_bps=args.reserve_bps,
             hedge_delay_s=args.hedge_delay_s, one_sided=args.one_sided,
             maker_fee_bps=fee_m, tx_per_min=args.tx_per_min,
@@ -969,7 +985,8 @@ def pair_block(
         res = run_pair(books, trades, fee_h=fee_h, p=base)
         run = res.run
         lines.append(
-            f"**quote = {mode}**  (order {args.order_usd:g} USD, max inventory "
+            f"**placement = {placement_label(mode, args.anchor_edge_bps)}**  "
+            f"(order {args.order_usd:g} USD, max inventory "
             f"{args.max_inv_usd:g} USD, opening gate >= {args.min_edge_bps:g} bps after "
             f"the {fmt(fee_h)} bps {hedge} taker fee, the {fmt(fee_m)} bps {maker} maker fee "
             f"and a {args.reserve_bps:g} bps "
@@ -1004,7 +1021,7 @@ def pair_block(
         lines.append("")
         if mode == args.trace_mode and args.trace_match(symbol, maker, hedge):
             lines += trace_block(
-                res, f"{symbol} {maker}>{hedge} quote={mode}", args.trace_n,
+                res, f"{symbol} {maker}>{hedge} placement={mode}", args.trace_n,
             )
         lines.append("_by UTC hour_")
         lines.append("")
@@ -1135,8 +1152,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="venues we quote both sides on")
     parser.add_argument("--hedge", default="ASTER,HL",
                         help="venues we hedge every fill on, taker")
-    parser.add_argument("--quote", default="improve",
-                        help="quote placement: join (at the touch) and/or improve (a tick)")
+    parser.add_argument("--placement", "--quote", dest="quote", default="improve",
+                        help="where a quote rests, comma list: improve (a tick inside the "
+                             "maker touch), join (at it) and/or anchor (off the hedge mid); "
+                             "--quote is the old spelling of the same flag")
+    parser.add_argument("--anchor-edge-bps", type=float, default=12.0,
+                        help="anchor placement only: bps off the hedge mid the quote rests at")
     parser.add_argument("--order-usd", type=float, default=500.0,
                         help="notional of one resting clip")
     parser.add_argument("--max-inv-usd", type=float, default=2000.0,
@@ -1177,7 +1198,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="dump the first fills of one pair: SYMBOL:MAKER:HEDGE")
     parser.add_argument("--trace-n", type=int, default=8, help="how many traced fills")
     parser.add_argument("--trace-quote", default=None,
-                        help="quote mode the trace applies to (default: the first one)")
+                        help="placement the trace applies to (default: the first one)")
     parser.add_argument("--from", dest="ts_from", default=None,
                         help="UTC ISO start of the analysis window")
     parser.add_argument("--to", dest="ts_to", default=None,
@@ -1193,10 +1214,14 @@ def main() -> None:
         raise SystemExit(f"[inv] not a directory: {args.dir}")
     args.makers = _venues(args.maker, "--maker")
     args.hedges = _venues(args.hedge, "--hedge")
-    args.quote_modes = [m.strip().lower() for m in args.quote.split(",") if m.strip()]
-    bad = [m for m in args.quote_modes if m not in ("join", "improve")]
-    if bad or not args.quote_modes:
-        raise SystemExit(f"[inv] --quote takes join and/or improve, got {args.quote!r}")
+    args.placements = [m.strip().lower() for m in args.quote.split(",") if m.strip()]
+    bad = [m for m in args.placements if m not in PLACEMENTS]
+    if bad or not args.placements:
+        raise SystemExit(
+            f"[inv] --placement takes {' / '.join(PLACEMENTS)}, got {args.quote!r}",
+        )
+    if args.anchor_edge_bps < 0.0:
+        raise SystemExit("[inv] --anchor-edge-bps cannot be negative")
     if args.order_usd <= 0.0 or args.max_inv_usd <= 0.0:
         raise SystemExit("[inv] --order-usd and --max-inv-usd must be positive")
     if args.tx_per_min is not None and args.tx_per_min < 1.0:
@@ -1212,7 +1237,7 @@ def main() -> None:
     if args.spread_window_s <= 0.0 or args.vol_window_s <= 0.0:
         raise SystemExit("[inv] --spread-window-s and --vol-window-s must be positive")
     args.trace_match = _make_trace_match(args.trace)
-    args.trace_mode = (args.trace_quote or args.quote_modes[0]).strip().lower()
+    args.trace_mode = (args.trace_quote or args.placements[0]).strip().lower()
     try:
         args.t_from = parse_iso(args.ts_from).timestamp() if args.ts_from else None
         args.t_to = parse_iso(args.ts_to).timestamp() if args.ts_to else None
@@ -1244,7 +1269,8 @@ def main() -> None:
         f"source `{args.dir}`  |  symbols {', '.join(f.symbol for f in found)}",
         "",
         f"maker {', '.join(args.makers)}  |  hedge {', '.join(args.hedges)}  |  "
-        f"quote {', '.join(args.quote_modes)}  |  order {args.order_usd:g} USD  |  "
+        f"placement {', '.join(placement_label(m, args.anchor_edge_bps) for m in args.placements)}"
+        f"  |  order {args.order_usd:g} USD  |  "
         f"max inventory {args.max_inv_usd:g} USD  |  min edge {args.min_edge_bps:g} bps  |  "
         f"reserve {args.reserve_bps:g} bps  |  hedge delay {args.hedge_delay_s:g} s"
         + (f"  |  tx budget {args.tx_per_min:g}/min" if args.tx_per_min else "")

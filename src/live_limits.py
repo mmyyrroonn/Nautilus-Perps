@@ -45,10 +45,19 @@ Read-only, stdlib only (``tomllib`` is 3.11+).
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
+
+
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+from quote_placement import PLACEMENTS  # noqa: E402
+from quote_placement import describe as describe_placement  # noqa: E402
 
 
 # ------------------------------------------------------------------ hard caps
@@ -83,6 +92,10 @@ FLOOR_MIN_SPREAD_RATIO = 1.0  # below 1.0 the maker spread would not even cover 
 FLOOR_MIN_MAKER_SPREAD_BPS = 5.0
 FLOOR_MAX_MOVE_BPS_PER_MIN = 5.0  # a limit under this would never let the gate open
 FLOOR_GATE_WINDOW_S = 1.0  # a window has to hold at least one second of samples
+# The anchor placement's distance from the hedge mid.  A LARGER number rests further out and
+# takes fewer, better fills, so the rail is again a floor: configuration may ask for more edge
+# than the shipped 12 bps, never for a quote pressed up against the touch.
+FLOOR_ANCHOR_EDGE_BPS = 3.0
 # ... and the volatility limit additionally carries a cap, because for THAT knob a larger
 # number is the looser one: without it a config could raise max_move_bps_per_min to infinity
 # and disable the gate, which is exactly what the rest of this module promises cannot happen.
@@ -217,6 +230,17 @@ class _Resolver:
         self._rows.append(Row(f"{section}.{key}", raw, None, raw))
         return raw
 
+    def word(self, section: str, key: str, default: str, choices: tuple[str, ...]) -> str:
+        """A lower-case enumerated string (the placements); recorded and returned as-is."""
+        raw = self._raw(section, key, default)
+        if not isinstance(raw, str):
+            raise LimitsError(f"[{section}] {key} must be a string, got {raw!r}")
+        value = raw.strip().lower()
+        if value not in choices:
+            raise LimitsError(f"[{section}] {key} must be one of {list(choices)}, got {raw!r}")
+        self._rows.append(Row(f"{section}.{key}", value, None, value))
+        return value
+
     def text(self, section: str, key: str, default: str, choices: tuple[str, ...]) -> str:
         raw = self._raw(section, key, default)
         if not isinstance(raw, str):
@@ -293,6 +317,11 @@ class QuoteLimits:
     requote_min_s: float = 3.0
     tx_per_min: float = 36.0
     improve_ticks: int = 1
+    # Where a quote rests: see src/quote_placement.py.  ``improve`` is what the maker ran
+    # until 2026-09-09; ``anchor`` prices off the hedge mid instead of following the maker
+    # touch, and ``anchor_edge_bps`` is how far off it rests.
+    placement: str = "improve"
+    anchor_edge_bps: float = 12.0
     # The two opening gates (src/quote_gates.py).  They stop the side that would GROW the
     # inventory; the closing side keeps quoting, and the kill switch is untouched by them.
     # Spread gate: the maker touch spread, smoothed over spread_window_s, must be at least
@@ -312,8 +341,8 @@ class QuoteLimits:
 
     @property
     def mode(self) -> str:
-        """``improve`` (one tick inside the touch) or ``join`` (rest at the touch)."""
-        return "improve" if self.improve_ticks > 0 else "join"
+        """Deprecated alias for :attr:`placement`, kept for older call sites."""
+        return self.placement
 
 
 @dataclass(frozen=True)
@@ -396,6 +425,12 @@ class Limits:
             f"{CAP_DAILY_FILLS_PROFITABLE}); it re-locks when realised net falls back to 0",
         )
         lines.append(
+            "  placement: "
+            + describe_placement(self.quote.placement, self.quote.anchor_edge_bps)
+            + (f" (hard floor {FLOOR_ANCHOR_EDGE_BPS:g} bps)"
+               if self.quote.placement == "anchor" else ""),
+        )
+        lines.append(
             f"  opening gates: spread >= max({self.quote.min_spread_ratio:g} x hedge "
             f"round-trip cost, {self.quote.min_maker_spread_bps:g} bps) on the median of the "
             f"last {self.quote.spread_window_s:g} s, and the maker mid range over "
@@ -415,6 +450,22 @@ class Limits:
 
 
 # ------------------------------------------------------------------ loader
+
+
+def _placement(r: _Resolver) -> str:
+    """``[quote] placement``, honouring the legacy ``improve_ticks = 0`` spelling of "join".
+
+    ``improve_ticks`` predates the placement key and is the only thing that used to choose
+    between the two rules, so a file that still says ``improve_ticks = 0`` and never mentions
+    ``placement`` must keep resting at the touch.  An explicit ``placement`` always wins - it
+    is the newer, more specific key - and ``improve_ticks`` is left in place as the cap it has
+    always been (one tick, never more).
+    """
+    asked = r.word("quote", "placement", "improve", PLACEMENTS)
+    ticks = r.count("quote", "improve_ticks", 1, 1, minimum=0)
+    if ticks == 0 and asked == "improve":
+        return "join"
+    return asked
 
 
 def load_limits(path: Path | str | None = None) -> Limits:
@@ -474,12 +525,17 @@ def load_limits(path: Path | str | None = None) -> Limits:
         ),
         max_hedge_fail_s=r.number("kill", "max_hedge_fail_s", 30.0, minimum=0.0),
     )
+    placement = _placement(r)
     quote = QuoteLimits(
         edge_min_bps=r.number("quote", "edge_min_bps", 3.0, allow_negative=True),
         reserve_bps=r.number("quote", "reserve_bps", 0.0),
         requote_min_s=r.number("quote", "requote_min_s", 3.0),
         tx_per_min=r.number("quote", "tx_per_min", 36.0, CAP_TX_PER_MIN, minimum=1.0),
-        improve_ticks=r.count("quote", "improve_ticks", 1, 1, minimum=0),
+        placement=placement,
+        improve_ticks=0 if placement == "join" else 1,
+        anchor_edge_bps=r.number(
+            "quote", "anchor_edge_bps", 12.0, floor=FLOOR_ANCHOR_EDGE_BPS,
+        ),
         close_min_flip=r.flag("quote", "close_min_flip", True),
         min_spread_ratio=r.number(
             "quote", "min_spread_ratio", 2.0, floor=FLOOR_MIN_SPREAD_RATIO,

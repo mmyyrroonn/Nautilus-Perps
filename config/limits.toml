@@ -73,8 +73,22 @@ requote_min_s = 3.0
 # Local token bucket over Lighter order transactions.  The venue allows 40 sendTx/min per L1
 # address shared by creates, modifies and cancels; hard cap 40, stay below it.
 tx_per_min = 36.0
-# 1 = improve the touch by one tick (queue ahead 0); 0 = join the touch (queue ahead = the
-# top-of-book size).  A quote that would lock the book is never sent.
+# Where a quote rests (src/quote_placement.py explains the choice and the evidence):
+#   "improve"  one tick inside the Lighter touch, queue ahead 0.  What the maker ran until
+#              2026-09-09, and what gets picked off in a fast market: that session took 40
+#              fills whose MEDIAN edge against the hedge was +5.5 bps but whose MEAN was
+#              -8.5 bps (worst -85), i.e. a handful of stale-quote fills ate the whole day.
+#   "join"     at the Lighter touch, behind whatever size is already resting there.
+#   "anchor"   priced off the ASTER mid, anchor_edge_bps away from it, then clamped so it can
+#              never cross the Lighter book.  The quote stops following the venue we do not
+#              hedge on, so a Lighter-only jump cannot leave us resting at a price the hedge
+#              will not honour.
+placement = "improve"
+# How far off the hedge mid an "anchor" quote rests.  Bigger = further out = fewer, better
+# fills, so the rail is a FLOOR of 3 bps: configuration may demand more edge, never less.
+anchor_edge_bps = 12.0
+# Legacy spelling of the same choice, kept so an old file still means what it said: 1 =
+# improve by one tick, 0 = join the touch.  An explicit `placement` above always wins.
 improve_ticks = 1
 # Lighter's minimum order (20 PONS ~ 15.6 USD) is close to max_notional_usd, so a residual
 # smaller than that minimum cannot be closed passively at all: the closing side simply stops

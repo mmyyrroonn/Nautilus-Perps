@@ -30,6 +30,7 @@ from live_limits import CAP_TOTAL_NOTIONAL_USD  # noqa: E402
 from live_limits import CAP_TX_PER_MIN  # noqa: E402
 from live_limits import CAP_MAX_MOVE_BPS_PER_MIN  # noqa: E402
 from live_limits import CAP_UNHEDGED_USD  # noqa: E402
+from live_limits import FLOOR_ANCHOR_EDGE_BPS  # noqa: E402
 from live_limits import FLOOR_GATE_WINDOW_S  # noqa: E402
 from live_limits import FLOOR_MAX_MOVE_BPS_PER_MIN  # noqa: E402
 from live_limits import FLOOR_MIN_MAKER_SPREAD_BPS  # noqa: E402
@@ -159,6 +160,56 @@ class TestDefaults(unittest.TestCase):
     def test_close_min_flip_must_be_a_boolean(self) -> None:
         with self.assertRaises(LimitsError):
             load_limits(write_toml('[quote]\nclose_min_flip = "yes"\n'))
+
+
+# --------------------------------------------------------------------------- placement
+
+
+class TestPlacement(unittest.TestCase):
+    """``[quote] placement`` and the anchor edge, plus the legacy ``improve_ticks`` spelling."""
+
+    def test_the_shipped_config_still_improves(self) -> None:
+        quote = load_limits(REPO / "config" / "limits.toml").quote
+        self.assertEqual(quote.placement, "improve")
+        self.assertEqual(quote.anchor_edge_bps, 12.0)
+        self.assertEqual(quote.mode, quote.placement)
+
+    def test_every_placement_can_be_asked_for(self) -> None:
+        for name in ("improve", "join", "anchor"):
+            with self.subTest(name=name):
+                limits = load_limits(quote_toml(f'placement = "{name}"'))
+                self.assertEqual(limits.quote.placement, name)
+
+    def test_an_unknown_placement_is_refused(self) -> None:
+        with self.assertRaises(LimitsError):
+            load_limits(quote_toml('placement = "peg"'))
+
+    def test_the_placement_is_case_insensitive(self) -> None:
+        self.assertEqual(load_limits(quote_toml('placement = "ANCHOR"')).quote.placement,
+                         "anchor")
+
+    def test_the_legacy_improve_ticks_zero_still_means_join(self) -> None:
+        """An old file that never heard of `placement` must keep resting at the touch."""
+        limits = load_limits(quote_toml("improve_ticks = 0"))
+        self.assertEqual(limits.quote.placement, "join")
+
+    def test_an_explicit_placement_wins_over_improve_ticks(self) -> None:
+        limits = load_limits(quote_toml('placement = "anchor"', "improve_ticks = 0"))
+        self.assertEqual(limits.quote.placement, "anchor")
+
+    def test_the_anchor_edge_may_be_widened_but_not_narrowed(self) -> None:
+        limits = load_limits(quote_toml("anchor_edge_bps = 25.0"))
+        self.assertEqual(limits.quote.anchor_edge_bps, 25.0)
+        with self.assertRaises(LimitsError):
+            load_limits(quote_toml("anchor_edge_bps = 2.9"))
+        edge = load_limits(quote_toml("anchor_edge_bps = 3.0")).quote.anchor_edge_bps
+        self.assertEqual(edge, FLOOR_ANCHOR_EDGE_BPS)
+
+    def test_the_report_names_the_placement(self) -> None:
+        report = load_limits(quote_toml('placement = "anchor"')).report()
+        self.assertIn("quote.placement", report)
+        self.assertIn("quote.anchor_edge_bps", report)
+        self.assertIn("anchor 12 bps off the hedge mid", report)
 
 
 # --------------------------------------------------------------------------- gates

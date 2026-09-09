@@ -14,7 +14,12 @@ explicit consent) a mainnet session:
                    opening gates open (:mod:`quote_gates`): the maker spread must pay for the
                    hedge round trip, and the maker mid must not be running.  The closing side
                    ignores all three, so inventory can always be worked off.
-    improve        one tick inside the touch (queue ahead 0), unless that would lock the book.
+    placement      where the quote rests: ``improve`` one tick inside the touch (queue ahead
+                   0) unless that would lock the book, ``join`` at the touch behind the size
+                   already there, or ``anchor`` priced off the HEDGE mid by
+                   ``anchor_edge_bps`` and clamped so it never crosses the maker book.  See
+                   :mod:`quote_placement`; ``anchor`` is the answer to being picked off by a
+                   maker-venue jump, which is what ``improve`` did on 2026-09-09.
     cadence        a side is re-priced at most every ``requote_min_s`` seconds, and every
                    place / re-price / cancel draws one token from a bucket refilled at
                    ``tx_per_min``; an action that finds it empty is retried next tick and the
@@ -124,6 +129,10 @@ from live_limits import LimitsError  # noqa: E402
 from live_limits import load_limits  # noqa: E402
 from quote_gates import GateParams  # noqa: E402
 from quote_gates import QuoteGates  # noqa: E402
+from quote_placement import ANCHOR  # noqa: E402
+from quote_placement import label as placement_label  # noqa: E402
+from quote_placement import place  # noqa: E402
+from quote_placement import describe as describe_placement  # noqa: E402
 
 
 try:  # Optional: load a local .env when python-dotenv is available.
@@ -487,7 +496,8 @@ class BookSample:
 class QuoteParams:
     """Every knob :class:`QuoteEngine` reads.  Built from :class:`live_limits.Limits`."""
 
-    mode: str  # "improve" (one tick inside) or "join" (at the touch)
+    placement: str  # "improve" (a tick inside), "join" (at the touch) or "anchor" (hedge mid)
+    anchor_edge_bps: float
     order_usd: float
     max_inv_usd: float
     min_edge_bps: float
@@ -523,7 +533,8 @@ class QuoteParams:
     ) -> QuoteParams:
         q = limits.quote
         return cls(
-            mode=q.mode,
+            placement=q.placement,
+            anchor_edge_bps=q.anchor_edge_bps,
             order_usd=limits.order.max_notional_usd,
             # NOT limits.inventory.max_inventory_usd directly: the hedge doubles the
             # gross two-leg notional, so [exposure] normally binds first.  See
@@ -736,16 +747,26 @@ class QuoteEngine:
             mid = book.mid
             ok = touch > 0.0 and opposite > 0.0 and hedge_px > 0.0 and mid > 0.0
             price = 0.0
+            queue = 0.0
+            level = touch  # the level the re-price cadence measures movement against
             closing = False
             size = 0.0
             if ok:
-                if p.mode == "improve":
-                    price = round(touch - p.tick if sell else touch + p.tick, p.decimals)
-                    if (price <= opposite) if sell else (price >= opposite):
-                        self.counters["locked"] += 1  # one tick inside would lock the book
-                        ok = False
-                else:
-                    price = round(touch, p.decimals)
+                spot = place(
+                    p.placement,
+                    sell=sell,
+                    m_bid=book.m_bid, m_ask=book.m_ask,
+                    h_bid=book.h_bid, h_ask=book.h_ask,
+                    tick=p.tick, decimals=p.decimals, tob=tob,
+                    anchor_edge_bps=p.anchor_edge_bps,
+                )
+                price, queue = spot.price, spot.queue_ahead
+                if spot.locked:
+                    self.counters["locked"] += 1  # improve one tick inside would cross
+                    ok = False
+                elif p.placement == ANCHOR:
+                    # An anchor quote does not track the touch, so neither does its cadence.
+                    level = price
             if ok:
                 closing = (q > EPS) if sell else (q < -EPS)
                 if closing:
@@ -838,8 +859,8 @@ class QuoteEngine:
                 price=price,
                 base=size,
                 placed_t=t,
-                queue=tob if p.mode == "join" else 0.0,
-                queue0=tob if p.mode == "join" else 0.0,
+                queue=queue,
+                queue0=queue,
                 ref=order.ref if want == 2 else None,
                 min_clip=min_clip,
             )
@@ -850,7 +871,7 @@ class QuoteEngine:
                 self.tx_modify += 1
                 actions.append(Action(MODIFY, side, fresh, order))
             self.orders[side] = fresh
-            self.quoted[side] = touch
+            self.quoted[side] = level
             self.last_act[side] = t
         return actions
 
@@ -1729,6 +1750,10 @@ class LighterMaker(Strategy):
             f"exposure cap {self._limits.exposure.max_total_notional_usd:g} over 2 legs); "
             f"clip {self._engine.p.order_usd:g} USD",
         )
+        self.log.info(
+            f"[maker] placement "
+            f"{describe_placement(self._engine.p.placement, self._engine.p.anchor_edge_bps)}",
+        )
         self.log.info(f"[maker] {self._gates.p.describe()}")
         self.log.info(
             f"[maker] daily budget carried in: fills={self._state.fills}/"
@@ -2529,6 +2554,8 @@ class LighterMaker(Strategy):
             f"day {self._state.fills}/{self._kill.fill_cap}f"
             f"{' UNLOCKED' if self._kill.fill_cap_unlocked else ''} "
             f"{self._state.tx}/{self._limits.daily.max_tx}tx  "
+            f"place="
+            f"{placement_label(self._engine.p.placement, self._engine.p.anchor_edge_bps)} "
             f"{self._gates.status()}  | {margins}",
             flush=True,
         )
@@ -2555,6 +2582,8 @@ class LighterMaker(Strategy):
         counters = " ".join(f"{k}={v}" for k, v in sorted(self._engine.counters.items()))
         return (
             f"[maker] SUMMARY mode={self._cfg.mode} env={self._cfg.env} "
+            f"placement="
+            f"{placement_label(self._engine.p.placement, self._engine.p.anchor_edge_bps)} "
             f"symbol={self._plan.symbol} ran={elapsed:.0f}s "
             f"fills_ask={pnl.fills[ASK]} fills_bid={pnl.fills[BID]} "
             f"filled_usd={pnl.filled_usd[ASK] + pnl.filled_usd[BID]:.2f} "
@@ -3784,6 +3813,8 @@ def main(argv: list[str] | None = None) -> int:
               f"{' unlocked' if unlocked else ' base'} "
               f"tx={loaded.tx}/{limits.daily.max_tx} "
               f"realized={loaded.realized_net_usd:.4f} USD){active}")
+    print(f"placement         : "
+          f"{describe_placement(limits.quote.placement, limits.quote.anchor_edge_bps)}")
     print(f"risk engine       : bypass=False, max_notional_per_order="
           f"{CAP_ORDER_NOTIONAL_USD:g} USD (HARD cap) on "
           f"{[plan.maker_id] + ([plan.hedge_id] if hedge_enabled else [])}")
