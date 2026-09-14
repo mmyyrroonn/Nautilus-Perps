@@ -51,6 +51,21 @@ def test_every_venue_the_watcher_maps_has_registered_funding_units():
     assert opportunities.ASTER_FUNDING_HOURS["SNDK"] == 8
 
 
+def test_funding_units_are_pinned_to_the_documented_numbers():
+    """docs/entropy-readonly.md and the source comments quote these: pin them.
+
+    Lighter is the trap: the adapter hands over an hourly PERCENT, so 0.01 is
+    1 bp/h. Read as a fraction it would be 100 bp/h - a silent 100x error.
+    """
+    assert opportunities.FUNDING_SCALE == {
+        "HL": 1e4, "LIGHTER": 1e2, "LIGHTER_RH": 1e2, "ASTER": 1e4, "ENTROPY": 1e4,
+    }
+    assert opportunities.FUNDING_HOURS == {
+        "HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0, "ENTROPY": 1.0,
+    }
+    assert opportunities.hourly_bps(0.01, "LIGHTER", "NVDA") == pytest.approx(1.0)
+
+
 def test_funding_report_prints_both_legs_in_bps_per_hour():
     """ENTROPY 1 bp/h (hourly fraction) against ASTER 3 bp/h (every 8 h)."""
     data = opportunities.AllData()

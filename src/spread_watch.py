@@ -859,8 +859,10 @@ class SpreadWatch(Strategy):
         ])
 
     def on_funding_rate(self, funding_rate: FundingRateUpdate) -> None:
-        # Raw venue rate, stored as delivered: HL/Lighter/Entropy are hourly
-        # fractions, Aster is a fraction per that instrument's own 1/4/8 h interval.
+        # Raw venue rate, stored as delivered, never normalised here: HL/Entropy are
+        # hourly fractions, Lighter an hourly PERCENT (the adapter does not /100),
+        # Aster a fraction per that instrument's own 1/4/8 h interval. The units are
+        # registered in analysis/opportunities.py, which is what converts them.
         leg = self._by_id.get(funding_rate.instrument_id)
         if leg is not None:
             leg.funding = float(funding_rate.rate)
