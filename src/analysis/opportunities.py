@@ -45,21 +45,27 @@ from spread_watch import INSTRUMENTS, RESERVE_BPS  # noqa: E402  (needs sys.path
 CAP_BPS = (2, 5, 10)  # depth buckets written by spread_watch, in bps off the touch
 DEPTH_TOL_S = 2.0  # a depth row this far from the episode start still counts
 # Funding: the CSV stores the RAW venue number as delivered by the Nautilus
-# adapter. Units verified 2026-09-07 against the adapter sources and venue docs:
+# adapter. Units verified 2026-09-07 (Aster) / 2026-09-14 (Entropy) against the
+# adapter sources and venue docs:
 #   HL      fraction per hour                         -> bps/h = raw * 1e4
 #   LIGHTER PERCENT per hour (adapter does not /100)  -> bps/h = raw * 1e2
 #   LIGHTER_RH  same as LIGHTER (same adapter, ROBINHOOD deployment): PERCENT per
 #           hour, hourly. Confirmed on a live sample 2026-09-07: HYPE raw medians
 #           were LIGHTER 0.0012 and LIGHTER_RH 0.0011, i.e. 0.12 / 0.11 bps/h -
 #           reading them as fractions would give an absurd ~960 %/yr.
-#   ASTER   fraction per settlement interval; the interval is per symbol
+#   ENTROPY fraction per hour, hourly                 -> bps/h = raw * 1e4. Same
+#           adapter and market type as HL (HIP-3 io: builder dex); the public
+#           activeAssetCtx funding is already the hourly rate, and the deployer's
+#           assetToFundingMultiplier is applied upstream - never multiply again.
+#   ASTER   fraction per settlement interval; the interval is per instrument
 #           (GET /fapi/v1/fundingInfo fundingIntervalHours: 1 / 4 / 8 h)
-FUNDING_SCALE = {"HL": 1e4, "LIGHTER": 1e2, "LIGHTER_RH": 1e2, "ASTER": 1e4}
-FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0}
-ASTER_FUNDING_HOURS = {  # fundingInfo snapshot 2026-09-07; unknown symbols fall back to 8
+FUNDING_SCALE = {"HL": 1e4, "LIGHTER": 1e2, "LIGHTER_RH": 1e2, "ASTER": 1e4,
+                 "ENTROPY": 1e4}
+FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0, "ENTROPY": 1.0}
+ASTER_FUNDING_HOURS = {  # fundingInfo snapshot 2026-09-07, GPRO added 2026-09-14
     "BTC": 8, "ETH": 8, "SOL": 8, "HYPE": 4, "ZEC": 1, "PONS": 1, "LIT": 1, "ASTER": 4,
     "DASH": 8, "PUMP": 4, "ARB": 8, "NVDA": 8, "TSLA": 8, "HOOD": 8, "SNDK": 8, "MU": 8,
-    "SPCX": 8, "GOLD": 4, "GOLD1": 4,
+    "SPCX": 8, "GOLD": 4, "GOLD1": 4, "GPRO": 8,
 }
 DEFAULT_FUNDING_HOURS = 8.0
 SUSPICIOUS_BPS_H = 3.0  # |hourly funding| above this is flagged, not trusted
@@ -846,8 +852,8 @@ def analyse(files: SymbolFiles, args) -> list[str]:
 
     # ---- 5. funding
     venue_rows, pairs, flags = funding_report(data, fees, files.symbol)
-    lines.append("### 5. Funding carry (raw -> bps/h; HL fraction/h, Lighter percent/h, "
-                 "Aster fraction per 1/4/8 h interval)")
+    lines.append("### 5. Funding carry (raw -> bps/h; HL + Entropy fraction/h, "
+                 "Lighter percent/h, Aster fraction per the instrument's 1/4/8 h interval)")
     lines.append("")
     if venue_rows:
         lines += table(

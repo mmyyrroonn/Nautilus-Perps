@@ -11,6 +11,11 @@ only: no execution client, no keys, no signing, no orders.
 
     --symbols NVDA,TSLA --venues HL,LIGHTER,ASTER     multi-symbol, N venues
     --venues HL,LIGHTER,LIGHTER_RH,ASTER              adds Lighter's Robinhood Chain
+    --venues HL,ENTROPY,ASTER                         adds Entropy's io: equity perps:
+                                                      separate logical legs, one shared
+                                                      HYPERLIQUID data client
+    --dry-run                                         print the resolved plan + clients
+                                                      as JSON and exit (no network)
     --pair NVDA:HL-ASTER                              legacy single-pair alias
     --symbol NVDA                                     alias for NVDA:HL-LIGHTER
     --reference FUTU                                  adds the real US stock quote
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import statistics
 import sys
 import threading
@@ -73,6 +79,10 @@ LIGHTER_RH_TAKER_FEE_BPS = 0.0
 # NVDAUSDT, XAUUSDT and XAUUSD1: takerCommissionRate 0.000090 (0.9 bps), maker 0.
 # The older "20 bps" figure for stock perps is wrong for this account.
 ASTER_TAKER_FEE_BPS = 0.9
+# Entropy ("io:") equity perps: Tier-0 taker 0.045% x 2 x deployerFeeScale 1.0
+# = 0.009% = 0.9 bps with growth mode enabled, checked 2026-09-14. Its own constant
+# on purpose: a future xyz fee change must not silently move the io: legs.
+ENTROPY_TAKER_FEE_BPS = 0.9
 RESERVE_BPS = 5.0  # one-leg failure reserve
 MAX_AGE_MS = 2_000  # a leg older than this is not tradable
 STATUS_SECS = 30
@@ -226,9 +236,15 @@ def _aster_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
 
 @dataclass(frozen=True)
 class VenueSpec:
-    """One venue: how to name it, and how to build its data client."""
+    """One venue: how to name it, and how to build its data client.
 
-    key: str  # short tag used on the CLI: HL / LIGHTER / LIGHTER_RH / ASTER
+    ``key`` is the logical leg tag used on the CLI and in the CSV labels; ``venue``
+    is the real Nautilus venue, and it is also the ClientId the legs subscribe with.
+    The two are NOT one to one: HL and ENTROPY are different markets on one
+    platform, so they share a single HYPERLIQUID data client (see build_client_groups).
+    """
+
+    key: str  # short tag used on the CLI: HL / LIGHTER / LIGHTER_RH / ASTER / ENTROPY
     venue: str  # Nautilus venue string, also the ClientId
     build_client: Callable[[Sequence[str]], tuple[object, object]]
     supports_depth10: bool = True  # Aster's Binance-derived path has no depth10 sub
@@ -240,7 +256,10 @@ VENUES: dict[str, VenueSpec] = {
     "LIGHTER_RH": VenueSpec("LIGHTER_RH", "LIGHTER_ROBINHOOD", _lighter_rh_client),
     "ASTER": VenueSpec("ASTER", "ASTER", _aster_client, supports_depth10=False),
 }
-ALL_VENUES = ("HL", "LIGHTER", "LIGHTER_RH", "ASTER")
+# Entropy is a HIP-3 builder dex ON Hyperliquid: same client, same venue string,
+# separate logical leg. Opt-in only - never in DEFAULT_VENUES / DEFAULT_PAIR.
+VENUES["ENTROPY"] = VenueSpec("ENTROPY", "HYPERLIQUID", _hyperliquid_client)
+ALL_VENUES = ("HL", "LIGHTER", "LIGHTER_RH", "ASTER", "ENTROPY")
 # What `--venues` defaults to. LIGHTER_RH is opt-in: it is a separate exchange with
 # its own books, so it only joins a run when it is named explicitly.
 DEFAULT_VENUES = ("HL", "LIGHTER", "ASTER")
@@ -304,8 +323,9 @@ def stock(base: str, aster_symbol: str) -> dict[str, tuple[str, float]]:
 
 
 # symbol -> venue key -> (instrument id, taker fee bps).
-# Funding: HL and Lighter settle hourly, Aster every 8 hours. The CSV stores the
-# raw rate as reported by each venue; no per-hour normalisation is done here.
+# Funding: HL, Lighter and Entropy settle hourly, Aster per instrument (1/4/8 h).
+# The CSV stores the raw rate as reported by each venue; no per-hour normalisation
+# is done here, that is src/analysis/opportunities.py's job.
 # Aster stock perps: only the USD1-margined listings carry volume (SNDKUSD1 39.8M vs
 # SNDKUSDT 3.0M on 2026-09-07); NVDA / TSLA / HOOD exist only as USDT and are thin there.
 INSTRUMENTS: dict[str, dict[str, tuple[str, float]]] = {
@@ -342,6 +362,16 @@ INSTRUMENTS["ANSEM"] = {
     "LIGHTER": ("ANSEM-PERP.LIGHTER", LIGHTER_TAKER_FEE_BPS),
     "ASTER": ("ANSEMUSDT-PERP.ASTER", ASTER_TAKER_FEE_BPS),
     **lighter_rh("ANSEM"),
+}
+# Entropy ("io:") equity perps, checked on the live Hyperliquid metadata 2026-09-14:
+# SNDK size increment 0.0001, GPRO 0.1, both USD-quoted / USDC-settled, multiplier 1.
+# Only the pairs that were actually verified are mapped here - never inferred by ticker.
+INSTRUMENTS["SNDK"]["ENTROPY"] = (
+    "io:SNDK-USD-PERP.HYPERLIQUID", ENTROPY_TAKER_FEE_BPS,
+)
+INSTRUMENTS["GPRO"] = {  # no verified HL / Lighter GPRO mapping: ENTROPY x Aster only
+    "ENTROPY": ("io:GPRO-USD-PERP.HYPERLIQUID", ENTROPY_TAKER_FEE_BPS),
+    "ASTER": ("GPROUSD1-PERP.ASTER", ASTER_TAKER_FEE_BPS),
 }
 
 
@@ -416,11 +446,12 @@ def build_plan(symbols: Sequence[str], venue_keys: Sequence[str]) -> dict[str, l
             mapping = INSTRUMENTS[symbol].get(key)
             if mapping is None:
                 # Not every venue lists every symbol (e.g. HOOD is not on LIGHTER_RH):
-                # skip that leg and watch the rest, never fail the whole run.
+                # skip that leg and watch the rest, never fail the whole run. stderr,
+                # because --dry-run prints pure JSON on stdout.
                 print(
                     f"[stage1] INFO {symbol}: no instrument mapped for {key}; "
                     f"skipping that leg and watching the remaining legs",
-                    flush=True,
+                    file=sys.stderr, flush=True,
                 )
                 continue
             legs.append(LegSpec(key, mapping[0], VENUES[key].venue, mapping[1]))
@@ -548,10 +579,19 @@ class RunState:
         self.started_ns = 0
         self.last_seen: dict[str, int] = {}
         self.stop_requested = False
+        self.startup_errors: list[str] = []
 
     def note_start(self, now_ns: int) -> None:
         if self.started_ns == 0:
             self.started_ns = now_ns
+
+    def fail_startup(self, message: str) -> None:
+        """A strategy could not even start: record it and stop the node once."""
+        if message not in self.startup_errors:
+            self.startup_errors.append(message)
+        if self.stop_node is not None and not self.stop_requested:
+            self.stop_requested = True
+            self.stop_node()
 
     def report(self, symbol: str, last_ns: int, now_ns: int, log) -> None:
         self.last_seen[symbol] = last_ns
@@ -682,6 +722,11 @@ class SpreadWatch(Strategy):
                 self.log.error(
                     f"[{self.symbol}/{leg.spec.label}] {leg.instrument_id} NOT loaded; "
                     f"candidates: {near}",
+                )
+                # Not necessarily delisted: the metadata load may have failed too.
+                self._cfg.run_state.fail_startup(
+                    f"{self.symbol}/{leg.spec.venue_key}: instrument not loaded: "
+                    f"{leg.spec.instrument_id}",
                 )
                 self.stop()
                 return
@@ -814,7 +859,8 @@ class SpreadWatch(Strategy):
         ])
 
     def on_funding_rate(self, funding_rate: FundingRateUpdate) -> None:
-        # Raw venue rate; HL/Lighter settle hourly, Aster every 8 hours.
+        # Raw venue rate, stored as delivered: HL/Lighter/Entropy are hourly
+        # fractions, Aster is a fraction per that instrument's own 1/4/8 h interval.
         leg = self._by_id.get(funding_rate.instrument_id)
         if leg is not None:
             leg.funding = float(funding_rate.rate)
@@ -1082,8 +1128,16 @@ class SpreadWatch(Strategy):
 
     # ------------------------------------------------------------------ summary
 
-    def received(self) -> bool:
-        return any(leg.updates for leg in self._legs)
+    def received_leg_keys(self) -> set[tuple[str, str, str]]:
+        """(symbol, venue_key, instrument_id) of every leg that produced a quote.
+
+        Only used to judge "this run saw each leg at least once"; it says nothing
+        about continuity, freshness or whether the feed is still alive.
+        """
+        return {
+            (self.symbol, leg.spec.venue_key, leg.spec.instrument_id)
+            for leg in self._legs if leg.updates > 0
+        }
 
     def summary(self) -> str:
         lines = [
@@ -1095,7 +1149,8 @@ class SpreadWatch(Strategy):
             lines.append(
                 f"  leg {leg.spec.venue_key:<10} top-of-book updates={leg.updates} "
                 f"({leg.source})  book updates={leg.depth_updates} ({leg.book_mode})  "
-                f"trades={leg.trades}  {leg.spec.instrument_id}",
+                f"trades={leg.trades}  funding_seen={leg.funding is not None}  "
+                f"{leg.spec.instrument_id}",
             )
         lines.append(
             f"  evaluated samples={self._samples}  skipped-stale={self._stale}",
@@ -1135,6 +1190,82 @@ class SpreadWatch(Strategy):
             lines.append(f"  csv: {path}")
         lines.append("=" * 78)
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- client groups
+
+
+@dataclass
+class ClientGroup:
+    """One data client to register: every instrument of the run that rides it.
+
+    Grouped by ClientId, not by venue key or factory: HL and ENTROPY are the same
+    client, while LIGHTER and LIGHTER_RH share a factory but are two deployments
+    and must stay two clients. Insertion order is the registration order.
+    """
+
+    client_id: str
+    venue_spec: VenueSpec
+    instrument_ids: list[str]
+
+
+def build_client_groups(plan: dict[str, list[LegSpec]]) -> list[ClientGroup]:
+    groups: dict[str, ClientGroup] = {}
+    for symbol, legs in plan.items():
+        seen: set[str] = set()
+        for leg in legs:
+            if leg.instrument_id in seen:
+                raise ValueError(f"{symbol}: duplicate instrument {leg.instrument_id}")
+            seen.add(leg.instrument_id)
+            spec = VENUES[leg.venue_key]
+            venue = str(InstrumentId.from_str(leg.instrument_id).venue)
+            if leg.client_id != spec.venue or venue != spec.venue:
+                raise ValueError(f"{symbol}/{leg.venue_key}: inconsistent client route")
+            group = groups.get(leg.client_id)
+            if group is None:
+                groups[leg.client_id] = ClientGroup(leg.client_id, spec, [])
+                group = groups[leg.client_id]
+            elif (group.venue_spec.venue != spec.venue
+                  or group.venue_spec.build_client is not spec.build_client):
+                raise ValueError(f"conflicting configuration for {leg.client_id}")
+            if leg.instrument_id not in group.instrument_ids:
+                group.instrument_ids.append(leg.instrument_id)
+    return list(groups.values())
+
+
+def missing_leg_keys(
+    plan: dict[str, list[LegSpec]],
+    received: set[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """Legs of the plan that never produced a top-of-book update in this run."""
+    return sorted({
+        (symbol, leg.venue_key, leg.instrument_id)
+        for symbol, legs in plan.items() for leg in legs
+    } - received)
+
+
+def describe_plan(plan: dict[str, list[LegSpec]]) -> dict[str, object]:
+    """What this run would subscribe to, without building a client or touching the net.
+
+    ``market_availability_checked`` stays False on purpose: the mapping is the
+    repository's static knowledge, not a probe of the venues.
+    """
+    return {
+        "mode": "read-only",
+        "market_availability_checked": False,
+        "symbols": {
+            symbol: [
+                {"venue_key": leg.venue_key, "instrument_id": leg.instrument_id,
+                 "client_id": leg.client_id, "taker_fee_bps": leg.taker_fee_bps}
+                for leg in legs
+            ]
+            for symbol, legs in plan.items()
+        },
+        "data_clients": [
+            {"client_id": group.client_id, "instrument_ids": group.instrument_ids}
+            for group in build_client_groups(plan)
+        ],
+    }
 
 
 # ---------------------------------------------------------------- node
@@ -1178,21 +1309,15 @@ def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
         .with_timeout_connection(60)
         .with_delay_post_stop_secs(2)
     )
-    # Exactly one data client per venue, carrying the union of the instrument ids
-    # we watch there (Aster's load_ids must cover every Aster symbol in the run).
-    ids_by_venue: dict[str, list[str]] = {}
-    for legs in np.plan.values():
-        for leg in legs:
-            ids_by_venue.setdefault(leg.venue_key, [])
-            if leg.instrument_id not in ids_by_venue[leg.venue_key]:
-                ids_by_venue[leg.venue_key].append(leg.instrument_id)
-    for venue_key, ids in ids_by_venue.items():
-        spec = VENUES[venue_key]
-        factory, client_config = spec.build_client(ids)
+    # Exactly one data client per ClientId, carrying the union of the instrument ids
+    # that ride it (Aster's load_ids must cover every Aster symbol in the run, and the
+    # xyz: plus io: legs share the one HYPERLIQUID client).
+    for group in build_client_groups(np.plan):
+        factory, client_config = group.venue_spec.build_client(group.instrument_ids)
         # Name the client after the venue instead of letting it default to the factory
         # name: LIGHTER and LIGHTER_RH share one factory ("LIGHTER"), so the default
         # would collide. The name is the ClientId the legs subscribe with.
-        builder = builder.add_data_client(spec.venue, factory, client_config)
+        builder = builder.add_data_client(group.client_id, factory, client_config)
     node = builder.build()
 
     if np.ref_codes:
@@ -1301,10 +1426,17 @@ def main() -> None:
                              "from the FUTUNN OPEN API WebSocket (needs FUTU_API_KEY / "
                              "FUTU_PRIVATE_KEY in .env), FAKE is a local random walk for "
                              "testing the path; writes <stem>_ref.csv per equity symbol")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the resolved plan and data clients as JSON, then exit "
+                             "before dotenv, the node and any subscription")
     args = parser.parse_args()
 
     symbols, venue_keys = resolve_targets(args, parser)
     plan = build_plan(symbols, venue_keys)
+
+    if args.dry_run:
+        print(json.dumps(describe_plan(plan), indent=2))
+        return
 
     started = datetime.now(timezone.utc)
     if args.until:
@@ -1344,7 +1476,9 @@ def main() -> None:
 
     strategies: list[SpreadWatch] = []
     restarts = 0
-    ever_received = False
+    # Every leg that ever produced top-of-book data, across all nodes of this run:
+    # a leg covered by an earlier node still counts after a restart.
+    received_legs: set[tuple[str, str, str]] = set()
     while True:
         remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
         if remaining <= 1.0:
@@ -1369,8 +1503,14 @@ def main() -> None:
             timer.cancel()
 
         for strategy in strategies:
-            ever_received = ever_received or strategy.received()
+            received_legs.update(strategy.received_leg_keys())
             print(strategy.summary(), flush=True)
+        if run_state.startup_errors:
+            # A leg could not be found at all: keep the evidence and stop for good
+            # instead of restarting into the same failure.
+            for message in run_state.startup_errors:
+                print(f"[stage1] STARTUP FAILED {message}", file=sys.stderr, flush=True)
+            raise SystemExit(1)
         if failure is not None:
             print(f"[stage1] node run failed: {failure!r}", flush=True)
         if interrupted:
@@ -1391,7 +1531,12 @@ def main() -> None:
 
     if restarts:
         print(f"[stage1] node restarts during this run: {restarts}", flush=True)
-    if not ever_received:
+    # Legs skipped by build_plan are not in the plan, so they are not "missing" here.
+    missing = missing_leg_keys(plan, received_legs)
+    if missing:
+        for symbol, key, instrument_id in missing:
+            print(f"[stage1] INCOMPLETE {symbol}/{key}: no top-of-book data for "
+                  f"{instrument_id}", file=sys.stderr, flush=True)
         raise SystemExit(1)
 
 
