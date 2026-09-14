@@ -1,0 +1,10 @@
+{
+  "url": "https://api.hyperliquid.xyz/info",
+  "request": {
+    "type": "metaAndAssetCtxs",
+    "dex": "io"
+  },
+  "requested_at_utc": "2026-09-14T08:33:31.354093+00:00",
+  "error": "URLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)'))",
+  "finished_at_utc": "2026-09-14T08:33:36.529409+00:00"
+}

@@ -1,0 +1,253 @@
+python.exe : [stage1] INFO GPRO: no instrument mapped for HL; skipping that leg and watching the remaining legs
+所在位置 行:8 字符: 12
++ $output = (& .\.venv\Scripts\python.exe src/spread_watch.py --symbols ...
++            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([stage1] INFO G... remaining legs:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[stage1] watching SNDK[HL-ENTROPY-ASTER]  GPRO[ENTROPY-ASTER] until 2026-09-14T08:39:11+00:00 -> reports\entropy-io-acceptance\20260914T083711Z
+[1m2026-09-14T08:37:11.581043200Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581110300Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  NAUTILUS TRADER - Automated Algorithmic Trading Platform[0m
+[1m2026-09-14T08:37:11.581111800Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  by Nautech Systems Pty Ltd.[0m
+[1m2026-09-14T08:37:11.581112100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  Copyright (C) 2015-2026. All rights reserved.[0m
+[1m2026-09-14T08:37:11.581112500Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581113000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⡤⠤⠤⠤⠤⠤⠤⠤⢤⡀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581113600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠚⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⠁⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581114100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⢀⣠⠖⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠚⠁⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581115500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⢀⡴⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581115900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⣠⠏⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠒⠒⠒⠒⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581116200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⡇⠀⠀⠀⠀⠀⠀⠀⢀⡖⠋⣠⢴⢪⠞⣩⢟⡭⠵⢤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581116500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⣦⡙⠦⣄⡀⠀⢀⣠⠴⠋⢠⡐⣇⢸⡘⢦⡇⣏⡴⣋⡭⠖⠮⢥⡀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581116700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⢸⡉⠓⠦⠭⠭⠭⠴⣺⠃⠸⣷⢬⣓⣛⠒⠩⣌⢡⡷⢒⣫⠭⣝⡛⠆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581116900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠙⠦⢤⣀⣠⠤⠞⣡⠞⡆⠺⣭⣭⡷⢇⣷⡻⠡⠾⣛⣒⠦⢤⡙⡆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581117100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠈⠳⣖⠒⠒⠒⠋⠁⣠⠇⡼⢦⠀⣌⡉⢥⣄⣛⡻⢥⡈⠉⢳⡙⠇⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581117300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠈⠙⣒⣒⣒⣋⡥⠞⠁⣸⠃⡇⠙⢦⢹⠀⠙⡆⢳⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581117500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠈⠙⠒⠦⠤⠴⣚⣡⠞⠁⣠⠏⡼⢀⣠⠇⠞⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581117700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⠉⠉⠑⠚⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:37:11.581118000Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581118200Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  SYSTEM SPECIFICATION[0m
+[1m2026-09-14T08:37:11.581118500Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581120400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: CPU architecture: AMD Ryzen 9 9950X 16-Core Processor            [0m
+[1m2026-09-14T08:37:11.581122100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: CPU(s): 32 @ 4300 MHz[0m
+[1m2026-09-14T08:37:11.581123100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: OS: kernel-26200 Windows 11 Pro[0m
+[1m2026-09-14T08:37:11.581202400Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581202800Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  MEMORY USAGE[0m
+[1m2026-09-14T08:37:11.581203100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581206400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Total: 93.65 GiB[0m
+[1m2026-09-14T08:37:11.581207100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Used: 25.66 GiB (27.40%)[0m
+[1m2026-09-14T08:37:11.581207700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Avail: 68.00 GiB (72.60%)[0m
+[1m2026-09-14T08:37:11.581214100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Total: 6.00 GiB[0m
+[1m2026-09-14T08:37:11.581215200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Used: 0.00 GiB (0.00%)[0m
+[1m2026-09-14T08:37:11.581216000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Avail: 6.00 GiB (100.00%)[0m
+[1m2026-09-14T08:37:11.581218500Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581218900Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  IDENTIFIERS[0m
+[1m2026-09-14T08:37:11.581219200Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581221100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: trader_id: STAGE1-001[0m
+[1m2026-09-14T08:37:11.581221500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: machine_id: 主力机器[0m
+[1m2026-09-14T08:37:11.581224200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: instance_id: 31bd2d22-62b5-46a4-b456-06538635f400[0m
+[1m2026-09-14T08:37:11.581224800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: PID: 46872[0m
+[1m2026-09-14T08:37:11.581225100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581225400Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  VERSIONING[0m
+[1m2026-09-14T08:37:11.581225700Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.581248200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: nautilus_trader: 2.0.0rc4[0m
+[1m2026-09-14T08:37:11.581248700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: nautilus_core: 0.63.0[0m
+[1m2026-09-14T08:37:11.581257300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: python: 3.12.9[0m
+[1m2026-09-14T08:37:11.581279000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: git_commit: 047d494e3c26[0m
+[1m2026-09-14T08:37:11.581279500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rustc: 1.98.0 (88d9e12ae 2026-08-18)[0m
+[1m2026-09-14T08:37:11.581279900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: target: x86_64-pc-windows-msvc[0m
+[1m2026-09-14T08:37:11.581280400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: profile: debug[0m
+[1m2026-09-14T08:37:11.581280800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: panic: unwind[0m
+[1m2026-09-14T08:37:11.581281100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: precision: high (128-bit, 16 dp)[0m
+[1m2026-09-14T08:37:11.581281400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: allocator: mimalloc 0.1.52[0m
+[1m2026-09-14T08:37:11.581281700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: cargo_lock: f389d3c3[0m
+[1m2026-09-14T08:37:11.581282000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rust_decimal: 1.42.1[0m
+[1m2026-09-14T08:37:11.581292700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rustls: 0.23.43[0m
+[1m2026-09-14T08:37:11.581293200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: aws_lc_rs: 1.18.0[0m
+[1m2026-09-14T08:37:11.581293600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: tokio: 1.53.1[0m
+[1m2026-09-14T08:37:11.581294400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyo3: 0.29.2[0m
+[1m2026-09-14T08:37:11.581294700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyo3_async_runtimes: 0.29.0[0m
+[1m2026-09-14T08:37:11.621983700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: numpy: 2.5.2[0m
+[1m2026-09-14T08:37:11.841778200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pandas: 3.0.5[0m
+[1m2026-09-14T08:37:11.846049300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: msgspec: 0.21.1[0m
+[1m2026-09-14T08:37:11.846068100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyarrow: 25.0.1[0m
+[1m2026-09-14T08:37:11.846071300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pytz: 2026.3.post1[0m
+[1m2026-09-14T08:37:11.846169200Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:37:11.846211000Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Building system kernel[0m
+[1m2026-09-14T08:37:11.847621900Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Registered DataClient-HYPERLIQUID[0m
+[1m2026-09-14T08:37:11.847964700Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Registered DataClient-ASTER[0m
+[1m2026-09-14T08:37:11.848038400Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Built successfully[0m
+[1m2026-09-14T08:37:11.848435900Z[0m [INFO] STAGE1-001.SPREAD-WATCH-SNDK: Ready[0m
+[1m2026-09-14T08:37:11.848533800Z[0m [INFO] STAGE1-001.nautilus_system::python::registration: Registered Python strategy SPREAD-WATCH-SNDK with trader STAGE1-001[0m
+[1m2026-09-14T08:37:11.848538700Z[0m [INFO] STAGE1-001.nautilus_live::python::node: Registered Python strategy SPREAD-WATCH-SNDK[0m
+[1m2026-09-14T08:37:11.848620600Z[0m [INFO] STAGE1-001.SPREAD-WATCH-GPRO: Ready[0m
+[1m2026-09-14T08:37:11.848638800Z[0m [INFO] STAGE1-001.nautilus_system::python::registration: Registered Python strategy SPREAD-WATCH-GPRO with trader STAGE1-001[0m
+[1m2026-09-14T08:37:11.848640900Z[0m [INFO] STAGE1-001.nautilus_live::python::node: Registered Python strategy SPREAD-WATCH-GPRO[0m
+[1m2026-09-14T08:37:11.849804600Z[0m [INFO] STAGE1-001.nautilus_live::node: Event loop starting[0m
+[1m2026-09-14T08:37:11.849823200Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Starting[0m
+[1m2026-09-14T08:37:11.849843300Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Starting Hyperliquid data client: client_id=HYPERLIQUID, environment=Mainnet, proxy_url=None[0m
+[1m2026-09-14T08:37:11.849852700Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Started: client_id=ASTER, product_type=UsdM, environment=Live[0m
+[1m2026-09-14T08:37:11.849897300Z[0m [INFO] STAGE1-001.nautilus_execution::engine: Started[0m
+[1m2026-09-14T08:37:11.849901000Z[0m [INFO] STAGE1-001.nautilus_risk::engine: Started[0m
+[1m2026-09-14T08:37:11.849902000Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Initializing trader[0m
+[1m2026-09-14T08:37:11.849904700Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Started[0m
+[1m2026-09-14T08:37:11.849928600Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Connecting data clients...[0m
+[1m2026-09-14T08:37:14.073219300Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument MBLUSDT: Unsupported USD-M contract type '' for symbol 'MBLUSDT'[0m
+[1m2026-09-14T08:37:14.073448500Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument TONUSDT: Symbol 'TONUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.073596900Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument AFEEUSDT: Unsupported USD-M contract type '' for symbol 'AFEEUSDT'[0m
+[1m2026-09-14T08:37:14.074898500Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument IRUSDT: Symbol 'IRUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.075243500Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument IPUSDT: Symbol 'IPUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.075956700Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument ACXUSDT: Symbol 'ACXUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.075997300Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument COSUSDT: Symbol 'COSUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076165800Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument DUSDT: Symbol 'DUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076232100Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument PDDUSDT: Symbol 'PDDUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076290500Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument BIRDUSDT: Symbol 'BIRDUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076306300Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument 1000SATSUSDT: Symbol '1000SATSUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076350000Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument HIGHUSDT: Symbol 'HIGHUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076409400Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument CARUSDT: Symbol 'CARUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076416800Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument 1000WOJAKUSDT: Symbol '1000WOJAKUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076712000Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument STORJUSDT: Symbol 'STORJUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.076743500Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument PHAROSUSDT: Unsupported USD-M contract type '' for symbol 'PHAROSUSDT'[0m
+[1m2026-09-14T08:37:14.077010800Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument RAILUSDT: Symbol 'RAILUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.077076400Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument SKHXUSDT: Unsupported USD-M contract type '' for symbol 'SKHXUSDT'[0m
+[1m2026-09-14T08:37:14.077083000Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument SMSNUSDT: Unsupported USD-M contract type '' for symbol 'SMSNUSDT'[0m
+[1m2026-09-14T08:37:14.077914700Z[0m [1;33m[WARN] STAGE1-001.nautilus_binance::futures::http::client: Skipping Binance Futures instrument VANRYUSDT: Symbol 'VANRYUSDT' is not trading (status: Settling)[0m
+[1m2026-09-14T08:37:14.387681700Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Connecting to Binance Futures market WebSocket...[0m
+[1m2026-09-14T08:37:14.422104800Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Connected: client_id=HYPERLIQUID[0m
+[1m2026-09-14T08:37:14.780932600Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Binance Futures market WebSocket connected[0m
+[1m2026-09-14T08:37:14.780962700Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Connecting to Binance Futures public WebSocket...[0m
+[1m2026-09-14T08:37:15.116833600Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Binance Futures public WebSocket connected[0m
+[1m2026-09-14T08:37:15.116965800Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Connected: client_id=ASTER[0m
+[1m2026-09-14T08:37:15.125237400Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Connecting execution clients...[0m
+[1m2026-09-14T08:37:15.125280000Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting engine connections (60s timeout)...[0m
+[1m2026-09-14T08:37:15.125302900Z[0m [INFO] STAGE1-001.nautilus_live::node: All engine clients connected[0m
+[1m2026-09-14T08:37:15.125330500Z[0m [94m[INFO] STAGE1-001.nautilus_live::node: Starting execution state reconciliation...[0m
+[1m2026-09-14T08:37:15.125390500Z[0m [INFO] STAGE1-001.nautilus_portfolio::portfolio: Initialized 0 open orders[0m
+[1m2026-09-14T08:37:15.125423800Z[0m [INFO] STAGE1-001.nautilus_portfolio::portfolio: Initialized 0 open positions[0m
+[1m2026-09-14T08:37:15.125441800Z[0m [INFO] STAGE1-001.nautilus_portfolio::portfolio: Initialized 0 Wallet reservations[0m
+[1m2026-09-14T08:37:15.125444900Z[0m [94m[INFO] STAGE1-001.nautilus_live::node: Startup reconciliation completed in 0.00s[0m
+[1m2026-09-14T08:37:15.125448400Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Starting trader...[0m
+[1m2026-09-14T08:37:15.125468200Z[0m [INFO] STAGE1-001.nautilus_execution::order_emulator::emulator: Started[0m
+[1m2026-09-14T08:37:15.125475100Z[0m [INFO] STAGE1-001.nautilus_system::trader: Starting[0m
+[1m2026-09-14T08:37:15.125496500Z[0m [INFO] STAGE1-001.SPREAD-WATCH-SNDK: Starting[0m
+[1m2026-09-14T08:37:15.125501800Z[0m [INFO] STAGE1-001.nautilus_trading::strategy: Starting SPREAD-WATCH-SNDK[0m
+[1m2026-09-14T08:37:15.125871900Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/HL] HYPERLIQUID instruments loaded: 1290[0m
+[1m2026-09-14T08:37:15.125925900Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/HL] instrument OK: xyz:SNDK-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-14T08:37:15.126164700Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/ENTROPY] HYPERLIQUID instruments loaded: 1290[0m
+[1m2026-09-14T08:37:15.126173000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/ENTROPY] instrument OK: io:SNDK-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-14T08:37:15.126313500Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/ASTER] ASTER instruments loaded: 574[0m
+[1m2026-09-14T08:37:15.126318900Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/ASTER] instrument OK: SNDKUSD1-PERP.ASTER[0m
+[1m2026-09-14T08:37:15.127463900Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "xyz:SNDK-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(8a3196a7-2a02-4421-aa2d-4cfed7963058), ts_init: UnixNanos(1789375035127462200), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127551500Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "xyz:SNDK-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(fa77fb09-1f63-4885-9411-d31ceab78203), ts_init: UnixNanos(1789375035127551200), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127569000Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "xyz:SNDK-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(c52a98f8-e328-4a8c-8cac-83c6b8df049d), ts_init: UnixNanos(1789375035127568800), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127608700Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "xyz:SNDK-USD-PERP.HYPERLIQUID", book_type: L2_MBP, client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(2db5b097-6af1-448d-9638-6f3e9e027b39), ts_init: UnixNanos(1789375035127608600), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127634000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/HL] subscribed quotes+funding+trades+deltas(managed) xyz:SNDK-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-14T08:37:15.127645300Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "io:SNDK-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(6de509e2-bcf5-4bcc-a406-023075ff1801), ts_init: UnixNanos(1789375035127645200), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127652900Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "io:SNDK-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(092b2a41-c2d8-4cf0-9f7b-da14508d5d2d), ts_init: UnixNanos(1789375035127652800), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127660500Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "io:SNDK-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(77a1bbad-e7ca-413a-8aeb-e2f260fade57), ts_init: UnixNanos(1789375035127660400), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127667300Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "io:SNDK-USD-PERP.HYPERLIQUID", book_type: L2_MBP, client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(de4987f4-b431-47de-a6df-02a9f5f2754d), ts_init: UnixNanos(1789375035127667200), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127673600Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/ENTROPY] subscribed quotes+funding+trades+deltas(managed) io:SNDK-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-14T08:37:15.127677600Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "SNDKUSD1-PERP.ASTER", client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(81281dbc-a1d8-4131-aa7d-634335f778f6), ts_init: UnixNanos(1789375035127677500), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127682800Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "SNDKUSD1-PERP.ASTER", client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(c1a6e0a0-1401-4701-bdb3-347eb2e99a05), ts_init: UnixNanos(1789375035127682700), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127688200Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "SNDKUSD1-PERP.ASTER", client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(4bf52fc1-8cc8-47f0-afaa-37646da24af3), ts_init: UnixNanos(1789375035127688100), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127693400Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "SNDKUSD1-PERP.ASTER", book_type: L2_MBP, client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(ff84bc0f-c4eb-416c-b666-5ca832799a6d), ts_init: UnixNanos(1789375035127693300), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.127697100Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: [SNDK/ASTER] subscribed quotes+funding+trades+deltas(managed) SNDKUSD1-PERP.ASTER[0m
+[1m2026-09-14T08:37:15.127922000Z[0m [INFO] STAGE1-001.SPREAD-WATCH-SNDK: Running[0m
+[1m2026-09-14T08:37:15.127935700Z[0m [INFO] STAGE1-001.SPREAD-WATCH-GPRO: Starting[0m
+[1m2026-09-14T08:37:15.127939200Z[0m [INFO] STAGE1-001.nautilus_trading::strategy: Starting SPREAD-WATCH-GPRO[0m
+[1m2026-09-14T08:37:15.128105300Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: [GPRO/ENTROPY] HYPERLIQUID instruments loaded: 1290[0m
+[1m2026-09-14T08:37:15.128117000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: [GPRO/ENTROPY] instrument OK: io:GPRO-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-14T08:37:15.128262700Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: [GPRO/ASTER] ASTER instruments loaded: 574[0m
+[1m2026-09-14T08:37:15.128268300Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: [GPRO/ASTER] instrument OK: GPROUSD1-PERP.ASTER[0m
+[1m2026-09-14T08:37:15.128800300Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "io:GPRO-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(ace1c87a-c3f5-4b7d-b8b2-15a91ba9130d), ts_init: UnixNanos(1789375035128798600), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128829000Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "io:GPRO-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(0997ae01-7885-4d27-a45a-8d45acc15607), ts_init: UnixNanos(1789375035128828800), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128840700Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "io:GPRO-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(095fd493-cea8-4e5e-bf4d-0611e6ff4453), ts_init: UnixNanos(1789375035128840600), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128854700Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "io:GPRO-USD-PERP.HYPERLIQUID", book_type: L2_MBP, client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(2f534478-4fe9-4a24-94df-c52a1b03c814), ts_init: UnixNanos(1789375035128854600), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128867700Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: [GPRO/ENTROPY] subscribed quotes+funding+trades+deltas(managed) io:GPRO-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-14T08:37:15.128875600Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "GPROUSD1-PERP.ASTER", client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(a4d3cedf-3c36-4fb1-935c-c122f8f1ac15), ts_init: UnixNanos(1789375035128875500), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128880900Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "GPROUSD1-PERP.ASTER", client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(32e2cb85-463b-4588-90c4-1f46bd3a42f1), ts_init: UnixNanos(1789375035128880800), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128888300Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "GPROUSD1-PERP.ASTER", client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(8c36ad8c-b25d-4274-aabb-2683a60330ed), ts_init: UnixNanos(1789375035128888200), correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128894300Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "GPROUSD1-PERP.ASTER", book_type: L2_MBP, client_id: Some("ASTER"), venue: Some("ASTER"), command_id: UUID4(d09178ec-612a-454e-97af-c09703418f57), ts_init: UnixNanos(1789375035128894200), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-14T08:37:15.128898600Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: [GPRO/ASTER] subscribed quotes+funding+trades+deltas(managed) GPROUSD1-PERP.ASTER[0m
+[1m2026-09-14T08:37:15.128985900Z[0m [INFO] STAGE1-001.SPREAD-WATCH-GPRO: Running[0m
+[1m2026-09-14T08:37:15.128994100Z[0m [INFO] STAGE1-001.nautilus_system::trader: Running[0m
+[1m2026-09-14T08:37:15.128995600Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Trader started[0m
+[1m2026-09-14T08:37:15.129157900Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:SNDK-USD-PERP.HYPERLIQUID quotes[0m
+[1m2026-09-14T08:37:15.129233100Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:SNDK-USD-PERP.HYPERLIQUID funding rates[0m
+[1m2026-09-14T08:37:15.129272300Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:SNDK-USD-PERP.HYPERLIQUID trades[0m
+[1m2026-09-14T08:37:15.129348200Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:SNDK-USD-PERP.HYPERLIQUID order book deltas[0m
+[1m2026-09-14T08:37:15.129371000Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:SNDK-USD-PERP.HYPERLIQUID quotes[0m
+[1m2026-09-14T08:37:15.129377000Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:SNDK-USD-PERP.HYPERLIQUID funding rates[0m
+[1m2026-09-14T08:37:15.129383100Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:SNDK-USD-PERP.HYPERLIQUID trades[0m
+[1m2026-09-14T08:37:15.129401700Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:SNDK-USD-PERP.HYPERLIQUID order book deltas[0m
+[1m2026-09-14T08:37:15.129412100Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed SNDKUSD1-PERP.ASTER quotes[0m
+[1m2026-09-14T08:37:15.129537500Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed SNDKUSD1-PERP.ASTER funding rates[0m
+[1m2026-09-14T08:37:15.129590000Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed SNDKUSD1-PERP.ASTER trades[0m
+[1m2026-09-14T08:37:15.129629800Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed SNDKUSD1-PERP.ASTER order book deltas[0m
+[1m2026-09-14T08:37:15.129736800Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:GPRO-USD-PERP.HYPERLIQUID quotes[0m
+[1m2026-09-14T08:37:15.129746100Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:GPRO-USD-PERP.HYPERLIQUID funding rates[0m
+[1m2026-09-14T08:37:15.129754900Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:GPRO-USD-PERP.HYPERLIQUID trades[0m
+[1m2026-09-14T08:37:15.129773000Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed io:GPRO-USD-PERP.HYPERLIQUID order book deltas[0m
+[1m2026-09-14T08:37:15.129780500Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed GPROUSD1-PERP.ASTER quotes[0m
+[1m2026-09-14T08:37:15.129793400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed GPROUSD1-PERP.ASTER funding rates[0m
+[1m2026-09-14T08:37:15.129802600Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed GPROUSD1-PERP.ASTER trades[0m
+[1m2026-09-14T08:37:15.129812500Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed GPROUSD1-PERP.ASTER order book deltas[0m
+[1m2026-09-14T08:37:45.134567200Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: STATUS [SNDK] HL=236(quotes/deltas-cache:7,trades=75) ENTROPY=150(quotes/deltas-cache:7,trades=84) ASTER=744(quotes/deltas-cache:363,trades=1) | samples=1102 stale=10 | last gross HL>ENTROPY=-3.86 HL>ASTER=-13.43 ENTROPY>HL=1.29 ENTROPY>ASTER=-11.50 ASTER>HL=10.09 ASTER>ENTROPY=6.88 bps | net+ rows=1446 (dirs 1446) | depth rows=87 | trade rows=160[0m
+[1m2026-09-14T08:37:45.136044900Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: STATUS [GPRO] ENTROPY=25(quotes/deltas-cache:7,trades=46) ASTER=4(quotes/deltas-cache:5,trades=1) | samples=8 stale=8 | last gross ENTROPY>ASTER=-45.00 ASTER>ENTROPY=-22.50 bps | net+ rows=0 (dirs 0) | depth rows=60 | trade rows=47[0m
+[1m2026-09-14T08:38:15.135503200Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: STATUS [GPRO] ENTROPY=25(quotes/deltas-cache:12,trades=46) ASTER=4(quotes/deltas-cache:8,trades=1) | samples=8 stale=8 | last gross ENTROPY>ASTER=-45.00 ASTER>ENTROPY=-22.50 bps | net+ rows=0 (dirs 0) | depth rows=118 | trade rows=47[0m
+[1m2026-09-14T08:38:15.135554400Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: STATUS [SNDK] HL=425(quotes/deltas-cache:12,trades=78) ENTROPY=250(quotes/deltas-cache:12,trades=107) ASTER=1289(quotes/deltas-cache:682,trades=1) | samples=1936 stale=30 | last gross HL>ENTROPY=-1.93 HL>ASTER=-13.75 ENTROPY>HL=0.00 ENTROPY>ASTER=-12.47 ASTER>HL=9.77 ASTER>ENTROPY=9.13 bps | net+ rows=2617 (dirs 2617) | depth rows=180 | trade rows=186[0m
+[1m2026-09-14T08:38:45.143112000Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-GPRO: STATUS [GPRO] ENTROPY=26(quotes/deltas-cache:18,trades=46) ASTER=4(quotes/deltas-cache:10,trades=1) | samples=8 stale=10 | last gross ENTROPY>ASTER=-45.00 ASTER>ENTROPY=-22.50 bps | net+ rows=0 (dirs 0) | depth rows=180 | trade rows=47[0m
+[1m2026-09-14T08:38:45.143177500Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-SNDK: STATUS [SNDK] HL=613(quotes/deltas-cache:18,trades=87) ENTROPY=337(quotes/deltas-cache:18,trades=134) ASTER=1965(quotes/deltas-cache:965,trades=1) | samples=2887 stale=70 | last gross HL>ENTROPY=-1.29 HL>ASTER=-12.85 ENTROPY>HL=-0.64 ENTROPY>ASTER=-12.21 ASTER>HL=8.48 ASTER>ENTROPY=8.48 bps | net+ rows=4175 (dirs 4175) | depth rows=270 | trade rows=222[0m
+[1m2026-09-14T08:39:11.936858600Z[0m [INFO] STAGE1-001.nautilus_live::node: Received stop signal from handle[0m
+[1m2026-09-14T08:39:11.936899300Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Stopping trader...[0m
+[1m2026-09-14T08:39:11.936911400Z[0m [INFO] STAGE1-001.nautilus_system::trader: Stopping[0m
+[1m2026-09-14T08:39:11.936973700Z[0m [INFO] STAGE1-001.SPREAD-WATCH-SNDK: Stopping[0m
+[1m2026-09-14T08:39:11.937359900Z[0m [INFO] STAGE1-001.SPREAD-WATCH-SNDK: Stopped[0m
+[1m2026-09-14T08:39:11.937380400Z[0m [INFO] STAGE1-001.SPREAD-WATCH-GPRO: Stopping[0m
+[1m2026-09-14T08:39:11.937654400Z[0m [INFO] STAGE1-001.SPREAD-WATCH-GPRO: Stopped[0m
+[1m2026-09-14T08:39:11.937679300Z[0m [INFO] STAGE1-001.nautilus_system::trader: Stopped[0m
+[1m2026-09-14T08:39:11.937683400Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting residual events (2s)...[0m
+[1m2026-09-14T08:39:13.953049400Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Disconnecting clients...[0m
+[1m2026-09-14T08:39:13.953595500Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Disconnected: client_id=ASTER[0m
+[1m2026-09-14T08:39:14.081334400Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Disconnected: client_id=HYPERLIQUID[0m
+[1m2026-09-14T08:39:14.081384100Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting engine disconnections (10s timeout)...[0m
+[1m2026-09-14T08:39:14.081401300Z[0m [INFO] STAGE1-001.nautilus_live::node: All engine clients disconnected[0m
+[1m2026-09-14T08:39:14.081427000Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Stopping Hyperliquid data client HYPERLIQUID[0m
+[1m2026-09-14T08:39:14.081436300Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Stopping ASTER[0m
+[1m2026-09-14T08:39:14.081465300Z[0m [INFO] STAGE1-001.nautilus_execution::engine: Stopped[0m
+[1m2026-09-14T08:39:14.081470500Z[0m [INFO] STAGE1-001.nautilus_risk::engine: Stopped[0m
+[1m2026-09-14T08:39:14.081472700Z[0m [INFO] STAGE1-001.nautilus_execution::order_emulator::emulator: Stopped[0m
+[1m2026-09-14T08:39:14.081478100Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Stopped[0m
+[1m2026-09-14T08:39:14.081504900Z[0m [INFO] STAGE1-001.nautilus_live::node: Event loop stopped[0m
+
+==============================================================================
+SUMMARY [SNDK]
+  leg HL         top-of-book updates=786 (quotes)  book updates=23 (deltas-cache)  trades=106  funding_seen=True  xyz:SNDK-USD-PERP.HYPERLIQUID
+  leg ENTROPY    top-of-book updates=434 (quotes)  book updates=23 (deltas-cache)  trades=171  funding_seen=True  io:SNDK-USD-PERP.HYPERLIQUID
+  leg ASTER      top-of-book updates=2532 (quotes)  book updates=1284 (deltas-cache)  trades=1  funding_seen=True  SNDKUSD1-PERP.ASTER
+  evaluated samples=3724  skipped-stale=108
+  net-positive rows written=5331   all-sample rows=614   depth rows=348   trade rows=278
+  HL>ENTROPY: net-positive 0/1215 (0.00%)  gross median=-1.93 max=2.57 min=-4.50 bps  fee+reserve=6.80
+  HL>ASTER: net-positive 0/3248 (0.00%)  gross median=-13.04 max=-8.94 min=-16.14 bps  fee+reserve=6.80
+  ENTROPY>HL: net-positive 0/1215 (0.00%)  gross median=0.00 max=3.22 min=-3.86 bps  fee+reserve=6.80
+  ENTROPY>ASTER: net-positive 0/2930 (0.00%)  gross median=-12.21 max=-7.59 min=-17.42 bps  fee+reserve=6.80
+  ASTER>HL: net-positive 3028/3248 (93.23%)  gross median=8.93 max=12.28 min=2.64 bps  fee+reserve=6.80
+  ASTER>ENTROPY: net-positive 2303/2930 (78.60%)  gross median=7.84 max=12.66 min=0.71 bps  fee+reserve=6.80
+  csv: reports\entropy-io-acceptance\20260914T083711Z\spread_SNDK_HL-ENTROPY-ASTER_20260914T083711Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083711Z\spread_SNDK_HL-ENTROPY-ASTER_20260914T083711Z_all.csv
+  csv: reports\entropy-io-acceptance\20260914T083711Z\depth_SNDK_HL-ENTROPY-ASTER_20260914T083711Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083711Z\trades_SNDK_HL-ENTROPY-ASTER_20260914T083711Z.csv
+==============================================================================
+
+==============================================================================
+SUMMARY [GPRO]
+  leg ENTROPY    top-of-book updates=26 (quotes)  book updates=23 (deltas-cache)  trades=46  funding_seen=True  io:GPRO-USD-PERP.HYPERLIQUID
+  leg ASTER      top-of-book updates=4 (quotes)  book updates=12 (deltas-cache)  trades=1  funding_seen=True  GPROUSD1-PERP.ASTER
+  evaluated samples=8  skipped-stale=10
+  net-positive rows written=0   all-sample rows=4   depth rows=232   trade rows=47
+  ENTROPY>ASTER: net-positive 0/8 (0.00%)  gross median=-45.00 max=-45.00 min=-47.26 bps  fee+reserve=6.80
+  ASTER>ENTROPY: net-positive 0/8 (0.00%)  gross median=-24.75 max=-22.50 min=-24.75 bps  fee+reserve=6.80
+  csv: reports\entropy-io-acceptance\20260914T083711Z\spread_GPRO_ENTROPY-ASTER_20260914T083711Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083711Z\spread_GPRO_ENTROPY-ASTER_20260914T083711Z_all.csv
+  csv: reports\entropy-io-acceptance\20260914T083711Z\depth_GPRO_ENTROPY-ASTER_20260914T083711Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083711Z\trades_GPRO_ENTROPY-ASTER_20260914T083711Z.csv
+==============================================================================

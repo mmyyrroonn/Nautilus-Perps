@@ -1,0 +1,87 @@
+# Opportunity analysis - stamp 20260914T084152Z
+
+source `reports\entropy-io-acceptance\20260914T084152Z`  |  symbols GPRO, SNDK  |  gap 2s, hold 30s, min-usd 1000
+
+## GPRO  [ENTROPY, ASTER]
+
+window 2026-09-14T08:42:17+00:00 .. 2026-09-14T08:43:49+00:00  (0.03 h)  |  samples 26  hits 0  episodes 0  depth rows 232 (0 empty)
+
+### 1. Basis (1 s samples, gross bps)
+
+| direction     |   n | median |    p95 |    max |    min | fee+res | net>0 |
+| ------------- | --: | -----: | -----: | -----: | -----: | ------: | ----: |
+| ASTER>ENTROPY |  13 | -18.01 |   1.80 |   2.25 | -20.26 |    6.80 | 0.00% |
+| ENTROPY>ASTER |  13 | -39.77 | -21.76 | -19.52 | -44.28 |    6.80 | 0.00% |
+
+### 2. Episodes (hits merged, gap <= 2 s)
+
+_no net-positive rows in the window: no episodes, no round trips_
+
+### 5. Funding carry (raw -> bps/h; HL + Entropy fraction/h, Lighter percent/h, Aster fraction per the instrument's 1/4/8 h interval)
+
+| venue   |   raw median | settle h |  bps/h |  %/yr | distinct raw |
+| ------- | -----------: | -------: | -----: | ----: | -----------: |
+| ASTER   |            0 |        8 | 0.0000 |   0.0 |            1 |
+| ENTROPY | 0.0002508846 |        1 | 2.5088 | 219.8 |           12 |
+
+| pair          | short leg     | long leg   | carry bps/h |  %/yr | round-trip fee bps | hours to b/e | samples |
+| ------------- | ------------- | ---------- | ----------: | ----: | -----------------: | -----------: | ------: |
+| ASTER/ENTROPY | short ENTROPY | long ASTER |      2.5088 | 219.8 |               3.60 |          1.4 |      13 |
+
+> **FLAG** ASTER funding is exactly 0 in every sample (feed may be idle)
+
+## SNDK  [HL, ENTROPY, ASTER]
+
+window 2026-09-14T08:41:56+00:00 .. 2026-09-14T08:43:53+00:00  (0.03 h)  |  samples 590  hits 3425  episodes 4  depth rows 348 (0 empty)
+
+### 1. Basis (1 s samples, gross bps)
+
+| direction     |   n | median |    p95 |    max |    min | fee+res |  net>0 |
+| ------------- | --: | -----: | -----: | -----: | -----: | ------: | -----: |
+| ASTER>ENTROPY |  94 |   8.39 |   9.65 |  10.68 |   3.15 |    6.80 | 92.55% |
+| ASTER>HL      | 103 |  10.48 |  11.70 |  12.74 |   5.86 |    6.80 | 99.03% |
+| ENTROPY>ASTER |  94 | -12.00 | -10.76 |  -6.43 | -16.15 |    6.80 |  0.00% |
+| ENTROPY>HL    |  98 |   1.29 |   2.57 |   3.86 |  -1.29 |    6.80 |  0.00% |
+| HL>ASTER      | 103 | -13.83 | -12.82 | -10.30 | -15.56 |    6.80 |  0.00% |
+| HL>ENTROPY    |  98 |  -2.58 |  -1.29 |   0.00 |  -5.15 |    6.80 |  0.00% |
+
+### 2. Episodes (hits merged, gap <= 2 s)
+
+| direction     | episodes | eps/h | net+ s | % of window | dur med | dur max | best net med | best net max | raw hits |
+| ------------- | -------: | ----: | -----: | ----------: | ------: | ------: | -----------: | -----------: | -------: |
+| ASTER>ENTROPY |        3 |  92.6 |  110.2 |      94.52% |   20.98 |   73.96 |         5.29 |         6.20 |     1390 |
+| ASTER>HL      |        1 |  30.9 |  116.6 |     100.00% |  116.58 |  116.58 |         6.78 |         6.78 |     2035 |
+
+_a single-row episode has duration 0 s: the book was net-positive on one evaluation only_
+
+### 3. Capacity per episode (USD, min-usd 1000)
+
+| direction     | tob med | tob p90 | tob epi-med | depth med | depth p90 | tob>=1000 | depth>=1000 | depth n | bucket        | skipped |
+| ------------- | ------: | ------: | ----------: | --------: | --------: | --------: | ----------: | ------: | ------------- | ------- |
+| ASTER>ENTROPY |    1.0k |    1.4k |         539 |     10.8k |     10.9k |         2 |           3 |       3 | 2bps:1 5bps:2 | -       |
+| ASTER>HL      |    4.2k |    4.2k |        4.2k |     11.2k |     11.2k |         1 |           1 |       1 | 5bps:1        | -       |
+
+_tob = min(sell_bid_size, buy_ask_size) x mid at the episode's first row; depth = min(sell bid_usd_N, buy ask_usd_N) at the episode start, N = largest of 2/5/10 bps at or below the episode's best net; tob-only = best net < 2 bps, no-depth = no depth row within 2 s_
+
+### 4. Round trip (taker in / taker out, hold <= 30 s)
+
+| direction     | trades | pos% | pnl med | pnl mean | pnl total | hold med s | USD pnl | forced exits |
+| ------------- | -----: | ---: | ------: | -------: | --------: | ---------: | ------: | -----------: |
+| ASTER>ENTROPY |      3 | 0.0% |  -13.30 |   -12.70 |     -38.1 |       28.0 |      -4 |            3 |
+| ASTER>HL      |      1 | 0.0% |  -10.72 |   -10.72 |     -10.7 |       28.1 |      -4 |            1 |
+
+_entry = episode's first hit (gross - taker both legs - 5 bps reserve); exit = first reverse 1 s sample whose total pnl >= 0, else the last sample within the hold; USD pnl = sum(pnl_bps x tob capacity / 1e4); unresolved (no reverse sample in the window, excluded): 0_
+
+### 5. Funding carry (raw -> bps/h; HL + Entropy fraction/h, Lighter percent/h, Aster fraction per the instrument's 1/4/8 h interval)
+
+| venue   |   raw median | settle h |  bps/h | %/yr | distinct raw |
+| ------- | -----------: | -------: | -----: | ---: | -----------: |
+| ASTER   |   0.00032654 |        8 | 0.4082 | 35.8 |            2 |
+| ENTROPY | 0.0000020998 |        1 | 0.0210 |  1.8 |           23 |
+| HL      |   0.00000625 |        1 | 0.0625 |  5.5 |            1 |
+
+| pair          | short leg   | long leg     | carry bps/h | %/yr | round-trip fee bps | hours to b/e | samples |
+| ------------- | ----------- | ------------ | ----------: | ---: | -----------------: | -----------: | ------: |
+| ASTER/ENTROPY | short ASTER | long ENTROPY |      0.3873 | 33.9 |               3.60 |          9.3 |      93 |
+| ASTER/HL      | short ASTER | long HL      |      0.3457 | 30.3 |               3.60 |         10.4 |     102 |
+| ENTROPY/HL    | short HL    | long ENTROPY |      0.0415 |  3.6 |               3.60 |         86.7 |      98 |

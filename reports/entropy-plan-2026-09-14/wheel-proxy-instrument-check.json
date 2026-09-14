@@ -1,0 +1,50 @@
+{
+  "retrieved_at_utc": "2026-09-14T08:05:47.840723+00:00",
+  "proxy_configured": false,
+  "main_meta_readable": true,
+  "loaded_count": 519,
+  "instruments": [
+    {
+      "id": "io:GPRO-USD-PERP.HYPERLIQUID",
+      "raw_symbol": "io:GPRO",
+      "base_currency": "io:GPRO",
+      "quote_currency": "USD",
+      "settlement_currency": "USDC",
+      "price_precision": "5",
+      "size_precision": "1",
+      "price_increment": "0.00001",
+      "size_increment": "0.1",
+      "multiplier": "1",
+      "is_inverse": "False",
+      "info": "{}"
+    },
+    {
+      "id": "io:SNDK-USD-PERP.HYPERLIQUID",
+      "raw_symbol": "io:SNDK",
+      "base_currency": "io:SNDK",
+      "quote_currency": "USD",
+      "settlement_currency": "USDC",
+      "price_precision": "2",
+      "size_precision": "4",
+      "price_increment": "0.01",
+      "size_increment": "0.0001",
+      "multiplier": "1",
+      "is_inverse": "False",
+      "info": "{}"
+    },
+    {
+      "id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+      "raw_symbol": "xyz:SNDK",
+      "base_currency": "xyz:SNDK",
+      "quote_currency": "USD",
+      "settlement_currency": "USDC",
+      "price_precision": "3",
+      "size_precision": "3",
+      "price_increment": "0.001",
+      "size_increment": "0.001",
+      "multiplier": "1",
+      "is_inverse": "False",
+      "info": "{}"
+    }
+  ]
+}

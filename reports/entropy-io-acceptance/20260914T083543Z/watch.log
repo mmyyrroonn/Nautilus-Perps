@@ -1,0 +1,165 @@
+python.exe : [stage1] INFO GPRO: no instrument mapped for HL; skipping that leg and watching the remaining legs
+所在位置 行:6 字符: 12
++ $output = (& .\.venv\Scripts\python.exe src/spread_watch.py --symbols ...
++            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([stage1] INFO G... remaining legs:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[stage1] watching SNDK[HL-ENTROPY-ASTER]  GPRO[ENTROPY-ASTER] until 2026-09-14T08:37:43+00:00 -> reports\entropy-io-acceptance\20260914T083543Z
+[1m2026-09-14T08:35:43.395998900Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396087500Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  NAUTILUS TRADER - Automated Algorithmic Trading Platform[0m
+[1m2026-09-14T08:35:43.396088700Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  by Nautech Systems Pty Ltd.[0m
+[1m2026-09-14T08:35:43.396089100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  Copyright (C) 2015-2026. All rights reserved.[0m
+[1m2026-09-14T08:35:43.396089600Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396090500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⡤⠤⠤⠤⠤⠤⠤⠤⢤⡀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396091200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠚⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⠁⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396091600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⢀⣠⠖⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠚⠁⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396093100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⢀⡴⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396093700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⣠⠏⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠒⠒⠒⠒⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396094000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⡇⠀⠀⠀⠀⠀⠀⠀⢀⡖⠋⣠⢴⢪⠞⣩⢟⡭⠵⢤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396094200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⣦⡙⠦⣄⡀⠀⢀⣠⠴⠋⢠⡐⣇⢸⡘⢦⡇⣏⡴⣋⡭⠖⠮⢥⡀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396094500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⢸⡉⠓⠦⠭⠭⠭⠴⣺⠃⠸⣷⢬⣓⣛⠒⠩⣌⢡⡷⢒⣫⠭⣝⡛⠆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396094700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠙⠦⢤⣀⣠⠤⠞⣡⠞⡆⠺⣭⣭⡷⢇⣷⡻⠡⠾⣛⣒⠦⢤⡙⡆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396094900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠈⠳⣖⠒⠒⠒⠋⠁⣠⠇⡼⢦⠀⣌⡉⢥⣄⣛⡻⢥⡈⠉⢳⡙⠇⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396095100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠈⠙⣒⣒⣒⣋⡥⠞⠁⣸⠃⡇⠙⢦⢹⠀⠙⡆⢳⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396095300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠈⠙⠒⠦⠤⠴⣚⣡⠞⠁⣠⠏⡼⢀⣠⠇⠞⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396095500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⠉⠉⠑⠚⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-14T08:35:43.396095800Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396096000Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  SYSTEM SPECIFICATION[0m
+[1m2026-09-14T08:35:43.396096300Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396098400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: CPU architecture: AMD Ryzen 9 9950X 16-Core Processor            [0m
+[1m2026-09-14T08:35:43.396100300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: CPU(s): 32 @ 4300 MHz[0m
+[1m2026-09-14T08:35:43.396101100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: OS: kernel-26200 Windows 11 Pro[0m
+[1m2026-09-14T08:35:43.396149200Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396149900Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  MEMORY USAGE[0m
+[1m2026-09-14T08:35:43.396150200Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396153600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Total: 93.65 GiB[0m
+[1m2026-09-14T08:35:43.396154200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Used: 25.80 GiB (27.55%)[0m
+[1m2026-09-14T08:35:43.396154900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Avail: 67.85 GiB (72.45%)[0m
+[1m2026-09-14T08:35:43.396161400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Total: 6.00 GiB[0m
+[1m2026-09-14T08:35:43.396162600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Used: 0.00 GiB (0.00%)[0m
+[1m2026-09-14T08:35:43.396163500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Avail: 6.00 GiB (100.00%)[0m
+[1m2026-09-14T08:35:43.396166100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396166400Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  IDENTIFIERS[0m
+[1m2026-09-14T08:35:43.396166700Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396168500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: trader_id: STAGE1-001[0m
+[1m2026-09-14T08:35:43.396169000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: machine_id: 主力机器[0m
+[1m2026-09-14T08:35:43.396172700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: instance_id: 7df5fc50-9aec-4b33-a454-4e663224ee29[0m
+[1m2026-09-14T08:35:43.396173400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: PID: 15972[0m
+[1m2026-09-14T08:35:43.396173600Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396173900Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  VERSIONING[0m
+[1m2026-09-14T08:35:43.396174100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.396200500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: nautilus_trader: 2.0.0rc4[0m
+[1m2026-09-14T08:35:43.396201000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: nautilus_core: 0.63.0[0m
+[1m2026-09-14T08:35:43.396209200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: python: 3.12.9[0m
+[1m2026-09-14T08:35:43.396233000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: git_commit: 047d494e3c26[0m
+[1m2026-09-14T08:35:43.396233400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rustc: 1.98.0 (88d9e12ae 2026-08-18)[0m
+[1m2026-09-14T08:35:43.396233800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: target: x86_64-pc-windows-msvc[0m
+[1m2026-09-14T08:35:43.396234100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: profile: debug[0m
+[1m2026-09-14T08:35:43.396234400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: panic: unwind[0m
+[1m2026-09-14T08:35:43.396234700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: precision: high (128-bit, 16 dp)[0m
+[1m2026-09-14T08:35:43.396235000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: allocator: mimalloc 0.1.52[0m
+[1m2026-09-14T08:35:43.396235300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: cargo_lock: f389d3c3[0m
+[1m2026-09-14T08:35:43.396235600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rust_decimal: 1.42.1[0m
+[1m2026-09-14T08:35:43.396248300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rustls: 0.23.43[0m
+[1m2026-09-14T08:35:43.396248900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: aws_lc_rs: 1.18.0[0m
+[1m2026-09-14T08:35:43.396249300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: tokio: 1.53.1[0m
+[1m2026-09-14T08:35:43.396250100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyo3: 0.29.2[0m
+[1m2026-09-14T08:35:43.396250400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyo3_async_runtimes: 0.29.0[0m
+[1m2026-09-14T08:35:43.440121700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: numpy: 2.5.2[0m
+[1m2026-09-14T08:35:43.679309600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pandas: 3.0.5[0m
+[1m2026-09-14T08:35:43.683951700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: msgspec: 0.21.1[0m
+[1m2026-09-14T08:35:43.683975000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyarrow: 25.0.1[0m
+[1m2026-09-14T08:35:43.683978000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pytz: 2026.3.post1[0m
+[1m2026-09-14T08:35:43.684095800Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-14T08:35:43.684139500Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Building system kernel[0m
+[1m2026-09-14T08:35:43.685436700Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Registered DataClient-ASTER[0m
+[1m2026-09-14T08:35:43.685782100Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Registered DataClient-HYPERLIQUID[0m
+[1m2026-09-14T08:35:43.685847400Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Built successfully[0m
+[1m2026-09-14T08:35:43.686243200Z[0m [INFO] STAGE1-001.SPREAD-WATCH-SNDK: Ready[0m
+[1m2026-09-14T08:35:43.686339900Z[0m [INFO] STAGE1-001.nautilus_system::python::registration: Registered Python strategy SPREAD-WATCH-SNDK with trader STAGE1-001[0m
+[1m2026-09-14T08:35:43.686344000Z[0m [INFO] STAGE1-001.nautilus_live::python::node: Registered Python strategy SPREAD-WATCH-SNDK[0m
+[1m2026-09-14T08:35:43.686421900Z[0m [INFO] STAGE1-001.SPREAD-WATCH-GPRO: Ready[0m
+[1m2026-09-14T08:35:43.686439300Z[0m [INFO] STAGE1-001.nautilus_system::python::registration: Registered Python strategy SPREAD-WATCH-GPRO with trader STAGE1-001[0m
+[1m2026-09-14T08:35:43.686441900Z[0m [INFO] STAGE1-001.nautilus_live::python::node: Registered Python strategy SPREAD-WATCH-GPRO[0m
+[1m2026-09-14T08:35:43.687582400Z[0m [INFO] STAGE1-001.nautilus_live::node: Event loop starting[0m
+[1m2026-09-14T08:35:43.687603900Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Starting[0m
+[1m2026-09-14T08:35:43.687628100Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Started: client_id=ASTER, product_type=UsdM, environment=Live[0m
+[1m2026-09-14T08:35:43.687637700Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Starting Hyperliquid data client: client_id=HYPERLIQUID, environment=Mainnet, proxy_url=None[0m
+[1m2026-09-14T08:35:43.687708800Z[0m [INFO] STAGE1-001.nautilus_execution::engine: Started[0m
+[1m2026-09-14T08:35:43.687713700Z[0m [INFO] STAGE1-001.nautilus_risk::engine: Started[0m
+[1m2026-09-14T08:35:43.687714500Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Initializing trader[0m
+[1m2026-09-14T08:35:43.687718500Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Started[0m
+[1m2026-09-14T08:35:43.687749800Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Connecting data clients...[0m
+[1m2026-09-14T08:36:04.725881700Z[0m [1;33m[WARN] STAGE1-001.nautilus_hyperliquid::http::client: Failed to load Hyperliquid spot metadata: transport error: HTTP client error: HTTP request timed out: error sending request for url (https://api.hyperliquid.xyz/info): client error (Connect): tcp connect error: 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。 (os error 10060)[0m
+[1m2026-09-14T08:36:05.176244200Z[0m [1;31m[ERROR] STAGE1-001.nautilus_data::engine: Failed to connect data client: 
+failed to request Binance Futures instruments[0m
+[1m2026-09-14T08:36:05.176347300Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Connecting execution clients...[0m
+[1m2026-09-14T08:36:05.176296600Z[0m [1;31m[ERROR] STAGE1-001.nautilus_data::engine: Failed to connect data client: 
+failed to bootstrap instruments[0m
+[1m2026-09-14T08:36:05.176376000Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting engine connections (60s timeout)...[0m
+[1m2026-09-14T08:36:43.699244600Z[0m [1;33m[WARN] STAGE1-001.nautilus_live::node: Timed out (60s) waiting for engines to connect
+
+╭─────────────┬──────┬───────────╮
+│ Client      │ Type │ Connected │
+├─────────────┼──────┼───────────┤
+│ ASTER       │ Data │ false     │
+│ HYPERLIQUID │ Data │ false     │
+╰─────────────┴──────┴───────────╯
+
+DataEngine.check_connected() == false
+ExecEngine.check_connected() == true[0m
+[1m2026-09-14T08:36:43.699344500Z[0m [INFO] STAGE1-001.nautilus_live::node: Engine readiness timed out, aborting startup[0m
+[1m2026-09-14T08:36:43.699361400Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Disconnecting clients...[0m
+[1m2026-09-14T08:36:43.699645700Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Disconnected: client_id=ASTER[0m
+[1m2026-09-14T08:36:43.699746400Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Disconnected: client_id=HYPERLIQUID[0m
+[1m2026-09-14T08:36:43.699780000Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting engine disconnections (10s timeout)...[0m
+[1m2026-09-14T08:36:43.699796000Z[0m [INFO] STAGE1-001.nautilus_live::node: All engine clients disconnected[0m
+[1m2026-09-14T08:36:43.699833700Z[0m [INFO] STAGE1-001.nautilus_binance::futures::data: Stopping ASTER[0m
+[1m2026-09-14T08:36:43.699838400Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Stopping Hyperliquid data client HYPERLIQUID[0m
+[1m2026-09-14T08:36:43.699877100Z[0m [INFO] STAGE1-001.nautilus_execution::engine: Stopped[0m
+[1m2026-09-14T08:36:43.699881200Z[0m [INFO] STAGE1-001.nautilus_risk::engine: Stopped[0m
+[1m2026-09-14T08:36:43.699887900Z[0m [INFO] STAGE1-001.nautilus_execution::order_emulator::emulator: Stopped[0m
+[1m2026-09-14T08:36:43.699893000Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Stopped[0m
+[1m2026-09-14T08:36:43.699904800Z[0m [INFO] STAGE1-001.nautilus_live::node: Event loop stopped[0m
+
+==============================================================================
+SUMMARY [SNDK]
+  leg HL         top-of-book updates=0 (quotes)  book updates=0 (-)  trades=0  funding_seen=False  xyz:SNDK-USD-PERP.HYPERLIQUID
+  leg ENTROPY    top-of-book updates=0 (quotes)  book updates=0 (-)  trades=0  funding_seen=False  io:SNDK-USD-PERP.HYPERLIQUID
+  leg ASTER      top-of-book updates=0 (quotes)  book updates=0 (-)  trades=0  funding_seen=False  SNDKUSD1-PERP.ASTER
+  evaluated samples=0  skipped-stale=0
+  net-positive rows written=0   all-sample rows=0   depth rows=0   trade rows=0
+  HL>ENTROPY: no samples (fee+reserve=6.80 bps)
+  HL>ASTER: no samples (fee+reserve=6.80 bps)
+  ENTROPY>HL: no samples (fee+reserve=6.80 bps)
+  ENTROPY>ASTER: no samples (fee+reserve=6.80 bps)
+  ASTER>HL: no samples (fee+reserve=6.80 bps)
+  ASTER>ENTROPY: no samples (fee+reserve=6.80 bps)
+  csv: reports\entropy-io-acceptance\20260914T083543Z\spread_SNDK_HL-ENTROPY-ASTER_20260914T083543Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083543Z\spread_SNDK_HL-ENTROPY-ASTER_20260914T083543Z_all.csv
+  csv: reports\entropy-io-acceptance\20260914T083543Z\depth_SNDK_HL-ENTROPY-ASTER_20260914T083543Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083543Z\trades_SNDK_HL-ENTROPY-ASTER_20260914T083543Z.csv
+==============================================================================
+
+==============================================================================
+SUMMARY [GPRO]
+  leg ENTROPY    top-of-book updates=0 (quotes)  book updates=0 (-)  trades=0  funding_seen=False  io:GPRO-USD-PERP.HYPERLIQUID
+  leg ASTER      top-of-book updates=0 (quotes)  book updates=0 (-)  trades=0  funding_seen=False  GPROUSD1-PERP.ASTER
+  evaluated samples=0  skipped-stale=0
+  net-positive rows written=0   all-sample rows=0   depth rows=0   trade rows=0
+  ENTROPY>ASTER: no samples (fee+reserve=6.80 bps)
+  ASTER>ENTROPY: no samples (fee+reserve=6.80 bps)
+  csv: reports\entropy-io-acceptance\20260914T083543Z\spread_GPRO_ENTROPY-ASTER_20260914T083543Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083543Z\spread_GPRO_ENTROPY-ASTER_20260914T083543Z_all.csv
+  csv: reports\entropy-io-acceptance\20260914T083543Z\depth_GPRO_ENTROPY-ASTER_20260914T083543Z.csv
+  csv: reports\entropy-io-acceptance\20260914T083543Z\trades_GPRO_ENTROPY-ASTER_20260914T083543Z.csv
+==============================================================================
+[stage1] node run failed: RuntimeError('readiness timeout while waiting for engine connections')
+[stage1] giving up after 0 restarts
+[stage1] node restarts during this run: 1
+[stage1] INCOMPLETE GPRO/ASTER: no top-of-book data for GPROUSD1-PERP.ASTER
+[stage1] INCOMPLETE GPRO/ENTROPY: no top-of-book data for io:GPRO-USD-PERP.HYPERLIQUID
+[stage1] INCOMPLETE SNDK/ASTER: no top-of-book data for SNDKUSD1-PERP.ASTER
+[stage1] INCOMPLETE SNDK/ENTROPY: no top-of-book data for io:SNDK-USD-PERP.HYPERLIQUID
+[stage1] INCOMPLETE SNDK/HL: no top-of-book data for xyz:SNDK-USD-PERP.HYPERLIQUID

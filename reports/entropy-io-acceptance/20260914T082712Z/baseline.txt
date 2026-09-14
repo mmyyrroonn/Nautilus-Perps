@@ -1,0 +1,14 @@
+﻿# Task 0 baseline - implementation window 20260914T082712Z
+
+Repo: E:\Nautilus-Perps (main)
+git rev-parse HEAD: c33c0a74dbae29744206407fce1cb07bdbe1ddcb
+Planned HEAD:      c33c0a74dbae29744206407fce1cb07bdbe1ddcb  -> match
+
+Interpreter / wheel:
+E:\Nautilus-Perps\.venv\Scripts\python.exe 2.0.0rc4
+
+Baseline tests (before any change):
+    .\.venv\Scripts\python.exe -m pytest tests/test_spread_watch.py tests/test_ref_feed.py -q -p no:cacheprovider
+.......................................................                  [100%]
+55 passed in 0.64s
+

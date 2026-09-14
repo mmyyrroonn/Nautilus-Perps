@@ -1,0 +1,46 @@
+{
+  "loaded_count": 519,
+  "required": [
+    "io:GPRO-USD-PERP.HYPERLIQUID",
+    "io:SNDK-USD-PERP.HYPERLIQUID",
+    "xyz:SNDK-USD-PERP.HYPERLIQUID"
+  ],
+  "found": {
+    "io:GPRO-USD-PERP.HYPERLIQUID": {
+      "raw_symbol": "io:GPRO",
+      "size_increment": "0.1",
+      "price_precision": 5,
+      "size_precision": 1,
+      "quote_currency": "USD",
+      "settlement_currency": "USDC",
+      "base_currency": "io:GPRO",
+      "multiplier": "1",
+      "is_inverse": false,
+      "info": {}
+    },
+    "io:SNDK-USD-PERP.HYPERLIQUID": {
+      "raw_symbol": "io:SNDK",
+      "size_increment": "0.0001",
+      "price_precision": 2,
+      "size_precision": 4,
+      "quote_currency": "USD",
+      "settlement_currency": "USDC",
+      "base_currency": "io:SNDK",
+      "multiplier": "1",
+      "is_inverse": false,
+      "info": {}
+    },
+    "xyz:SNDK-USD-PERP.HYPERLIQUID": {
+      "raw_symbol": "xyz:SNDK",
+      "size_increment": "0.001",
+      "price_precision": 3,
+      "size_precision": 3,
+      "quote_currency": "USD",
+      "settlement_currency": "USDC",
+      "base_currency": "xyz:SNDK",
+      "multiplier": "1",
+      "is_inverse": false,
+      "info": {}
+    }
+  }
+}

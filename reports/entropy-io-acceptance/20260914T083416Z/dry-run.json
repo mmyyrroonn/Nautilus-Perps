@@ -1,0 +1,57 @@
+{
+  "mode": "read-only",
+  "market_availability_checked": false,
+  "symbols": {
+    "SNDK": [
+      {
+        "venue_key": "HL",
+        "instrument_id": "xyz:SNDK-USD-PERP.HYPERLIQUID",
+        "client_id": "HYPERLIQUID",
+        "taker_fee_bps": 0.9
+      },
+      {
+        "venue_key": "ENTROPY",
+        "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+        "client_id": "HYPERLIQUID",
+        "taker_fee_bps": 0.9
+      },
+      {
+        "venue_key": "ASTER",
+        "instrument_id": "SNDKUSD1-PERP.ASTER",
+        "client_id": "ASTER",
+        "taker_fee_bps": 0.9
+      }
+    ],
+    "GPRO": [
+      {
+        "venue_key": "ENTROPY",
+        "instrument_id": "io:GPRO-USD-PERP.HYPERLIQUID",
+        "client_id": "HYPERLIQUID",
+        "taker_fee_bps": 0.9
+      },
+      {
+        "venue_key": "ASTER",
+        "instrument_id": "GPROUSD1-PERP.ASTER",
+        "client_id": "ASTER",
+        "taker_fee_bps": 0.9
+      }
+    ]
+  },
+  "data_clients": [
+    {
+      "client_id": "HYPERLIQUID",
+      "instrument_ids": [
+        "xyz:SNDK-USD-PERP.HYPERLIQUID",
+        "io:SNDK-USD-PERP.HYPERLIQUID",
+        "io:GPRO-USD-PERP.HYPERLIQUID"
+      ]
+    },
+    {
+      "client_id": "ASTER",
+      "instrument_ids": [
+        "SNDKUSD1-PERP.ASTER",
+        "GPROUSD1-PERP.ASTER"
+      ]
+    }
+  ]
+}
