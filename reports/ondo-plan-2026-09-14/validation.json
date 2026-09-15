@@ -1,0 +1,36 @@
+{
+  "validated_at_utc": "2026-09-14T11:23:54.561626+00:00",
+  "official_files_hash_checked": 12,
+  "authored_files": [
+    {
+      "path": "docs\\superpowers\\plans\\2026-09-14-ondo-perps-full-integration.md",
+      "lines": 591,
+      "sha256": "30644acdd843d013c578bd79911ebadffa64a2a3f743101631b08c24947c86d3",
+      "diff_check_exit": 1,
+      "diagnostics": ""
+    },
+    {
+      "path": "reports\\ondo-plan-2026-09-14\\README.md",
+      "lines": 49,
+      "sha256": "5fb66612f059fc7ba237e62d0c1331a27c2f09950abe6d677743a90394b1c2ec",
+      "diff_check_exit": 1,
+      "diagnostics": ""
+    }
+  ],
+  "checks": [
+    "official SHA256",
+    "probe SHA256",
+    "JSON parse",
+    "relative Markdown links",
+    "code fence pairs",
+    "placeholder scan",
+    "authored-file whitespace",
+    "git diff --no-index --check; exit 1 with empty diagnostics denotes new file differences"
+  ],
+  "errors": [],
+  "existing_offline_baseline": {
+    "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/test_spread_watch.py tests/test_opportunities.py tests/test_ref_feed.py -q -p no:cacheprovider",
+    "result": "83 passed in 0.72s",
+    "scope": "Executed this turn; existing targeted suite only, no implementation changes."
+  }
+}

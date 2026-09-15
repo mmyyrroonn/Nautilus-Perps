@@ -1,0 +1,134 @@
+[
+  {
+    "url": "https://docs.ondoperps.xyz/llms.txt",
+    "file": "llms.txt",
+    "retrieved_at_utc": "2026-09-14T11:08:43.220046+00:00",
+    "status": 200,
+    "sha256": "c9ddebb5bbecaba65a5c54b88de4960525d9071643cfba5b356216deda583fa8",
+    "bytes": 23328
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/api_key_authentication.md",
+    "file": "api-reference__api_key_authentication.md",
+    "retrieved_at_utc": "2026-09-14T11:08:43.220046+00:00",
+    "status": 200,
+    "sha256": "4d1a6ce38bf82b2fd486c1d83e77c377891d6bb6d37edabd35079cc87e0c71d2",
+    "bytes": 4636
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/connection/connect.md",
+    "file": "api-reference__connection__connect.md",
+    "retrieved_at_utc": "2026-09-14T11:08:43.220046+00:00",
+    "status": 200,
+    "sha256": "5ffc02bc0c0f0df2e8409e6a47aa9e00c4badc3a392362f6a53356b6a6a02db4",
+    "bytes": 2225
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/connection/login.md",
+    "file": "api-reference__connection__login.md",
+    "retrieved_at_utc": "2026-09-14T11:08:43.220046+00:00",
+    "status": 200,
+    "sha256": "284c288cdc20e27ccd4186f4a0d96903957c6622a5cdd32638fd8ca98f119b94",
+    "bytes": 4598
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/public-channels/subscribe:-perps-depth-book.md",
+    "file": "api-reference__public-channels__subscribe-perps-depth-book.md",
+    "retrieved_at_utc": "2026-09-14T11:08:44.015247+00:00",
+    "status": 200,
+    "sha256": "a7cc216fb294a80eebda2f6b6c5e5fffa93aefd9accd4556bf116f0db3791b38",
+    "bytes": 5416
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/public-channels/subscribe:-perps-top-of-book.md",
+    "file": "api-reference__public-channels__subscribe-perps-top-of-book.md",
+    "retrieved_at_utc": "2026-09-14T11:08:44.373496+00:00",
+    "status": 200,
+    "sha256": "7f69a884a04d4c31d45179e740662ed998d25b12a1d9083e4915304619ac22d9",
+    "bytes": 5360
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/public-channels/subscribe:-perps-funding-rates.md",
+    "file": "api-reference__public-channels__subscribe-perps-funding-rates.md",
+    "retrieved_at_utc": "2026-09-14T11:08:44.413900+00:00",
+    "status": 200,
+    "sha256": "770412a078260c0a17870b8021300b38db063ac4de132c6e84a33e06caf601eb",
+    "bytes": 4738
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/private-channels/subscribe:-perps-dead-mans-switch.md",
+    "file": "api-reference__private-channels__subscribe-perps-dead-mans-switch.md",
+    "retrieved_at_utc": "2026-09-14T11:08:44.480312+00:00",
+    "status": 200,
+    "sha256": "52d9d3c50dabdc012ab9cd0005e69d71bb56f33d5e7e0e0ad55b8473b07f5f04",
+    "bytes": 4119
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/rest-spec.json",
+    "file": "api-reference__rest-spec.json",
+    "retrieved_at_utc": "2026-09-14T11:08:44.875791+00:00",
+    "status": 200,
+    "sha256": "860a96ca3fa1e0800841446cddc738bc8ab2749feb67c2f10fcdd1e2aae003f1",
+    "bytes": 342337
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/api-reference/ws-spec.json",
+    "file": "api-reference__ws-spec.json",
+    "retrieved_at_utc": "2026-09-14T11:08:45.020593+00:00",
+    "status": 200,
+    "sha256": "9321654d102d996b6e7aaf3c67675ca651f2b64d7910b99b37f2dae16988d67c",
+    "bytes": 81746
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/fees.md",
+    "file": "fees.md",
+    "retrieved_at_utc": "2026-09-14T11:08:45.179791+00:00",
+    "status": 200,
+    "sha256": "5ec248258c910632fd2bfcc4a2db5b6a32b8c9c7b72ba6c5778030f3b8e50a8f",
+    "bytes": 3023
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/funding-rates.md",
+    "file": "funding-rates.md",
+    "retrieved_at_utc": "2026-09-14T11:08:45.198793+00:00",
+    "status": 200,
+    "sha256": "8ab487da57b31875989fe706002cbe66679d8228cafb0e5b2cacfcb600ba5591",
+    "bytes": 9524
+  },
+  {
+    "url": "https://docs.ondoperps.xyz/public-beta.md",
+    "file": "public-beta.md",
+    "retrieved_at_utc": "2026-09-14T11:08:45.690881+00:00",
+    "error": "URLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)'))"
+  },
+  {
+    "url": "https://api.ondoperps.xyz/status",
+    "file": "status.json",
+    "retrieved_at_utc": "2026-09-14T11:08:50.713810+00:00",
+    "error": "URLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)'))"
+  },
+  {
+    "url": "https://api.ondoperps.xyz/v1/markets",
+    "file": "markets.json",
+    "retrieved_at_utc": "2026-09-14T11:08:56.914877+00:00",
+    "error": "<HTTPError 403: 'Forbidden'>"
+  },
+  {
+    "url": "https://api.ondoperps.xyz/v1/perps/contracts",
+    "file": "contracts.json",
+    "retrieved_at_utc": "2026-09-14T11:08:58.289659+00:00",
+    "error": "<HTTPError 403: 'Forbidden'>"
+  },
+  {
+    "url": "https://api.ondoperps.xyz/v1/perps/depth?market=NVDA-USD.P&depth=10",
+    "file": "nvda-depth.json",
+    "retrieved_at_utc": "2026-09-14T11:08:59.681872+00:00",
+    "error": "<HTTPError 403: 'Forbidden'>"
+  },
+  {
+    "url": "https://api.ondoperps.xyz/v1/perps/funding_rates?market=NVDA-USD.P",
+    "file": "nvda-funding.json",
+    "retrieved_at_utc": "2026-09-14T11:09:01.046373+00:00",
+    "error": "<HTTPError 403: 'Forbidden'>"
+  }
+]
