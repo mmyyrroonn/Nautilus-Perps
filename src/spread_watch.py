@@ -14,8 +14,22 @@ only: no execution client, no keys, no signing, no orders.
     --venues HL,ENTROPY,ASTER                         adds Entropy's io: equity perps:
                                                       separate logical legs, one shared
                                                       HYPERLIQUID data client
+    --venues ONDO,ASTER                               adds Ondo Perps' NVDA/TSLA equity
+                                                      perps as their own ONDO client. The
+                                                      leg's taker fee comes from the
+                                                      instrument metadata (never the 2.5
+                                                      bps documentation assumption), and
+                                                      a local feed disconnect invalidates
+                                                      its BBO and book at once.
     --dry-run                                         print the resolved plan + clients
                                                       as JSON and exit (no network)
+    --record-l2                                       record every observed leg's complete
+                                                      normalized L2 as JSONL fragments plus a
+                                                      manifest under <out>/l2 (off by
+                                                      default; a run with ONDO also points
+                                                      its raw_md_path at <out>/raw_ondo and
+                                                      passes this run's stamp as that
+                                                      recorder's run id)
     --pair NVDA:HL-ASTER                              legacy single-pair alias
     --symbol NVDA                                     alias for NVDA:HL-LIGHTER
     --reference FUTU                                  adds the real US stock quote
@@ -32,8 +46,9 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from nautilus_trader.common import Environment, LogColor, LogLevel, LoggerConfig, TimeEvent
@@ -45,6 +60,8 @@ from nautilus_trader.model import (
     ClientId,
     FundingRateUpdate,
     InstrumentId,
+    InstrumentStatus,
+    MarketStatusAction,
     OrderBook,
     OrderBookDeltas,
     OrderBookDepth10,
@@ -68,6 +85,17 @@ from ref_feed import (  # noqa: E402  (needs sys.path above)
     ref_data_type,
     sell_edge_bps,
 )
+from market_tape import (  # noqa: E402  (needs sys.path above)
+    BookTape,
+    Delta,
+    TapeError,
+    TapeWriter,
+    funding_event,
+    instrument_event,
+    quote_event,
+    status_event,
+    write_run_manifest,
+)
 
 HL_TAKER_FEE_BPS = 0.9  # xyz HIP-3 taker, PROMPT.md section 2
 HL_MAIN_TAKER_FEE_BPS = 4.5  # HL main-dex perps, tier-0 taker (no HIP-3 discount)
@@ -83,6 +111,34 @@ ASTER_TAKER_FEE_BPS = 0.9
 # = 0.009% = 0.9 bps with growth mode enabled, checked 2026-09-14. Its own constant
 # on purpose: a future xyz fee change must not silently move the io: legs.
 ENTROPY_TAKER_FEE_BPS = 0.9
+# Ondo Perps (venue string / ClientId both "ONDO"). The venue charges a taker fee,
+# but the live number only exists in the instrument metadata the adapter loads.
+# 2.5 bps is the *dated documentation assumption* of plan 5.2 (2026-09-14): it is
+# what --dry-run prints and what analysis of an old CSV may assume, and nothing
+# else. A live run replaces it from the loaded instrument (see
+# ondo_metadata_fee_bps); when that metadata carries no fee the leg stays
+# fee-unknown and its cost-qualified judgement is withheld rather than computed
+# against this number. Source precedence: account rate > live public metadata >
+# this dated assumption.
+ONDO_TAKER_FEE_BPS = 2.5
+ONDO_FEE_SOURCE = "documented_assumption_2026-09-14"
+FEE_SOURCE_REGISTRY = "registry"  # the static fee in INSTRUMENTS (non-ONDO venues)
+FEE_SOURCE_METADATA = "instrument_metadata"
+FEE_SOURCE_MISSING = "missing"  # no fee published: cost judgement withheld
+# InstrumentStatus reasons the adapter publishes for its own *local* feed. They
+# are not venue halts and must never be read as one (plan 4.2).
+ADAPTER_DISCONNECTED = "adapter:disconnected"
+ADAPTER_SNAPSHOT_READY = "adapter:snapshot_ready"
+ADAPTER_REASON_PREFIX = "adapter:"
+# MarketStatusAction values that mean "not tradable right now".
+NON_TRADING_ACTIONS = frozenset({
+    MarketStatusAction.HALT,
+    MarketStatusAction.SUSPEND,
+    MarketStatusAction.CLOSE,
+    MarketStatusAction.PRE_CLOSE,
+    MarketStatusAction.POST_CLOSE,
+    MarketStatusAction.NOT_AVAILABLE_FOR_TRADING,
+})
 RESERVE_BPS = 5.0  # one-leg failure reserve
 MAX_AGE_MS = 2_000  # a leg older than this is not tradable
 STATUS_SECS = 30
@@ -132,6 +188,36 @@ REF_HEAD = [
     "ref_book_mode",
 ]
 REF_SILENT_SECS = 60  # --reference on but nothing arrived by then -> warn
+
+# ---- the standardized L2 tape (plan 5.1/5.2, --record-l2, default off) ----
+# Every observed leg of the run records its own *complete normalized* L2 into these
+# fragments; the legacy 2/5/10 bps capacity CSVs cannot rebuild a VWAP, so the tape is
+# the only artifact a replay may use for depth. One tape per symbol carries every leg of
+# that symbol, so the legs share one arrival_seq stream and their relative receive order
+# survives the replay.
+L2_DIRNAME = "l2"  # fragments + the run manifest, under the run directory
+RAW_MD_DIRNAME = "raw_ondo"  # the Ondo adapter's raw public-frame directory (plan 5.2)
+ONDO_VENUE_KEY = "ONDO"  # the registry key / ClientId string of the Ondo leg
+# OrderBookDepth10 is fixed at ten levels per side (v2), so a tape record built from the
+# fallback is limited coverage and says so instead of pretending to be complete L2.
+DEPTH10_LEVELS = 10
+
+
+def ondo_book_limit() -> int | None:
+    """The Ondo data client's configured ``book_limit``, or None without the adapter.
+
+    The tape's ``coverage_limit`` for an ONDO leg must be the most levels the venue's depth
+    channel can publish (``OndoDataClientConfig.book_limit``, the fork's ``ONDO_BOOK_LIMIT``,
+    default 100; plan 4.2: limit=100 is "at most 100 levels"). It is read from that
+    configuration instead of a constant copied into this file, so the record cannot silently
+    overstate the depth it holds if that default changes. An adapter that cannot be imported
+    means "unknown", which the tape records as ``None`` rather than inventing a number.
+    """
+    try:
+        from nautilus_trader.adapters.ondo import OndoDataClientConfig
+    except ImportError:
+        return None
+    return int(OndoDataClientConfig().book_limit)
 
 
 def ref_header(legs: Sequence[LegSpec]) -> list[str]:
@@ -234,6 +320,81 @@ def _aster_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
     )
 
 
+def _ondo_client(
+    instrument_ids: Sequence[str],
+    *,
+    raw_md_path: str | None = None,
+    raw_md_run_id: str | None = None,
+) -> tuple[object, object]:
+    """Ondo Perps production data client (public market data, no keys).
+
+    Built from the adapter's PyO3 surface (plan 4.1). ``load_ids`` takes
+    ``InstrumentId`` objects, not the id strings the plan/CLI carry, so the two
+    lists are not interchangeable (Stage 3a report, A.7): the conversion is here
+    and only after the import succeeded.
+
+    ``raw_md_path`` is plan 5.2's recording wiring and nothing else: with
+    ``--record-l2`` the runner points it at the run's ``raw_ondo`` directory and the
+    adapter's own recorder (fork side) writes the public frames there. This file never
+    writes into that directory and never guesses its layout.
+
+    ``raw_md_run_id`` is the run id that recorder must stamp on its raw frames: the
+    same process stamp every tape record of this run carries, so the two halves of a
+    run join *by construction* even when ``--out`` is not named after the run (its
+    default ``reports/stage1`` is the case that matters). It is passed only when the
+    caller has one - the adapter's own directory-derived fallback is never overridden
+    with a ``None``.
+    """
+    try:
+        from nautilus_trader.adapters.ondo import (
+            OndoDataClientConfig,
+            OndoDataClientFactory,
+            OndoEnvironment,
+        )
+    except ImportError as exc:
+        raise SystemExit(_adapter_missing("ONDO", "nautilus_trader.adapters.ondo")) from exc
+    recording: dict[str, object] = {"raw_md_path": raw_md_path}
+    if raw_md_run_id is not None:
+        recording["raw_md_run_id"] = raw_md_run_id
+    return (
+        OndoDataClientFactory(),
+        OndoDataClientConfig(
+            environment=OndoEnvironment.PRODUCTION,
+            load_ids=[InstrumentId.from_str(name) for name in instrument_ids],
+            **recording,
+        ),
+    )
+
+
+def ondo_metadata_fee_bps(instrument: object) -> float | None:
+    """Ondo taker fee in bps from the loaded instrument's runtime metadata.
+
+    This is the middle rung of plan 5.2's source precedence (a real account rate >
+    the live public metadata published with the instrument > the dated
+    documentation assumption) and it returns a value only when the provider
+    actually published one:
+
+    * ``taker_fee`` is Nautilus's per-fill rate (``Decimal("0.00025")`` is 2.5 bps)
+      and is converted with Decimal arithmetic - never via ``f64``;
+    * a rate that is absent, unparsable, non-finite, negative or exactly zero
+      counts as NOT published. The Ondo venue charges a taker fee, so a zero here
+      means the provider defaulted instead of reporting, not that the leg is free.
+
+    ``None`` therefore means "unknown", and the caller must not substitute
+    ``ONDO_TAKER_FEE_BPS`` for it.
+    """
+    value = getattr(instrument, "taker_fee", None)
+    if value is None:
+        return None
+    try:
+        rate = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not rate.is_finite() or rate <= 0:
+        return None
+    return float(rate * Decimal(10_000))
+
+
 @dataclass(frozen=True)
 class VenueSpec:
     """One venue: how to name it, and how to build its data client.
@@ -242,12 +403,28 @@ class VenueSpec:
     is the real Nautilus venue, and it is also the ClientId the legs subscribe with.
     The two are NOT one to one: HL and ENTROPY are different markets on one
     platform, so they share a single HYPERLIQUID data client (see build_client_groups).
+
+    The three behaviour flags are the only places a venue may opt out of the
+    default leg semantics. Every one of them defaults to the old behaviour, so
+    adding a venue cannot change an existing leg:
+
+    ``supports_depth10``    the venue can serve a depth10 fallback subscription.
+    ``tracks_feed_status``  subscribe InstrumentStatus and let the adapter's local
+                            feed notices invalidate the leg's BBO and book
+                            (plan 4.2). Off => the leg is ready exactly when it has
+                            a two-sided BBO, and status events are ignored.
+    ``reads_runtime_fee``   take the leg's taker fee from the loaded instrument
+                            metadata instead of the static registry number, and
+                            leave it unknown (withholding the cost judgement) when
+                            the provider published none (plan 5.2).
     """
 
-    key: str  # short tag used on the CLI: HL / LIGHTER / LIGHTER_RH / ASTER / ENTROPY
+    key: str  # short tag used on the CLI: HL / LIGHTER / LIGHTER_RH / ASTER / ENTROPY / ONDO
     venue: str  # Nautilus venue string, also the ClientId
     build_client: Callable[[Sequence[str]], tuple[object, object]]
     supports_depth10: bool = True  # Aster's Binance-derived path has no depth10 sub
+    tracks_feed_status: bool = False  # only ONDO has the adapter:disconnected chain
+    reads_runtime_fee: bool = False  # only ONDO's fee is metadata-only today
 
 
 VENUES: dict[str, VenueSpec] = {
@@ -259,7 +436,15 @@ VENUES: dict[str, VenueSpec] = {
 # Entropy is a HIP-3 builder dex ON Hyperliquid: same client, same venue string,
 # separate logical leg. Opt-in only - never in DEFAULT_VENUES / DEFAULT_PAIR.
 VENUES["ENTROPY"] = VenueSpec("ENTROPY", "HYPERLIQUID", _hyperliquid_client)
-ALL_VENUES = ("HL", "LIGHTER", "LIGHTER_RH", "ASTER", "ENTROPY")
+# Ondo Perps: its own venue string and ClientId ("ONDO" - never the ONDO asset
+# ticker). No depth10 sub in P1 (plan 4.2 says the registry must say so rather
+# than pretend), and it is the one venue whose fee and feed validity arrive as
+# runtime metadata/status rather than as a static constant.
+VENUES["ONDO"] = VenueSpec(
+    "ONDO", "ONDO", _ondo_client,
+    supports_depth10=False, tracks_feed_status=True, reads_runtime_fee=True,
+)
+ALL_VENUES = ("HL", "LIGHTER", "LIGHTER_RH", "ASTER", "ENTROPY", "ONDO")
 # What `--venues` defaults to. LIGHTER_RH is opt-in: it is a separate exchange with
 # its own books, so it only joins a run when it is named explicitly.
 DEFAULT_VENUES = ("HL", "LIGHTER", "ASTER")
@@ -373,6 +558,20 @@ INSTRUMENTS["GPRO"] = {  # no verified HL / Lighter GPRO mapping: ENTROPY x Aste
     "ENTROPY": ("io:GPRO-USD-PERP.HYPERLIQUID", ENTROPY_TAKER_FEE_BPS),
     "ASTER": ("GPROUSD1-PERP.ASTER", ASTER_TAKER_FEE_BPS),
 }
+# Ondo Perps: exactly the two markets plan 4.1 fixes, from the venue's own raw
+# symbol ("NVDA-USD.P") to the planned Nautilus name ("NVDA-USD-PERP.ONDO").
+# Never inferred by ticker: an unmapped symbol simply runs without the ONDO leg.
+# The fee here is the dated documentation assumption (see ONDO_TAKER_FEE_BPS); a
+# live run replaces it from the instrument metadata.
+ONDO_INSTRUMENTS: dict[str, tuple[str, float]] = {
+    "NVDA": ("NVDA-USD-PERP.ONDO", ONDO_TAKER_FEE_BPS),
+    "TSLA": ("TSLA-USD-PERP.ONDO", ONDO_TAKER_FEE_BPS),
+}
+for _symbol, _mapping in ONDO_INSTRUMENTS.items():
+    INSTRUMENTS[_symbol]["ONDO"] = _mapping
+# Ondo's raw market names, for src/ondo_preflight.py (the REST CLI): the venue
+# calls NVDA "NVDA-USD.P", Nautilus calls it "NVDA-USD-PERP.ONDO".
+ONDO_RAW_MARKETS: dict[str, str] = {"NVDA": "NVDA-USD.P", "TSLA": "TSLA-USD.P"}
 
 
 # ---------------------------------------------------------------- reference codes
@@ -407,12 +606,18 @@ def reference_code(symbol: str) -> str | None:
 
 @dataclass(frozen=True)
 class LegSpec:
-    """One venue leg: what to subscribe to and what it costs to cross."""
+    """One venue leg: what to subscribe to and what it costs to cross.
+
+    ``taker_fee_bps`` is the fee the *registry* knows. For a venue whose spec sets
+    ``reads_runtime_fee`` a live run replaces it from the loaded instrument, and
+    replaces it with ``None`` when the provider published no fee at all - ``None``
+    means "unknown" and the leg's cost-qualified judgement is withheld (plan 5.2).
+    """
 
     venue_key: str  # key into VENUES
     instrument_id: str
     client_id: str
-    taker_fee_bps: float
+    taker_fee_bps: float | None
 
     @property
     def label(self) -> str:
@@ -531,12 +736,61 @@ class LegState:
     depth_warned: bool = False
     depth10_subscribed: bool = False
     trades: int = 0  # public trade ticks seen on this leg
+    # --- Ondo local feed / real market state (plan 4.2). A leg that does not opt
+    # in to status tracking keeps both True, so its readiness is exactly the old
+    # "a two-sided BBO" rule and nothing about an existing venue changes.
+    feed_ready: bool = True  # the adapter's local feed has a usable snapshot
+    market_ready: bool = True  # the venue says this market is tradable
+    book_valid: bool = True  # the cached book belongs to the current feed
+    market_halted: bool = False  # a real venue status currently says "not trading"
+    status_tracked: bool = False  # this leg reacts to InstrumentStatus
+    fee_source: str = FEE_SOURCE_REGISTRY
+    disconnects: int = 0
+    snapshots: int = 0
+    # The leg's normalized L2 on this run's tape (plan 5.2): None unless --record-l2 is
+    # on. One per leg, so a run never records one venue's book next to another venue's
+    # top-of-book and calls both "depth".
+    book_tape: object | None = None
 
     def ready(self) -> bool:
-        return self.bid > 0.0 and self.ask > 0.0
+        """Tradable: the feed is up, the market is trading and both sides exist.
+
+        The first two are True by default, which is the pre-Ondo behaviour; for a
+        status-tracked leg a local disconnect takes them down in the same
+        event-loop turn, without waiting for the old quote to age out.
+        """
+        return (
+            self.feed_ready
+            and self.market_ready
+            and self.bid > 0.0
+            and self.ask > 0.0
+        )
+
+    def unusable_reasons(self) -> list[str]:
+        """Why this leg is not usable *right now* (empty when it is).
+
+        Plan 8 judges a run leg by leg ("no quote or no valid two-sided book is not
+        a P1 pass"), so the summary states this instead of leaving it to be inferred
+        from the counters. It does not change the exit code: a leg that produced a
+        BBO earlier in the run still counts as covered (received_leg_keys).
+        """
+        reasons: list[str] = []
+        if not self.feed_ready:
+            reasons.append("local-feed-disconnected")
+        if not self.market_ready:
+            reasons.append("market-not-trading")
+        if not self.book_valid:
+            reasons.append("book-invalidated")
+        if self.bid <= 0.0 or self.ask <= 0.0:
+            reasons.append("no-two-sided-bbo")
+        return reasons
 
     def age_ms(self, now_ns: int) -> float:
         return (now_ns - self.ts_ns) / 1e6
+
+
+def _fee_text(fee: float | None) -> str:
+    return "unknown" if fee is None else f"{fee:.2f}"
 
 
 # ---------------------------------------------------------------- capacity math
@@ -568,6 +822,57 @@ def _levels_from_book(book: OrderBook) -> tuple[list, list]:
     return ([x for x in bids if x[1] > 0.0], [x for x in asks if x[1] > 0.0])
 
 
+# ---------------------------------------------------------------- tape records
+
+
+def tape_deltas(deltas: OrderBookDeltas) -> list[Delta]:
+    """One deltas message as normalized tape operations, in arrival order.
+
+    Every price and size is the adapter's own exact decimal text (``str`` of a
+    Nautilus ``Price``/``Quantity``), never a float. A CLEAR is an operation of the
+    batch, not a book state: the caller (:meth:`SpreadWatch._record_book_batch`) applies
+    the whole batch and only then records one book, so a CLEAR can never become ordinary
+    depth. An unnamed side (``NO_ORDER_SIDE``) is not a level and is dropped rather than
+    guessed.
+    """
+    ops: list[Delta] = []
+    for delta in deltas.deltas:
+        action = str(getattr(delta.action, "name", delta.action))
+        if action.upper() == "CLEAR":
+            ops.append(Delta("clear"))
+            continue
+        order = getattr(delta, "order", None)
+        side = str(getattr(getattr(order, "side", None), "name", ""))
+        if order is None or side not in ("BUY", "SELL"):
+            continue
+        ops.append(Delta(
+            action.lower(), "bid" if side == "BUY" else "ask",
+            str(order.price), str(order.size),
+        ))
+    return ops
+
+
+def tape_instrument_metadata(leg: LegState, instrument: object) -> dict:
+    """The normalized instrument facts a run started from, for the tape's header block.
+
+    The taker fee travels as the same text the CSV/summary use (:func:`_fee_text`), so the
+    tape never carries an f64 and a report can still see which source the fee came from.
+    """
+    metadata: dict[str, object] = {
+        "venue": leg.spec.client_id,
+        "client_id": leg.spec.client_id,
+        "taker_fee_bps": _fee_text(leg.spec.taker_fee_bps),
+        "fee_source": leg.fee_source,
+    }
+    for name in ("price_precision", "size_precision"):
+        value = getattr(instrument, name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            metadata[name] = value
+    tick = getattr(instrument, "tick_size", None)
+    metadata["tick_size"] = None if tick is None else str(tick)
+    return metadata
+
+
 # ---------------------------------------------------------------- run state
 
 
@@ -580,6 +885,14 @@ class RunState:
         self.last_seen: dict[str, int] = {}
         self.stop_requested = False
         self.startup_errors: list[str] = []
+        # Recording failures (plan 5.1) are NOT startup errors: the spread watch keeps
+        # running and reporting, but the recording's own acceptance has failed and the
+        # caller must be able to print that.
+        self.recording_errors: list[str] = []
+
+    def note_recording_error(self, message: str) -> None:
+        if message not in self.recording_errors:
+            self.recording_errors.append(message)
 
     def note_start(self, now_ns: int) -> None:
         if self.started_ns == 0:
@@ -630,6 +943,10 @@ class SpreadWatchConfig(StrategyConfig):
         all_sample_ms: int = ALL_SAMPLE_MS,
         ref_code: str | None = None,
         ref_csv_path: Path | None = None,
+        record_l2: bool = False,
+        tape_path: Path | None = None,
+        run_id: str = "",
+        coverage_limits: dict[str, int | None] | None = None,
         **_kwargs: object,
     ) -> None:
         super().__init__()  # pyo3 base: strategy_id must travel through __new__ kwargs
@@ -646,6 +963,15 @@ class SpreadWatchConfig(StrategyConfig):
         self.book_depth_levels = book_depth_levels
         self.max_age_ms = max_age_ms
         self.all_sample_ms = all_sample_ms
+        # --record-l2 (plan 5.2): explicit, default off, and it covers every leg of this
+        # strategy. tape_path is None when the switch is off.
+        self.record_l2 = record_l2
+        self.tape_path = tape_path
+        self.run_id = run_id
+        # venue_key -> the most levels that venue's depth channel can publish, for the tape's
+        # coverage_limit. None means "resolve it at open time" (the ONDO cap is the adapter
+        # config's own book_limit, never a constant copied into this file).
+        self.coverage_limits = coverage_limits
 
 
 class SpreadWatch(Strategy):
@@ -660,6 +986,8 @@ class SpreadWatch(Strategy):
                      ClientId.from_str(spec.client_id))
             for spec in config.legs
         ]
+        for leg in self._legs:
+            leg.status_tracked = VENUES[leg.spec.venue_key].tracks_feed_status
         self._by_id = {leg.instrument_id: leg for leg in self._legs}
         # every ordered pair (sell venue, buy venue)
         self._pairs = [
@@ -668,7 +996,10 @@ class SpreadWatch(Strategy):
             for buy in self._legs
             if sell is not buy
         ]
-        self._fee: dict[tuple[str, str], float] = {}
+        # fee+reserve per direction; None = at least one leg's fee is unknown, so
+        # net_bps is not a cost-qualified number and the direction is withheld.
+        self._fee: dict[tuple[str, str], float | None] = {}
+        self._fee_unknown: dict[tuple[str, str], int] = {}
         self._gross: dict[tuple[str, str], deque[float]] = {}  # recent, bounded
         self._evals: dict[tuple[str, str], int] = {}  # total appended, unbounded
         self._gross_min: dict[tuple[str, str], float] = {}
@@ -678,7 +1009,7 @@ class SpreadWatch(Strategy):
         self._last_all_ns: dict[tuple[str, str], int] = {}
         for sell, buy in self._pairs:
             key = (sell.spec.venue_key, buy.spec.venue_key)
-            self._fee[key] = sell.spec.taker_fee_bps + buy.spec.taker_fee_bps + config.reserve_bps
+            self._fee_unknown[key] = 0
             self._gross[key] = deque(maxlen=GROSS_KEEP)
             self._evals[key] = 0
             self._gross_min[key] = float("inf")
@@ -686,6 +1017,7 @@ class SpreadWatch(Strategy):
             self._positive[key] = 0
             self._last_gross[key] = float("nan")
             self._last_all_ns[key] = 0
+        self._recompute_fees()
         self._samples = 0
         self._stale = 0
         self._start_ns = 0
@@ -705,8 +1037,61 @@ class SpreadWatch(Strategy):
         )
         self._ref_warned = False
         self._ref_last_written: float | None = None  # ref_last on the last ref row
+        # The run's tape (plan 5.2): one writer per symbol carrying every leg of it.
+        self._tape: TapeWriter | None = None
+        self._tape_error: str | None = None
+        self._tape_facts: tuple[int, int, int, int] | None = None
+        # venue_key -> published-depth cap, resolved once (see _tape_coverage_limits).
+        self._coverage: dict[str, int | None] | None = None
 
     # ---------------------------------------------------------------- lifecycle
+
+    def _recompute_fees(self) -> None:
+        """Rebuild every direction's fee+reserve threshold from the live leg specs.
+
+        Called once at construction and again after the ONDO legs read their fee
+        from the runtime metadata. A direction that touches a fee-unknown leg gets
+        ``None`` rather than the dated documentation assumption.
+        """
+        for sell, buy in self._pairs:
+            key = (sell.spec.venue_key, buy.spec.venue_key)
+            fees = (sell.spec.taker_fee_bps, buy.spec.taker_fee_bps)
+            if fees[0] is None or fees[1] is None:
+                self._fee[key] = None
+            else:
+                self._fee[key] = fees[0] + fees[1] + self._cfg.reserve_bps
+
+    def _read_runtime_fees(self) -> None:
+        """Take the ONDO leg's taker fee from the loaded instrument metadata.
+
+        Plan 5.2's precedence is account rate > live public metadata > the dated
+        documentation assumption. The account rate needs a private feed this stage
+        does not have, so the metadata is the source; when it published no fee the
+        leg keeps ``None`` and its cost-qualified judgement is withheld instead of
+        silently using ``ONDO_TAKER_FEE_BPS``.
+        """
+        for leg in self._legs:
+            if not VENUES[leg.spec.venue_key].reads_runtime_fee:
+                continue
+            fee = ondo_metadata_fee_bps(self.cache.instrument(leg.instrument_id))
+            if fee is None:
+                leg.spec = replace(leg.spec, taker_fee_bps=None)
+                leg.fee_source = FEE_SOURCE_MISSING
+                self.log.warning(
+                    f"[{self.symbol}/{leg.spec.label}] no taker fee in the runtime "
+                    f"instrument metadata of {leg.instrument_id}: fee unknown, so the "
+                    f"dated documentation assumption is NOT used and this leg's "
+                    f"cost-qualified judgement is withheld until the fee is known",
+                )
+            else:
+                leg.spec = replace(leg.spec, taker_fee_bps=fee)
+                leg.fee_source = FEE_SOURCE_METADATA
+                self.log.info(
+                    f"[{self.symbol}/{leg.spec.label}] taker fee from the runtime "
+                    f"instrument metadata: {fee:.4f} bps ({leg.instrument_id})",
+                    LogColor.GREEN,
+                )
+            self._recompute_fees()
 
     def on_start(self) -> None:
         for leg in self._legs:
@@ -735,10 +1120,27 @@ class SpreadWatch(Strategy):
                 LogColor.GREEN,
             )
 
+        # Runtime metadata, read once the instrument is known to be loaded: the
+        # ONDO taker fee and the local-feed status subscription are the only two
+        # venue-specific behaviours Stage 3c adds (plan 4.2/5.2).
+        self._read_runtime_fees()
+        for leg in self._legs:
+            if not leg.status_tracked:
+                continue
+            self.subscribe_instrument_status(leg.instrument_id, client_id=leg.client_id)
+            self.log.info(
+                f"[{self.symbol}/{leg.spec.label}] subscribed instrument status "
+                f"(local feed disconnect vs real market halt) {leg.instrument_id}",
+                LogColor.GREEN,
+            )
+
         for sink in (self._hits, self._all, self._depth, self._trades):
             sink.open()
         if self._ref_sink is not None:
             self._ref_sink.open()
+        # --record-l2 (plan 5.2). After the runtime fees are known, so the tape's
+        # instrument records carry the fee the run actually uses.
+        self._open_tape()
         if self._ref is not None:
             # Published by RefActor on this node's message bus; no data client and
             # no funding / trades / deltas subscription - it is not a trading leg.
@@ -785,6 +1187,205 @@ class SpreadWatch(Strategy):
             sink.close()
         if self._ref_sink is not None:
             self._ref_sink.close()
+        self._close_tape()
+
+    # ------------------------------------------------------------------- l2 tape
+
+    def _tape_coverage_limits(self) -> dict[str, int | None]:
+        """venue_key -> the most levels that venue's depth channel can publish.
+
+        Plan 4.2: an ONDO depth channel publishes at most ``book_limit`` levels and the
+        depth10 fallback publishes ten, so a book record carries the cap of the feed it came
+        from and never claims more depth than it holds. A venue whose published depth is
+        unknown maps to ``None`` (unknown), never to an invented number. Resolved once per
+        run; the ONDO cap is the adapter configuration's own ``book_limit``.
+        """
+        if self._coverage is None:
+            if self._cfg.coverage_limits is not None:
+                self._coverage = dict(self._cfg.coverage_limits)
+            elif any(leg.spec.venue_key == ONDO_VENUE_KEY for leg in self._legs):
+                self._coverage = {ONDO_VENUE_KEY: ondo_book_limit()}
+            else:
+                self._coverage = {}
+        return self._coverage
+
+    def _open_tape(self) -> None:
+        """Open this run's tape and give every observed leg its own normalized L2.
+
+        Plan 5.2: ``--record-l2`` is explicit and default off, and it applies to *all*
+        observed legs of the run - the legacy 2/5/10 bps capacity CSVs cannot rebuild a
+        VWAP, so a run must never record one venue's book and another venue's top of
+        book and call both depth. One writer carries every leg of this symbol, so the
+        legs share one ``arrival_seq`` stream and their relative receive order is what a
+        replay sees.
+        """
+        if not self._cfg.record_l2:
+            return
+        path = self._cfg.tape_path
+        if path is None:
+            self.log.error(
+                f"[{self.symbol}] --record-l2 is on but no tape path is configured: "
+                f"nothing is recorded",
+            )
+            return
+        coverage = self._tape_coverage_limits()
+        legs = [
+            {
+                "venue_key": leg.spec.venue_key,
+                "venue": leg.spec.client_id,
+                "instrument_id": leg.spec.instrument_id,
+                "coverage_limit": coverage.get(leg.spec.venue_key),
+            }
+            for leg in self._legs
+        ]
+        try:
+            self._tape = TapeWriter(
+                path, run_id=self._cfg.run_id or self.symbol, symbol=self.symbol, legs=legs,
+            )
+            self._tape.open()
+            for leg in self._legs:
+                leg.book_tape = BookTape(
+                    self._tape, symbol=self.symbol, venue=leg.spec.venue_key,
+                    instrument_id=leg.spec.instrument_id,
+                    coverage_limit=coverage.get(leg.spec.venue_key),
+                )
+                self._write_instrument_record(leg)
+        except (TapeError, OSError) as exc:
+            self._tape_failed(f"cannot record the L2 tape {path}: {exc}")
+            # The run was asked to record and cannot: that is a startup failure, not a
+            # reason to keep collecting data nobody asked for.
+            self._cfg.run_state.fail_startup(
+                f"{self.symbol}: cannot record the L2 tape {path}: {exc}",
+            )
+            return
+        self.log.info(
+            f"[{self.symbol}] recording complete normalized L2 for "
+            f"{len(self._legs)} leg(s) -> {path}",
+            LogColor.GREEN,
+        )
+
+    def _close_tape(self) -> None:
+        tape, self._tape = self._tape, None
+        for leg in self._legs:
+            leg.book_tape = None
+        if tape is None:
+            return
+        try:
+            tape.close()
+        except (TapeError, OSError) as exc:
+            self._tape_failed(f"closing the L2 tape failed: {exc}")
+            return
+        self._tape_facts = (tape.records, tape.dropped, tape.gaps, len(tape.fragments))
+        if not tape.complete:
+            # Plan 5.1: a gap means this recording's own acceptance failed, even though
+            # the file closed cleanly and the spread deliberately kept running. It is
+            # reported as a *recording* failure - never as a clean run - and the tape may
+            # not be replayed across the gap.
+            self._tape_error = (
+                f"the L2 tape closed with {tape.dropped} dropped record(s) in "
+                f"{tape.gaps} gap(s): this recording is incomplete and must not be "
+                f"replayed across a gap"
+            )
+            self._cfg.run_state.note_recording_error(f"{self.symbol}: {self._tape_error}")
+            self.log.error(
+                f"[{self.symbol}] L2 TAPE FAILED: {self._tape_error} -> {tape.path}",
+            )
+            return
+        self.log.info(
+            f"[{self.symbol}] L2 tape closed: records={tape.records} "
+            f"dropped={tape.dropped} gaps={tape.gaps} "
+            f"fragments={len(tape.fragments)} -> {tape.path}",
+            LogColor.GREEN,
+        )
+
+    def _flush_tape(self) -> None:
+        tape = self._tape
+        if tape is None:
+            return
+        try:
+            tape.flush()
+        except (TapeError, OSError) as exc:
+            self._tape_failed(f"the L2 tape stopped writing: {exc}")
+
+    def _tape_failed(self, message: str) -> None:
+        """Abort the recorder, keep the spread running and make the failure visible."""
+        self._tape_error = message
+        self._tape = None
+        for leg in self._legs:
+            leg.book_tape = None
+        self._cfg.run_state.note_recording_error(f"{self.symbol}: {message}")
+        self.log.error(
+            f"[{self.symbol}] L2 TAPE FAILED: {message} -> this recording is incomplete "
+            f"and must not be replayed across the gap (plan 5.1)",
+        )
+
+    def _write_tape(self, event: dict) -> None:
+        tape = self._tape
+        if tape is None or self._tape_error is not None:
+            return
+        try:
+            tape.write_event(event)
+        except (TapeError, OSError) as exc:
+            self._tape_failed(str(exc))
+
+    def _write_instrument_record(self, leg: LegState) -> None:
+        self._write_tape(instrument_event(
+            symbol=self.symbol, venue=leg.spec.venue_key,
+            instrument_id=leg.spec.instrument_id,
+            metadata=tape_instrument_metadata(leg, self.cache.instrument(leg.instrument_id)),
+            coverage_limit=self._tape_coverage_limits().get(leg.spec.venue_key),
+        ))
+
+    def _record_book_depth(self, leg: LegState, depth: OrderBookDepth10) -> None:
+        """Record a depth10 snapshot as limited coverage, never as complete L2."""
+        book_tape = leg.book_tape
+        if book_tape is None or self._tape_error is not None:
+            return
+        bids = [[str(level.price), str(level.size)] for level in depth.bids]
+        asks = [[str(level.price), str(level.size)] for level in depth.asks]
+        feed_ok = leg.book_valid and leg.feed_ready
+        try:
+            book_tape.replace(
+                bids, asks, source="depth10", coverage_limit=DEPTH10_LEVELS,
+                ts_event_ns=depth.ts_event, ts_init_ns=depth.ts_init,
+                valid=None if feed_ok else False,
+                invalid_reason=None if feed_ok else "feed-invalidated",
+            )
+        except (TapeError, OSError) as exc:
+            self._tape_failed(str(exc))
+
+    def _record_book_batch(self, leg: LegState, deltas: OrderBookDeltas) -> None:
+        """Apply the whole deltas batch, then record exactly one book for it.
+
+        The batch is applied first: a leading CLEAR empties the book and every ADD lands
+        before anything is written, so the intermediate state between the CLEAR and its
+        ADDs never reaches the tape as ordinary depth (plan 5.1).
+        """
+        book_tape = leg.book_tape
+        if book_tape is None or self._tape_error is not None:
+            return
+        feed_ok = leg.book_valid and leg.feed_ready
+        try:
+            book_tape.apply_batch(
+                tape_deltas(deltas),
+                ts_event_ns=deltas.ts_event, ts_init_ns=deltas.ts_init,
+                coverage_limit=self._tape_coverage_limits().get(leg.spec.venue_key),
+                valid=None if feed_ok else False,
+                invalid_reason=None if feed_ok else "feed-invalidated",
+            )
+        except (TapeError, OSError) as exc:
+            self._tape_failed(str(exc))
+
+    def _tape_text(self) -> str:
+        facts = ""
+        if self._tape_facts is not None:
+            records, dropped, gaps, fragments = self._tape_facts
+            facts = f"records={records} dropped={dropped} gaps={gaps} fragments={fragments}"
+        if self._tape_error is not None:
+            # A recorder that died mid-run and a tape that closed with a gap are both
+            # failed acceptance: say so where the run prints its own verdict.
+            return f"FAILED: {self._tape_error}" + (f"  {facts}" if facts else "")
+        return facts or "open"
 
     # ------------------------------------------------------------------ handlers
 
@@ -796,6 +1397,15 @@ class SpreadWatch(Strategy):
         leg.bid_size, leg.ask_size = float(quote.bid_size), float(quote.ask_size)
         leg.ts_ns = quote.ts_init
         leg.updates += 1
+        # The tape keeps the quote's own exact decimal text (never the f64 above): a
+        # replay needs the top of book that was visible at each arrival.
+        self._write_tape(quote_event(
+            symbol=self.symbol, venue=leg.spec.venue_key,
+            instrument_id=leg.spec.instrument_id,
+            bid=str(quote.bid_price), ask=str(quote.ask_price),
+            bid_size=str(quote.bid_size), ask_size=str(quote.ask_size),
+            source=leg.source, ts_event_ns=quote.ts_event, ts_init_ns=quote.ts_init,
+        ))
         self._evaluate(leg)
         self._write_ref_row(f"quote:{leg.spec.venue_key}")
 
@@ -815,6 +1425,7 @@ class SpreadWatch(Strategy):
             return
         leg.depth10 = depth
         leg.depth_updates += 1
+        self._record_book_depth(leg, depth)
         if leg.source != "depth10" or not depth.bids or not depth.asks:
             return
         leg.bid, leg.bid_size = float(depth.bids[0].price), float(depth.bids[0].size)
@@ -829,16 +1440,20 @@ class SpreadWatch(Strategy):
             return
         leg.depth_updates += 1
         if leg.local_book is None:
-            if self.cache.order_book(deltas.instrument_id) is not None:
-                return  # managed=True: the engine keeps the book for us
-            if leg.depth_updates < LOCAL_BOOK_AFTER:
-                return  # the engine may just not have created it yet
-            leg.local_book = OrderBook(deltas.instrument_id, BookType.L2_MBP)
-            self.log.warning(
-                f"[{self.symbol}/{leg.spec.label}] cache holds no order book after "
-                f"{leg.depth_updates} managed deltas -> maintaining a local OrderBook",
-            )
-        leg.local_book.apply_deltas(deltas)
+            # managed=True normally: the engine keeps the book for us. Only when the
+            # cache still has none after LOCAL_BOOK_AFTER batches do we maintain one.
+            managed = self.cache.order_book(deltas.instrument_id) is not None
+            if not managed and leg.depth_updates >= LOCAL_BOOK_AFTER:
+                leg.local_book = OrderBook(deltas.instrument_id, BookType.L2_MBP)
+                self.log.warning(
+                    f"[{self.symbol}/{leg.spec.label}] cache holds no order book after "
+                    f"{leg.depth_updates} managed deltas -> maintaining a local OrderBook",
+                )
+        if leg.local_book is not None:
+            leg.local_book.apply_deltas(deltas)
+        # One tape record per fully applied batch, whatever the cache does: the batch is
+        # applied inside the recorder before anything is written.
+        self._record_book_batch(leg, deltas)
 
     def on_trade(self, trade: TradeTick) -> None:
         leg = self._by_id.get(trade.instrument_id)
@@ -864,8 +1479,127 @@ class SpreadWatch(Strategy):
         # Aster a fraction per that instrument's own 1/4/8 h interval. The units are
         # registered in analysis/opportunities.py, which is what converts them.
         leg = self._by_id.get(funding_rate.instrument_id)
-        if leg is not None:
-            leg.funding = float(funding_rate.rate)
+        if leg is None:
+            return
+        leg.funding = float(funding_rate.rate)
+        # The tape keeps the rate's own decimal text, not the float above: 0.0000063 is
+        # 0.063 bp/h and must survive exactly (plan 4.3).
+        self._write_tape(funding_event(
+            symbol=self.symbol, venue=leg.spec.venue_key,
+            instrument_id=leg.spec.instrument_id,
+            rate=str(funding_rate.rate),
+            interval_secs=getattr(funding_rate, "interval", None),
+            ts_event_ns=funding_rate.ts_event, ts_init_ns=funding_rate.ts_init,
+        ))
+
+    # ----------------------------------------------------- instrument status
+
+    def on_instrument_status(self, status: InstrumentStatus) -> None:
+        """Two unrelated things travel on InstrumentStatus (plan 4.2).
+
+        ``reason="adapter:disconnected"`` and ``reason="adapter:snapshot_ready"``
+        are the adapter's notices about its *local* feed: they are not venue halts
+        and never pretend to be. Every other reason is a real market status. Only
+        a leg whose registry spec sets ``tracks_feed_status`` (ONDO) is affected;
+        every other leg keeps the plain "a two-sided BBO means ready" rule.
+        """
+        leg = self._by_id.get(status.instrument_id)
+        if leg is None or not leg.status_tracked:
+            return
+        reason = status.reason or ""
+        # Every status the leg subscribes to is recorded, the local feed notices
+        # included: a replay must see why a quote gap or a book invalidation happened.
+        self._write_tape(status_event(
+            symbol=self.symbol, venue=leg.spec.venue_key,
+            instrument_id=leg.spec.instrument_id,
+            action=str(getattr(status.action, "name", status.action)), reason=reason,
+            is_trading=status.is_trading, is_quoting=status.is_quoting,
+            ts_event_ns=status.ts_event, ts_init_ns=status.ts_init,
+            valid=leg.book_valid and leg.feed_ready,
+            invalid_reason=None if (leg.book_valid and leg.feed_ready)
+            else "feed-invalidated",
+        ))
+        if reason == ADAPTER_DISCONNECTED:
+            self._on_feed_disconnected(leg, status)
+        elif reason == ADAPTER_SNAPSHOT_READY:
+            self._on_feed_snapshot_ready(leg, status)
+        elif reason.startswith(ADAPTER_REASON_PREFIX):
+            # Any other local feed notice (a bare "socket connected", a subscribe
+            # ack) is NOT recovery: only a new snapshot re-arms the leg.
+            self.log.info(
+                f"[{self.symbol}/{leg.spec.label}] local feed notice {reason!r}: "
+                f"readiness untouched (feed_ready={leg.feed_ready})",
+            )
+        else:
+            self._on_market_status(leg, status)
+
+    def _on_feed_disconnected(self, leg: LegState, status: InstrumentStatus) -> None:
+        """The local feed died: the old BBO and book are unusable *now*.
+
+        This runs in the same event-loop turn as the notice: the cached quote is
+        cleared and the book marked invalid immediately, so nothing has to wait
+        for the old quote to age out past MAX_AGE_MS. A fresh quote alone cannot
+        restore readiness either - that needs a new snapshot.
+        """
+        leg.disconnects += 1
+        leg.feed_ready = False
+        # The market state we last knew came over the connection that just died,
+        # so it is unknown until a new snapshot re-establishes the channel. A halt
+        # the venue had *explicitly* announced (`market_halted`) is not forgotten:
+        # it survives the reconnect.
+        leg.market_ready = False
+        leg.book_valid = False
+        leg.bid = leg.ask = leg.bid_size = leg.ask_size = 0.0
+        leg.ts_ns = 0
+        leg.depth10 = None
+        leg.source = "quotes"
+        self.log.error(
+            f"[{self.symbol}/{leg.spec.label}] LOCAL FEED DISCONNECTED "
+            f"({status.reason!r}, is_quoting={status.is_quoting}): cached BBO cleared "
+            f"and book invalidated; readiness needs a new snapshot "
+            f"(disconnects={leg.disconnects})",
+        )
+
+    def _on_feed_snapshot_ready(self, leg: LegState, status: InstrumentStatus) -> None:
+        """A complete new snapshot landed: the feed side is usable again.
+
+        Only this notice re-arms ``feed_ready``; the market axis is resolved with
+        it, except for a halt the venue announced itself, which a local reconnect
+        must not clear.
+        """
+        leg.snapshots += 1
+        leg.feed_ready = True
+        leg.market_ready = not leg.market_halted
+        leg.book_valid = True
+        self.log.info(
+            f"[{self.symbol}/{leg.spec.label}] new snapshot ready "
+            f"(is_trading={status.is_trading}): feed and book usable again, "
+            f"market_ready={leg.market_ready} (halted={leg.market_halted}) "
+            f"(snapshots={leg.snapshots})",
+            LogColor.GREEN,
+        )
+
+    def _on_market_status(self, leg: LegState, status: InstrumentStatus) -> None:
+        """A real venue market status - never mixed with the local feed state."""
+        was_ready = leg.market_ready
+        if status.is_trading is False or status.action in NON_TRADING_ACTIONS:
+            leg.market_halted = True
+            leg.market_ready = False
+        elif status.is_trading is True:
+            leg.market_halted = False
+            leg.market_ready = True
+        # is_trading=None with a non-halting action: keep what we had. Readiness
+        # is never assumed from a status that does not say "trading".
+        if leg.market_ready != was_ready:
+            self.log.warning(
+                f"[{self.symbol}/{leg.spec.label}] market status {status.action} "
+                f"({status.reason!r}): market_ready={leg.market_ready}",
+            )
+        else:
+            self.log.info(
+                f"[{self.symbol}/{leg.spec.label}] market status {status.action} "
+                f"({status.reason!r}): market_ready={leg.market_ready}",
+            )
 
     def on_time_event(self, event: TimeEvent) -> None:
         name = event.name
@@ -906,6 +1640,10 @@ class SpreadWatch(Strategy):
 
     def _book_levels(self, leg: LegState) -> tuple[list, list]:
         """Capacity source: the managed L2 book first, depth10 only as a fallback."""
+        if not leg.book_valid:
+            # A local feed disconnect invalidates the book even though the cache
+            # still holds the pre-disconnect copy: it must not be quoted as depth.
+            return [], []
         cached = self.cache.order_book(leg.instrument_id)
         for book, mode in ((cached, "deltas-cache"), (leg.local_book, "deltas-local")):
             if book is None:
@@ -993,6 +1731,12 @@ class SpreadWatch(Strategy):
                 row += ["", "", "", "", ""]
                 continue
             fee = leg.spec.taker_fee_bps
+            if fee is None:
+                # No known fee: the edge columns would be a cost judgement, so they
+                # stay empty rather than assume the dated 2.5 bps (plan 5.2).
+                row += [f"{leg.bid:.8f}", f"{leg.ask:.8f}", f"{leg.age_ms(now_ns):.1f}",
+                        "", ""]
+                continue
             buy = "" if not mid else f"{buy_edge_bps(mid, leg.ask, fee):.4f}"
             sell = "" if not mid else f"{sell_edge_bps(mid, leg.bid, fee):.4f}"
             row += [f"{leg.bid:.8f}", f"{leg.ask:.8f}", f"{leg.age_ms(now_ns):.1f}", buy, sell]
@@ -1041,13 +1785,28 @@ class SpreadWatch(Strategy):
     def _last_update_ns(self) -> int:
         return max((leg.ts_ns for leg in self._legs), default=0)
 
+    @staticmethod
+    def _leg_status_text(leg: LegState) -> str:
+        """One leg's status token. Non-tracked legs keep the pre-Ondo format."""
+        text = (
+            f"{leg.spec.venue_key}={leg.updates}({leg.source}/{leg.book_mode}:"
+            f"{leg.depth_updates},trades={leg.trades}"
+        )
+        if leg.status_tracked:  # the two extra axes only exist where they are read
+            text += (
+                f",feed={'up' if leg.feed_ready else 'DOWN'}"
+                f",market={'up' if leg.market_ready else 'HALT'}"
+                f",book={'ok' if leg.book_valid else 'STALE'}"
+                f",disconnects={leg.disconnects}"
+            )
+        return text + ")"
+
     def _log_status(self) -> None:
         now_ns = self.clock.timestamp_ns()
-        legs = " ".join(
-            f"{leg.spec.venue_key}={leg.updates}({leg.source}/{leg.book_mode}:"
-            f"{leg.depth_updates},trades={leg.trades})"
-            for leg in self._legs
-        )
+        # Bound what a dying process can lose: the tape flushes with every write and at
+        # least on every status tick, on top of the writer's own 1 s cadence.
+        self._flush_tape()
+        legs = " ".join(self._leg_status_text(leg) for leg in self._legs)
         gross = " ".join(
             f"{sell}>{buy}={self._last_gross[(sell, buy)]:.2f}"
             for (sell, buy) in self._last_gross
@@ -1059,6 +1818,16 @@ class SpreadWatch(Strategy):
             f"| depth rows={self._depth.rows} | trade rows={self._trades.rows}",
             LogColor.CYAN,
         )
+        unknown = sorted(key for key, fee in self._fee.items() if fee is None)
+        if unknown:
+            # Report the missing fee on every status tick: silence here would look
+            # like "no opportunity" instead of "no cost-qualified judgement".
+            self.log.warning(
+                f"[{self.symbol}] fee unknown for {len(unknown)} direction(s) "
+                f"({', '.join(f'{sell}>{buy}' for sell, buy in unknown)}): net_bps, "
+                f"hits and the cost-qualified judgement are withheld (plan 5.2); "
+                f"withheld evaluations={sum(self._fee_unknown.values())}",
+            )
         self._log_ref_status(now_ns)
         for leg in self._legs:
             if leg.ts_ns == 0:
@@ -1095,8 +1864,15 @@ class SpreadWatch(Strategy):
             if mid <= 0.0:
                 continue
             key = (sell.spec.venue_key, buy.spec.venue_key)
+            threshold = self._fee[key]
+            if threshold is None:
+                # Cost-qualified judgement withheld: at least one leg has no known
+                # fee (plan 5.2). The dated documentation assumption is never used
+                # as a substitute, so no net_bps - and no hit row - comes from here.
+                self._fee_unknown[key] += 1
+                continue
             gross_bps = (sell.bid - buy.ask) / mid * 1e4
-            net_bps = gross_bps - self._fee[key]
+            net_bps = gross_bps - threshold
             self._last_gross[key] = gross_bps
             self._gross[key].append(gross_bps)
             self._evals[key] += 1
@@ -1152,23 +1928,50 @@ class SpreadWatch(Strategy):
                 f"  leg {leg.spec.venue_key:<10} top-of-book updates={leg.updates} "
                 f"({leg.source})  book updates={leg.depth_updates} ({leg.book_mode})  "
                 f"trades={leg.trades}  funding_seen={leg.funding is not None}  "
-                f"{leg.spec.instrument_id}",
+                f"taker_fee_bps={_fee_text(leg.spec.taker_fee_bps)} "
+                f"({leg.fee_source})  "
+                + (
+                    f"feed_ready={leg.feed_ready} market_ready={leg.market_ready} "
+                    f"book_valid={leg.book_valid} disconnects={leg.disconnects} "
+                    if leg.status_tracked else ""
+                )
+                + f"{leg.spec.instrument_id}",
             )
         lines.append(
             f"  evaluated samples={self._samples}  skipped-stale={self._stale}",
         )
+        unknown = sorted(key for key, fee in self._fee.items() if fee is None)
+        if unknown:
+            lines.append(
+                f"  fee unknown (cost-qualified judgement withheld, plan 5.2): "
+                f"{', '.join(f'{sell}>{buy}' for sell, buy in unknown)}  "
+                f"withheld evaluations={sum(self._fee_unknown.values())}",
+            )
+        unusable = [
+            f"{leg.spec.venue_key}({','.join(leg.unusable_reasons())})"
+            for leg in self._legs
+            if leg.unusable_reasons()
+        ]
+        if unusable:
+            lines.append(
+                f"  legs not usable at the end of this run: {', '.join(unusable)}",
+            )
         lines.append(
             f"  net-positive rows written={self._hits.rows}   "
             f"all-sample rows={self._all.rows}   depth rows={self._depth.rows}   "
             f"trade rows={self._trades.rows}",
         )
+        if self._cfg.record_l2:
+            lines.append(f"  l2 tape: {self._cfg.tape_path}  {self._tape_text()}")
         for (sell, buy) in self._gross:
             key = (sell, buy)
             series = self._gross[key]
             total = self._evals[key]
             fee = self._fee[key]
             if not total:
-                lines.append(f"  {sell}>{buy}: no samples (fee+reserve={fee:.2f} bps)")
+                lines.append(
+                    f"  {sell}>{buy}: no samples (fee+reserve={_fee_text(fee)} bps)",
+                )
                 continue
             pct = 100.0 * self._positive[key] / total
             median_note = "" if total <= GROSS_KEEP else f" (last {len(series)})"
@@ -1176,7 +1979,7 @@ class SpreadWatch(Strategy):
                 f"  {sell}>{buy}: net-positive {self._positive[key]}/{total} "
                 f"({pct:.2f}%)  gross median={statistics.median(series):.2f}{median_note} "
                 f"max={self._gross_max[key]:.2f} min={self._gross_min[key]:.2f} bps  "
-                f"fee+reserve={fee:.2f}",
+                f"fee+reserve={_fee_text(fee)}",
             )
         if self._ref is not None:
             kinds = ",".join(f"{k}={n}" for k, n in sorted(self._ref.by_kind.items())) or "-"
@@ -1246,15 +2049,18 @@ def missing_leg_keys(
     } - received)
 
 
-def describe_plan(plan: dict[str, list[LegSpec]]) -> dict[str, object]:
+def describe_plan(plan: dict[str, list[LegSpec]], *, record_l2: bool = False) -> dict[str, object]:
     """What this run would subscribe to, without building a client or touching the net.
 
     ``market_availability_checked`` stays False on purpose: the mapping is the
-    repository's static knowledge, not a probe of the venues.
+    repository's static knowledge, not a probe of the venues. When ONDO is in the
+    plan its registry fee is carried explicitly as a dated assumption: a live run
+    replaces it from the instrument metadata (see ``_read_runtime_fees``).
     """
-    return {
+    described: dict[str, object] = {
         "mode": "read-only",
         "market_availability_checked": False,
+        "record_l2": bool(record_l2),
         "symbols": {
             symbol: [
                 {"venue_key": leg.venue_key, "instrument_id": leg.instrument_id,
@@ -1268,6 +2074,23 @@ def describe_plan(plan: dict[str, list[LegSpec]]) -> dict[str, object]:
             for group in build_client_groups(plan)
         ],
     }
+    if record_l2:
+        described["record_l2_note"] = (
+            f"every observed leg of this run records complete normalized L2 as JSONL "
+            f"fragments plus a manifest under <out>/{L2_DIRNAME}; when the run contains "
+            f"ONDO its data client also gets raw_md_path=<out>/{RAW_MD_DIRNAME} and the "
+            f"run's own stamp as that recorder's run id (both halves of the run then join "
+            f"on run_id, whatever --out is called)"
+        )
+    if any(leg.venue_key == "ONDO" for legs in plan.values() for leg in legs):
+        described["ondo_taker_fee_bps"] = ONDO_TAKER_FEE_BPS
+        described["ondo_fee_source"] = ONDO_FEE_SOURCE
+        described["ondo_fee_note"] = (
+            "taker_fee_bps above is the dated documentation assumption, printed for "
+            "dry-run only; a live run reads the fee from the instrument metadata and "
+            "withholds the cost-qualified judgement when none is published"
+        )
+    return described
 
 
 # ---------------------------------------------------------------- node
@@ -1285,6 +2108,8 @@ class NodePlan:
     reference: str = "none"  # none / FUTU / FAKE
     stems: dict[str, str] = field(default_factory=dict)
     ref_codes: dict[str, str] = field(default_factory=dict)  # symbol -> Futu code
+    # --record-l2 (plan 5.2): explicit, default off. The run directory holds the tape.
+    record_l2: bool = False
 
     def __post_init__(self) -> None:
         for symbol, legs in self.plan.items():
@@ -1302,6 +2127,24 @@ class NodePlan:
                 continue
             self.ref_codes[symbol] = code
 
+    @property
+    def l2_dir(self) -> Path:
+        """Where this run's L2 tape fragments and manifests live."""
+        return self.out_dir / L2_DIRNAME
+
+    @property
+    def raw_md_dir(self) -> Path:
+        """The Ondo adapter's raw public-frame directory for this run (plan 5.2).
+
+        The fork-side recorder owns the layout inside it; the application only points
+        ``OndoDataClientConfig.raw_md_path`` at it.
+        """
+        return self.out_dir / RAW_MD_DIRNAME
+
+    def tape_path(self, symbol: str) -> Path:
+        """The tape fragment set of one symbol: every leg of it shares one stream."""
+        return self.l2_dir / f"l2_{self.stems[symbol]}.jsonl"
+
 
 def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
     run_state = RunState()
@@ -1314,8 +2157,32 @@ def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
     # Exactly one data client per ClientId, carrying the union of the instrument ids
     # that ride it (Aster's load_ids must cover every Aster symbol in the run, and the
     # xyz: plus io: legs share the one HYPERLIQUID client).
+    ondo_legs = [
+        leg for legs in np.plan.values() for leg in legs if leg.venue_key == ONDO_VENUE_KEY
+    ]
+    if np.record_l2 and ondo_legs:
+        # Plan 5.2: the fork-side recorder writes its raw public frames into the run's
+        # raw_ondo directory; the application only plumbed the path (below).
+        np.raw_md_dir.mkdir(parents=True, exist_ok=True)
+    coverage_limits: dict[str, int | None] = {}
     for group in build_client_groups(np.plan):
-        factory, client_config = group.venue_spec.build_client(group.instrument_ids)
+        extra: dict[str, object] = {}
+        if np.record_l2 and group.client_id == ONDO_VENUE_KEY:
+            # Only the ONDO builder takes these: the other venues' config systems are
+            # deliberately left alone (plan 5.2).
+            extra["raw_md_path"] = str(np.raw_md_dir)
+            # The run id the fork's recorder must stamp on its raw frames: this run's own
+            # stamp, which is the run_id of every tape record built below. Without it the
+            # fork derives the id from the raw_ondo directory's *parent* name, so a default
+            # `--out reports/stage1` would silently record `stage1` and the two halves of
+            # the run would not join.
+            extra["raw_md_run_id"] = np.stamp
+        factory, client_config = group.venue_spec.build_client(group.instrument_ids, **extra)
+        if group.client_id == ONDO_VENUE_KEY:
+            # The tape's coverage_limit for the ONDO leg is the configured book_limit of the
+            # client that actually serves it, not a constant copied into this file.
+            limit = getattr(client_config, "book_limit", None)
+            coverage_limits[ONDO_VENUE_KEY] = ondo_book_limit() if limit is None else int(limit)
         # Name the client after the venue instead of letting it default to the factory
         # name: LIGHTER and LIGHTER_RH share one factory ("LIGHTER"), so the default
         # would collide. The name is the ClientId the legs subscribe with.
@@ -1349,6 +2216,10 @@ def build_node(np: NodePlan) -> tuple[LiveNode, list[SpreadWatch], RunState]:
             run_state=run_state,
             book_depth_levels=np.depth_levels,
             all_sample_ms=np.all_sample_ms,
+            record_l2=np.record_l2,
+            tape_path=np.tape_path(symbol) if np.record_l2 else None,
+            run_id=np.stamp,
+            coverage_limits=dict(coverage_limits),
         )
         strategy = SpreadWatch(config)
         node.add_strategy(strategy)
@@ -1431,13 +2302,18 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true",
                         help="print the resolved plan and data clients as JSON, then exit "
                              "before dotenv, the node and any subscription")
+    parser.add_argument("--record-l2", action="store_true",
+                        help="record every observed leg's complete normalized L2 as JSONL "
+                             f"fragments plus a manifest under <out>/{L2_DIRNAME} (a run "
+                             f"with an ONDO leg also points its raw_md_path at "
+                             f"<out>/{RAW_MD_DIRNAME}); off by default")
     args = parser.parse_args()
 
     symbols, venue_keys = resolve_targets(args, parser)
     plan = build_plan(symbols, venue_keys)
 
     if args.dry_run:
-        print(json.dumps(describe_plan(plan), indent=2))
+        print(json.dumps(describe_plan(plan, record_l2=args.record_l2), indent=2))
         return
 
     started = datetime.now(timezone.utc)
@@ -1462,6 +2338,7 @@ def main() -> None:
         depth_levels=args.depth_levels,
         all_sample_ms=args.all_sample_ms,
         reference=args.reference,
+        record_l2=args.record_l2,
     )
     describe = "  ".join(
         f"{symbol}[{'-'.join(leg.venue_key for leg in legs)}]" for symbol, legs in plan.items()
@@ -1470,6 +2347,8 @@ def main() -> None:
         describe += f"  reference[{args.reference}]=" + ",".join(
             sorted(set(node_plan.ref_codes.values())),
         )
+    if node_plan.record_l2:
+        describe += f"  record-l2[{L2_DIRNAME}]"
     print(
         f"[stage1] watching {describe} until {deadline.isoformat(timespec='seconds')} "
         f"-> {args.out}",
@@ -1481,6 +2360,15 @@ def main() -> None:
     # Every leg that ever produced top-of-book data, across all nodes of this run:
     # a leg covered by an earlier node still counts after a restart.
     received_legs: set[tuple[str, str, str]] = set()
+    # Every recording failure of this run, node restarts included (plan 5.1: a gap or a dead
+    # recorder fails this *recording's* acceptance, and §8 needs the run reportable as failed).
+    recording_failures: list[str] = []
+
+    def note_recording_failure(message: str) -> None:
+        if message not in recording_failures:
+            recording_failures.append(message)
+        print(f"[stage1] RECORDING FAILED {message}", file=sys.stderr, flush=True)
+
     while True:
         remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
         if remaining <= 1.0:
@@ -1507,6 +2395,11 @@ def main() -> None:
         for strategy in strategies:
             received_legs.update(strategy.received_leg_keys())
             print(strategy.summary(), flush=True)
+        for message in run_state.recording_errors:
+            # A recording failure is not a spread failure (plan 5.1: the recording's own
+            # acceptance fails), so it is reported loudly and the spread run keeps going -
+            # but it is remembered, and the exit status of this run reflects it below.
+            note_recording_failure(message)
         if run_state.startup_errors:
             # A leg could not be found at all: keep the evidence and stop for good
             # instead of restarting into the same failure.
@@ -1533,6 +2426,21 @@ def main() -> None:
 
     if restarts:
         print(f"[stage1] node restarts during this run: {restarts}", flush=True)
+    if node_plan.record_l2:
+        # One run-level manifest so an analyzer reads the fragments in order without
+        # guessing the rotation naming.
+        manifest = write_run_manifest(node_plan.l2_dir)
+        if manifest is not None:
+            print(f"[stage1] l2 tape manifest: {manifest}", flush=True)
+        else:
+            note_recording_failure(
+                f"no tape fragment was written under {node_plan.l2_dir}",
+            )
+    if recording_failures:
+        # Plan 5.1 and §8: a gap or a dead recorder means this recording's acceptance
+        # failed, so the run must be reportable as failed - an orchestrator keyed on the
+        # exit code must never read it as a passing run.
+        raise SystemExit(1)
     # Legs skipped by build_plan are not in the plan, so they are not "missing" here.
     missing = missing_leg_keys(plan, received_legs)
     if missing:

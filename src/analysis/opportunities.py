@@ -59,9 +59,15 @@ DEPTH_TOL_S = 2.0  # a depth row this far from the episode start still counts
 #           assetToFundingMultiplier is applied upstream - never multiply again.
 #   ASTER   fraction per settlement interval; the interval is per instrument
 #           (GET /fapi/v1/fundingInfo fundingIntervalHours: 1 / 4 / 8 h)
+#   ONDO    fraction per hour, hourly (plan 4.3). The Ondo API's `rate` is a
+#           decimal fraction of notional settled each hour: 0.0001 == 1 bp/h and
+#           the observed 0.0000063 == 0.063 bp/h. Never /100 and never x8. It is
+#           the same unit as HL/Entropy but its own entry on purpose: an Ondo
+#           unit change must not silently move the HL legs.
 FUNDING_SCALE = {"HL": 1e4, "LIGHTER": 1e2, "LIGHTER_RH": 1e2, "ASTER": 1e4,
-                 "ENTROPY": 1e4}
-FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0, "ENTROPY": 1.0}
+                 "ENTROPY": 1e4, "ONDO": 1e4}
+FUNDING_HOURS = {"HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0, "ENTROPY": 1.0,
+                 "ONDO": 1.0}
 ASTER_FUNDING_HOURS = {  # fundingInfo snapshot 2026-09-07, GPRO added 2026-09-14
     "BTC": 8, "ETH": 8, "SOL": 8, "HYPE": 4, "ZEC": 1, "PONS": 1, "LIT": 1, "ASTER": 4,
     "DASH": 8, "PUMP": 4, "ARB": 8, "NVDA": 8, "TSLA": 8, "HOOD": 8, "SNDK": 8, "MU": 8,

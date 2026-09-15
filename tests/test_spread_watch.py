@@ -28,9 +28,18 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import spread_watch  # noqa: E402
+from market_tape import read_manifest, read_tape, read_run_manifest  # noqa: E402
 from nautilus_trader.model import AggressorSide  # noqa: E402
+from nautilus_trader.model import BookAction  # noqa: E402
+from nautilus_trader.model import BookOrder  # noqa: E402
 from nautilus_trader.model import FundingRateUpdate  # noqa: E402
 from nautilus_trader.model import InstrumentId  # noqa: E402
+from nautilus_trader.model import InstrumentStatus  # noqa: E402
+from nautilus_trader.model import MarketStatusAction  # noqa: E402
+from nautilus_trader.model import OrderBookDelta  # noqa: E402
+from nautilus_trader.model import OrderBookDeltas  # noqa: E402
+from nautilus_trader.model import OrderBookDepth10  # noqa: E402
+from nautilus_trader.model import OrderSide  # noqa: E402
 from nautilus_trader.model import Price  # noqa: E402
 from nautilus_trader.model import Quantity  # noqa: E402
 from nautilus_trader.model import QuoteTick  # noqa: E402
@@ -42,20 +51,55 @@ from nautilus_trader.model import TradeTick  # noqa: E402
 # --------------------------------------------------------------------------------- fixtures
 
 
-class FakeCache:
-    """Stand-in for the Nautilus cache: every watched instrument is "loaded"."""
+class FakeLevel:
+    """One book level: only what ``spread_watch._levels_from_book`` reads."""
 
-    def __init__(self, instrument_ids: tuple[InstrumentId, ...]) -> None:
+    def __init__(self, price: Decimal, size: Decimal) -> None:
+        self.price = price
+        self._size = size
+
+    def size(self) -> Decimal:
+        return self._size
+
+
+class FakeBook:
+    """Minimal OrderBook stand-in: bids() / asks() of FakeLevel objects."""
+
+    def __init__(self, bids: list[FakeLevel], asks: list[FakeLevel]) -> None:
+        self._bids = list(bids)
+        self._asks = list(asks)
+
+    def bids(self) -> list[FakeLevel]:
+        return list(self._bids)
+
+    def asks(self) -> list[FakeLevel]:
+        return list(self._asks)
+
+
+class FakeCache:
+    """Stand-in for the Nautilus cache: every watched instrument is "loaded".
+
+    ``instruments`` optionally maps an InstrumentId to the instrument object the
+    cache returns for it (``object()`` otherwise); ``books`` does the same for
+    ``order_book`` (``None`` otherwise).
+    """
+
+    def __init__(self, instrument_ids: tuple[InstrumentId, ...],
+                 instruments: dict[InstrumentId, object] | None = None) -> None:
         self._ids = list(instrument_ids)
+        self._instruments = dict(instruments or {})
+        self.books: dict[InstrumentId, object] = {}
 
     def instrument_ids(self, venue) -> list[InstrumentId]:
         return [i for i in self._ids if i.venue == venue]
 
     def instrument(self, instrument_id: InstrumentId) -> object | None:
-        return object() if instrument_id in self._ids else None
+        if instrument_id not in self._ids:
+            return None
+        return self._instruments.get(instrument_id, object())
 
-    def order_book(self, instrument_id: InstrumentId) -> None:
-        return None
+    def order_book(self, instrument_id: InstrumentId) -> object | None:
+        return self.books.get(instrument_id)
 
 
 class FakeLog:
@@ -113,13 +157,16 @@ class WatchUnderTest(spread_watch.SpreadWatch):
         # The pyo3 base __new__ only accepts the config; drop the test-double arguments.
         return super().__new__(cls, config)
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, instruments: dict[InstrumentId, object] | None = None) -> None:
         super().__init__(config)
-        self._stub_cache = FakeCache(tuple(leg.instrument_id for leg in self._legs))
+        self._stub_cache = FakeCache(
+            tuple(leg.instrument_id for leg in self._legs), instruments,
+        )
         self._stub_log = FakeLog()
         self._stub_clock = FakeClock()
         self.subscribed: dict[str, list[InstrumentId]] = {
             "quotes": [], "funding": [], "trades": [], "deltas": [], "depth10": [],
+            "status": [],
         }
         # Same subscriptions, but with the client they were routed through: with two
         # HYPERLIQUID legs the instrument alone no longer says which client was used.
@@ -166,13 +213,21 @@ class WatchUnderTest(spread_watch.SpreadWatch):
         self.subscribed["depth10"].append(instrument_id)
         self._route("depth10", instrument_id, client_id)
 
+    def subscribe_instrument_status(self, instrument_id, client_id=None, params=None) -> None:
+        self.subscribed["status"].append(instrument_id)
+        self._route("status", instrument_id, client_id)
+
 
 def build_watch(out_dir: Path, symbol: str = "NVDA",
-                venue_keys: tuple[str, ...] = ("HL", "LIGHTER_RH")) -> WatchUnderTest:
+                venue_keys: tuple[str, ...] = ("HL", "LIGHTER_RH"),
+                instruments: dict[InstrumentId, object] | None = None,
+                record_l2: bool = False,
+                stamp: str = "20260907T120000Z",
+                coverage_limits: dict[str, int | None] | None = None) -> WatchUnderTest:
     """A started watcher for ``symbol`` writing its CSVs under ``out_dir``."""
     with contextlib.redirect_stderr(io.StringIO()):
         legs = spread_watch.build_plan([symbol], list(venue_keys))[symbol]
-    stem = spread_watch.csv_stem(symbol, legs, "20260907T120000Z")
+    stem = spread_watch.csv_stem(symbol, legs, stamp)
     config = spread_watch.SpreadWatchConfig(
         strategy_id=StrategyId.from_str(f"SPREAD-WATCH-TEST-{symbol}"),
         symbol=symbol,
@@ -182,8 +237,12 @@ def build_watch(out_dir: Path, symbol: str = "NVDA",
         depth_csv_path=out_dir / f"depth_{stem}.csv",
         trades_csv_path=out_dir / f"trades_{stem}.csv",
         run_state=spread_watch.RunState(),
+        record_l2=record_l2,
+        tape_path=(out_dir / "l2" / f"l2_{stem}.jsonl") if record_l2 else None,
+        run_id=stamp,
+        coverage_limits=coverage_limits,
     )
-    return WatchUnderTest(config)
+    return WatchUnderTest(config, instruments)
 
 
 def make_trade(instrument_id: InstrumentId, price: str, size: str,
@@ -458,6 +517,7 @@ def test_build_node_registers_shared_hyperliquid_once(tmp_path, monkeypatch):
 def _run_dry_run(argv: list[str], monkeypatch, tmp_path) -> tuple[dict, str]:
     """main() with --dry-run: returns (parsed stdout, stderr) and forbids side effects."""
     import dotenv
+    import socket
     from dataclasses import replace
     from unittest.mock import patch
 
@@ -471,6 +531,8 @@ def _run_dry_run(argv: list[str], monkeypatch, tmp_path) -> tuple[dict, str]:
     out, err = io.StringIO(), io.StringIO()
     with patch.object(sys, "argv", ["spread_watch.py", *argv, "--out", str(out_dir)]), \
             patch.object(spread_watch, "build_node") as build, \
+            patch.object(socket.socket, "connect",
+                         side_effect=AssertionError("dry-run must not open a socket")), \
             patch.object(dotenv, "load_dotenv") as load:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             spread_watch.main()
@@ -790,13 +852,17 @@ def test_on_start_records_a_startup_error_for_a_missing_instrument(tmp_path):
         watch.on_stop()
 
 
-def _run_main_with_a_fake_node(monkeypatch, tmp_path, received, startup_errors):
+def _run_main_with_a_fake_node(monkeypatch, tmp_path, received, startup_errors,
+                               symbols: str = "SNDK,GPRO", venues: str = "HL,ENTROPY,ASTER",
+                               recording_errors: tuple[str, ...] = (),
+                               record_l2: bool = False):
     """Drive main() once through a mocked node; returns the SystemExit code."""
     import dotenv
     from unittest.mock import MagicMock, patch
 
     run_state = spread_watch.RunState()
     run_state.startup_errors = list(startup_errors)
+    run_state.recording_errors = list(recording_errors)
     strategy = MagicMock()
     strategy.summary.return_value = "SUMMARY [fake]"
     strategy.received_leg_keys.return_value = set(received)
@@ -804,8 +870,10 @@ def _run_main_with_a_fake_node(monkeypatch, tmp_path, received, startup_errors):
     node.handle.return_value.stop = lambda: None
     monkeypatch.setattr(spread_watch, "build_node",
                         lambda np: (node, [strategy], run_state))
-    args = ["spread_watch.py", "--symbols", "SNDK,GPRO", "--venues", "HL,ENTROPY,ASTER",
+    args = ["spread_watch.py", "--symbols", symbols, "--venues", venues,
             "--minutes", "1", "--max-restarts", "0", "--out", str(tmp_path / "out")]
+    if record_l2:
+        args.append("--record-l2")
     out, err = io.StringIO(), io.StringIO()
     with patch.object(sys, "argv", args), patch.object(dotenv, "load_dotenv"):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -837,6 +905,49 @@ def test_main_exits_1_when_a_leg_never_received_data(monkeypatch, tmp_path):
     assert "INCOMPLETE GPRO/ASTER: no top-of-book data for GPROUSD1-PERP.ASTER" in err
 
 
+# The two ONDO + ASTER legs of NVDA, which is the plan's acceptance venue pair.
+ONDO_ID = "NVDA-USD-PERP.ONDO"
+TSLA_ONDO_ID = "TSLA-USD-PERP.ONDO"
+NVDA_ONDO_RECEIVED = [("NVDA", "ONDO", ONDO_ID), ("NVDA", "ASTER", "NVDAUSDT-PERP.ASTER")]
+
+
+def test_main_exits_1_when_a_recording_failed(monkeypatch, tmp_path):
+    """Minor 5: a failed recording fails the *run's* exit status (plan 5.1/8).
+
+    The spread run itself kept going - it is only the recording's acceptance that failed -
+    but an orchestrator keyed on the exit code must not read it as a passing run.
+    """
+    code, err, out = _run_main_with_a_fake_node(
+        monkeypatch, tmp_path, NVDA_ONDO_RECEIVED, [],
+        symbols="NVDA", venues="ONDO,ASTER",
+        recording_errors=[
+            "NVDA: the L2 tape closed with 3 dropped record(s) in 1 gap(s): this "
+            "recording is incomplete and must not be replayed across a gap",
+        ],
+    )
+    assert code == 1, "a recording failure must be visible in the exit status"
+    assert "RECORDING FAILED NVDA: the L2 tape closed with 3 dropped record(s)" in err
+    assert "SUMMARY [fake]" in out, "the spread run still reported normally"
+
+
+def test_main_exits_1_when_record_l2_wrote_no_tape(monkeypatch, tmp_path):
+    """The other recording failure: --record-l2 was asked for and nothing was recorded."""
+    code, err, _out = _run_main_with_a_fake_node(
+        monkeypatch, tmp_path, NVDA_ONDO_RECEIVED, [],
+        symbols="NVDA", venues="ONDO,ASTER", record_l2=True,
+    )
+    assert code == 1
+    assert "RECORDING FAILED no tape fragment was written under " in err
+
+
+def test_main_does_not_fail_a_run_that_recorded_cleanly(monkeypatch, tmp_path):
+    code, err, _out = _run_main_with_a_fake_node(
+        monkeypatch, tmp_path, NVDA_ONDO_RECEIVED, [], symbols="NVDA", venues="ONDO,ASTER",
+    )
+    assert code is None, "a clean run returns normally"
+    assert err == ""
+
+
 def test_reference_columns_and_node_stay_off_without_reference(tmp_path):
     """--reference none must not add a Futu feed or a reference csv, io: included."""
     with contextlib.redirect_stderr(io.StringIO()):
@@ -863,6 +974,775 @@ def test_main_reports_the_funding_channel_per_leg(tmp_path):
     assert "funding_seen=False" in text   # HL and Aster legs: no funding update yet
     assert "funding_seen=True" in text    # the io: leg got one
     assert text.count("funding_seen=") == 3
+
+
+# ------------------------------------------------------------------------ ondo venue
+
+
+def make_status(instrument_id: InstrumentId, reason: str, *, is_trading=None,
+                is_quoting=None, action=MarketStatusAction.NONE, ts: int = 1_000):
+    """One InstrumentStatus as the adapter publishes it (plan 4.2)."""
+    return InstrumentStatus(
+        instrument_id=instrument_id,
+        action=action,
+        reason=reason,
+        is_quoting=is_quoting,
+        is_trading=is_trading,
+        ts_event=ts,
+        ts_init=ts,
+    )
+
+
+class FakeInstrument:
+    """A loaded instrument carrying the provider's runtime fee metadata."""
+
+    def __init__(self, taker_fee) -> None:
+        self.taker_fee = taker_fee
+
+
+class TestOndoVenueRegistry(unittest.TestCase):
+    """ONDO is a known venue with exactly the two NVDA/TSLA mappings (plan 4.1)."""
+
+    def test_registered_on_the_ondo_venue(self) -> None:
+        spec = spread_watch.VENUES["ONDO"]
+        self.assertEqual(spec.key, "ONDO")
+        self.assertEqual(spec.venue, "ONDO")
+        self.assertIn("ONDO", spread_watch.ALL_VENUES)
+
+    def test_only_nvda_and_tsla_are_mapped(self) -> None:
+        mapped = sorted(s for s, m in spread_watch.INSTRUMENTS.items() if "ONDO" in m)
+        self.assertEqual(mapped, ["NVDA", "TSLA"])
+        self.assertEqual(spread_watch.INSTRUMENTS["NVDA"]["ONDO"],
+                         (ONDO_ID, spread_watch.ONDO_TAKER_FEE_BPS))
+        self.assertEqual(spread_watch.INSTRUMENTS["TSLA"]["ONDO"],
+                         (TSLA_ONDO_ID, spread_watch.ONDO_TAKER_FEE_BPS))
+
+    def test_registry_fee_is_the_labelled_documentation_assumption(self) -> None:
+        # plan 5.2: 2.5 bps is a dated assumption for --dry-run / old csv only.
+        self.assertEqual(spread_watch.ONDO_TAKER_FEE_BPS, 2.5)
+        self.assertIn("2026-09-14", spread_watch.ONDO_FEE_SOURCE)
+
+    def test_stays_out_of_the_defaults(self) -> None:
+        self.assertNotIn("ONDO", spread_watch.DEFAULT_VENUES)
+        self.assertNotIn("ONDO", spread_watch.DEFAULT_PAIR)
+        self.assertEqual(spread_watch.DEFAULT_VENUES, ("HL", "LIGHTER", "ASTER"))
+        self.assertEqual(spread_watch.DEFAULT_PAIR, ("HL", "LIGHTER"))
+
+    def test_no_depth10_fallback_is_claimed_for_p1(self) -> None:
+        # plan 4.2: on-demand depth10 is not implemented in P1 -> registry says so.
+        self.assertFalse(spread_watch.VENUES["ONDO"].supports_depth10)
+
+    def test_the_ondo_leg_is_two_venues_off_the_aster_leg(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            plan = spread_watch.build_plan(["NVDA", "TSLA"], ["ONDO", "ASTER"])
+        self.assertEqual([leg.venue_key for leg in plan["NVDA"]], ["ONDO", "ASTER"])
+        self.assertEqual(plan["NVDA"][0].instrument_id, ONDO_ID)
+        self.assertEqual(plan["NVDA"][0].client_id, "ONDO")
+        self.assertEqual(plan["TSLA"][0].instrument_id, TSLA_ONDO_ID)
+        self.assertEqual(plan["NVDA"][1].instrument_id, "NVDAUSDT-PERP.ASTER")
+
+
+def test_hl_and_entropy_share_one_client_while_ondo_and_aster_are_two():
+    """The Ondo client count must not disturb the existing HYPERLIQUID sharing."""
+    with contextlib.redirect_stderr(io.StringIO()):
+        plan = spread_watch.build_plan(["SNDK", "NVDA"], ["HL", "ENTROPY", "ONDO", "ASTER"])
+    groups = {g.client_id: g for g in spread_watch.build_client_groups(plan)}
+    assert set(groups) == {"HYPERLIQUID", "ONDO", "ASTER"}
+    assert groups["HYPERLIQUID"].instrument_ids == [
+        "xyz:SNDK-USD-PERP.HYPERLIQUID",
+        "io:SNDK-USD-PERP.HYPERLIQUID",
+        "xyz:NVDA-USD-PERP.HYPERLIQUID",
+    ]
+    assert groups["ONDO"].instrument_ids == [ONDO_ID]
+    assert groups["ASTER"].instrument_ids == [
+        "SNDKUSD1-PERP.ASTER", "NVDAUSDT-PERP.ASTER",
+    ]
+
+
+def test_ondo_client_is_a_production_config_with_instrument_id_load_ids():
+    """`load_ids` takes InstrumentId objects (Stage 3a caveat) built from the plan."""
+    import importlib
+
+    try:
+        importlib.import_module("nautilus_trader.adapters.ondo")
+    except ImportError:
+        pytest.skip("the candidate ondo wheel is not installed in this venv")
+    factory, config = spread_watch._ondo_client([ONDO_ID, TSLA_ONDO_ID])
+    assert factory.name() == "ONDO"
+    assert [str(i) for i in config.load_ids] == [ONDO_ID, TSLA_ONDO_ID]
+
+
+def test_ondo_client_reports_adapter_missing_with_a_build_pointer(monkeypatch):
+    """Without the wheel the factory raises SystemExit, never a bare ImportError."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("nautilus_trader.adapters.ondo"):
+            raise ImportError("simulated: this venv has no ondo adapter")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(SystemExit) as caught:
+        spread_watch._ondo_client([ONDO_ID])
+    assert str(caught.value) == spread_watch._adapter_missing(
+        "ONDO", "nautilus_trader.adapters.ondo",
+    )
+
+
+def test_dry_run_lists_ondo_and_aster_clients_without_side_effects(tmp_path, monkeypatch):
+    """`--symbols NVDA,TSLA --venues ONDO,ASTER --dry-run` is plan 8's offline command."""
+    result, err = _run_dry_run(
+        ["--symbols", "NVDA,TSLA", "--venues", "ONDO,ASTER", "--dry-run"],
+        monkeypatch, tmp_path,
+    )
+    assert result["mode"] == "read-only"
+    assert [x["client_id"] for x in result["data_clients"]] == ["ONDO", "ASTER"]
+    assert result["data_clients"][0]["instrument_ids"] == [ONDO_ID, TSLA_ONDO_ID]
+    assert [leg["venue_key"] for leg in result["symbols"]["NVDA"]] == ["ONDO", "ASTER"]
+    assert [leg["instrument_id"] for leg in result["symbols"]["NVDA"]] == [
+        ONDO_ID, "NVDAUSDT-PERP.ASTER",
+    ]
+    assert err == ""
+
+
+def test_the_watcher_never_builds_an_execution_client():
+    """P1 is a read-only data watcher: no exec client, no add_exec_client."""
+    source = (Path(__file__).resolve().parents[1] / "src" / "spread_watch.py").read_text(
+        encoding="utf-8",
+    )
+    assert "add_exec_client" not in source
+    assert "ExecutionClient" not in source
+
+
+# ------------------------------------------------------------------ ondo fee source
+
+
+def test_metadata_fee_is_read_as_a_rate_through_decimal():
+    assert spread_watch.ondo_metadata_fee_bps(FakeInstrument(Decimal("0.00025"))) == 2.5
+    assert spread_watch.ondo_metadata_fee_bps(FakeInstrument("0.0001")) == 1.0
+    assert spread_watch.ondo_metadata_fee_bps(FakeInstrument(Decimal("0.00007"))) == 0.7
+
+
+def test_metadata_fee_is_unknown_rather_than_free():
+    """A zero/absent/negative rate is "not published", never a free Ondo leg."""
+    for instrument in (object(), FakeInstrument(None), FakeInstrument(Decimal("0")),
+                       FakeInstrument("0.0"), FakeInstrument(Decimal("-0.001")),
+                       FakeInstrument("not a number")):
+        assert spread_watch.ondo_metadata_fee_bps(instrument) is None, instrument
+
+
+def test_ondo_leg_takes_its_fee_from_the_runtime_metadata(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(Decimal("0.00025")),
+    })
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        assert ondo.spec.taker_fee_bps == pytest.approx(2.5)
+        assert ondo.fee_source == "instrument_metadata"
+        assert watch._fee[("ONDO", "ASTER")] == pytest.approx(2.5 + 0.9 + 5.0)
+        assert watch.subscribed["status"] == [watch._legs[0].instrument_id]
+    finally:
+        watch.on_stop()
+
+
+def test_ondo_leg_without_a_published_fee_does_not_use_the_2_5_assumption(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        assert ondo.fee_source == "missing"
+        assert ondo.spec.taker_fee_bps is None, "the 2.5 assumption must not survive"
+        assert watch._fee[("ONDO", "ASTER")] is None
+        assert watch._fee[("ASTER", "ONDO")] is None
+
+        now = watch.clock.timestamp_ns()  # quotes alone cannot make a cost judgement
+        for leg in watch._legs:
+            watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01", now))
+        assert watch._hits.rows == 0
+        assert watch._all.rows == 0
+        watch._log_status()  # the status line and the summary must survive a None fee
+        text = watch.summary()
+        assert "fee" in text.lower()
+    finally:
+        watch.on_stop()
+
+
+def test_ondo_leg_warns_once_about_the_missing_fee(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        warnings = [msg for level, msg in watch.log.lines if level == "WARNING"]
+        fee_warnings = [m for m in warnings if "ONDO" in m and "fee" in m]
+        assert fee_warnings, warnings
+        assert "2.5" not in fee_warnings[0]
+        assert "unknown" in fee_warnings[0]
+    finally:
+        watch.on_stop()
+
+
+def test_missing_ondo_instrument_fails_startup_without_subscribing(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch._stub_cache._ids.remove(InstrumentId.from_str(ONDO_ID))
+    stops: list[int] = []
+    watch._cfg.run_state.stop_node = lambda: stops.append(1)
+    try:
+        watch.on_start()
+        assert watch._cfg.run_state.startup_errors == [
+            f"NVDA/ONDO: instrument not loaded: {ONDO_ID}",
+        ]
+        assert watch._cfg.run_state.stop_requested
+        assert stops == [1]
+        assert watch.subscribed["quotes"] == []
+        assert watch.subscribed["status"] == []
+    finally:
+        watch.on_stop()
+
+
+def test_main_exits_1_when_the_ondo_leg_never_received_a_bbo(monkeypatch, tmp_path):
+    code, err, _out = _run_main_with_a_fake_node(
+        monkeypatch, tmp_path, [], [], symbols="NVDA,TSLA", venues="ONDO,ASTER",
+    )
+    assert code == 1
+    assert f"INCOMPLETE NVDA/ONDO: no top-of-book data for {ONDO_ID}" in err
+    assert f"INCOMPLETE TSLA/ONDO: no top-of-book data for {TSLA_ONDO_ID}" in err
+
+
+# ------------------------------------------------------- ondo feed / market status
+
+
+def test_ondo_disconnect_invalidates_the_quote_and_the_book_at_once(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        ondo, aster = watch._legs
+        now = watch.clock.timestamp_ns()
+        watch.on_quote(make_quote(ondo.instrument_id, "100.00", "100.01", now))
+        watch.on_quote(make_quote(aster.instrument_id, "100.00", "100.02", now))
+        assert ondo.ready() and aster.ready()
+        # The book is present in the cache: losing the feed must make it unusable.
+        watch.cache.books[ondo.instrument_id] = FakeBook(
+            [FakeLevel(Decimal("100.00"), Decimal("1"))],
+            [FakeLevel(Decimal("100.01"), Decimal("2"))],
+        )
+        assert watch._book_levels(ondo)[0], "the book is readable before the disconnect"
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+        ))
+        # Same event-loop turn, no waiting for MAX_AGE_MS:
+        assert ondo.bid == 0.0 and ondo.ask == 0.0 and ondo.ts_ns == 0
+        assert not ondo.feed_ready and not ondo.market_ready
+        assert not ondo.book_valid
+        assert watch._book_levels(ondo) == ([], []), "the cached book is unusable"
+        assert not ondo.ready()
+        assert aster.ready(), "a non-ONDO leg keeps its old behaviour"
+        assert aster.feed_ready and aster.market_ready
+    finally:
+        watch.on_stop()
+
+
+def test_ondo_readiness_needs_a_new_snapshot_not_a_socket_or_a_quote(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        now = watch.clock.timestamp_ns()
+        watch.on_quote(make_quote(ondo.instrument_id, "100.00", "100.01", now))
+        assert ondo.ready()
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+        ))
+        assert not ondo.ready()
+        # "socket connected" alone is not recovery.
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:connected", is_trading=None, is_quoting=True,
+        ))
+        assert not ondo.feed_ready and not ondo.ready()
+        # A brand-new quote is still not enough: the snapshot is what is missing.
+        watch.on_quote(make_quote(ondo.instrument_id, "100.00", "100.01",
+                                  watch.clock.timestamp_ns()))
+        assert ondo.bid > 0.0 and ondo.ask > 0.0
+        assert not ondo.ready(), "a new snapshot is required for readiness"
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:snapshot_ready", is_trading=True, is_quoting=True,
+        ))
+        assert ondo.feed_ready and ondo.market_ready and ondo.book_valid
+        assert ondo.ready(), "the new snapshot plus the fresh quote is a usable leg"
+    finally:
+        watch.on_stop()
+
+
+def test_ondo_real_market_status_is_a_separate_axis(tmp_path):
+    """A real venue status (not an adapter:* reason) drives market_ready on its own."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        watch.on_quote(make_quote(ondo.instrument_id, "100.00", "100.01",
+                                  watch.clock.timestamp_ns()))
+        assert ondo.ready()
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "market halts", is_trading=False,
+            action=MarketStatusAction.HALT,
+        ))
+        assert not ondo.market_ready and ondo.feed_ready
+        assert not ondo.ready(), "a halted market is not tradable"
+        assert ondo.bid > 0.0, "a halt does not clear the quote, it invalidates it"
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "regular trading hours", is_trading=True,
+            action=MarketStatusAction.TRADING,
+        ))
+        assert ondo.market_ready and ondo.ready()
+    finally:
+        watch.on_stop()
+
+
+def test_non_ondo_legs_never_subscribe_or_react_to_status(tmp_path):
+    watch = build_watch(tmp_path, "SNDK", ("HL", "ENTROPY", "ASTER"))
+    watch.on_start()
+    try:
+        assert watch.subscribed["status"] == []
+        for leg in watch._legs:  # a stray status event must not change a non-ONDO leg
+            watch.on_instrument_status(make_status(
+                leg.instrument_id, "adapter:disconnected", is_trading=False,
+            ))
+            assert leg.feed_ready and leg.market_ready and leg.book_valid
+    finally:
+        watch.on_stop()
+
+
+def test_a_real_halt_survives_a_local_reconnect(tmp_path):
+    """A venue halt is not cleared by a local feed snapshot: the axes stay apart."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        watch.on_quote(make_quote(ondo.instrument_id, "100.00", "100.01",
+                                  watch.clock.timestamp_ns()))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "market halts", is_trading=False,
+            action=MarketStatusAction.HALT,
+        ))
+        assert not ondo.ready() and ondo.market_halted
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+        ))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:snapshot_ready", is_trading=None, is_quoting=True,
+        ))
+        assert ondo.feed_ready and ondo.book_valid, "the local feed is back"
+        assert not ondo.market_ready and not ondo.ready(), (
+            "a snapshot must not clear a halt the venue announced itself"
+        )
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "regular trading hours", is_trading=True,
+            action=MarketStatusAction.TRADING,
+        ))
+        assert ondo.market_ready and not ondo.market_halted
+    finally:
+        watch.on_stop()
+
+
+def test_the_summary_names_the_legs_that_are_not_usable(tmp_path):
+    """plan 8 judges a run leg by leg: 'no valid two-sided book' must be visible."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        for leg in watch._legs:  # both legs quoted, so neither is unusable yet
+            watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01",
+                                      watch.clock.timestamp_ns()))
+        ondo = watch._legs[0]
+        assert ondo.unusable_reasons() == []
+        assert "not usable at the end" not in watch.summary()
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+        ))
+        assert ondo.unusable_reasons() == [
+            "local-feed-disconnected", "market-not-trading", "book-invalidated",
+            "no-two-sided-bbo",
+        ]
+        text = watch.summary()
+        assert "legs not usable at the end of this run: ONDO(" in text
+        # The other leg still has its quote and is not listed.
+        assert "ASTER(" not in text
+        assert "feed_ready=False market_ready=False book_valid=False disconnects=1" in text
+    finally:
+        watch.on_stop()
+
+
+# ------------------------------------------------------------------ csv compatibility
+
+
+def test_every_csv_header_and_its_order_are_unchanged():
+    assert spread_watch.SPREAD_HEADER == [
+        "ts_utc", "sell_venue", "buy_venue", "gross_bps", "net_bps",
+        "sell_bid", "sell_bid_size", "buy_ask", "buy_ask_size",
+        "sell_ask", "buy_bid", "funding_sell", "funding_buy",
+        "age_sell_ms", "age_buy_ms",
+    ]
+    assert spread_watch.TRADES_HEADER == [
+        "ts_utc", "venue", "price", "size", "aggressor_side", "trade_id",
+        "ts_event_ns", "ts_init_ns",
+    ]
+    assert spread_watch.DEPTH_HEADER == [
+        "ts_utc", "venue", "bid", "ask", "mid", "levels_bid", "levels_ask",
+        "bid_usd_2bps", "bid_usd_5bps", "bid_usd_10bps",
+        "ask_usd_2bps", "ask_usd_5bps", "ask_usd_10bps",
+    ]
+    assert spread_watch.REF_HEAD == [
+        "ts_utc", "event", "ref_ts_src_utc", "ref_last", "ref_bid", "ref_ask",
+        "ref_mid", "ref_age_ms", "ref_src_to_srv_ms", "ref_book_mode",
+    ]
+
+
+def test_a_real_ondo_run_writes_the_same_columns_as_before(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        now = watch.clock.timestamp_ns()
+        for leg in watch._legs:
+            watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01", now))
+            watch.on_trade(make_trade(leg.instrument_id, "100.00", "1.0",
+                                      AggressorSide.BUY, "T", now))
+    finally:
+        watch.on_stop()
+    spread_rows = read_csv(tmp_path / "spread_NVDA_ONDO-ASTER_20260907T120000Z_all.csv")
+    depth_rows = read_csv(tmp_path / "depth_NVDA_ONDO-ASTER_20260907T120000Z.csv")
+    trade_rows = read_csv(tmp_path / "trades_NVDA_ONDO-ASTER_20260907T120000Z.csv")
+    assert spread_rows[0] == spread_watch.SPREAD_HEADER
+    assert depth_rows[0] == spread_watch.DEPTH_HEADER
+    assert trade_rows[0] == spread_watch.TRADES_HEADER
+    assert {row[1] for row in spread_rows[1:]} <= {"ONDO", "ASTER"}
+
+
+# ----------------------------------------------------------------- l2 tape (plan 5.2)
+
+
+def make_batch(instrument_id: InstrumentId, *, bids, asks, clear=True,
+               ts: int = 1_000) -> OrderBookDeltas:
+    """A real Nautilus deltas message: a CLEAR plus the ADDs of one book state."""
+    deltas = []
+    if clear:
+        deltas.append(OrderBookDelta.clear(instrument_id, 0, ts, ts + 1))
+    for price, size in bids:
+        deltas.append(OrderBookDelta(
+            instrument_id, BookAction.ADD,
+            BookOrder(OrderSide.BUY, Price.from_str(price), Quantity.from_str(size), 0),
+            0, 0, ts, ts + 1,
+        ))
+    for price, size in asks:
+        deltas.append(OrderBookDelta(
+            instrument_id, BookAction.ADD,
+            BookOrder(OrderSide.SELL, Price.from_str(price), Quantity.from_str(size), 0),
+            0, 0, ts, ts + 1,
+        ))
+    return OrderBookDeltas(instrument_id, deltas)
+
+
+def make_depth10(instrument_id: InstrumentId, *, bids, asks, ts: int = 1_000
+                 ) -> OrderBookDepth10:
+    """A depth10 snapshot: Nautilus wants exactly ten levels per side."""
+
+    def side(levels, order_side):
+        orders = [
+            BookOrder(order_side, Price.from_str(price), Quantity.from_str(size), 0)
+            for price, size in levels
+        ]
+        while len(orders) < 10:  # an empty depth slot: size 0
+            orders.append(BookOrder(order_side, Price.from_str(levels[-1][0]),
+                                    Quantity.from_str("0"), 0))
+        return orders
+
+    bid_orders, ask_orders = side(bids, OrderSide.BUY), side(asks, OrderSide.SELL)
+    return OrderBookDepth10(
+        instrument_id, bid_orders, ask_orders, [len(bids)] + [0] * 9,
+        [len(asks)] + [0] * 9, 0, 0, ts, ts + 1,
+    )
+
+
+def test_record_l2_is_off_by_default_and_on_with_the_switch(tmp_path, monkeypatch):
+    """`--record-l2` is explicit and default off (plan 5.2)."""
+    off, _err = _run_dry_run(
+        ["--symbols", "NVDA", "--venues", "ONDO,ASTER", "--dry-run"], monkeypatch, tmp_path,
+    )
+    assert off["record_l2"] is False
+    on, _err = _run_dry_run(
+        ["--symbols", "NVDA", "--venues", "ONDO,ASTER", "--dry-run", "--record-l2"],
+        monkeypatch, tmp_path,
+    )
+    assert on["record_l2"] is True
+    assert "l2" in on["record_l2_note"]
+    assert "raw_ondo" in on["record_l2_note"]
+
+
+def test_without_record_l2_no_tape_is_opened_or_written(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"))
+    watch.on_start()
+    try:
+        now = watch.clock.timestamp_ns()
+        for leg in watch._legs:
+            watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01", now))
+            watch.on_book_deltas(make_batch(
+                leg.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+            ))
+        assert watch._tape is None
+        assert all(leg.book_tape is None for leg in watch._legs)
+    finally:
+        watch.on_stop()
+    assert not (tmp_path / "l2").exists(), "the switch off means no tape at all"
+
+
+def test_a_record_l2_run_records_every_leg_with_a_manifest(tmp_path):
+    """Every observed leg gets complete L2 - never only Ondo with a top-of-book."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    try:
+        now = watch.clock.timestamp_ns()
+        for leg in watch._legs:
+            watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01", now))
+            watch.on_book_deltas(make_batch(
+                leg.instrument_id,
+                bids=[("100.05", "0.001"), ("100.04", "0.002")],
+                asks=[("100.10", "0.003")],
+                ts=now,
+            ))
+        watch.on_funding_rate(FundingRateUpdate(
+            instrument_id=watch._legs[0].instrument_id, rate=Decimal("0.0000063"),
+            ts_event=now, ts_init=now, interval=60,
+        ))
+        watch.on_instrument_status(make_status(
+            watch._legs[0].instrument_id, "adapter:snapshot_ready", is_trading=True,
+            is_quoting=True,
+        ))
+        summary = watch.summary()
+    finally:
+        watch.on_stop()
+
+    assert not watch._cfg.run_state.recording_errors, "a clean run records cleanly"
+    assert watch._tape_error is None
+    l2 = tmp_path / "l2"
+    assert (l2 / "l2_NVDA_ONDO-ASTER_20260907T120000Z.jsonl").exists()
+    reader = read_tape([l2])
+    rows = list(reader)
+    books = [r for r in rows if r["event_kind"] == "book"]
+    assert {r["venue"] for r in books} == {"ONDO", "ASTER"}, (
+        "each observed leg records its own L2"
+    )
+    for record in books:
+        assert record["bids"] == [["100.05", "0.001"], ["100.04", "0.002"]]
+        assert record["asks"] == [["100.10", "0.003"]]
+        assert isinstance(record["bids"][0][0], str)
+        assert record["source"] == "snapshot"
+    assert {r["instrument_id"] for r in books} == {
+        ONDO_ID, "NVDAUSDT-PERP.ASTER",
+    }
+    assert [r["venue"] for r in rows if r["event_kind"] == "quote"] == ["ONDO", "ASTER"]
+    assert [r["coverage_limit"] for r in books if r["venue"] == "ONDO"] == [100]
+    assert [r["coverage_limit"] for r in books if r["venue"] == "ASTER"] == [None]
+    kinds = {r["event_kind"] for r in rows}
+    assert {"run_start", "instrument", "book", "quote", "funding", "status", "run_end"} <= kinds
+    assert reader.status.complete is True
+    assert reader.status.dropped == 0
+    assert "l2 tape" in summary
+
+    manifest = read_manifest(l2 / "l2_NVDA_ONDO-ASTER_20260907T120000Z.manifest.json")
+    assert [entry["segment_index"] for entry in manifest["segments"]] == [1]
+    assert manifest["segments"][0]["closed"] is True
+
+
+def test_the_ondo_leg_records_the_feeds_own_fee_metadata(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True, instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(Decimal("0.00025")),
+    })
+    watch.on_start()
+    watch.on_stop()
+    rows = list(read_tape([tmp_path / "l2"]))
+    metadata = [
+        r["metadata"] for r in rows
+        if r["event_kind"] == "instrument" and r["venue"] == "ONDO"
+    ]
+    assert metadata == [{
+        "venue": "ONDO",
+        "client_id": "ONDO",
+        "taker_fee_bps": "2.50",
+        "fee_source": "instrument_metadata",
+        "tick_size": None,
+    }]
+
+
+def test_the_depth10_fallback_is_recorded_as_a_limited_source(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    try:
+        now = watch.clock.timestamp_ns()
+        watch.on_book_depth(make_depth10(
+            watch._legs[1].instrument_id, bids=[("200.50", "0.100")],
+            asks=[("200.51", "0.200")], ts=now,
+        ))
+    finally:
+        watch.on_stop()
+    books = [r for r in read_tape([tmp_path / "l2"]) if r["event_kind"] == "book"]
+    assert len(books) == 1
+    assert books[0]["venue"] == "ASTER"
+    assert books[0]["source"] == "depth10"
+    assert books[0]["coverage_limit"] == 10
+    assert books[0]["bids"] == [["200.50", "0.100"]], "the zero-size slots are not levels"
+
+
+def test_a_run_with_ondo_points_raw_md_path_at_the_run_raw_ondo_dir(tmp_path, monkeypatch):
+    """Plan 5.2: only the path is plumbed; the fork's recorder owns the layout."""
+    from dataclasses import replace
+    from unittest.mock import MagicMock
+
+    captured: dict[str, object] = {}
+
+    def fake_ondo(ids, **kwargs):
+        captured["ids"] = list(ids)
+        captured["kwargs"] = dict(kwargs)
+        return object(), object()
+
+    def fake_aster(ids):
+        return object(), object()
+
+    monkeypatch.setitem(spread_watch.VENUES, "ONDO",
+                        replace(spread_watch.VENUES["ONDO"], build_client=fake_ondo))
+    monkeypatch.setitem(spread_watch.VENUES, "ASTER",
+                        replace(spread_watch.VENUES["ASTER"], build_client=fake_aster))
+    live = MagicMock()
+    builder = live.builder.return_value
+    for method in ("with_logging", "with_timeout_connection",
+                   "with_delay_post_stop_secs", "add_data_client"):
+        getattr(builder, method).return_value = builder
+    monkeypatch.setattr(spread_watch, "LiveNode", live)
+    with contextlib.redirect_stderr(io.StringIO()):
+        plan = spread_watch.build_plan(["NVDA"], ["ONDO", "ASTER"])
+
+    off = spread_watch.NodePlan(plan, tmp_path, "20260914T000000Z", 10, 1000)
+    _node, strategies, _state = spread_watch.build_node(off)
+    assert captured["kwargs"] == {}, "record-l2 off: the ONDO config is untouched"
+    assert not (tmp_path / "raw_ondo").exists()
+    assert all(not strategy._cfg.record_l2 for strategy in strategies)
+    assert all(strategy._cfg.tape_path is None for strategy in strategies)
+
+    on = spread_watch.NodePlan(plan, tmp_path, "20260914T000000Z", 10, 1000,
+                               record_l2=True)
+    _node, strategies, _state = spread_watch.build_node(on)
+    assert captured["ids"] == [ONDO_ID]
+    assert captured["kwargs"] == {
+        "raw_md_path": str(tmp_path / "raw_ondo"),
+        "raw_md_run_id": "20260914T000000Z",
+    }
+    # The recorder's run id is passed explicitly, not inferred from the directory
+    # name, so the raw frames and the tape join on the same id even when --out is
+    # not stamped (plan 8 uses a stamped runDir, a default --out does not).
+    assert captured["kwargs"]["raw_md_run_id"] == on.stamp
+    assert (tmp_path / "raw_ondo").is_dir()
+    assert [strategy._cfg.tape_path for strategy in strategies] == [
+        tmp_path / "l2" / "l2_NVDA_ONDO-ASTER_20260914T000000Z.jsonl",
+    ]
+    assert all(strategy._cfg.run_id == "20260914T000000Z" for strategy in strategies)
+
+
+def test_the_run_manifest_names_the_fragments_in_order(tmp_path):
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    try:
+        now = watch.clock.timestamp_ns()
+        for leg in watch._legs:
+            watch.on_book_deltas(make_batch(
+                leg.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+                ts=now,
+            ))
+    finally:
+        watch.on_stop()
+    from market_tape import write_run_manifest
+
+    manifest = write_run_manifest(tmp_path / "l2")
+    assert manifest == tmp_path / "l2" / "manifest.json"
+    document = read_run_manifest(tmp_path / "l2")
+    assert [fragment["tape"] for fragment in document["fragments"]] == [
+        "l2_NVDA_ONDO-ASTER_20260907T120000Z.jsonl",
+    ]
+    assert document["tapes"][0]["complete"] is True
+    assert list(read_tape([manifest])) == list(read_tape([tmp_path / "l2"]))
+
+
+def test_a_recording_gap_fails_the_recording_acceptance_but_not_the_spread(tmp_path):
+    """Plan 5.1: a gap is a failed *recording*, never a silent omission.
+
+    The queue is bounded, so a burst can drop records. The spread deliberately keeps
+    running, but the tape must name the gap and the run's own verdict must say the
+    recording failed - otherwise a caller reads "complete" off a tape with a hole in it.
+    """
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    try:
+        tape = watch._tape
+        assert tape is not None
+        # Nothing flushes on its own and the queue holds one record: every leg's quote
+        # after the first is dropped rather than queued without bound.
+        tape.queue_max, tape.flush_secs = 1, 1e9
+        now = watch.clock.timestamp_ns()
+        for _ in range(4):
+            for leg in watch._legs:
+                watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01", now))
+        assert tape.dropped > 0
+        assert not watch._cfg.run_state.recording_errors, "learned when the tape closes"
+    finally:
+        watch.on_stop()
+
+    assert watch._cfg.run_state.recording_errors, "a gap fails this recording"
+    assert "gap" in watch._cfg.run_state.recording_errors[0]
+    assert "incomplete" in watch._cfg.run_state.recording_errors[0]
+    assert not watch._cfg.run_state.startup_errors, "the spread run itself keeps going"
+
+    reader = read_tape([tmp_path / "l2"])
+    rows = list(reader)
+    assert reader.status.complete is False
+    assert reader.status.dropped > 0 and reader.status.failed is True
+    marker = next(r for r in rows if r["event_kind"] == "gap")
+    assert marker["valid"] is False and marker["invalid_reason"].startswith("recording_gap")
+    assert rows[-1]["event_kind"] == "run_end" and rows[-1]["complete"] is False
+    assert "FAILED" in watch.summary(), "the run prints the recording's failed acceptance"
+
+
+def test_a_tape_write_failure_is_surfaced_and_does_not_kill_the_spread_run(
+    tmp_path, monkeypatch,
+):
+    """A disk failure aborts the recorder and reaches the watcher (plan 5.1)."""
+    import market_tape
+
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    try:
+        def boom(_self, _lines):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(market_tape.TapeWriter, "_write_lines", boom)
+        now = watch.clock.timestamp_ns()
+        for leg in watch._legs:  # every leg keeps quoting after the recorder died
+            watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01", now))
+        watch._log_status()  # the status tick flushes the recorder
+        assert watch._tape_error is not None
+        assert "No space left" in watch._tape_error
+        assert watch._cfg.run_state.recording_errors
+        assert "No space left" in watch._cfg.run_state.recording_errors[0]
+        assert watch._tape is None and all(leg.book_tape is None for leg in watch._legs)
+        summary = watch.summary()
+    finally:
+        watch.on_stop()
+    assert "FAILED" in summary
+    assert not watch._cfg.run_state.startup_errors, "the spread run itself keeps going"
 
 
 if __name__ == "__main__":

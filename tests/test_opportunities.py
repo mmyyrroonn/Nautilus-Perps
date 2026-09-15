@@ -59,11 +59,38 @@ def test_funding_units_are_pinned_to_the_documented_numbers():
     """
     assert opportunities.FUNDING_SCALE == {
         "HL": 1e4, "LIGHTER": 1e2, "LIGHTER_RH": 1e2, "ASTER": 1e4, "ENTROPY": 1e4,
+        "ONDO": 1e4,
     }
     assert opportunities.FUNDING_HOURS == {
-        "HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0, "ENTROPY": 1.0,
+        "HL": 1.0, "LIGHTER": 1.0, "LIGHTER_RH": 1.0, "ENTROPY": 1.0, "ONDO": 1.0,
     }
     assert opportunities.hourly_bps(0.01, "LIGHTER", "NVDA") == pytest.approx(1.0)
+
+
+def test_ondo_funding_is_fraction():
+    """plan 4.3: the Ondo API `rate` is an hourly decimal fraction, 0.0001 == 1 bp/h."""
+    assert opportunities.FUNDING_SCALE["ONDO"] == 1e4
+    assert opportunities.FUNDING_HOURS["ONDO"] == 1.0
+    assert opportunities.hourly_bps(0.0001, "ONDO", "NVDA") == 1.0
+    assert abs(opportunities.hourly_bps(0.0000063, "ONDO", "NVDA") - 0.063) < 1e-12
+    # Hourly settlement: no /8 and no /100 on the way to bps/h.
+    assert opportunities.funding_hours("ONDO", "NVDA") == 1.0
+
+
+def test_ondo_and_lighter_units_stay_distinct():
+    """Same raw number, two units: ONDO is a fraction/h, Lighter a percent/h."""
+    assert opportunities.hourly_bps(0.0001, "ONDO", "NVDA") == 1.0
+    assert opportunities.hourly_bps(0.01, "LIGHTER", "NVDA") == pytest.approx(1.0)
+
+
+def test_ondo_leg_fees_come_from_the_watcher_registry():
+    """The analyser reads INSTRUMENTS, so the ONDO legs must be fee-visible too."""
+    fees, note = opportunities.venue_fees("NVDA")
+    assert not note
+    assert "ONDO" in fees
+    assert fees["ONDO"] == pytest.approx(2.5), "the dated assumption, labelled as such"
+    assert opportunities.venue_fees("TSLA")[0]["ONDO"] == pytest.approx(2.5)
+    assert "ONDO" not in opportunities.venue_fees("GOLD")[0]
 
 
 def test_funding_report_prints_both_legs_in_bps_per_hour():
