@@ -1,0 +1,42 @@
+=== F01 原始代码取证（git show HEAD，即修复前）===
+
+--- reconciliation.rs: refuses_new_risk (修复前) ---
+    /// Returns whether this client must refuse a new order right now.
+    ///
+    /// [`Self::can_submit_new_orders`] once a session exists. Before any session the machine does
+    /// not govern: this is the one difference between the two, and it is deliberate - the predicate
+    /// answers a question about a recovered account, and there is no account yet.
+    #[must_use]
+    pub fn refuses_new_risk(&self) -> bool {
+        self.session_established && !self.can_submit_new_orders()
+    }
+
+--- execution.rs: 单笔提交入口（修复前）---
+            return Ok(());
+        }
+
+        // Plan §6.4: new risk waits for a recovered account. A command refused here leaves no trace
+        // at the venue, which is the point - the alternative is an order placed against an account
+        // whose state is unknown.
+        if self.refuses_new_risk() {
+            let reason = self.new_risk_refusal_reason();
+
+            log::error!(
+                "Ondo refused to submit {} while the account is not ready: {reason}",
+                cmd.client_order_id,
+            );
+
+--- execution.rs: 批量提交入口（修复前）---
+            log::warn!("Cannot submit an empty order list");
+            return Ok(());
+        }
+
+        // A batch is new risk too, so plan §6.4 stops it with the same predicate a single order
+        // meets. Every item is denied by name, and no batch request exists to have been applied.
+        if self.refuses_new_risk() {
+            let reason = self.new_risk_refusal_reason();
+
+            log::error!(
+                "Ondo refused a {}-order batch while the account is not ready: {reason}",
+                cmd.order_inits.len(),
+            );

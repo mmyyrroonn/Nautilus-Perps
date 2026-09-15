@@ -1,0 +1,3 @@
+branch: task/r0-execution-guards
+head: 5c2ba5aedfe35625a1787d0468d6885771aa2e51
+head_subject: nautilus-ondo: add the Ondo Perps adapter crate and wire it into the workspace

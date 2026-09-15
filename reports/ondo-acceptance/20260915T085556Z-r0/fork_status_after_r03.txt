@@ -1,0 +1,11 @@
+ M crates/adapters/ondo/src/common/credential.rs
+ M crates/adapters/ondo/src/common/mod.rs
+ M crates/adapters/ondo/src/config.rs
+ M crates/adapters/ondo/src/execution.rs
+ M crates/adapters/ondo/src/http/client.rs
+ M crates/adapters/ondo/src/reconciliation.rs
+ M crates/adapters/ondo/tests/execution.rs
+ M crates/adapters/ondo/tests/http_client.rs
+ M crates/adapters/ondo/tests/reconciliation.rs
+ M crates/adapters/ondo/tests/signing.rs
+?? crates/adapters/ondo/src/common/endpoint.rs

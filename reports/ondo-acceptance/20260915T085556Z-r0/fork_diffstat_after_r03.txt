@@ -1,0 +1,11 @@
+ crates/adapters/ondo/src/common/credential.rs | 162 ++---
+ crates/adapters/ondo/src/common/mod.rs        |   1 +
+ crates/adapters/ondo/src/config.rs            |  66 ++-
+ crates/adapters/ondo/src/execution.rs         | 519 +++++++++++-----
+ crates/adapters/ondo/src/http/client.rs       |  83 ++-
+ crates/adapters/ondo/src/reconciliation.rs    | 501 +++++++++++++---
+ crates/adapters/ondo/tests/execution.rs       | 794 +++++++++++++++++++++----
+ crates/adapters/ondo/tests/http_client.rs     |  98 ++-
+ crates/adapters/ondo/tests/reconciliation.rs  | 822 +++++++++++++++++++++++---
+ crates/adapters/ondo/tests/signing.rs         | 173 +++++-
+ 10 files changed, 2695 insertions(+), 524 deletions(-)

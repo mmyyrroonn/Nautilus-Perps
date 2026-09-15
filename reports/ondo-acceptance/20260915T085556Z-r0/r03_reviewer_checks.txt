@@ -1,0 +1,45 @@
+=== R0.3 验收者独立核查（非 sub agent 转述）===
+
+[1] 改动范围
+非 .pyi 改动：src/common/{credential.rs,mod.rs,endpoint.rs(新增)}, src/config.rs,
+src/execution.rs, src/http/client.rs, src/reconciliation.rs,
+tests/{execution,http_client,reconciliation,signing}.rs
+禁改文件 data.rs / factories.rs / python/* / websocket/* / recording.rs 均未被触碰。
+40 个既有 dirty .pyi 保持不变。
+
+[2] R0.1/R0.2 成果未被扰动（diff 行数与 R0.3 开工前快照比对）
+  src/reconciliation.rs        = 501  (开工前 501)
+  tests/reconciliation.rs      = 822  (开工前 822)
+
+[3] 没有靠删测试换绿（测试函数计数，HEAD vs 工作区）
+  tests/signing.rs          16 -> 20
+  tests/http_client.rs      34 -> 37
+  tests/execution.rs        23 -> 32
+  tests/reconciliation.rs   55 -> 63
+  四个文件全部只增不减。
+
+[4] 全包测试（验收者亲自跑，未经 warning 抑制）
+  cargo +1.98.0 test -p nautilus-ondo --locked --offline --no-fail-fast
+  385 lib + 42 + 35 + 77 + 40 + 63 + 63 + 1 doc-test = 706 passed, 0 failed, exit 0
+
+[5] "新策略不得比旧黑名单更弱" 的证据
+  src/common/endpoint.rs:538 test_the_allowlist_refuses_everything_the_superseded_blacklist_refused
+  在测试内重新实现被替换的黑名单 superseded_blacklist_refuses()，对
+  6 scheme x 3 userinfo x 8 host x 3 port x 4 path = 1728 个 URL 形态断言
+  「旧规则拒绝 => 新规则必须拒绝」，并有 refused_before > 0 防止对比退化成空转。
+
+[6] 重定向不携带鉴权（跨 authority）的证据
+  tests/http_client.rs:1500 test_a_signed_request_does_not_follow_a_redirect_to_another_authority
+  两个 mock server：源返回 302 Location 指向目标。断言
+    - 错误为 OndoHttpError::Http { status: 302 }
+    - 源 server 恰好收到 1 个请求
+    - 目标 server 收到 0 个请求
+  实现侧 http/client.rs 对认证 client 设 HttpRedirectPolicy::Reject（公网 client 保持 Follow），
+  理由是 transport 在跨 host 跳转时只剥离标准敏感头，剥不到本适配器自有的
+  ONDO-KEY-ID / ONDO-SIGNATURE。
+
+[7] 拒绝发生在 client 构造之前
+  http/client.rs：endpoint policy 在 HttpClient::builder() 之前求值，且 redirect policy 由它决定。
+  测试 test_an_endpoint_outside_the_allowlist_is_refused_before_a_client_exists 用 mock 自己的
+  监听地址改名成 0.0.0.0（一个真实可达但策略拒绝的 host），使「没发出去」是关于一个活着的监听者
+  的观察，而不是关于一个从未启动的 host。

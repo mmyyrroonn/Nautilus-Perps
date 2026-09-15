@@ -1,0 +1,21 @@
+=== F01 独立证伪（由验收者执行，非 sub agent 转述）===
+
+方法：把修复前语义「无 session 则不 governed」重新注入新版管道 —— 在
+`ReconciliationMachine::new_risk_refusal()` 顶部插入 `if !self.session_established { return None; }`。
+这忠实复现了修复前 `refuses_new_risk()` 的判定（提交入口现在走 admission()，直接改
+refuses_new_risk() 已不在路径上，故不能那样回退）。
+
+结果（tests/reconciliation.rs，--exact 单测）：
+
+    test test_a_fresh_client_refuses_a_submission_and_a_batch_before_any_session_exists ... FAILED
+    panicked at crates\adapters\ondo\tests\reconciliation.rs:2113:5:
+    no create request exists for an account this client has never read:
+      ["/v1/perps/orders", "/v1/perps/orders/batch"]
+
+=> 两个写端点在一个从未读取过的账户上照样发出。测试确实抓住 F01，修复确实关闭它。
+   恢复后重跑：34 + 63 passed，0 failed，exit 0。
+   恢复校验：sha256(reconciliation.rs) = 49a61c6e84870d0429cf27dcd04fd7790fe697d3bd471fe49f7e5b4866e3e1d6
+
+补充：单独把 `refuses_new_risk()` 改回 `session_established && !can_submit_new_orders()`
+时，端到端测试仍然通过 —— 因为新版提交入口已改用 `admission()`，不再读该谓词。
+这说明该谓词现在只是公共 API 的一致性投影，不承担执行责任（见报告"观察项"）。

@@ -1,0 +1,19 @@
+run_id: 20260915T085556Z-r0
+stage: R0 (execution admission guards)
+created_utc: 20260915T085556Z
+
+APP  E:/Nautilus-Perps   branch=task/ondo-r0-acceptance  base=main e49716b7ec8bc16648aa0f2c3e1450c8d73284e0
+FORK E:/nautilus_trader  branch=task/r0-execution-guards  base=onde-perps 5c2ba5aedfe35625a1787d0468d6885771aa2e51
+FORK dirty at stage start: 40 files, all python/**/__init__.pyi CRLF-only
+
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+cargo 1.98.0 (797e8a9bc 2026-08-05)
+python 3.12.9 (E:/Nautilus-Perps/.venv/Scripts/python.exe)
+
+installed nautilus_trader: 2.0.0rc4
+  direct_url: file:///E:/nautilus_trader/dist-p3/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+  sha256: b49ef609bbd42cc37ef3315f15ddeae44b7ae3ec83275bca86df07bcf70f6436  (201832423 bytes)
+pyproject.toml declares:
+  file:///E:/nautilus_trader/target/wheels/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+  sha256: 6f5f0f6bb63bf9562d62caf9874f545eb0d28b5de36c9577beb8708e742a6698  (200955063 bytes)
+  => F17 reproduced: installed wheel != declared wheel (different size and SHA256)
