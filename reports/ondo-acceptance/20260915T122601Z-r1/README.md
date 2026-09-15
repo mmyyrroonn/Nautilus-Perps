@@ -278,7 +278,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 57 filtered out
 | 5 | **私有 WS transport 仍然一行未写** | 不是 R1 范围。R1 的缓冲/代际是按「将来接 transport 时直接喂进来」的结构写的，但没有 transport 就没有端到端的流侧验证 |
 | 6 | **对真实 venue 零请求** | 全部 fixture 仍是合成的；sandbox 从未被连接。plan §128 明确「不需要真实账号即可完成」，本阶段即按此执行 |
 | 7 | **wheel 未重编** | venv 里装的仍是旧 wheel。R1 全是 Rust 侧行为，与 Python 面无关，但**要跑 app 侧集成需先重编 wheel**（记录 SHA256） |
-| 8 | ~~一处已识别的 `judge_orders` 重构~~ | **已核实，撤回。** 见 §5.1 的更正：`judge_orders` 消费的**就是**合并后的读，计划的要求已满足 |
+| 8 | ~~一处已识别的 `judge_orders` 重构~~ | **已核实，撤回**（见 §5.1）。取而代之的是一个更小但**真实**的缺口：`AccountReading::orders` 承诺收录「只在流里见过、分页从未列出的订单」，**目前只有文档承诺、没有测试钉住**（见 §5.1 第二张表） |
 | 9 | **`r1_mutation_counterproof.txt` 只覆盖一条注入** | 见 §4.4(b) |
 
 ### 5.1 更正：`judge_orders` 并没有「在判定时重新推导」
@@ -294,7 +294,21 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 57 filtered out
 | 构造读时**优先取账本** | `src/execution.rs:2106-2110`（文档）、`:2111-2142`（`order_reading`） | `status` 与 `venue_filled` 在订单被跟踪时**取自订单索引**，只有未跟踪的订单才回落到 payload；文档说明理由是「the pass judges the state it left behind rather than the state one of its inputs described」 |
 | 账本侧的同一问题，不与判定重复报告 | `src/execution.rs:775-801` | 账本路径只在「打开分歧的那条 payload」上记一次日志（文档明写 `rather than on every read of it afterwards`），与 `judge_orders` 产出的 `Finding` 是两条不同通道，二者的一致性由 `src/execution.rs:346`、`:363` 的文档声明并指向 `judge_orders` |
 
-结论：plan 对 R1.1 的「final `AccountReading`/judgment from merged state including stream-only orders」这一条**在本阶段已实现且有测试覆盖**（`tests/reconciliation.rs:3482`、`:3569`、`:1907`；`AccountReading::orders` 含「只有流里见过」的订单见 `tests/reconciliation.rs:3655`）。**下一阶段不需要把它当作第一件事。**
+结论：plan 对 R1.1 的「final `AccountReading`/judgment from merged state including stream-only orders」这一条**在本阶段已实现**：判定消费的读由 `order_reading` 从账本索引建成，而账本索引吸收流报告与分页两种来源，所以「合并态」是有据可查的，不是声称。
+
+**但测试覆盖要分开说，不能含糊：**
+
+| 被测到的 | 测试 |
+|---|---|
+| 账户读期间到达的流报告被重放一次、进入那一轮的读 | `tests/reconciliation.rs:3482` |
+| 同一订单的多条流报告按到达序重放、后者胜 | `tests/reconciliation.rs:3569` |
+| 无法落地的报告 → 有界重读，不静默丢弃 | `tests/reconciliation.rs:1907` |
+
+| **没有被测到的** | 说明 |
+|---|---|
+| 「一个**只在流里出现过**、venue 的分页从未列出的订单，确实出现在 `AccountReading::orders` 里」 | 这一条目前**只有 `src/reconciliation.rs:922-928` 的文档承诺，没有测试钉住**。测试用的读由 `clean_reading()`（`tests/reconciliation.rs:201`）与 `long_position()`（`:873`）这类助手直接构造，不经过「分页 + 流」两条来源的合并路径 |
+
+**这个缺口比原先第 8 项那个说法更需要下一阶段处理**：它是「文档承诺了、测试没钉住」的一类，而不是「代码有缺陷」。原先第 8 项（以及 `cd959df` 提交信息里那句）的撤回理由见上；**更正本身也在第一次写下时引错过一条测试**（曾把「只有流见过」归给 `tests/reconciliation.rs:3655`，而那条实际是「重复帧只应用一次」），一并撤回。
 
 ---
 
@@ -305,7 +319,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 57 filtered out
 - R1 的两条验收命令退出码 0；fork `onde-perps` 除 40 个 CRLF-only `.pyi` 外干净；8 个文件的改动已 `--ff-only` 合并
 - R1 **没有**改 admission gate 的落点（R0 的 `admission()` / `revalidate()` 仍是唯一准入入口），也没有改 `allow_production_orders` 的拒绝路径
 - **F05（账户余额与持仓未接到真实 Nautilus 输出）本阶段未动**——它是 P1 交付阻断，且与「私有 WS transport 不存在」是同一件事的两面（见 §5.5）。
-- 本报告 §5.1 的更正撤回了一项原先的「下一阶段第一件事」；R1 未留下需要立刻偿还的已知重构，下一阶段的入口由 F05 与私有 WS transport 决定
+- 本报告 §5.1 撤回了一项原先的「下一阶段第一件事」（原第 8 项不成立），并给出一个更小的真实缺口：`AccountReading::orders` 的「只在流里见过的订单也收录」目前**只有文档承诺、没有测试钉住**。**建议作为下一阶段的第一个提交**——补一条走「分页 + 流」两条来源合并路径的测试，不需要改生产代码
 
 **本目录的工件清单**：
 
