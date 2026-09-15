@@ -1,0 +1,46 @@
+repo: E:\Nautilus-Perps (APP)
+branch: main
+base_head: 23f68bcd39f3cf7c8a2cf3e3ac3e6bf41a903dc7
+  subject: reports: state the stream-only coverage gap instead of claiming coverage
+r2_source_head: 39f714e
+  subject: ondo: price each arrival with the metadata of its time and tell the
+           three status axes apart (R2)
+  files: 8 changed, 3524 insertions(+), 379 deletions(-)
+r2_report_head: 6b69419
+  subject: reports: R2 acceptance — the market truth, the tape, and the seam
+           between the repos
+  files: 21 changed, 3031 insertions(+)
+
+# 39f714e carries the R2 source and tests; 6b69419 carries this report directory.
+# The file you are reading was written after both, so it lands in a follow-up
+# commit — the two SHAs above are the ones to cite.
+
+# FORK counterpart (recorded here so both SHAs are in one file):
+#   repo: E:\nautilus_trader (FORK), branch onde-perps
+#   base_head: 5b7d2db6694c8f1707482d07ce83de19888213c7
+#     subject: nautilus-ondo: square the account across recovery and honour
+#              the report-query contract (R1)
+#   r2_head:   3133e2501b990745655d2b6226801099b60e6b77
+#     subject: nautilus-ondo: publish market truth one axis at a time and share
+#              one REST budget per environment (R2)
+#     files: 10 changed, 2205 insertions(+), 97 deletions(-)
+#     all 10 files are inside crates/adapters/ondo/ — no other crate is touched.
+#     rustdoc and clippy are still red at this commit and were red before it;
+#     unlike R1 this stage did not byte-attribute the findings, it only ran
+#     clippy against the two files R2 wrote most of (data.rs, tests/market_data.rs)
+#     and found 0 there. See the report's §6.4 for what that does and does not
+#     establish.
+
+# Test totals: APP 704 passed / 0 failed / 97 subtests (exit 0); FORK 763 passed /
+# 0 failed across 8 test binaries (exit 0). Both acceptance commands in plan §R2
+# exit 0. No test annotation and no test function was deleted on either side.
+
+# Correction policy for this stage: none. R1 needed 508e7ec to withdraw a claim;
+# both R2 commit messages were checked against the artifacts before they were
+# written, and the two misjudgements this stage did produce (a false
+# "the adapter never publishes instruments" reading, and an unfalsifiable check)
+# are recorded in the report's §6 and §5 respectively rather than in the log.
+
+# Not verified, and stated as such in the report: the cross-repo seam was checked
+# statically, not end to end. Exercising it needs a wheel rebuilt from 3133e25;
+# that is a hard prerequisite for R5.1, not something R2 closed.

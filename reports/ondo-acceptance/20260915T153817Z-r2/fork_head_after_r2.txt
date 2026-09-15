@@ -1,0 +1,50 @@
+repo: E:\nautilus_trader (FORK)
+branch: onde-perps
+base_head: 5b7d2db6694c8f1707482d07ce83de19888213c7
+  subject: nautilus-ondo: square the account across recovery and honour the
+           report-query contract (R1)
+r2_head: 3133e2501b990745655d2b6226801099b60e6b77
+  subject: nautilus-ondo: publish market truth one axis at a time and share one
+           REST budget per environment (R2)
+  files: 10 changed, 2205 insertions(+), 97 deletions(-)
+
+# Working branch during the stage was task/ondo-r2-market-truth, fast-forwarded
+# into onde-perps on acceptance. 3133e25 is the single commit of the stage; an
+# earlier 4bd4bf9 was amended rather than followed up, because its message
+# asserted that the strict python-feature build was already failing at the
+# previous commit — that was reasoning, not a run. 3133e25 states only what was
+# run. Nothing else was rewritten.
+
+# Per-file diffstat (git diff --stat 5b7d2db..3133e25; paths are relative to the
+# repo root, i.e. all under crates/adapters/ondo/):
+#   src/data.rs             | 883 ++++++++++++++++++++++++++++++++-
+#   src/factories.rs        | 311 ++++++++++++++-
+#   src/http/rate_limit.rs  |  66 +++-
+#   src/python/factories.rs |  19 +-
+#   src/python/http.rs      |   7 +-
+#   src/websocket/book.rs   |  15 +
+#   src/websocket/client.rs | 326 +++++++++++++++-
+#   tests/execution.rs      |  27 +
+#   tests/market_data.rs    | 461 ++++++++++++++-
+#   tests/python.rs         | 187 ++++++-
+#
+# src/python/factories.rs and src/python/http.rs are doc-comment-only diffs: they
+# delete the instruction to hand the data factory's budget to the execution
+# factory, which was the F13 defect in prose. Removing a doc line counts as a
+# change here because the line was actively teaching the bug.
+
+# Acceptance commands, all against this commit (real output in the report dir):
+#   cargo +1.98.0 test -p nautilus-ondo --locked --offline --test market_data
+#       -> 43 passed; 0 failed; exit 0            (fork_market_data.txt)
+#   cargo +1.98.0 test -p nautilus-ondo --locked --offline
+#       -> 763 passed; 0 failed across 8 binaries; exit 0   (fork_full_suite.txt)
+#   cargo +1.98.0 fmt -p nautilus-ondo -- --check
+#       -> exit 0                                  (fork_fmt_check.txt)
+
+# One command did NOT pass and is not being smoothed over: the strict
+# --features python build exits 101 on a dependency warning with zero Compiling
+# lines of its own — i.e. nautilus-ondo is not rebuilt and the failure is not its
+# own. Recorded in the report's §2.2/§6.4 with the raw log; the same target with
+# CARGO_BUILD_WARNINGS=allow gives 5 passed.
+
+# APP counterpart: see app_head_after_r2.txt in this directory.
