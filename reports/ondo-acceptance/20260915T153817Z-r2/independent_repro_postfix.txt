@@ -1,0 +1,15 @@
+# independent_repro.py -- FIXED working tree (branch task/ondo-r2-market-truth)
+# command: .venv\Scripts\python.exe reports/ondo-acceptance/20260915T153817Z-r2/independent_repro.py .
+
+repository under test: E:\Nautilus-Perps
+PASS F06: fees by arrival: [(4, '3.4'), (4, '3.4'), (6, '100.9'), (6, '100.9'), (7, '100.9'), (7, '100.9')]
+PASS F07: the halt survived the reconnect (reasons ['disconnected', 'market_halted', 'no_book', 'stale_book'])
+PASS F08a: no increment in the tape -> step {}, reasons ['no_book', 'quantity_step_unknown']
+PASS F08b: 0.002 and 0.003 through the tape metadata give 0.006
+PASS F09: event age measured from the local receipt: min 120001 ms
+PASS F10: tick() held the queue at t=0.5 s and drained it at t=5 s with no new record (1 written, 2 dropped)
+PASS F11: the later session was read through the old cut tail (4 records from new)
+
+6/6 findings green
+
+exit code: 0

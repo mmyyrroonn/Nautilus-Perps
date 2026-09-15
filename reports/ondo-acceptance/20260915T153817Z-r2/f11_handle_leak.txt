@@ -1,0 +1,12 @@
+# F11 second half: the reader must close its handles on every exit path
+# (the review recorded that the truncated-tail path kept an open generator/file handle,
+#  which on Windows made the read temp file impossible to rename or delete)
+#
+# command: .venv\Scripts\python.exe <this script>   (script is inline in the transcript; logic reproduced below)
+
+reading a tape whose last line is cut (the truncation path F11 named):
+  full read to exhaustion: rename + delete of the read file both OK
+  generator abandoned early: rename + delete of the read file both OK
+
+NO WINDOWS HANDLE LEAK ON EITHER PATH: True
+exit code: 0

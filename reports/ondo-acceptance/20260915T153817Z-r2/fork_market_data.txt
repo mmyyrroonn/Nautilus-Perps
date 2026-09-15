@@ -1,0 +1,55 @@
+$ cargo +1.98.0 test -p nautilus-ondo --locked --offline --test market_data
+cwd: E:\nautilus_trader   branch: task/ondo-r2-market-truth   HEAD: 5b7d2db6694c8f1707482d07ce83de19888213c7
+run at: 2026-09-15T16:56:49Z
+-----------------------------------------------------------------
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests\market_data.rs (target\debug\deps\market_data-600ed2dce6596f5c.exe)
+
+running 43 tests
+test test_a_lexeme_wider_than_decimal_is_rejected_and_never_rounded ... ok
+test test_each_market_frame_is_one_clear_plus_adds_batch_with_the_snapshot_flag ... ok
+test test_the_book_channel_reference_counting_covers_quote_depth10_and_deltas ... ok
+test test_an_empty_snapshot_publishes_one_trailing_clear ... ok
+test test_a_rounded_conversion_is_explicit_and_counted ... ok
+test test_an_empty_snapshot_clears_both_sides ... ok
+test test_a_snapshot_replaces_the_whole_covered_range ... ok
+test test_control_messages_are_never_published_as_market_data ... ok
+test test_the_depth10_projection_is_taken_from_the_same_book_subscription ... ok
+test test_a_one_sided_snapshot_replaces_the_other_side_too ... ok
+test test_quote_and_trade_messages_map_to_their_nautilus_events ... ok
+test test_a_one_sided_top_of_book_is_ignored_rather_than_zero_filled ... ok
+test test_no_exchange_sequence_is_fabricated ... ok
+test test_item_time_becomes_ts_event_while_the_envelope_and_local_times_stay_separate ... ok
+test test_an_item_for_an_unloaded_market_is_reported_and_does_not_affect_the_loaded_one ... ok
+test test_a_data_array_routes_every_item_by_its_full_market ... ok
+test test_a_late_callback_from_the_previous_session_cannot_mutate_the_new_book ... ok
+test test_funding_keeps_the_hourly_rate_and_maps_interval_ends_to_next_funding_ns ... ok
+test test_an_unsubscribed_market_is_never_resubscribed ... ok
+test test_an_identical_snapshot_at_the_same_time_is_suppressed ... ok
+test test_an_older_item_time_cannot_overwrite_newer_state ... ok
+test test_levels_absent_from_a_limited_snapshot_do_not_linger ... ok
+test test_different_content_at_the_same_time_is_processed_in_receive_order ... ok
+test test_a_disconnect_makes_the_book_unusable_and_only_a_new_snapshot_restores_it ... ok
+test test_the_disconnect_and_ready_signals_are_documented_local_feed_states ... ok
+test test_the_expected_and_confirmed_subscription_sets_are_distinct ... ok
+test test_the_mark_price_example_maps_by_market_and_falls_back_to_a_later_time ... ok
+test test_the_mark_price_fixture_is_an_official_example_per_the_manifest ... ok
+test test_a_load_the_metadata_cannot_satisfy_fails_instead_of_loading_what_is_there ... ok
+test test_the_instrument_provider_publishes_exactly_the_requested_instruments ... ok
+test test_the_session_command_seam_registers_routes_and_publishes_the_disconnect ... ok
+test test_a_public_connection_needs_no_credentials ... ok
+test test_several_subscriptions_share_one_connection ... ok
+test test_without_a_raw_md_path_nothing_is_recorded_at_all ... ok
+test test_the_raw_recorder_writes_the_public_stream_and_nothing_else ... ok
+test test_the_configured_run_id_joins_the_raw_frames_with_the_tape ... ok
+test test_the_data_client_balances_a_deltas_only_book_subscription ... ok
+test test_the_seam_subscribes_once_per_topic_and_unsubscribes_on_the_last_reference ... ok
+test test_the_data_client_unsubscribes_the_shared_book_topic_after_deltas_and_depth10 ... ok
+test test_the_instrument_a_consumer_is_handed_names_the_metadata_version_it_belongs_to ... ok
+test test_one_recovery_frame_makes_the_feed_usable_and_the_deltas_come_first ... ok
+test test_a_disconnect_reaches_an_instrument_status_subscriber_and_only_a_new_snapshot_restores_the_book ... ok
+test test_a_venue_halt_reaches_a_subscriber_and_only_the_venue_clears_it ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+
+exit code: 0

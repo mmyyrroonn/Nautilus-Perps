@@ -1,0 +1,10 @@
+# plan R2 acceptance command (APP)
+# command: .\.venv\Scripts\python.exe -m pytest tests/test_market_tape.py tests/test_ondo_depth.py tests/test_ondo_preflight.py tests/test_spread_watch.py tests/test_opportunities.py -q -p no:cacheprovider
+
+........................................................................ [ 29%]
+........................................................................ [ 59%]
+........................................................................ [ 88%]
+............................                                             [100%]
+244 passed in 1.92s
+
+exit code: 0

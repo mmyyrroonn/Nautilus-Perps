@@ -1,0 +1,16 @@
+# independent_repro.py -- PRISTINE pre-fix tree
+# source: 'git archive HEAD' of the APP repo before the R2 changes, unpacked to %TEMP%\r2-prefix-check
+# command: .venv\Scripts\python.exe reports/ondo-acceptance/20260915T153817Z-r2/independent_repro.py %TEMP%\r2-prefix-check
+
+repository under test: C:\Users\myron\AppData\Local\Temp\r2-prefix-check
+FAIL F06: a mid-run metadata change repriced the wrong arrivals: [(4, '100.9'), (4, '100.9'), (6, '100.9'), (6, '100.9'), (7, '100.9'), (7, '100.9')] (early arrivals must be 3.4, later ones 100.9)
+FAIL F07: a reconnect cleared a real venue halt: the market axis is being lifted by adapter:snapshot_ready (reasons ['disconnected', 'no_book', 'stale_book'])
+FAIL F08a: the step was inferred from size_precision: {'0.001'} (reasons ['no_book'])
+FAIL F08b: the two real increments did not give a common step of 0.006: {'0.001'}
+FAIL F09: the event age collapsed to the venue-to-venue difference: ['0', '0', '0', '0'] (both legs are 120 s old and were received together)
+FAIL F10: the writer exposes no deadline drain entry point at all, so a quiet queue can only be emptied by the next arriving record (dropped=2, records=1)
+FAIL F11: the later complete session was never reached: 3 records seen, none from session new (old session old)
+
+0/6 findings green
+
+exit code: 1

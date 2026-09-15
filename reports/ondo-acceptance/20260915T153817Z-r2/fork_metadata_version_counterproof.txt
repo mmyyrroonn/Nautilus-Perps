@@ -1,0 +1,98 @@
+# MUTATION COUNTERPROOF, run by the main session.
+# One-line mutation: METADATA_VERSION_KEY's value changed from "metadata_version" to
+# "metadata_version_MUTATED", so the stamp still happens but lands where no reader looks.
+# This asks: do the three new tests actually FAIL when the carrier is broken, and do they
+# fail at their own assertion rather than for some incidental reason?
+# The file was restored afterwards and its sha256 re-checked (see the tail of this file).
+sha256 before mutation: eea550cdac6d70d07f3144330038d8f6dac17e90a31c3f6c89d294820b93dfc8
+-----------------------------------------------------------------
+$ cargo +1.98.0 test -p nautilus-ondo --locked --offline --lib -- the_accepted_version_is_stamped a_read_that_is_kept_leaves_the_stamp
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.00s
+     Running unittests src\lib.rs (target\debug\deps\nautilus_ondo-daf4d62b6bbbcf38.exe)
+
+running 2 tests
+test data::tests::test_a_read_that_is_kept_leaves_the_stamp_of_the_version_it_kept_alone ... FAILED
+test data::tests::test_the_accepted_version_is_stamped_on_the_instruments_a_consumer_reads_it_from ... FAILED
+
+failures:
+
+---- data::tests::test_a_read_that_is_kept_leaves_the_stamp_of_the_version_it_kept_alone stdout ----
+
+thread 'data::tests::test_a_read_that_is_kept_leaves_the_stamp_of_the_version_it_kept_alone' (37260) panicked at crates\adapters\ondo\src\data.rs:2163:13:
+assertion `left == right` failed: the stamp of the kept version is untouched on NVDA-USD-PERP.ONDO
+  left: None
+ right: Some(1)
+
+---- data::tests::test_the_accepted_version_is_stamped_on_the_instruments_a_consumer_reads_it_from stdout ----
+
+thread 'data::tests::test_the_accepted_version_is_stamped_on_the_instruments_a_consumer_reads_it_from' (32852) panicked at crates\adapters\ondo\src\data.rs:2099:13:
+assertion `left == right` failed: the first accepted version is stamped on NVDA-USD-PERP.ONDO
+  left: None
+ right: Some(1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    data::tests::test_a_read_that_is_kept_leaves_the_stamp_of_the_version_it_kept_alone
+    data::tests::test_the_accepted_version_is_stamped_on_the_instruments_a_consumer_reads_it_from
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 398 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p nautilus-ondo --lib`
+exit code: 101
+
+$ cargo +1.98.0 test -p nautilus-ondo --locked --offline --test market_data the_instrument_a_consumer_is_handed
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.81s
+     Running tests\market_data.rs (target\debug\deps\market_data-600ed2dce6596f5c.exe)
+
+running 1 test
+test test_the_instrument_a_consumer_is_handed_names_the_metadata_version_it_belongs_to ... FAILED
+
+failures:
+
+---- test_the_instrument_a_consumer_is_handed_names_the_metadata_version_it_belongs_to stdout ----
+
+thread 'test_the_instrument_a_consumer_is_handed_names_the_metadata_version_it_belongs_to' (30708) panicked at crates\adapters\ondo\tests\market_data.rs:2278:5:
+assertion `left == right` failed: the first accepted version names itself on the instrument it publishes
+  left: None
+ right: Some(1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_the_instrument_a_consumer_is_handed_names_the_metadata_version_it_belongs_to
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 42 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p nautilus-ondo --test market_data`
+exit code: 101
+
+-----------------------------------------------------------------
+RESTORED. sha256 before mutation: eea550cdac6d70d07f3144330038d8f6dac17e90a31c3f6c89d294820b93dfc8
+           sha256 after  restore: eea550cdac6d70d07f3144330038d8f6dac17e90a31c3f6c89d294820b93dfc8
+VERDICT: identical - the tree carries no mutation.
+
+$ cargo +1.98.0 test -p nautilus-ondo --locked --offline --lib -- the_accepted_version_is_stamped a_read_that_is_kept_leaves_the_stamp   (post-restore)
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.56s
+     Running unittests src\lib.rs (target\debug\deps\nautilus_ondo-daf4d62b6bbbcf38.exe)
+
+running 2 tests
+test data::tests::test_the_accepted_version_is_stamped_on_the_instruments_a_consumer_reads_it_from ... ok
+test data::tests::test_a_read_that_is_kept_leaves_the_stamp_of_the_version_it_kept_alone ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 398 filtered out; finished in 0.00s
+
+exit code: 0
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.76s
+     Running tests\market_data.rs (target\debug\deps\market_data-600ed2dce6596f5c.exe)
+
+running 1 test
+test test_the_instrument_a_consumer_is_handed_names_the_metadata_version_it_belongs_to ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 1.02s
+
+exit code: 0

@@ -1,0 +1,67 @@
+# FORK E:\nautilus_trader
+branch: task/ondo-r2-market-truth
+HEAD (R2 start): 5b7d2db6694c8f1707482d07ce83de19888213c7  (onde-perps, R1)
+onde-perps is at: 5b7d2db6694c8f1707482d07ce83de19888213c7
+R2 end (final commit on this branch): 3133e2501b990745655d2b6226801099b60e6b77
+
+## tracked changes of this stage (git diff --stat 5b7d2db 3133e25)
+ crates/adapters/ondo/src/data.rs             | 883 +++++++++++++++++++++++++--
+ crates/adapters/ondo/src/factories.rs        | 311 +++++++++-
+ crates/adapters/ondo/src/http/rate_limit.rs  |  66 +-
+ crates/adapters/ondo/src/python/factories.rs |  19 +-
+ crates/adapters/ondo/src/python/http.rs      |   7 +-
+ crates/adapters/ondo/src/websocket/book.rs   |  15 +
+ crates/adapters/ondo/src/websocket/client.rs | 326 +++++++++-
+ crates/adapters/ondo/tests/execution.rs      |  27 +
+ crates/adapters/ondo/tests/market_data.rs    | 461 +++++++++++++-
+ crates/adapters/ondo/tests/python.rs         | 187 +++++-
+ 10 files changed, 2205 insertions(+), 97 deletions(-)
+
+## scope check: anything changed OUTSIDE crates/adapters/ondo/ ?
+(no output above = nothing outside the ondo crate in the commit)
+
+## Cargo.toml / Cargo.lock diff in this stage
+(no output above = untouched)
+
+## post-commit working tree (the 40 CRLF-only .pyi are the long-standing noise;
+##  they were not staged, not committed, and not modified - see the memory note)
+   M python/nautilus_trader/__init__.pyi
+   M python/nautilus_trader/_libnautilus/__init__.pyi
+   M python/nautilus_trader/adapters/architect_ax/__init__.pyi
+   M python/nautilus_trader/adapters/aster/__init__.pyi
+   M python/nautilus_trader/adapters/betfair/__init__.pyi
+   M python/nautilus_trader/adapters/binance/__init__.pyi
+   M python/nautilus_trader/adapters/bitmex/__init__.pyi
+   M python/nautilus_trader/adapters/blockchain/__init__.pyi
+   M python/nautilus_trader/adapters/bybit/__init__.pyi
+   M python/nautilus_trader/adapters/coinbase/__init__.pyi
+   M python/nautilus_trader/adapters/databento/__init__.pyi
+   M python/nautilus_trader/adapters/deribit/__init__.pyi
+   M python/nautilus_trader/adapters/derive/__init__.pyi
+   M python/nautilus_trader/adapters/dydx/__init__.pyi
+   M python/nautilus_trader/adapters/hyperliquid/__init__.pyi
+   M python/nautilus_trader/adapters/interactive_brokers/__init__.pyi
+   M python/nautilus_trader/adapters/kraken/__init__.pyi
+   M python/nautilus_trader/adapters/lighter/__init__.pyi
+   M python/nautilus_trader/adapters/okx/__init__.pyi
+   M python/nautilus_trader/adapters/polymarket/__init__.pyi
+   M python/nautilus_trader/adapters/sandbox/__init__.pyi
+   M python/nautilus_trader/adapters/tardis/__init__.pyi
+   M python/nautilus_trader/analysis/__init__.pyi
+   M python/nautilus_trader/backtest/__init__.pyi
+   M python/nautilus_trader/common/__init__.pyi
+   M python/nautilus_trader/config/__init__.pyi
+   M python/nautilus_trader/cryptography/__init__.pyi
+   M python/nautilus_trader/data/__init__.pyi
+   M python/nautilus_trader/execution/__init__.pyi
+   M python/nautilus_trader/indicators/__init__.pyi
+   M python/nautilus_trader/infrastructure/__init__.pyi
+   M python/nautilus_trader/live/__init__.pyi
+   M python/nautilus_trader/model/__init__.pyi
+   M python/nautilus_trader/network/__init__.pyi
+   M python/nautilus_trader/persistence/__init__.pyi
+   M python/nautilus_trader/portfolio/__init__.pyi
+   M python/nautilus_trader/risk/__init__.pyi
+   M python/nautilus_trader/serialization/__init__.pyi
+   M python/nautilus_trader/testkit/__init__.pyi
+   M python/nautilus_trader/trading/__init__.pyi

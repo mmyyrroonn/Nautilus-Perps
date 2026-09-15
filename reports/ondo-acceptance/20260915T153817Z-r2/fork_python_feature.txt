@@ -1,0 +1,40 @@
+# DIAGNOSTIC BUILD, not the strict one (see the strict run below it).
+#
+# Why the strict run fails, and why that is not R2's doing (all three checked by the
+# main session on these bytes, not taken from the sub agent's report):
+#   1. the error names the DEPENDENCY `nautilus-persistence-macros` (lib), from an MSVC
+#      linker message, denied by .cargo/config.toml's build.warnings = "deny";
+#   2. cargo's strict output contains ZERO `Compiling` lines - not just zero for
+#      `nautilus-ondo` - so nothing in this crate was even reached;
+#   3. `git diff 5b7d2db -- Cargo.toml Cargo.lock` is empty and nothing outside
+#      crates/adapters/ondo/ is modified, so R2 could not have changed this build.
+
+$ cargo +1.98.0 test -p nautilus-ondo --features python --test python --locked --offline
+cwd: E:\nautilus_trader   HEAD: 5b7d2db6694c8f1707482d07ce83de19888213c7
+-----------------------------------------------------------------
+warning: linker stdout: 正在创建库 E:\nautilus_trader\target\debug\deps\nautilus_persistence_macros-bf1a5da75f91328c.dll.lib 和对象 E:\nautilus_trader\target\debug\deps\nautilus_persistence_macros-bf1a5da75f91328c.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+  = note: the `linker_messages` lint ignores `-D warnings`
+
+error: `nautilus-persistence-macros` (lib) generated 1 warning
+error: warnings are denied by `build.warnings` configuration
+exit code: 101
+
+-----
+$ CARGO_BUILD_WARNINGS=allow cargo +1.98.0 test -p nautilus-ondo --locked --offline --features python --test python
+-----------------------------------------------------------------
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.99s
+     Running tests\python.rs (target\debug\deps\python-dc83a5aa5ce41358.exe)
+
+running 5 tests
+test test_the_python_module_registers_the_documented_surface ... ok
+test test_the_http_client_constructs_offline_and_exposes_the_four_reads ... ok
+test test_the_data_client_config_and_the_http_client_take_no_secret ... ok
+test test_the_data_client_config_defaults_match_the_plan ... ok
+test test_the_python_factories_share_one_environment_budget_under_concurrency ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+exit code: 0

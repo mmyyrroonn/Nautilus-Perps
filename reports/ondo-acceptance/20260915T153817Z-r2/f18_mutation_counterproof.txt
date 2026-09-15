@@ -1,0 +1,118 @@
+# F18 mutation counterproof
+#
+# The main session reverted ONE hunk of the F18 fix in a disposable copy of the tree
+# (C:\Users\myron\AppData\Local\Temp/r2-mutation) and ran the two tests that claim to pin it.
+#
+# Mutation: in src/spread_watch.py :: _record_book_batch, restore the pre-fix lines
+#     feed_ok = leg.book_valid and leg.feed_ready
+#     valid=None if feed_ok else False,
+#     invalid_reason=None if feed_ok else "feed-invalidated",
+# (the depth10 site was deliberately left fixed, so only the deltas site is mutated)
+#
+# command: (cd %TEMP%\r2-mutation && .venv\Scripts\python.exe -m pytest tests/test_spread_watch.py -q -p no:cacheprovider -k "first_book_after_a_recovery or never_carries_the_feed_state")
+
+FF                                                                       [100%]
+================================== FAILURES ===================================
+_____ test_the_first_book_after_a_recovery_snapshot_is_valid_on_the_tape ______
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-171/test_the_first_book_after_a_re0')
+
+    def test_the_first_book_after_a_recovery_snapshot_is_valid_on_the_tape(tmp_path):
+        """F18: the replacement snapshot arrives *before* the ready notice and is good depth.
+    
+        The adapter publishes the new Deltas and only then `adapter:snapshot_ready`, so the
+        first book of the recovery lands while `feed_ready` is still False. Folding that feed
+        state into the record's `valid` wrote the one usable book of the recovery as invalid,
+        and a replay held an unusable book until a second frame arrived.
+        """
+        watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+        watch.on_start()
+        try:
+            ondo = watch._legs[0]
+            now = watch.clock.timestamp_ns()
+            watch.on_book_deltas(make_batch(
+                ondo.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+                ts=now,
+            ))
+            watch.on_instrument_status(make_status(
+                ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+            ))
+            # One recovery frame, then the ready notice - the adapter's own order.
+            watch.on_book_deltas(make_batch(
+                ondo.instrument_id, bids=[("100.06", "0.003")], asks=[("100.11", "0.004")],
+                ts=now + 1,
+            ))
+            watch.on_instrument_status(make_status(
+                ondo.instrument_id, "adapter:snapshot_ready", is_trading=None, is_quoting=True,
+            ))
+            assert ondo.feed_ready and ondo.book_valid
+        finally:
+            watch.on_stop()
+    
+        books = [r for r in read_tape([tmp_path / "l2"]) if r["event_kind"] == "book"]
+        assert len(books) == 2, "one record per fully applied batch"
+        recovery = books[1]
+        assert recovery["bids"] == [["100.06", "0.003"]]
+>       assert recovery["valid"] is True, (
+            "the replacement snapshot is good depth: the feed state belongs to the replay, "
+            "not to this record's own verdict"
+        )
+E       AssertionError: the replacement snapshot is good depth: the feed state belongs to the replay, not to this record's own verdict
+E       assert False is True
+
+tests\test_spread_watch.py:1650: AssertionError
+_______ test_a_book_record_never_carries_the_feed_state_as_its_validity _______
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-171/test_a_book_record_never_carri0')
+
+    def test_a_book_record_never_carries_the_feed_state_as_its_validity(tmp_path):
+        """Contract D: feed / market / metadata eligibility is replay state, never a record flag.
+    
+        A two-sided uncrossed book that arrives while the feed is marked down, and while the
+        venue says the market is halted, is still a perfectly good snapshot: what makes it
+        *unusable* is the state of the axes at that arrival, and that is what a replay reads
+        the status records for. Writing ``feed-invalidated`` into the record instead put the
+        same fact in two places and made one snapshot's verdict depend on an unrelated event.
+        """
+        watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+        watch.on_start()
+        try:
+            ondo = watch._legs[0]
+            now = watch.clock.timestamp_ns()
+            watch.on_instrument_status(make_status(
+                ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+            ))
+            watch.on_instrument_status(make_status(
+                ondo.instrument_id, "market halts", is_trading=False,
+                action=MarketStatusAction.HALT,
+            ))
+            watch.on_book_deltas(make_batch(
+                ondo.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+                ts=now,
+            ))
+            watch.on_book_depth(make_depth10(
+                ondo.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+                ts=now,
+            ))
+        finally:
+            watch.on_stop()
+    
+        rows = list(read_tape([tmp_path / "l2"]))
+>       assert "feed-invalidated" not in json.dumps(rows), (
+            "the feed's state is replayed from the status records, it is not a record's verdict"
+        )
+E       AssertionError: the feed's state is replayed from the status records, it is not a record's verdict
+E       assert 'feed-invalidated' not in '[{"schema_v...:39+00:00"}]'
+E         
+E         'feed-invalidated' is contained here:
+E           reason": "feed-invalidated"}, {"schema_version": 2, "run_id": "20260907T120000Z", "session_id": "20260907T120000Z-d3b8040e3f53", "arrival_seq": 6, "symbol": "NVDA", "venue": "ONDO", "instrument_id": "NVDA-USD-PERP.ONDO", "event_kind": "book", "ts_event_ns": 1788782400000000000, "ts_init_ns": 1788782400000000001, "recorded_mono_ns": 400750578000000, "bids": [["100.05", "0.001"]], "asks": [["100.10", "0.002"]], "coverage_limit": 10, "source": "depth10", "valid": true, "invalid_reason": null}, {"schema_version": 2, "run_id": "20260907T120000Z",...
+E         
+E         ...Full output truncated (2 lines hidden), use '-vv' to show
+
+tests\test_spread_watch.py:1690: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_spread_watch.py::test_the_first_book_after_a_recovery_snapshot_is_valid_on_the_tape
+FAILED tests/test_spread_watch.py::test_a_book_record_never_carries_the_feed_state_as_its_validity
+2 failed, 85 deselected in 0.31s
+
+exit code: 1

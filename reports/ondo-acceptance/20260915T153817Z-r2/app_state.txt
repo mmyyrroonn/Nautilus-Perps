@@ -1,0 +1,48 @@
+# APP E:\Nautilus-Perps
+branch: task/ondo-r2-market-truth
+HEAD (R2 start, unchanged by this stage): 23f68bcd39f3cf7c8a2cf3e3ac3e6bf41a903dc7
+main is at: 23f68bcd39f3cf7c8a2cf3e3ac3e6bf41a903dc7
+
+## tracked changes of this stage (git diff --stat 23f68bc)
+ src/analysis/ondo_depth.py   | 1023 +++++++++++++++++++++++++++++++++---------
+ src/market_tape.py           |  145 +++++-
+ src/ondo_preflight.py        |  248 ++++++++--
+ src/spread_watch.py          |  562 ++++++++++++++++++++---
+ tests/test_market_tape.py    |  305 ++++++++++++-
+ tests/test_ondo_depth.py     |  842 ++++++++++++++++++++++++++++++++--
+ tests/test_ondo_preflight.py |  252 ++++++++++-
+ tests/test_spread_watch.py   |  526 +++++++++++++++++++++-
+ 8 files changed, 3524 insertions(+), 379 deletions(-)
+
+## untracked, deliberately NOT staged (kept at their original provenance)
+# reports/ondo-acceptance/20260915T153817Z-r2/ is NOT in this list: this stage's own
+# report IS staged with the change, in the same commit.
+?? .commandcode/
+?? reports/entropy-survey-2026-09-04.sources.json
+?? reports/ondo-acceptance/20260914T114942Z/
+?? reports/ondo-acceptance/20260914T142730Z-p1-build/
+?? reports/ondo-acceptance/20260915T-signed-fixture-correction/
+?? reports/ondo-acceptance/20260915T024236Z-p2/
+?? reports/ondo-acceptance/20260915T033038Z-p1-ondo-hl/
+?? reports/ondo-review-2026-09-15/
+?? reports/ondo-stage-status-2026-09-15.md
+?? reports/perps-candidates-2026-09-11/
+?? reports/perps-survey-2026-09-04.md
+?? reports/perps-survey-2026-09-04.sources.json
+?? reports/polymarket-survey-2026-09-10.md
+?? reports/stage1/NVDA_HL-LIGHTER_20260908T141127Z_ref.csv
+?? reports/stage1/NVDA_HL-LIGHTER_20260908T142224Z_ref.csv
+?? reports/stage1/NVDA_HL-LIGHTER_20260908T142611Z_ref.csv
+?? reports/stage1/depth_NVDA_HL-LIGHTER_20260908T141127Z.csv
+?? reports/stage1/depth_NVDA_HL-LIGHTER_20260908T142224Z.csv
+?? reports/stage1/depth_NVDA_HL-LIGHTER_20260908T142611Z.csv
+?? reports/stage1/spread_NVDA_HL-LIGHTER_20260908T141127Z.csv
+?? reports/stage1/spread_NVDA_HL-LIGHTER_20260908T141127Z_all.csv
+?? reports/stage1/spread_NVDA_HL-LIGHTER_20260908T142224Z.csv
+?? reports/stage1/spread_NVDA_HL-LIGHTER_20260908T142224Z_all.csv
+?? reports/stage1/spread_NVDA_HL-LIGHTER_20260908T142611Z.csv
+?? reports/stage1/spread_NVDA_HL-LIGHTER_20260908T142611Z_all.csv
+?? reports/stage1/trades_NVDA_HL-LIGHTER_20260908T141127Z.csv
+?? reports/stage1/trades_NVDA_HL-LIGHTER_20260908T142224Z.csv
+?? reports/stage1/trades_NVDA_HL-LIGHTER_20260908T142611Z.csv
+?? "\345\255\246\344\271\240\350\257\276\351\242\230/"

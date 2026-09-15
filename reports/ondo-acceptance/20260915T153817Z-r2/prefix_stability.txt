@@ -1,0 +1,9 @@
+# plan R2 numeric regression: '追加未来文件不改变已输出前缀'
+# a later session's file (fees 100/50 bps, increments 0.5/0.7) is appended AFTER the
+# first analysis, and session A's rows must be identical before and after.
+
+session A rows, before the later file: [(4, 'A', '3.4', '0.006'), (4, 'A', '3.4', '0.006'), (5, 'A', '3.4', '0.006'), (5, 'A', '3.4', '0.006'), (6, 'A', '3.4', '0.006'), (6, 'A', '3.4', '0.006')]
+session A rows, after  the later file: [(4, 'A', '3.4', '0.006'), (4, 'A', '3.4', '0.006'), (5, 'A', '3.4', '0.006'), (5, 'A', '3.4', '0.006'), (6, 'A', '3.4', '0.006'), (6, 'A', '3.4', '0.006')]
+
+PREFIX UNCHANGED BY A LATER FILE: True
+session B rows (its own metadata is NOT inherited by A): []

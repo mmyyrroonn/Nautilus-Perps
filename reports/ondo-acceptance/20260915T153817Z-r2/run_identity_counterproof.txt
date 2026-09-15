@@ -1,0 +1,48 @@
+# run-identity check: counterproof + pre-fix observation
+#
+# (a) Observed on the tree BEFORE the main session added the check:
+#     a manifest whose run_id was re-pointed to 'r999' while run_dir still named
+#     'runs/r4' returned verified=True with run_id='r999' and an empty problems list.
+#     verify_run reported an identity it never checked against the manifest's own
+#     run_dir (plan R2.3: 'readers must verify run identity and hashes').
+#
+# (b) Counterproof of the regression added with the check: the check is deleted in a
+#     disposable copy and the preflight file is run.
+#
+# command: (cd %TEMP%\r2-identity-check && .venv\Scripts\python.exe -m pytest tests/test_ondo_preflight.py -q -p no:cacheprovider)
+
+.............................F.......                                    [100%]
+================================== FAILURES ===================================
+______ test_a_manifest_whose_run_id_and_run_dir_disagree_is_not_verified ______
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-176/test_a_manifest_whose_run_id_a0')
+
+    def test_a_manifest_whose_run_id_and_run_dir_disagree_is_not_verified(tmp_path):
+        """F12: the run identity is *checked*, not merely reported back to the reader.
+    
+        Every attempt publishes both a run id and the run directory that id belongs to. A
+        manifest whose two halves name different attempts is not one run's record, so a reader
+        must not be handed the run id it claims - the point of naming an identity at all.
+        """
+        out_dir = tmp_path / "preflight"
+        assert ondo_preflight.run(
+            ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+        ) == 0
+        meta = read_json(out_dir / "meta.json")
+        assert meta["run_dir"] == f"{ondo_preflight.RUNS_DIRNAME}/run-ok"
+    
+        # Re-point the run id while the run directory still names the original attempt.
+        meta["run_id"] = "run-somebody-else"
+        (out_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        verdict = ondo_preflight.verify_run(out_dir)
+>       assert verdict["verified"] is False
+E       assert True is False
+
+tests\test_ondo_preflight.py:720: AssertionError
+---------------------------- Captured stdout call -----------------------------
+[ondo-preflight] OK NVDA, TSLA -> C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-176\test_a_manifest_whose_run_id_a0\preflight (status, markets, contracts, instruments, meta; run run-ok)
+=========================== short test summary info ===========================
+FAILED tests/test_ondo_preflight.py::test_a_manifest_whose_run_id_and_run_dir_disagree_is_not_verified
+1 failed, 36 passed in 0.76s
+
+exit code: 1

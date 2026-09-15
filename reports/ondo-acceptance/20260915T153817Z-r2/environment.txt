@@ -1,0 +1,23 @@
+# R2 run environment
+run_id: 20260915T153817Z-r2
+started_utc: 2026-09-15T15:38:17Z
+
+## APP E:\Nautilus-Perps
+branch: task/ondo-r2-market-truth
+HEAD:   23f68bcd39f3cf7c8a2cf3e3ac3e6bf41a903dc7
+HEAD subject: reports: state the stream-only coverage gap instead of claiming coverage
+
+## FORK E:\nautilus_trader
+branch: task/ondo-r2-market-truth
+HEAD:   5b7d2db6694c8f1707482d07ce83de19888213c7
+HEAD subject: nautilus-ondo: square the account across recovery and honour the report-query contract (R1)
+
+## toolchain
+python: Python 3.12.9
+cargo:  cargo 1.98.0 (797e8a9bc 2026-08-05)
+rustc:  rustc 1.98.0 (88d9e12ae 2026-08-18)
+
+## installed wheel (venv)
+{"url":"file:///E:/nautilus_trader/dist-p3/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl","archive_info":{}}
+wheel sha256 (dist-p3):
+b49ef609bbd42cc37ef3315f15ddeae44b7ae3ec83275bca86df07bcf70f6436 */e/nautilus_trader/dist-p3/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl

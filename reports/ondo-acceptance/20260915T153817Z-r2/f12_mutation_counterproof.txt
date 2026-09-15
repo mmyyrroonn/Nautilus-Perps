@@ -1,0 +1,238 @@
+# F12 mutation counterproof
+#
+# One hunk of the F12 fix reverted in a disposable copy of the tree (%TEMP%\r2-mutation-f12),
+# then the whole preflight test file run.
+#
+# Mutation: in src/ondo_preflight.py :: write_report, the published <out>/meta.json is
+# written only when the attempt succeeded - i.e. the pre-fix rule 'meta only for a
+# complete run'. Everything else (run-id staging, the immutable run dir, the hashes)
+# was left fixed, so this isolates the 'stale success survives a later failure' symptom.
+#
+# command: (cd %TEMP%\r2-mutation-f12 && .venv\Scripts\python.exe -m pytest tests/test_ondo_preflight.py -q -p no:cacheprovider)
+
+...........F............FF.F.......F                                     [100%]
+================================== FAILURES ===================================
+_______________ test_a_403_shaped_error_from_any_endpoint_fails _______________
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-173/test_a_403_shaped_error_from_a0')
+
+    def test_a_403_shaped_error_from_any_endpoint_fails(tmp_path):
+        """A 403 fails the run and produces no payload - but it does produce its own status.
+    
+        The assertion that ``meta.json`` is absent moved with F12: a failed attempt now
+        publishes ``complete: false`` so that a *previous* success can never be read as the
+        state of this attempt. What must still not exist is any payload: an error body is
+        never written up as an empty market.
+        """
+        for endpoint in ("get_status", "get_markets", "get_contracts",
+                         "load_instrument_definitions"):
+            out_dir = tmp_path / f"out-{endpoint}"
+            client = FakeClient(error={endpoint: RuntimeError("HTTP 403 Forbidden")})
+            code = ondo_preflight.run(["NVDA"], out_dir, client=client)
+            assert code != 0, endpoint
+            for name in ondo_preflight.PAYLOAD_FILES:
+                assert not (out_dir / f"{name}.json").exists(), (endpoint, name)
+>           meta = read_json(out_dir / "meta.json")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_ondo_preflight.py:324: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_ondo_preflight.py:122: in read_json
+    return json.loads(path.read_text(encoding="utf-8"))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\pathlib.py:1027: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-173/test_a_403_shaped_error_from_a0/out-get_status/meta.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\myron\\AppData\\Local\\Temp\\pytest-of-myron\\pytest-173\\test_a_403_shaped_error_from_a0\\out-get_status\\meta.json'
+
+..\..\..\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\pathlib.py:1013: FileNotFoundError
+---------------------------- Captured stderr call -----------------------------
+[ondo-preflight] FAILED: get_status failed: RuntimeError: HTTP 403 Forbidden - refusing to write an empty status result as if the venue had none
+[ondo-preflight] a failed read is not an empty market: no payload was written; this attempt is recorded at C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-173\test_a_403_shaped_error_from_a0\out-get_status\runs\20260915T160935814240Z
+___ test_a_failed_run_after_a_success_never_leaves_the_old_success_in_place ___
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-173/test_a_failed_run_after_a_succ0')
+
+    def test_a_failed_run_after_a_success_never_leaves_the_old_success_in_place(tmp_path):
+        """F12: the same --out, a success then a missing-field failure.
+    
+        Before the fix the payloads were overwritten while ``meta.json`` was written only for
+        a complete run, so the directory held the old ``complete: true`` manifest, the old
+        hashes and the new, non-empty ``missing.json`` at the same time.
+        """
+        out_dir = tmp_path / "preflight"
+        assert ondo_preflight.run(
+            ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+        ) == 0
+        good = read_json(out_dir / "meta.json")
+        assert good["run_id"] == "run-ok" and good["complete"] is True
+        assert ondo_preflight.verify_run(out_dir)["verified"] is True
+    
+        markets = {"perps": {"tradingPairs": [MARKETS["perps"]["tradingPairs"][1]]}}
+        assert ondo_preflight.run(
+            ["NVDA", "TSLA"], out_dir, client=FakeClient(markets=markets), run_id="run-bad",
+        ) == 1
+    
+        meta = read_json(out_dir / "meta.json")
+>       assert meta["run_id"] == "run-bad", "the published view is the attempt that just ran"
+E       AssertionError: the published view is the attempt that just ran
+E       assert 'run-ok' == 'run-bad'
+E         
+E         - run-bad
+E         + run-ok
+
+tests\test_ondo_preflight.py:546: AssertionError
+---------------------------- Captured stdout call -----------------------------
+[ondo-preflight] OK NVDA, TSLA -> C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-173\test_a_failed_run_after_a_succ0\preflight (status, markets, contracts, instruments, meta; run run-ok)
+---------------------------- Captured stderr call -----------------------------
+[ondo-preflight] FAILED: 1 missing/unknown item(s) for NVDA, TSLA -> C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-173\test_a_failed_run_after_a_succ0\preflight (run run-bad, complete=false)
+[ondo-preflight]   NVDA NVDA-USD.P market: no perps.tradingPairs entry for NVDA-USD.P (venue returned 1 markets)
+_______ test_a_transport_failure_after_a_success_publishes_that_failure _______
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-173/test_a_transport_failure_after0')
+
+    def test_a_transport_failure_after_a_success_publishes_that_failure(tmp_path):
+        """F12: a transport error is a result too - it must not leave the old run standing."""
+        out_dir = tmp_path / "preflight"
+        assert ondo_preflight.run(
+            ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+        ) == 0
+        assert ondo_preflight.verify_run(out_dir)["verified"] is True
+    
+        forbidden = RuntimeError("HTTP 403 Forbidden: GET /v1/markets -> {'error':'Forbidden'}")
+        assert ondo_preflight.run(
+            ["NVDA", "TSLA"], out_dir, client=FakeClient(error={"get_markets": forbidden}),
+            run_id="run-403",
+        ) == 1
+    
+        meta = read_json(out_dir / "meta.json")
+>       assert meta["run_id"] == "run-403"
+E       AssertionError: assert 'run-ok' == 'run-403'
+E         
+E         - run-403
+E         + run-ok
+
+tests\test_ondo_preflight.py:582: AssertionError
+---------------------------- Captured stdout call -----------------------------
+[ondo-preflight] OK NVDA, TSLA -> C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-173\test_a_transport_failure_after0\preflight (status, markets, contracts, instruments, meta; run run-ok)
+---------------------------- Captured stderr call -----------------------------
+[ondo-preflight] FAILED: get_markets failed: RuntimeError: HTTP 403 Forbidden: GET /v1/markets -> {'error':'Forbidden'} - refusing to write an empty markets result as if the venue had none
+[ondo-preflight] a failed read is not an empty market: no payload was written; this attempt is recorded at C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-173\test_a_transport_failure_after0\preflight\runs\run-403
+______ test_a_crash_in_the_middle_of_publishing_is_visible_to_the_reader ______
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-173/test_a_crash_in_the_middle_of_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000106F0B7A8D0>
+
+    def test_a_crash_in_the_middle_of_publishing_is_visible_to_the_reader(tmp_path, monkeypatch):
+        """F12: an interruption between the payloads and the manifest fails verification.
+    
+        The commit point is the atomic replacement of ``<out>/meta.json``. If the process dies
+        after the payloads are in place and before the manifest is switched, the manifest that
+        is still there describes a *different* run whose hashes no longer match what is on the
+        disk - so the reader sees a mismatch, not a tidy success.
+        """
+        out_dir = tmp_path / "preflight"
+        assert ondo_preflight.run(
+            ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+        ) == 0
+        good_manifest = read_json(out_dir / "meta.json")
+    
+        class Crash(RuntimeError):
+            pass
+    
+        real_write_json = ondo_preflight._write_json
+    
+        def dying_write_json(path, payload):
+            """Let the payloads land, then die before the published manifest is switched."""
+            path = Path(path)
+            if path.parent == out_dir and path.name == "meta.json":
+                raise Crash("the process died between the payloads and the manifest")
+            return real_write_json(path, payload)
+    
+        markets = {"perps": {"tradingPairs": [MARKETS["perps"]["tradingPairs"][1]]}}
+        with monkeypatch.context() as patched:
+            patched.setattr(ondo_preflight, "_write_json", dying_write_json)
+>           with pytest.raises(Crash):
+                 ^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE Crash
+
+tests\test_ondo_preflight.py:650: Failed
+---------------------------- Captured stdout call -----------------------------
+[ondo-preflight] OK NVDA, TSLA -> C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-173\test_a_crash_in_the_middle_of_0\preflight (status, markets, contracts, instruments, meta; run run-ok)
+---------------------------- Captured stderr call -----------------------------
+[ondo-preflight] FAILED: 1 missing/unknown item(s) for NVDA, TSLA -> C:\Users\myron\AppData\Local\Temp\pytest-of-myron\pytest-173\test_a_crash_in_the_middle_of_0\preflight (run run-2, complete=false)
+[ondo-preflight]   NVDA NVDA-USD.P market: no perps.tradingPairs entry for NVDA-USD.P (venue returned 1 markets)
+________________ test_a_failed_run_never_leaves_a_half_report _________________
+
+tmp_path = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-173/test_a_failed_run_never_leaves0')
+
+    def test_a_failed_run_never_leaves_a_half_report(tmp_path):
+        """A failed run publishes a status that says it failed - never a partial success.
+    
+        F12 changed what "no half report" means: the run still writes its own ``complete:
+        false`` manifest with the failure, and the payloads it could produce (here an empty
+        missing list is not a success either - the schema check fails the run first). What it
+        must never do is leave a manifest claiming a complete run.
+        """
+        markets = {"perps": {"tradingPairs": []}}
+        out_dir = tmp_path / "p"
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            code = ondo_preflight.main(
+                ["--symbols", "NVDA,TSLA", "--out", str(out_dir)],
+                client=FakeClient(markets=markets, instruments=[]),
+            )
+        assert code != 0
+        assert "preflight" in err.getvalue().lower()
+>       meta = read_json(out_dir / "meta.json")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_ondo_preflight.py:775: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_ondo_preflight.py:122: in read_json
+    return json.loads(path.read_text(encoding="utf-8"))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\pathlib.py:1027: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/myron/AppData/Local/Temp/pytest-of-myron/pytest-173/test_a_failed_run_never_leaves0/p/meta.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\myron\\AppData\\Local\\Temp\\pytest-of-myron\\pytest-173\\test_a_failed_run_never_leaves0\\p\\meta.json'
+
+..\..\..\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\pathlib.py:1013: FileNotFoundError
+=========================== short test summary info ===========================
+FAILED tests/test_ondo_preflight.py::test_a_403_shaped_error_from_any_endpoint_fails
+FAILED tests/test_ondo_preflight.py::test_a_failed_run_after_a_success_never_leaves_the_old_success_in_place
+FAILED tests/test_ondo_preflight.py::test_a_transport_failure_after_a_success_publishes_that_failure
+FAILED tests/test_ondo_preflight.py::test_a_crash_in_the_middle_of_publishing_is_visible_to_the_reader
+FAILED tests/test_ondo_preflight.py::test_a_failed_run_never_leaves_a_half_report
+5 failed, 31 passed in 0.60s
+
+exit code: 1
