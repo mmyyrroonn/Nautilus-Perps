@@ -25,3 +25,9 @@ r1_head: cd959df
 
 # Test totals: 746 passed / 0 failed crate-wide (R0: 712), both acceptance
 # commands exit 0. No test annotation and no test function was deleted.
+
+# Correction: 508e7ec (reports: withdraw the judge_orders claim from the R1
+# report) withdraws one §5 item from the report above. That item -- and the
+# same sentence in cd959df's commit message -- claimed judge_orders re-derives
+# the order state instead of consuming the merged AccountReading. It does not;
+# see the report's §5.1. Cite 508e7ec or later for the report, not cd959df.
