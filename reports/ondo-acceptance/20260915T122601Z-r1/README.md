@@ -3,7 +3,7 @@
 **run id**：`20260915T122601Z-r1`
 **阶段**：R1（plan `docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md` 的 R1.1 / R1.2）
 **对应 review 发现**：F03、F04、F14、F16（`reports/ondo-code-review-2026-09-15.md`）
-**本报告作者**：主 session（Fable 5.1）。§2 与 §4.1–§4.3、§4.4 的第一条由主 session **亲自执行**；§4.4 其余三条是转述 sub agent 的报告，已逐条标注。
+**本报告作者**：主 session（Fable 5.1）。§2 与 §4.1–§4.3、§4.4 的第一条、§5.1 由主 session **亲自执行**；§4.4 其余三条是转述 sub agent 的报告，已逐条标注。**§5.1 是对本报告自身一处错误陈述的更正**（该陈述曾随 `cd959df` 的 commit message 一起进入 `main`）。
 
 **本阶段不授权主网交易、资金转移或常驻部署。** 全程未向任何真实 venue 发出请求，未使用任何真实账号。
 
@@ -278,8 +278,23 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 57 filtered out
 | 5 | **私有 WS transport 仍然一行未写** | 不是 R1 范围。R1 的缓冲/代际是按「将来接 transport 时直接喂进来」的结构写的，但没有 transport 就没有端到端的流侧验证 |
 | 6 | **对真实 venue 零请求** | 全部 fixture 仍是合成的；sandbox 从未被连接。plan §128 明确「不需要真实账号即可完成」，本阶段即按此执行 |
 | 7 | **wheel 未重编** | venv 里装的仍是旧 wheel。R1 全是 Rust 侧行为，与 Python 面无关，但**要跑 app 侧集成需先重编 wheel**（记录 SHA256） |
-| 8 | **一处已识别但本阶段有意推迟的重构** | `judge_orders` 目前在判定时**重新推导**订单状态，而不是消费 `AccountReading` 里已经合并好的那份。计划要求「判定所消费的读，就是合并后的那份读」。推迟的理由：本阶段的提交已冻结并合并，改它需要第二个提交与一次独立验收，不在 R1 的验收范围内。**留给下一阶段的第一件事** |
+| 8 | ~~一处已识别的 `judge_orders` 重构~~ | **已核实，撤回。** 见 §5.1 的更正：`judge_orders` 消费的**就是**合并后的读，计划的要求已满足 |
 | 9 | **`r1_mutation_counterproof.txt` 只覆盖一条注入** | 见 §4.4(b) |
+
+### 5.1 更正：`judge_orders` 并没有「在判定时重新推导」
+
+**本报告提交后的第一次复核发现：本节原先的第 8 项（`judge_orders` 在判定时重新推导订单状态，而非消费合并后的读）在当前字节上不成立，已撤回。** 该项的原文也出现在了携带本报告的提交 `cd959df` 的 message 里——提交已合并，不回改历史，以本节的更正为准。
+
+核实过程（全部按 `5b7d2db` 的冻结字节实读）：
+
+| 取证 | 位置 | 说明 |
+|---|---|---|
+| 判定的输入**就是**读里的字段 | `src/reconciliation.rs:2163` | `judge_orders` 遍历 `reading.orders`，逐条比较 `Some(venue_filled) != order.applied_filled`，`venue_filled`/`applied_filled`/`status` 都是读里的现成字段，没有任何回查账本的动作 |
+| 读本身保证是**合并态** | `src/reconciliation.rs:922-928` | `AccountReading::orders` 的文档写死：「The state is the **merged** one, not the page's … An order only the stream mentioned is listed here too」 |
+| 构造读时**优先取账本** | `src/execution.rs:2106-2110`（文档）、`:2111-2142`（`order_reading`） | `status` 与 `venue_filled` 在订单被跟踪时**取自订单索引**，只有未跟踪的订单才回落到 payload；文档说明理由是「the pass judges the state it left behind rather than the state one of its inputs described」 |
+| 账本侧的同一问题，不与判定重复报告 | `src/execution.rs:775-801` | 账本路径只在「打开分歧的那条 payload」上记一次日志（文档明写 `rather than on every read of it afterwards`），与 `judge_orders` 产出的 `Finding` 是两条不同通道，二者的一致性由 `src/execution.rs:346`、`:363` 的文档声明并指向 `judge_orders` |
+
+结论：plan 对 R1.1 的「final `AccountReading`/judgment from merged state including stream-only orders」这一条**在本阶段已实现且有测试覆盖**（`tests/reconciliation.rs:3482`、`:3569`、`:1907`；`AccountReading::orders` 含「只有流里见过」的订单见 `tests/reconciliation.rs:3655`）。**下一阶段不需要把它当作第一件事。**
 
 ---
 
@@ -290,7 +305,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 57 filtered out
 - R1 的两条验收命令退出码 0；fork `onde-perps` 除 40 个 CRLF-only `.pyi` 外干净；8 个文件的改动已 `--ff-only` 合并
 - R1 **没有**改 admission gate 的落点（R0 的 `admission()` / `revalidate()` 仍是唯一准入入口），也没有改 `allow_production_orders` 的拒绝路径
 - **F05（账户余额与持仓未接到真实 Nautilus 输出）本阶段未动**——它是 P1 交付阻断，且与「私有 WS transport 不存在」是同一件事的两面（见 §5.5）。
-- §5.8 那处重构建议作为下一阶段的第一个提交，独立验收
+- 本报告 §5.1 的更正撤回了一项原先的「下一阶段第一件事」；R1 未留下需要立刻偿还的已知重构，下一阶段的入口由 F05 与私有 WS transport 决定
 
 **本目录的工件清单**：
 
