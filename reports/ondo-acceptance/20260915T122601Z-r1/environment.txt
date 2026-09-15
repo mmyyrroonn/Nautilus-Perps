@@ -1,0 +1,19 @@
+# R1 acceptance run — environment and starting SHAs
+# run id: 20260915T122601Z-r1
+
+repo: E:\Nautilus-Perps (APP)
+branch_at_start: main
+app_base_head: a7a49fa0afdf2f8b8f45e2a2acb53c304198232b
+  subject: reports: pin the R0 acceptance artifacts to the final fork HEAD
+
+repo: E:\nautilus_trader (FORK)
+branch_at_start: onde-perps
+fork_base_head: cef58bcf9453af89221560fa7960154a8fccbde9
+  subject: nautilus-ondo: take the market cancel reason by reference
+
+task branches created (both off the heads above):
+  APP  task/ondo-r1-recovery-consistency
+  FORK task/ondo-r1-recovery-consistency
+
+# Rust toolchain
+cargo 1.98.0 (797e8a9bc 2026-08-05)

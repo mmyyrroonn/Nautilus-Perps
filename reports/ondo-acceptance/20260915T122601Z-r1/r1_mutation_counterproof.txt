@@ -1,0 +1,83 @@
+R1 注入反证 — 主 session 亲自做（不是 sub agent 转述）
+================================================================================
+日期 2026-09-15，被测字节：FORK onde-perps @ 5b7d2db6694c8f1707482d07ce83de19888213c7
+工作区在该提交上干净（execution.rs 工作区 md5 = HEAD blob md5 = c8ce2920119b19fd04961462d86ee582）
+
+目的
+--------------------------------------------------------------------------------
+R1.2b 把「只给 venue order id 也能查单」做成了新行为（F16 的前半条）。这份反证
+回答的是：覆盖它的那条测试到底会不会在行为退回旧样时变红，还是只是跟着新代码
+一起写、怎么写都绿。sub agent 报告它自己做过四条注入反证，本文件是主 session
+自己复跑的那一条。
+
+
+注入的改动（在 src/execution.rs 的 generate_order_status_report 内）
+--------------------------------------------------------------------------------
+把 R1 新增的这条臂：
+
+    (None, Some(venue_order_id)) => venue_order_id.to_string(),
+
+改回 R1 之前的等价行为——拒绝：
+
+    (None, Some(_venue_order_id)) => anyhow::bail!(
+        "MUTATION INJECTED FOR ACCEPTANCE: a venue-order-id-only read is refused again"
+    ),
+
+注入后 execution.rs md5 = 7b9fabe611279216645a36e63ae45335
+
+
+命令
+--------------------------------------------------------------------------------
+$ cargo +1.98.0 test -p nautilus-ondo --locked --offline --test execution \
+    test_a_report_query_by_venue_order_id_alone_is_read_from_the_ledger
+
+
+注入后的真实输出（节选，全文即下面这几行）
+--------------------------------------------------------------------------------
+    Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.54s
+     Running tests\execution.rs (target\debug\deps\execution-8a3853199ce12edf.exe)
+
+running 1 test
+test test_a_report_query_by_venue_order_id_alone_is_read_from_the_ledger ... FAILED
+
+failures:
+
+---- test_a_report_query_by_venue_order_id_alone_is_read_from_the_ledger stdout ----
+
+thread 'test_a_report_query_by_venue_order_id_alone_is_read_from_the_ledger' (40224) panicked at crates\adapters\ondo\tests\execution.rs:3696:10:
+the order is read: MUTATION INJECTED FOR ACCEPTANCE: a venue-order-id-only read is refused again
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    test_a_report_query_by_venue_order_id_alone_is_read_from_the_ledger
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 57 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `-p nautilus-ondo --test execution`
+
+（该命令是管道到 tail 的，所以 shell 回报的 $? 是 tail 的退出码，不能用来说明
+ cargo 的成败；成败以上面的 `test result: FAILED. 0 passed; 1 failed` 为准。）
+
+
+结论
+--------------------------------------------------------------------------------
+测试变红，且红在它自己的断言处（tests/execution.rs:3696）——这条测试确实在断言
+「venue order id 单查会真的发出请求并读到订单」，不是空转。若这行被改回旧行为，
+它会拦下。
+
+
+回滚
+--------------------------------------------------------------------------------
+$ git checkout -- crates/adapters/ondo/src/execution.rs
+回滚后 worktree md5 = c8ce2920119b19fd04961462d86ee582  == HEAD blob md5
+$ git status --short -- crates/adapters/ondo/     → 无输出（干净）
+
+回滚后在同样字节上重跑两条验收命令：
+  PLAN  : passed=318 failed=0  PLAN_EXIT=0
+  SUITE : passed=746 failed=0  SUITE_EXIT=0
+
+未做
+--------------------------------------------------------------------------------
+sub agent 报告的四条注入反证中，其余三条（缓冲按到达序、代际拒绝、覆盖不足判不
+确定）主 session 没有复跑。详见 README.md §4.4。

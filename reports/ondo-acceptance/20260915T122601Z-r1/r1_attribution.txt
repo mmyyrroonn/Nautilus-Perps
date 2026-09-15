@@ -1,0 +1,35 @@
+R1 attribution — reference diff cef58bcf..5b7d2db6 (fork, onde-perps)
+==============================================================================
+
+Added lines per file, new-file side:
+    885  crates/adapters/ondo/src/execution.rs
+      6  crates/adapters/ondo/src/http/orders.rs
+    118  crates/adapters/ondo/src/http/private.rs
+    371  crates/adapters/ondo/src/reconciliation.rs
+      1  crates/adapters/ondo/test_data/conflicts.md
+   1095  crates/adapters/ondo/tests/execution.rs
+     45  crates/adapters/ondo/tests/http_contract.rs
+   1063  crates/adapters/ondo/tests/reconciliation.rs
+
+rustdoc (cargo doc, RUSTDOCFLAGS=-Dwarnings)
+------------------------------------------------------------------------------
+Source: target/r1_doc.txt. Every `-->` span, both an error's own span and
+any note span, is tested — the conservative reading.
+  distinct findings measured : 36
+  files carrying them        : 10
+  ON AN R1-ADDED LINE        : 0
+
+clippy (cargo clippy --all-targets, -Dwarnings)
+------------------------------------------------------------------------------
+Source: target/r1_clippy.txt, spans extracted into target/clippy_pairs.txt.
+Line count basis differs from cargo's own `N previous errors` (which counts
+per failing compilation unit); this file counts distinct file:line:col pairs.
+  distinct findings measured : 38
+  files carrying them        : 11
+  ON AN R1-ADDED LINE        : 0
+
+==============================================================================
+Conclusion: R1 introduced no rustdoc finding and no clippy finding.
+The 36 rustdoc spans and the 38 clippy pairs are all inherited from the
+pre-R1 tree. This is an attribution test, not a count: it says nothing
+about how many pre-existing findings remain, only that R1 added none.

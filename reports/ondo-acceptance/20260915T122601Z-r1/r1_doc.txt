@@ -1,0 +1,265 @@
+# R1 rustdoc (inherited red — see report §5)
+# cwd: E:/nautilus_trader
+# $ RUSTDOCFLAGS='-Dwarnings' cargo +1.98.0 doc -p nautilus-ondo --no-deps --locked --offline
+
+   Compiling nautilus-common v0.63.0 (E:\nautilus_trader\crates\common)
+    Checking nautilus-execution v0.63.0 (E:\nautilus_trader\crates\execution)
+    Checking nautilus-live v0.63.0 (E:\nautilus_trader\crates\live)
+ Documenting nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+error: unresolved link to `python`
+  --> crates\adapters\ondo\src\lib.rs:49:9
+   |
+49 | //! - [`python`] - the Python surface (`python` feature): venue constants, the environment, the two
+   |         ^^^^^^ no item named `python` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+note: the lint level is defined here
+  --> crates\adapters\ondo\src\lib.rs:89:9
+   |
+89 | #![deny(rustdoc::broken_intra_doc_links)]
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: unresolved link to `OndoExecutionConfigError::ProductionOrdersUnsupported`
+  --> crates\adapters\ondo\src\execution.rs:55:7
+   |
+55 | //! [`OndoExecutionConfigError::ProductionOrdersUnsupported`] refuses `allow_production_orders`
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `OndoExecutionConfigError` in scope
+
+error: public documentation for `apply_fill` links to private item `OndoReporter::apply_fill`
+    --> crates\adapters\ondo\src\execution.rs:2160:15
+     |
+2160 |     /// See [`OndoReporter::apply_fill`].
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+     = note: `-D rustdoc::private-intra-doc-links` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(rustdoc::private_intra_doc_links)]`
+
+error: unresolved link to `Self::post_raw`
+  --> crates\adapters\ondo\src\http\client.rs:31:46
+   |
+31 | //! - It does **not** own order semantics. [`Self::post_raw`] is single-shot on purpose: an error
+   |                                              ^^^^^^^^^^^^^^ no item named `post_raw` in module `client`
+
+error: unresolved link to `Self::get_account`
+  --> crates\adapters\ondo\src\http\client.rs:63:61
+   |
+63 | //! ([`crate::signing`]) and reads the private endpoints ([`Self::get_account`],
+   |                                                             ^^^^^^^^^^^^^^^^^ no item named `get_account` in module `client`
+
+error: unresolved link to `Self::get_orders`
+  --> crates\adapters\ondo\src\http\client.rs:64:7
+   |
+64 | //! [`Self::get_orders`], [`Self::get_fills`], [`Self::get_positions`], [`Self::get_balance`], and
+   |       ^^^^^^^^^^^^^^^^ no item named `get_orders` in module `client`
+
+error: unresolved link to `Self::get_fills`
+  --> crates\adapters\ondo\src\http\client.rs:64:29
+   |
+64 | //! [`Self::get_orders`], [`Self::get_fills`], [`Self::get_positions`], [`Self::get_balance`], and
+   |                             ^^^^^^^^^^^^^^^ no item named `get_fills` in module `client`
+
+error: unresolved link to `Self::get_positions`
+  --> crates\adapters\ondo\src\http\client.rs:64:50
+   |
+64 | //! [`Self::get_orders`], [`Self::get_fills`], [`Self::get_positions`], [`Self::get_balance`], and
+   |                                                  ^^^^^^^^^^^^^^^^^^^ no item named `get_positions` in module `client`
+
+error: unresolved link to `Self::get_balance`
+  --> crates\adapters\ondo\src\http\client.rs:64:75
+   |
+64 | //! [`Self::get_orders`], [`Self::get_fills`], [`Self::get_positions`], [`Self::get_balance`], and
+   |                                                                           ^^^^^^^^^^^^^^^^^ no item named `get_balance` in module `client`
+
+error: unresolved link to `Self::get_signed`
+  --> crates\adapters\ondo\src\http\client.rs:65:15
+   |
+65 | //! the raw [`Self::get_signed`] / [`Self::post_signed_raw`] / [`Self::delete_signed_raw`] seams).
+   |               ^^^^^^^^^^^^^^^^ no item named `get_signed` in module `client`
+
+error: unresolved link to `Self::post_signed_raw`
+  --> crates\adapters\ondo\src\http\client.rs:65:38
+   |
+65 | //! the raw [`Self::get_signed`] / [`Self::post_signed_raw`] / [`Self::delete_signed_raw`] seams).
+   |                                      ^^^^^^^^^^^^^^^^^^^^^ no item named `post_signed_raw` in module `client`
+
+error: unresolved link to `Self::delete_signed_raw`
+  --> crates\adapters\ondo\src\http\client.rs:65:66
+   |
+65 | //! the raw [`Self::get_signed`] / [`Self::post_signed_raw`] / [`Self::delete_signed_raw`] seams).
+   |                                                                  ^^^^^^^^^^^^^^^^^^^^^^^ no item named `delete_signed_raw` in module `client`
+
+error: unresolved link to `Self::create_order`
+  --> crates\adapters\ondo\src\http\client.rs:67:52
+   |
+67 | //! It also carries the **order write surface**: [`Self::create_order`],
+   |                                                    ^^^^^^^^^^^^^^^^^^ no item named `create_order` in module `client`
+
+error: unresolved link to `Self::create_orders_batch`
+  --> crates\adapters\ondo\src\http\client.rs:68:7
+   |
+68 | //! [`Self::create_orders_batch`], the two lookups ([`Self::get_order`],
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `create_orders_batch` in module `client`
+
+error: unresolved link to `Self::get_order`
+  --> crates\adapters\ondo\src\http\client.rs:68:55
+   |
+68 | //! [`Self::create_orders_batch`], the two lookups ([`Self::get_order`],
+   |                                                       ^^^^^^^^^^^^^^^ no item named `get_order` in module `client`
+
+error: unresolved link to `Self::get_client_order`
+  --> crates\adapters\ondo\src\http\client.rs:69:7
+   |
+69 | //! [`Self::get_client_order`]) and the three cancels ([`Self::cancel_order`],
+   |       ^^^^^^^^^^^^^^^^^^^^^^ no item named `get_client_order` in module `client`
+
+error: unresolved link to `Self::cancel_order`
+  --> crates\adapters\ondo\src\http\client.rs:69:58
+   |
+69 | //! [`Self::get_client_order`]) and the three cancels ([`Self::cancel_order`],
+   |                                                          ^^^^^^^^^^^^^^^^^^ no item named `cancel_order` in module `client`
+
+error: unresolved link to `Self::cancel_client_order`
+  --> crates\adapters\ondo\src\http\client.rs:70:7
+   |
+70 | //! [`Self::cancel_client_order`], [`Self::cancel_market_orders`]). Every one of them takes its
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `cancel_client_order` in module `client`
+
+error: unresolved link to `Self::cancel_market_orders`
+  --> crates\adapters\ondo\src\http\client.rs:70:38
+   |
+70 | //! [`Self::cancel_client_order`], [`Self::cancel_market_orders`]). Every one of them takes its
+   |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^ no item named `cancel_market_orders` in module `client`
+
+error: unresolved link to `Self::delete_signed_raw`
+  --> crates\adapters\ondo\src\http\client.rs:74:41
+   |
+74 | //! `POST .../cancel` - which is what [`Self::delete_signed_raw`] exists for.
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^ no item named `delete_signed_raw` in module `client`
+
+error: unresolved link to `Self::post_signed_raw`
+  --> crates\adapters\ondo\src\http\client.rs:95:10
+   |
+95 | //!   ([`Self::post_signed_raw`] and [`Self::delete_signed_raw`] are single-shot). A cancel is a
+   |          ^^^^^^^^^^^^^^^^^^^^^ no item named `post_signed_raw` in module `client`
+
+error: unresolved link to `Self::delete_signed_raw`
+  --> crates\adapters\ondo\src\http\client.rs:95:40
+   |
+95 | //!   ([`Self::post_signed_raw`] and [`Self::delete_signed_raw`] are single-shot). A cancel is a
+   |                                        ^^^^^^^^^^^^^^^^^^^^^^^ no item named `delete_signed_raw` in module `client`
+
+error: public documentation for `cancel_market_orders` links to private item `read_cancel_all`
+   --> crates\adapters\ondo\src\http\client.rs:992:36
+    |
+992 |     /// runs. It is read through [`read_cancel_all`] instead, which maps that documented success to
+    |                                    ^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+error: public documentation for `classify_auth_rejection` links to private item `extract_error_code`
+  --> crates\adapters\ondo\src\http\error.rs:99:8
+   |
+99 | /// ([`extract_error_code`]) or as the plain text of a message; both are matched as the literal codes
+   |        ^^^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+error: public documentation for `RequestRejected` links to private item `extract_error_code`
+   --> crates\adapters\ondo\src\http\error.rs:188:12
+    |
+188 |     /// ([`extract_error_code`]); `message` is the body verbatim and must be sanitized before it is
+    |            ^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+error: public documentation for `status` links to private item `deserialize_present_string`
+   --> crates\adapters\ondo\src\http\models.rs:145:11
+    |
+145 |     /// [`deserialize_present_string`].
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+error: public documentation for `disabled` links to private item `deserialize_present_bool`
+   --> crates\adapters\ondo\src\http\models.rs:154:11
+    |
+154 |     /// [`deserialize_present_bool`].
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+error: public documentation for `order_lookup_target` links to private item `percent_encode`
+   --> crates\adapters\ondo\src\http\orders.rs:133:8
+    |
+133 | /// ([`percent_encode`]): a colon becomes `%3A`, and the string the signature covers is the string
+    |        ^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+error: unresolved link to `crate::execution::OndoOrderState::cumulative_fee`
+   --> crates\adapters\ondo\src\http\orders.rs:973:11
+    |
+973 |     /// [`crate::execution::OndoOrderState::cumulative_fee`].
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the struct `OndoOrderState` has no field or associated item named `cumulative_fee`
+
+error: public documentation for `revalidate` links to private item `Self::invalidate_admissions`
+    --> crates\adapters\ondo\src\reconciliation.rs:1630:30
+     |
+1630 |     /// revoke permission ([`Self::invalidate_admissions`]), so a permit whose generation is stale
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this item is private
+     |
+     = note: this link will resolve properly if you pass `--document-private-items`
+
+error: public documentation for `signing` links to private item `ws_login_message`
+  --> crates\adapters\ondo\src\signing.rs:51:46
+   |
+51 | //! the only order this crate can produce: [`ws_login_message`] is the single place the order is
+   |                                              ^^^^^^^^^^^^^^^^ this item is private
+   |
+   = note: this link will resolve properly if you pass `--document-private-items`
+
+error: public documentation for `sign_ws` links to private item `ws_login_message`
+   --> crates\adapters\ondo\src\signing.rs:141:43
+    |
+141 | /// The phrase's concatenation order is [`ws_login_message`]'s decision and is reading A of
+    |                                           ^^^^^^^^^^^^^^^^ this item is private
+    |
+    = note: this link will resolve properly if you pass `--document-private-items`
+
+error: unresolved link to `Decimal`
+  --> crates\adapters\ondo\src\websocket\parse.rs:23:21
+   |
+23 | //!   digits than [`Decimal`] holds instead of rounding it away.
+   |                     ^^^^^^^ no item named `Decimal` in scope
+   |
+   = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+error: unresolved link to `Decimal`
+   --> crates\adapters\ondo\src\websocket\parse.rs:182:70
+    |
+182 |     /// and `ask` lexemes carry up to 38 significant digits, which [`Decimal`] cannot hold, and no
+    |                                                                      ^^^^^^^ no item named `Decimal` in scope
+    |
+    = help: to escape `[` and `]` characters, add '\' before them like `\[` or `\]`
+
+error: redundant explicit link target
+   --> crates\adapters\ondo\src\factories.rs:159:25
+    |
+159 | /// [`ExecutionClient`](nautilus_common::clients::ExecutionClient) trait, exactly as Aster's and
+    |      -----------------  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ explicit target is redundant
+    |      |
+    |      because label contains path that resolves to same destination
+    |
+    = note: when a link's destination is not specified,
+            the label is used to resolve intra-doc links
+    = note: `-D rustdoc::redundant-explicit-links` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(rustdoc::redundant_explicit_links)]`
+help: remove explicit link target
+    |
+159 - /// [`ExecutionClient`](nautilus_common::clients::ExecutionClient) trait, exactly as Aster's and
+159 + /// [`ExecutionClient`] trait, exactly as Aster's and
+    |
+
+error: could not document `nautilus-ondo`
+DOC_EXIT=101
