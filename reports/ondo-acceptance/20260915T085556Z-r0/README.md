@@ -22,7 +22,7 @@
 
 两个任务分支（`task/r0-execution-guards`、`task/r0-lint-fix`）都已 `--ff-only` 合并进 `onde-perps` 并删除。合并后 `git branch` 只剩 `aster` 与 `onde-perps`。
 
-**改动范围**（11 文件，+4208 −660）：
+**改动范围**（R0 主体 `635b916`：11 文件，+4208 −660；收尾 `cef58bc`：1 文件，+4 −4）：
 
 ```
 src/common/credential.rs      161 ++--     src/common/endpoint.rs   647 (新增)
@@ -47,7 +47,7 @@ $ git -C E:/nautilus_trader status --porcelain | grep -v '\.pyi$'
 | 起点 | `e49716b7ec8bc16648aa0f2c3e1450c8d73284e0` | stage-1 spread watcher 的 Ondo 腿 |
 | 终点 | 见本目录提交后 `app_head_after_r0.txt` | R0 的 plan / review / 验收工件 |
 
-任务分支 `task/ondo-r0-acceptance` 已 `--ff-only` 合并进 `main` 并删除。
+两个任务分支（`task/ondo-r0-acceptance`、`task/r0-report-clippy`）都已 `--ff-only` 合并进 `main` 并删除。合并后 `git branch` 只剩 `main`。
 
 **未提交、有意不提交**（与前一阶段 §5 保持一致，本阶段未改动其归属）：`reports/stage1/*.csv`、`reports/perps-*`、`reports/polymarket-*`、`reports/entropy-*`、`.commandcode/`、`学习课题/`。`reports/ondo-acceptance/20260914T114942Z/p0/` 下那个 191.65 MB 的上游 wheel 仍在磁盘上、仍未进 git。
 
@@ -70,7 +70,7 @@ cargo +1.98.0 test -p nautilus-ondo --locked --offline \
 | signing | 63 passed; 0 failed |
 | **退出码** | **0** |
 
-全 crate 套件（不加 `--test` 过滤）在**合并后的 HEAD `635b916`** 上另跑一次，完整输出见 `r0_full_crate_tests.txt`：
+全 crate 套件（不加 `--test` 过滤）在**最终 HEAD `cef58bc`** 上另跑一次，完整输出见 `r0_full_crate_tests.txt`：
 
 | target | passed | failed |
 |---|---|---|
