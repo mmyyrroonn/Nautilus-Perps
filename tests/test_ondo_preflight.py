@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -305,12 +306,25 @@ def test_a_request_failure_is_never_an_empty_market_success(tmp_path):
 
 
 def test_a_403_shaped_error_from_any_endpoint_fails(tmp_path):
+    """A 403 fails the run and produces no payload - but it does produce its own status.
+
+    The assertion that ``meta.json`` is absent moved with F12: a failed attempt now
+    publishes ``complete: false`` so that a *previous* success can never be read as the
+    state of this attempt. What must still not exist is any payload: an error body is
+    never written up as an empty market.
+    """
     for endpoint in ("get_status", "get_markets", "get_contracts",
                      "load_instrument_definitions"):
+        out_dir = tmp_path / f"out-{endpoint}"
         client = FakeClient(error={endpoint: RuntimeError("HTTP 403 Forbidden")})
-        code = ondo_preflight.run(["NVDA"], tmp_path / f"out-{endpoint}", client=client)
+        code = ondo_preflight.run(["NVDA"], out_dir, client=client)
         assert code != 0, endpoint
-        assert not (tmp_path / f"out-{endpoint}" / "meta.json").exists(), endpoint
+        for name in ondo_preflight.PAYLOAD_FILES:
+            assert not (out_dir / f"{name}.json").exists(), (endpoint, name)
+        meta = read_json(out_dir / "meta.json")
+        assert meta["complete"] is False, endpoint
+        assert endpoint in meta["failure"], meta
+        assert meta["files"] == {}, "a failed read writes no payload to describe"
 
 
 def test_a_markets_body_without_the_perps_path_is_a_failure(tmp_path):
@@ -505,6 +519,222 @@ def test_zero_instrument_definitions_fail_even_when_markets_look_fine(tmp_path):
     assert code != 0
 
 
+# --------------------------------------------------- run isolation and publishing (F12)
+
+
+def test_a_failed_run_after_a_success_never_leaves_the_old_success_in_place(tmp_path):
+    """F12: the same --out, a success then a missing-field failure.
+
+    Before the fix the payloads were overwritten while ``meta.json`` was written only for
+    a complete run, so the directory held the old ``complete: true`` manifest, the old
+    hashes and the new, non-empty ``missing.json`` at the same time.
+    """
+    out_dir = tmp_path / "preflight"
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+    ) == 0
+    good = read_json(out_dir / "meta.json")
+    assert good["run_id"] == "run-ok" and good["complete"] is True
+    assert ondo_preflight.verify_run(out_dir)["verified"] is True
+
+    markets = {"perps": {"tradingPairs": [MARKETS["perps"]["tradingPairs"][1]]}}
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(markets=markets), run_id="run-bad",
+    ) == 1
+
+    meta = read_json(out_dir / "meta.json")
+    assert meta["run_id"] == "run-bad", "the published view is the attempt that just ran"
+    assert meta["complete"] is False, "the old success must not survive as the current state"
+    assert meta["missing"], "the new failure names its missing items"
+    assert read_json(out_dir / "missing.json"), "the payload belongs to the current attempt"
+    verdict = ondo_preflight.verify_run(out_dir)
+    assert verdict["run_id"] == "run-bad"
+    assert verdict["verified"] is False and verdict["complete"] is False
+    # Both attempts remain readable under their own run ids, neither overwritten.
+    runs = sorted(p.name for p in (out_dir / "runs").iterdir())
+    assert runs == ["run-bad", "run-ok"]
+    assert read_json(out_dir / "runs" / "run-ok" / "meta.json")["complete"] is True
+    assert read_json(out_dir / "runs" / "run-bad" / "meta.json")["complete"] is False
+
+    # And the success→success direction still replaces the view cleanly.
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok-2",
+    ) == 0
+    assert ondo_preflight.verify_run(out_dir)["verified"] is True
+    assert read_json(out_dir / "meta.json")["run_id"] == "run-ok-2"
+
+
+def test_a_transport_failure_after_a_success_publishes_that_failure(tmp_path):
+    """F12: a transport error is a result too - it must not leave the old run standing."""
+    out_dir = tmp_path / "preflight"
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+    ) == 0
+    assert ondo_preflight.verify_run(out_dir)["verified"] is True
+
+    forbidden = RuntimeError("HTTP 403 Forbidden: GET /v1/markets -> {'error':'Forbidden'}")
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(error={"get_markets": forbidden}),
+        run_id="run-403",
+    ) == 1
+
+    meta = read_json(out_dir / "meta.json")
+    assert meta["run_id"] == "run-403"
+    assert meta["complete"] is False and "403" in meta["failure"]
+    assert meta["files"] == {}, "nothing is described that was not read"
+    for name in ondo_preflight.PAYLOAD_FILES:
+        assert not (out_dir / f"{name}.json").exists(), (
+            f"{name}.json is a previous run's payload and this attempt produced none: "
+            f"it must not be left where the current manifest points"
+        )
+    assert read_json(out_dir / "runs" / "run-403" / "meta.json")["complete"] is False
+    assert not ondo_preflight.verify_run(out_dir)["verified"]
+
+
+def test_a_run_is_staged_under_its_run_id_before_it_is_published(tmp_path, monkeypatch):
+    """F12: run-scoped staging, then one rename - never a file-by-file rewrite of --out."""
+    out_dir = tmp_path / "preflight"
+    seen: dict[str, object] = {}
+    real_write_json = ondo_preflight._write_json
+
+    def spy(path, payload):
+        path = Path(path)
+        if ondo_preflight.RUNS_DIRNAME in path.parts and path.name != "meta.json":
+            staged = [p for p in path.parts if p.startswith(ondo_preflight.STAGING_PREFIX)]
+            seen.setdefault("staged", []).append((staged[0] if staged else None, path.name))
+        return real_write_json(path, payload)
+
+    monkeypatch.setattr(ondo_preflight, "_write_json", spy)
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-1",
+    ) == 0
+    assert seen["staged"], "every payload is written inside the run's staging directory"
+    assert {entry[0] for entry in seen["staged"]} == {".staging-run-1"}
+    assert not list((out_dir / "runs").glob(f"{ondo_preflight.STAGING_PREFIX}*")), (
+        "the staging directory is gone once the run is published"
+    )
+    manifest = read_json(out_dir / "runs" / "run-1" / "meta.json")
+    assert manifest["run_dir"] == "runs/run-1"
+    assert manifest["run_id"] == "run-1"
+
+
+def test_a_crash_in_the_middle_of_publishing_is_visible_to_the_reader(tmp_path, monkeypatch):
+    """F12: an interruption between the payloads and the manifest fails verification.
+
+    The commit point is the atomic replacement of ``<out>/meta.json``. If the process dies
+    after the payloads are in place and before the manifest is switched, the manifest that
+    is still there describes a *different* run whose hashes no longer match what is on the
+    disk - so the reader sees a mismatch, not a tidy success.
+    """
+    out_dir = tmp_path / "preflight"
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+    ) == 0
+    good_manifest = read_json(out_dir / "meta.json")
+
+    class Crash(RuntimeError):
+        pass
+
+    real_write_json = ondo_preflight._write_json
+
+    def dying_write_json(path, payload):
+        """Let the payloads land, then die before the published manifest is switched."""
+        path = Path(path)
+        if path.parent == out_dir and path.name == "meta.json":
+            raise Crash("the process died between the payloads and the manifest")
+        return real_write_json(path, payload)
+
+    markets = {"perps": {"tradingPairs": [MARKETS["perps"]["tradingPairs"][1]]}}
+    with monkeypatch.context() as patched:
+        patched.setattr(ondo_preflight, "_write_json", dying_write_json)
+        with pytest.raises(Crash):
+            ondo_preflight.run(
+                ["NVDA", "TSLA"], out_dir, client=FakeClient(markets=markets),
+                run_id="run-2",
+            )
+
+    # The old manifest is still published and its hashes no longer describe the directory.
+    assert read_json(out_dir / "meta.json") == good_manifest
+    verdict = ondo_preflight.verify_run(out_dir)
+    assert verdict["run_id"] == "run-ok"
+    assert verdict["verified"] is False, (
+        "a half-published attempt must be detectable, never read as the old success"
+    )
+    assert any("sha256" in problem for problem in verdict["problems"]), verdict["problems"]
+    # The interrupted attempt *did* get its own immutable run directory - that rename is
+    # the first step of publishing, and it is complete in itself - but the published view
+    # never switched to it, which is exactly what the mismatch above says.
+    assert read_json(out_dir / "runs" / "run-2" / "meta.json")["complete"] is False
+
+
+def test_the_reader_verifies_the_run_identity_and_every_hash(tmp_path):
+    """F12: `complete: true` is checked against the bytes, not taken on trust."""
+    out_dir = tmp_path / "preflight"
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+    ) == 0
+    verdict = ondo_preflight.verify_run(out_dir)
+    assert verdict["verified"] is True and verdict["complete"] is True
+    assert verdict["run_id"] == "run-ok"
+    assert verdict["problems"] == []
+
+    meta = read_json(out_dir / "meta.json")
+    assert meta["run_id"] == "run-ok"
+    assert set(meta["files"]) == set(ondo_preflight.PAYLOAD_FILES)
+
+    # A payload edited after publishing no longer matches the manifest it was published with.
+    (out_dir / "instruments.json").write_text("[]\n", encoding="utf-8")
+    verdict = ondo_preflight.verify_run(out_dir)
+    assert verdict["verified"] is False
+    assert any("sha256" in problem for problem in verdict["problems"])
+
+    # …and so is a manifest that names a file which is not there at all.
+    (out_dir / "instruments.json").unlink()
+    verdict = ondo_preflight.verify_run(out_dir)
+    assert verdict["verified"] is False
+    assert any("missing" in problem for problem in verdict["problems"])
+
+    # A directory that was never published at all reports why, rather than guessing.
+    verdict = ondo_preflight.verify_run(tmp_path / "nothing-here")
+    assert verdict["verified"] is False and verdict["problems"]
+
+
+def test_a_manifest_whose_run_id_and_run_dir_disagree_is_not_verified(tmp_path):
+    """F12: the run identity is *checked*, not merely reported back to the reader.
+
+    Every attempt publishes both a run id and the run directory that id belongs to. A
+    manifest whose two halves name different attempts is not one run's record, so a reader
+    must not be handed the run id it claims - the point of naming an identity at all.
+    """
+    out_dir = tmp_path / "preflight"
+    assert ondo_preflight.run(
+        ["NVDA", "TSLA"], out_dir, client=FakeClient(), run_id="run-ok",
+    ) == 0
+    meta = read_json(out_dir / "meta.json")
+    assert meta["run_dir"] == f"{ondo_preflight.RUNS_DIRNAME}/run-ok"
+
+    # Re-point the run id while the run directory still names the original attempt.
+    meta["run_id"] = "run-somebody-else"
+    (out_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    verdict = ondo_preflight.verify_run(out_dir)
+    assert verdict["verified"] is False
+    assert any("identity" in problem for problem in verdict["problems"]), verdict
+
+    # The payloads themselves are untouched, so this is the identity check firing and not
+    # the hash check: put the two halves back together and it verifies again.
+    meta["run_id"] = "run-ok"
+    (out_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert ondo_preflight.verify_run(out_dir)["verified"] is True
+
+
+def test_every_run_id_is_unique_per_attempt():
+    first = ondo_preflight.new_run_id(datetime(2026, 9, 15, 12, 0, 0, 1, tzinfo=timezone.utc))
+    second = ondo_preflight.new_run_id(datetime(2026, 9, 15, 12, 0, 0, 2, tzinfo=timezone.utc))
+    assert first == "20260915T120000000001Z"
+    assert first != second
+    assert second > first, "run ids sort by when the attempt started"
+
+
 # --------------------------------------------------------------------- hygiene
 
 
@@ -554,16 +784,28 @@ def test_main_writes_nothing_when_the_symbol_list_is_unknown(tmp_path, capsys):
 
 
 def test_a_failed_run_never_leaves_a_half_report(tmp_path):
-    """Nothing is written until every target passed: no partial success files."""
+    """A failed run publishes a status that says it failed - never a partial success.
+
+    F12 changed what "no half report" means: the run still writes its own ``complete:
+    false`` manifest with the failure, and the payloads it could produce (here an empty
+    missing list is not a success either - the schema check fails the run first). What it
+    must never do is leave a manifest claiming a complete run.
+    """
     markets = {"perps": {"tradingPairs": []}}
+    out_dir = tmp_path / "p"
     with contextlib.redirect_stderr(io.StringIO()) as err:
         code = ondo_preflight.main(
-            ["--symbols", "NVDA,TSLA", "--out", str(tmp_path / "p")],
+            ["--symbols", "NVDA,TSLA", "--out", str(out_dir)],
             client=FakeClient(markets=markets, instruments=[]),
         )
     assert code != 0
     assert "preflight" in err.getvalue().lower()
-    assert not (tmp_path / "p" / "meta.json").exists()
+    meta = read_json(out_dir / "meta.json")
+    assert meta["complete"] is False
+    assert meta["failure"], "a failed attempt states why it failed"
+    assert meta["missing"], "and names the items that were missing"
+    assert meta["files"], "the payloads it did read are published with its own verdict"
+    assert not ondo_preflight.verify_run(out_dir)["verified"]
 
 
 if __name__ == "__main__":

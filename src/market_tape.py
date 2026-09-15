@@ -3,13 +3,21 @@
 
 Plan 5.1 is the specification implemented here:
 
-* JSONL, one record per line, every record carrying ``schema_version=1``, ``run_id``,
+* JSONL, one record per line, every record carrying ``schema_version``, ``run_id``,
   ``session_id``, ``arrival_seq``, ``symbol``/``venue``/``instrument_id``,
   ``event_kind``, ``ts_event_ns``/``ts_init_ns``/``recorded_mono_ns``,
   ``bids``/``asks`` as arrays of **decimal strings**, ``coverage_limit``, ``source``,
   ``valid`` and ``invalid_reason``. The book, quote, funding, status and instrument
   metadata kinds share that field set so a reader never has to guess; ``run_start``,
   ``gap`` and ``run_end`` are lifecycle markers.
+* **Schema 2 is what the writer stamps; a reader accepts 1 and 2.** Schema 1 tapes carry
+  one instrument record written at the start of the run: no per-arrival metadata, no
+  ``size_increment``. Schema 2 adds the per-arrival instrument records an adapter
+  republishes when its metadata is refreshed or goes stale, and the exact
+  ``size_increment``/``price_increment`` alongside ``metadata_version`` and
+  ``metadata_available_ns``. A record's ``valid`` describes **that record**: a book
+  record's own snapshot quality (empty/one-sided/crossed), never the state of the feed it
+  arrived on - feed, market and metadata eligibility belong to whoever replays the tape.
 * All decimals are written as the exact text they were given (``Decimal`` via ``str``,
   a string byte for byte). A price or size that arrives as an ``f64`` is refused: it
   has already lost the precision the tape is supposed to preserve.
@@ -23,10 +31,13 @@ Plan 5.1 is the specification implemented here:
   recorder and surfaces a :class:`TapeWriteError` to the caller.
 * Replay follows ``arrival_seq`` in receive order. It never sorts by exchange time:
   that would fabricate an ordering that was not visible at the time.
-* Corruption: a truncated final line may be ignored and is reported as
-  ``truncated_tail``; a bad line anywhere else is a hard failure. A restart appends a
-  new session and a new segment without repeating the run header and without hiding a
-  previous session's missing ``run_end``.
+* Corruption: the **last** line of a fragment may be cut short and is reported as
+  ``truncated_tail``; a bad line anywhere else is a hard failure. A cut tail ends its
+  fragment, never the whole read: a restart appends a new session and a new segment
+  without repeating the run header and without hiding a previous session's missing
+  ``run_end``, so the complete new session that follows an old cut tail is still read. If
+  the fragments turn out to continue the *same* session after the cut, the damage was
+  inside a session and is a hard failure rather than a tail.
 """
 
 from __future__ import annotations
@@ -44,7 +55,9 @@ from pathlib import Path
 from typing import Any, TextIO
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # what the writer stamps: per-arrival instrument metadata
+SCHEMA_VERSION_V1 = 1  # a run-start metadata record, no size_increment; still readable
+SUPPORTED_SCHEMA_VERSIONS = (SCHEMA_VERSION_V1, SCHEMA_VERSION)
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_NAME = "manifest.json"  # the run-level manifest, one per l2 directory
 MANIFEST_SUFFIX = ".manifest.json"  # the per-tape manifest, next to its fragments
@@ -382,16 +395,25 @@ def instrument_event(
     metadata: dict,
     coverage_limit: int | None = None,
     source: str = "instrument_metadata",
+    valid: bool = True,
+    invalid_reason: str | None = None,
     ts_event_ns: int | None = None,
     ts_init_ns: int | None = None,
     recorded_mono_ns: int | None = None,
 ) -> dict:
-    """The normalized instrument metadata a run started from (fee, tick, coverage)."""
+    """The normalized instrument metadata of one arrival: fee, step, version, availability.
+
+    ``source`` is ``instrument_metadata`` for the record a run starts from and
+    ``instrument_update`` for one published while it runs. ``valid=False`` with
+    ``invalid_reason="metadata_stale"`` marks the arrival from which that venue's
+    metadata is not to be trusted: the payload is kept for traceability and must not be
+    used by a reader.
+    """
     return base_event(
         INSTRUMENT, symbol=symbol, venue=venue, instrument_id=instrument_id,
         source=source, ts_event_ns=ts_event_ns, ts_init_ns=ts_init_ns,
         recorded_mono_ns=recorded_mono_ns, coverage_limit=coverage_limit,
-        metadata=dict(metadata),
+        valid=valid, invalid_reason=invalid_reason, metadata=dict(metadata),
     )
 
 
@@ -924,6 +946,11 @@ class TapeWriter:
         seq = record.get("arrival_seq")
         if isinstance(seq, bool) or not isinstance(seq, int):
             seq = None  # a lifecycle marker consumes no arrival_seq
+        # The flush deadline is honoured BEFORE the queue's capacity is consulted: the
+        # drain that empties a full queue must never be gated on there being room to
+        # accept one more record, or a full queue would block the very flush that would
+        # relieve it (F10).
+        self._flush_if_due()
         if self._pending_gap is not None and len(self._queue) < self.queue_max:
             self._emit_gap()
         if len(self._queue) >= self.queue_max:
@@ -935,7 +962,21 @@ class TapeWriter:
             return
         self._queue.append((_dump(record), seq, None))
         self._data_records += 1
-        if self._clock() - self._last_flush >= self.flush_secs:
+
+    def tick(self) -> None:
+        """Flush if the deadline has passed, whether or not a new record arrived (F10).
+
+        The periodic flush is a *time* promise, not a side effect of accepting a message:
+        a quiet tape - and one whose queue is full - still owes it. A caller drives this
+        from the event loop it already runs; the writer never starts a thread of its own,
+        so nothing can outlive the process or block a market-data callback.
+        """
+        if not self._opened or self._closed or self._failed:
+            return
+        self._flush_if_due()
+
+    def _flush_if_due(self) -> None:
+        if (self._clock() - self._last_flush) >= self.flush_secs:
             self.flush()
 
     def _note_gap(self, dropped: int, first: int, last: int, *, reason: str) -> None:
@@ -1233,6 +1274,7 @@ class TapeStatus:
     truncated_tail: bool = False
     truncated_at: str | None = None
     run_ids: list[str] = field(default_factory=list)
+    schema_versions: list[int] = field(default_factory=list)
     _current: TapeSessionStatus | None = None
 
     @property
@@ -1312,7 +1354,12 @@ class TapeReader(Iterator[dict]):
 
     ``status`` (available while and after iterating) carries the verdict: which sessions
     were seen, whether each ended with a complete run-end, how many records were dropped
-    into gaps, and whether the file's last line was a truncated tail.
+    into gaps, and whether a fragment's last line was a truncated tail.
+
+    The reader can be used as a context manager and is always safe to :meth:`close`: a
+    fragment that is still open is released on every exit path - the normal end, a
+    raised corruption, or a caller that stops iterating early - so no file handle is
+    left behind (on Windows an open tape file cannot be renamed or deleted).
     """
 
     def __init__(self, paths: Sequence[Path]) -> None:
@@ -1325,11 +1372,42 @@ class TapeReader(Iterator[dict]):
         self._index = -1
         self._done = False
         self._finished = False
+        # The session whose last line was cut short, until a following record says which
+        # session it belongs to. A record of *that* session means the damage was inside a
+        # session (fatal); a record of another session means the cut ended the old one.
+        self._cut_session: str | None = None
 
     def __iter__(self) -> TapeReader:
         return self
 
+    def __enter__(self) -> TapeReader:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        self.close()
+        return False
+
+    def close(self) -> None:
+        """Release the open fragment and end the read; safe to call more than once."""
+        self._done = True
+        self._end_fragment()
+
+    def __del__(self) -> None:  # pragma: no cover - a safety net, not the exit path
+        try:
+            self._end_fragment()
+        except Exception:  # noqa: BLE001 - a dying interpreter must not raise here
+            pass
+
     def __next__(self) -> dict:
+        try:
+            return self._next_record()
+        except BaseException:
+            # A corruption, a keyboard interrupt, any error at all: the fragment's file
+            # handle is released before the caller sees the failure.
+            self.close()
+            raise
+
+    def _next_record(self) -> dict:
         while True:
             if self._done:
                 self._finish()
@@ -1342,7 +1420,7 @@ class TapeReader(Iterator[dict]):
             try:
                 line, is_last = next(self._lines)
             except StopIteration:
-                self._lines = None
+                self._end_fragment()
                 continue
             self._lineno += 1
             record = self._read_line(line, is_last)
@@ -1354,6 +1432,15 @@ class TapeReader(Iterator[dict]):
             return record
 
     # ----------------------------------------------------------------- fragments
+
+    def _end_fragment(self) -> None:
+        """Drop the current fragment's generator, closing its file, and move on."""
+        lines, self._lines = self._lines, None
+        if lines is None:
+            return
+        close = getattr(lines, "close", None)
+        if close is not None:
+            close()  # GeneratorExit inside the ``with`` block closes the file itself
 
     def _next_fragment(self) -> bool:
         self._index += 1
@@ -1368,6 +1455,7 @@ class TapeReader(Iterator[dict]):
         if self._finished:
             return
         self._finished = True
+        self._end_fragment()
         for session in self.status.sessions:
             if not session.complete and session.reason is None:
                 session.reason = "no_run_end"
@@ -1395,21 +1483,38 @@ class TapeReader(Iterator[dict]):
         return record
 
     def _truncated_tail(self, where: str) -> None:
-        """The file's last line was cut short: reported, not fatal (plan 5.1)."""
+        """A fragment's last line was cut short: reported, not fatal on its own.
+
+        The cut ends *this fragment*, not the read (F11). A restart writes a new fragment
+        under a new session, and that complete session must still be read - stopping here
+        would hide it behind an old crash. The session whose tail was cut stays
+        incomplete, and the cut is remembered until a following record says which session
+        it belongs to: continuing the *same* session is damage inside a session and fails
+        hard instead (see :meth:`_session`).
+        """
         self.status.truncated_tail = True
         self.status.truncated_at = where
-        self._done = True  # nothing meaningful can follow a cut line
+        current = self.status._current
+        self._cut_session = current.session_id if current is not None else None
+        if current is not None and not current.complete and current.reason is None:
+            current.reason = (
+                f"truncated_tail: the last line of {where} was cut short"
+            )
+        self._end_fragment()
 
     # ----------------------------------------------------------------- validation
 
     def _validate(self, record: dict) -> None:
         where = f"{self._path}:{self._lineno}"
         version = record.get("schema_version")
-        if version != SCHEMA_VERSION:
+        if version not in SUPPORTED_SCHEMA_VERSIONS:
             raise TapeSchemaError(
                 f"{where}: unsupported schema_version {version!r} "
-                f"(expected {SCHEMA_VERSION})",
+                f"(this reader accepts {list(SUPPORTED_SCHEMA_VERSIONS)}: a schema 1 tape "
+                f"carries one run-start instrument record and no size_increment)",
             )
+        if version not in self.status.schema_versions:
+            self.status.schema_versions.append(version)
         kind = record.get("event_kind")
         if not isinstance(kind, str) or not kind:
             raise TapeSchemaError(f"{where}: event_kind must be a non-empty string")
@@ -1440,6 +1545,16 @@ class TapeReader(Iterator[dict]):
                 _validate_levels(record[key], where=where, field_name=key)
 
     def _session(self, session_id: str, run_id: str, where: str) -> TapeSessionStatus:
+        if self._cut_session is not None:
+            cut, self._cut_session = self._cut_session, None
+            if session_id == cut:
+                raise TapeCorruptionError(
+                    f"{where}: session {session_id!r} continues after a line of it was cut "
+                    f"short at {self.status.truncated_at}: that is damage inside a session, "
+                    f"not a fragment's truncated tail, and it cannot be skipped",
+                )
+            # A different session follows the cut: the old session's tail was cut short at
+            # the end of its own fragment, which is a reported tail, not a fatal hole.
         current = self.status._current
         if current is None or current.session_id != session_id:
             if any(session.session_id == session_id for session in self.status.sessions):

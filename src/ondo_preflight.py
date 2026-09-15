@@ -5,15 +5,29 @@
 
 The CLI reads the venue's *public* surface and writes evidence to ``<dir>``:
 
-    status.json       GET /status, as delivered
-    markets.json      GET /v1/markets, as delivered (exact decimal strings)
-    contracts.json    GET /v1/contracts, as delivered
-    instruments.json  the normalized target instrument table
-    missing.json      every missing/unknown field of a requested target
-    meta.json         fetch times + a sha256/byte-size manifest of the five files
+    <dir>/status.json       GET /status, as delivered
+    <dir>/markets.json      GET /v1/markets, as delivered (exact decimal strings)
+    <dir>/contracts.json    GET /v1/contracts, as delivered
+    <dir>/instruments.json  the normalized target instrument table
+    <dir>/missing.json      every missing/unknown field of a requested target
+    <dir>/meta.json         this attempt's identity, status and sha256 manifest
+    <dir>/runs/<run_id>/    the immutable copy of that attempt, payloads and meta alike
 
-``meta.json`` exists only when every target passed: it is the "this preflight is
-complete" marker, so a half-run can never be mistaken for a green one.
+Every attempt publishes under its own ``run_id``: the files are staged in a run-scoped
+temporary directory, that directory is renamed into ``runs/`` in one step, and only then
+is ``<dir>/meta.json`` replaced - atomically, via a temporary file - as the last act of
+publishing. Two things follow, and both are the point (F12):
+
+* ``meta.json`` always describes the **current** attempt. A failed preflight writes
+  ``complete: false`` with its failure reason, so a previous run's ``complete: true`` can
+  never be left standing as the state of a run that just failed; and
+* a reader checks the run it is reading with :func:`verify_run`, which recomputes every
+  sha256 the manifest names. An interruption between publishing the payloads and
+  publishing ``meta.json`` therefore shows up as a hash mismatch rather than as a tidy lie.
+
+A payload a run did not produce is removed from ``<dir>``, so the published view is
+exactly one attempt. Those five names are this tool's own artifacts and nothing else is
+ever touched.
 
 Two hard rules from plan 4.1:
 
@@ -42,6 +56,8 @@ import asyncio
 import hashlib
 import inspect
 import json
+import os
+import shutil
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -66,6 +82,8 @@ INSTRUMENT_FILE = "instruments"
 MISSING_FILE = "missing"
 META_FILE = "meta"
 PAYLOAD_FILES = (STATUS_FILE, MARKET_FILE, CONTRACT_FILE, INSTRUMENT_FILE, MISSING_FILE)
+RUNS_DIRNAME = "runs"  # one immutable directory per run id, under the output directory
+STAGING_PREFIX = ".staging-"  # the run-scoped temporary directory publishing starts from
 
 # The pointer printed when this venv has no ondo adapter: enough to build and
 # install the candidate wheel without guessing (plan 9).
@@ -554,9 +572,13 @@ def build_report(payloads: dict[str, object], symbols: Sequence[str]) -> dict[st
 
 
 def _write_json(path: Path, payload: object) -> dict[str, object]:
+    """Write one JSON document atomically (temporary file + replace) and describe it."""
     text = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     data = text.encode("utf-8")
-    path.write_bytes(data)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
     return {
         "path": path.name,
         "bytes": len(data),
@@ -564,19 +586,150 @@ def _write_json(path: Path, payload: object) -> dict[str, object]:
     }
 
 
-def write_report(report: dict[str, object], out_dir: Path, *, complete: bool,
-                 meta: dict[str, object]) -> dict[str, object]:
-    """Write the five payload files, and ``meta.json`` only for a complete run."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+def new_run_id(moment: datetime) -> str:
+    """A run id that is unique per attempt and sorts by when it started."""
+    return moment.strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def _publish_file(source: Path, target: Path) -> dict[str, object]:
+    """Copy one published file into place atomically, and describe what landed."""
+    data = source.read_bytes()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, target)
+    return {
+        "path": target.name,
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def write_report(report: dict[str, object], out_dir: Path, *, run_id: str, complete: bool,
+                 meta: dict[str, object], failure: str | None = None) -> dict[str, object]:
+    """Publish one attempt: stage it under its run id, then switch the published view.
+
+    ``report`` holds the payloads this attempt produced - empty for an attempt that could
+    not read the venue at all (a transport failure produces no evidence and none is
+    invented for it). Every attempt, successful or not, gets a ``meta.json`` naming its own
+    run id, its status and the hashes of what it wrote; the published ``<out>/meta.json``
+    is replaced last, so it always describes the attempt that just finished (F12).
+    """
+    out_dir = Path(out_dir)
+    runs_dir = out_dir / RUNS_DIRNAME
+    staging = runs_dir / f"{STAGING_PREFIX}{run_id}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+
+    manifest = dict(meta)
+    manifest["run_id"] = run_id
+    manifest["complete"] = bool(complete)
+    manifest["failure"] = failure if failure is not None else meta.get("failure")
+    manifest["run_dir"] = f"{RUNS_DIRNAME}/{run_id}"
     files: dict[str, object] = {}
     for name in PAYLOAD_FILES:
-        files[name] = _write_json(out_dir / f"{name}.json", report[name])
-    manifest = dict(meta)
+        if name in report:
+            files[name] = _write_json(staging / f"{name}.json", report[name])
     manifest["files"] = files
-    if complete:
-        manifest["missing"] = []
-        _write_json(out_dir / f"{META_FILE}.json", manifest)
+    # Always present, so a reader finds the verdict it is looking for in one document: []
+    # for a complete run or one that never read anything, the items for an incomplete one.
+    manifest["missing"] = list(report.get(MISSING_FILE) or [])
+    _write_json(staging / f"{META_FILE}.json", manifest)
+
+    # The run directory is the immutable record of this attempt: one rename publishes all
+    # of it at once, under a name no other attempt can hold.
+    final_dir = runs_dir / run_id
+    if final_dir.exists():
+        shutil.rmtree(final_dir)
+    os.replace(staging, final_dir)
+
+    # Then the published view: the payloads of *this* attempt, with any payload this
+    # attempt did not produce removed, and meta.json replaced last as the commit point.
+    for name in PAYLOAD_FILES:
+        produced = final_dir / f"{name}.json"
+        target = out_dir / f"{name}.json"
+        if name in files:
+            files[name] = _publish_file(produced, target)
+        elif target.exists():
+            target.unlink()
+    manifest["files"] = files
+    _write_json(out_dir / f"{META_FILE}.json", manifest)
     return manifest
+
+
+def verify_run(out_dir: Path) -> dict[str, object]:
+    """Check the published run against the identity and hashes its own manifest names.
+
+    A reader must never take ``complete: true`` on trust: this recomputes each sha256 and
+    each byte count, confirms every named file is present, and reports the run id it
+    verified. A publishing that was interrupted between its payloads and its ``meta.json``
+    therefore fails verification instead of reading as a success.
+    """
+    out_dir = Path(out_dir)
+    problems: list[str] = []
+    result: dict[str, object] = {
+        "out": str(out_dir),
+        "run_id": None,
+        "complete": False,
+        "verified": False,
+        "problems": problems,
+    }
+    meta_path = out_dir / f"{META_FILE}.json"
+    try:
+        manifest = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        problems.append(f"{meta_path} cannot be read: {exc!r}")
+        return result
+    if not isinstance(manifest, dict):
+        problems.append(f"{meta_path} is not an object")
+        return result
+    result["run_id"] = manifest.get("run_id")
+    result["complete"] = manifest.get("complete") is True
+    if not result["run_id"]:
+        problems.append(f"{meta_path} names no run id: the run's identity is unverifiable")
+    # The identity is checked, not just reported: a manifest carries both the run id and
+    # the run directory that id belongs to, and they have to name the same attempt. A
+    # manifest whose two halves disagree is not from one run, so no reader should be told
+    # the run id it claims (F12: "校验 run identity"). Only the manifest's *own* halves
+    # are compared - the published view stays readable when it is copied on its own,
+    # without the runs/ tree beside it.
+    run_dir = manifest.get("run_dir")
+    if result["run_id"] and isinstance(run_dir, str):
+        expected = f"{RUNS_DIRNAME}/{result['run_id']}"
+        if run_dir != expected:
+            problems.append(
+                f"{meta_path} names run id {result['run_id']!r} but the run directory "
+                f"{run_dir!r}: the manifest's identity does not agree with itself "
+                f"(expected {expected!r})",
+            )
+    if not result["complete"]:
+        problems.append(
+            f"the published run {result['run_id']} is not complete: "
+            f"{manifest.get('failure') or manifest.get('missing') or 'no reason recorded'}",
+        )
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        problems.append(f"{meta_path} names no files to verify")
+        return result
+    for name, entry in files.items():
+        path = out_dir / f"{name}.json"
+        if not path.exists():
+            problems.append(f"{name}.json is named by the manifest but is missing")
+            continue
+        data = path.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if isinstance(entry, dict):
+            if entry.get("sha256") != digest:
+                problems.append(
+                    f"{name}.json does not match the manifest's sha256: the published "
+                    f"files and the manifest are not from the same run",
+                )
+            elif entry.get("bytes") != len(data):
+                problems.append(f"{name}.json is {len(data)} bytes, the manifest says "
+                                f"{entry.get('bytes')}")
+    result["verified"] = not problems
+    return result
 
 
 # -------------------------------------------------------------------------- run
@@ -587,28 +740,21 @@ def _now() -> datetime:
 
 
 def run(symbols: Sequence[str], out_dir: Path, *, environment: str = "production",
-        timeout_secs: int = 15, client=None) -> int:
-    """Read the public surface once and write the evidence. 0 iff every target passed."""
+        timeout_secs: int = 15, client=None, run_id: str | None = None) -> int:
+    """Read the public surface once and publish the evidence. 0 iff every target passed.
+
+    Every attempt is published under its own run id, a failed one included: an attempt
+    that could not read the venue still has a status, and leaving the previous run's
+    success in place would report that failed attempt as the current state (F12).
+    """
     rows = targets(symbols)  # validates the symbols before any client exists
     if client is None:
         adapter = load_adapter()
         client = adapter.OndoHttpClient(_environment(adapter, environment), timeout_secs)
 
     started = _now()
-    try:
-        payloads = asyncio.run(collect(client, rows))
-        # The schema checks run before anything is written: an error body must fail
-        # the run rather than become a tidy "no markets" report.
-        report = build_report(payloads, symbols)
-    except OndoPreflightError as exc:
-        print(f"[ondo-preflight] FAILED: {exc}", file=sys.stderr, flush=True)
-        print("[ondo-preflight] nothing was written: a failed read is not an empty market",
-              file=sys.stderr, flush=True)
-        return 1
-    fetched = _now()
-
-    missing = report[MISSING_FILE]
-    meta: dict[str, object] = {
+    attempt = run_id or new_run_id(started)
+    base_meta: dict[str, object] = {
         "tool": "ondo_preflight",
         "schema_version": SCHEMA_VERSION,
         "venue": ONDO_VENUE,
@@ -616,21 +762,49 @@ def run(symbols: Sequence[str], out_dir: Path, *, environment: str = "production
         "symbols": [row["symbol"] for row in rows],
         "targets": rows,
         "started_at_utc": started.isoformat(timespec="milliseconds"),
-        "fetched_at_utc": fetched.isoformat(timespec="milliseconds"),
-        "fetched_at_ns": int(fetched.timestamp() * 1_000_000_000),
-        "complete": not missing,
     }
+    out_dir = Path(out_dir)
+    try:
+        payloads = asyncio.run(collect(client, rows))
+        # The schema checks run before anything is written: an error body must fail
+        # the run rather than become a tidy "no markets" report.
+        report = build_report(payloads, symbols)
+    except OndoPreflightError as exc:
+        # Nothing was read, so no payload is invented - but this attempt's own status is
+        # published, with the previous published view cleared of payloads it cannot back.
+        write_report({}, out_dir, run_id=attempt, complete=False, meta=base_meta,
+                     failure=str(exc))
+        print(f"[ondo-preflight] FAILED: {exc}", file=sys.stderr, flush=True)
+        print(f"[ondo-preflight] a failed read is not an empty market: no payload was "
+              f"written; this attempt is recorded at {out_dir / RUNS_DIRNAME / attempt}",
+              file=sys.stderr, flush=True)
+        return 1
+    fetched = _now()
+
+    missing = report[MISSING_FILE]
+    meta = dict(base_meta)
+    meta["fetched_at_utc"] = fetched.isoformat(timespec="milliseconds")
+    meta["fetched_at_ns"] = int(fetched.timestamp() * 1_000_000_000)
+    meta["complete"] = not missing
+    if missing:
+        # An incomplete attempt states why, in the same field a transport failure uses, so
+        # a reader never has to reconstruct the verdict from the payloads.
+        meta["failure"] = (
+            f"{len(missing)} missing/unknown item(s) for "
+            f"{', '.join(row['symbol'] for row in rows)}: not a complete preflight"
+        )
     # The venue convention the status verdicts rest on, with the counts behind it,
     # so meta.json records the evidence as well as the per-market source string.
     meta["market_status_convention"] = status_convention_evidence(
         market_entries(payloads.get(MARKET_FILE)),
     )
-    write_report(report, out_dir, complete=not missing, meta=meta)
+    write_report(report, out_dir, run_id=attempt, complete=not missing, meta=meta)
 
     if missing:
         print(
             f"[ondo-preflight] FAILED: {len(missing)} missing/unknown item(s) for "
-            f"{', '.join(row['symbol'] for row in rows)} -> {out_dir}",
+            f"{', '.join(row['symbol'] for row in rows)} -> {out_dir} "
+            f"(run {attempt}, complete=false)",
             file=sys.stderr, flush=True,
         )
         for item in missing:
@@ -642,7 +816,7 @@ def run(symbols: Sequence[str], out_dir: Path, *, environment: str = "production
         return 1
     print(
         f"[ondo-preflight] OK {', '.join(row['symbol'] for row in rows)} -> {out_dir} "
-        f"(status, markets, contracts, instruments, meta)",
+        f"(status, markets, contracts, instruments, meta; run {attempt})",
         flush=True,
     )
     return 0

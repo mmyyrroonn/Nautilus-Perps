@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import spread_watch  # noqa: E402
 from market_tape import read_manifest, read_tape, read_run_manifest  # noqa: E402
+from nautilus_trader.common import TimeEvent  # noqa: E402
+from nautilus_trader.core import UUID4  # noqa: E402
 from nautilus_trader.model import AggressorSide  # noqa: E402
 from nautilus_trader.model import BookAction  # noqa: E402
 from nautilus_trader.model import BookOrder  # noqa: E402
@@ -166,7 +168,7 @@ class WatchUnderTest(spread_watch.SpreadWatch):
         self._stub_clock = FakeClock()
         self.subscribed: dict[str, list[InstrumentId]] = {
             "quotes": [], "funding": [], "trades": [], "deltas": [], "depth10": [],
-            "status": [],
+            "status": [], "instrument": [],
         }
         # Same subscriptions, but with the client they were routed through: with two
         # HYPERLIQUID legs the instrument alone no longer says which client was used.
@@ -216,6 +218,10 @@ class WatchUnderTest(spread_watch.SpreadWatch):
     def subscribe_instrument_status(self, instrument_id, client_id=None, params=None) -> None:
         self.subscribed["status"].append(instrument_id)
         self._route("status", instrument_id, client_id)
+
+    def subscribe_instrument(self, instrument_id, client_id=None, params=None) -> None:
+        self.subscribed["instrument"].append(instrument_id)
+        self._route("instrument", instrument_id, client_id)
 
 
 def build_watch(out_dir: Path, symbol: str = "NVDA",
@@ -994,10 +1000,34 @@ def make_status(instrument_id: InstrumentId, reason: str, *, is_trading=None,
 
 
 class FakeInstrument:
-    """A loaded instrument carrying the provider's runtime fee metadata."""
+    """A loaded instrument carrying the provider's runtime fee metadata.
 
-    def __init__(self, taker_fee) -> None:
+    ``size_increment`` / ``price_increment`` are Nautilus ``Quantity`` / ``Price`` objects
+    on a real instrument; whatever they render as is what the tape must carry, so a test
+    can hand in an exact decimal string just as well. ``info`` is the adapter's metadata
+    carrier (version / availability) and ``ts_init`` the local receive time.
+    """
+
+    def __init__(self, taker_fee, *, instrument_id=None, size_increment=None,
+                 price_increment=None, info=None, ts_init=None, price_precision=None,
+                 size_precision=None, tick_size=None) -> None:
         self.taker_fee = taker_fee
+        if instrument_id is not None:
+            self.instrument_id = instrument_id
+        if size_increment is not None:
+            self.size_increment = size_increment
+        if price_increment is not None:
+            self.price_increment = price_increment
+        if info is not None:
+            self.info = info
+        if ts_init is not None:
+            self.ts_init = ts_init
+        if price_precision is not None:
+            self.price_precision = price_precision
+        if size_precision is not None:
+            self.size_precision = size_precision
+        if tick_size is not None:
+            self.tick_size = tick_size
 
 
 class TestOndoVenueRegistry(unittest.TestCase):
@@ -1144,6 +1174,9 @@ def test_ondo_leg_takes_its_fee_from_the_runtime_metadata(tmp_path):
         assert ondo.fee_source == "instrument_metadata"
         assert watch._fee[("ONDO", "ASTER")] == pytest.approx(2.5 + 0.9 + 5.0)
         assert watch.subscribed["status"] == [watch._legs[0].instrument_id]
+        assert watch.subscribed["instrument"] == [watch._legs[0].instrument_id], (
+            "a runtime metadata refresh only reaches on_instrument if it is subscribed"
+        )
     finally:
         watch.on_stop()
 
@@ -1309,6 +1342,7 @@ def test_non_ondo_legs_never_subscribe_or_react_to_status(tmp_path):
     watch.on_start()
     try:
         assert watch.subscribed["status"] == []
+        assert watch.subscribed["instrument"] == []
         for leg in watch._legs:  # a stray status event must not change a non-ONDO leg
             watch.on_instrument_status(make_status(
                 leg.instrument_id, "adapter:disconnected", is_trading=False,
@@ -1348,6 +1382,351 @@ def test_a_real_halt_survives_a_local_reconnect(tmp_path):
             action=MarketStatusAction.TRADING,
         ))
         assert ondo.market_ready and not ondo.market_halted
+    finally:
+        watch.on_stop()
+
+
+def test_the_metadata_axis_is_its_own_and_stale_withdraws_the_fee(tmp_path):
+    """F07: feed / market / metadata are three axes; only their own event moves each.
+
+    `metadata_stale` says the venue metadata is no longer acceptable, so the fee this leg's
+    cost judgement came from is withdrawn - the direction is withheld rather than priced
+    against a rate nobody trusts. It does not clear the quote, it does not touch the feed
+    and it is not a venue halt.
+    """
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True, instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(Decimal("0.00025")),
+    })
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        watch.on_quote(make_quote(ondo.instrument_id, "100.00", "100.01",
+                                  watch.clock.timestamp_ns()))
+        assert ondo.ready() and ondo.fee_source == "instrument_metadata"
+        assert watch._fee[("ONDO", "ASTER")] == pytest.approx(2.5 + 0.9 + 5.0)
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:metadata_stale", is_trading=None, is_quoting=False,
+        ))
+        assert not ondo.metadata_ready and ondo.metadata_stale_reason == "adapter:metadata_stale"
+        assert ondo.feed_ready and ondo.book_valid, "the feed axis is not the metadata axis"
+        assert ondo.market_ready, "stale metadata is not a venue halt"
+        assert ondo.bid > 0.0, "the quote is not cleared by a metadata notice"
+        assert not ondo.ready(), "a leg whose metadata is untrusted is not tradable"
+        assert ondo.unusable_reasons() == ["metadata-stale"]
+        assert ondo.spec.taker_fee_bps is None and ondo.fee_source == "metadata_stale"
+        assert watch._fee[("ONDO", "ASTER")] is None
+        assert watch._fee[("ASTER", "ONDO")] is None
+        assert "metadata=STALE" in watch._leg_status_text(ondo)
+    finally:
+        watch.on_stop()
+
+    records = [
+        r for r in read_tape([tmp_path / "l2"])
+        if r["event_kind"] == "instrument" and r["venue"] == "ONDO"
+    ]
+    assert [r["source"] for r in records] == ["instrument_metadata", "instrument_update"]
+    stale = records[-1]
+    assert stale["valid"] is False and stale["invalid_reason"] == "metadata_stale"
+    assert stale["metadata"]["taker_fee_bps"] == "2.50", (
+        "the last known payload is kept for traceability, with its fee, and marked unusable"
+    )
+
+
+def test_metadata_ready_restores_the_axis_without_touching_feed_or_market(tmp_path):
+    """F07: only `metadata_ready` clears stale metadata, and it moves nothing else."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(
+            Decimal("0.00030"), info={"metadata_version": "9"},
+        ),
+    })
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        watch.on_quote(make_quote(ondo.instrument_id, "100.00", "100.01",
+                                  watch.clock.timestamp_ns()))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "market halts", is_trading=False,
+            action=MarketStatusAction.HALT,
+        ))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:metadata_stale", is_trading=None, is_quoting=False,
+        ))
+        assert not ondo.metadata_ready and ondo.spec.taker_fee_bps is None
+
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:metadata_ready", is_trading=None, is_quoting=True,
+        ))
+        assert ondo.metadata_ready and ondo.metadata_stale_reason is None
+        assert ondo.spec.taker_fee_bps == pytest.approx(3.0), (
+            "the fee is re-read from the metadata in force now, not restored from memory"
+        )
+        assert ondo.metadata_version == "9"
+        assert watch._fee[("ONDO", "ASTER")] == pytest.approx(3.0 + 0.9 + 5.0)
+        assert not ondo.market_ready and ondo.market_halted, (
+            "a metadata refresh is not a venue halt being lifted"
+        )
+        assert ondo.feed_ready and ondo.book_valid
+        assert not ondo.ready(), "the halt still stands"
+    finally:
+        watch.on_stop()
+
+
+def test_a_recovery_snapshot_does_not_clear_stale_metadata(tmp_path):
+    """F07: the axes stay apart across a reconnect - neither clears the other."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(Decimal("0.00025")),
+    })
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:metadata_stale", is_trading=None, is_quoting=False,
+        ))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+        ))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:snapshot_ready", is_trading=None, is_quoting=True,
+        ))
+        assert ondo.feed_ready and ondo.book_valid, "the local feed is back"
+        assert not ondo.metadata_ready, (
+            "a new snapshot says nothing about whether the metadata is trustworthy"
+        )
+        assert ondo.spec.taker_fee_bps is None
+    finally:
+        watch.on_stop()
+
+
+def test_an_instrument_update_while_stale_is_recorded_as_unusable(tmp_path):
+    """F07: a payload that arrives while the metadata is stale is not silently adopted.
+
+    The adapter only republishes on a successful refresh, but nothing has said the metadata
+    is acceptable again until `metadata_ready` does. Until then the new payload is on the
+    tape with the stale marker, the last *acceptable* payload stays the remembered one, and
+    the leg stays unusable.
+    """
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True, instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(Decimal("0.00025")),
+    })
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:metadata_stale", is_trading=None, is_quoting=False,
+        ))
+        watch.on_instrument(FakeInstrument(
+            Decimal("0.00060"), instrument_id=InstrumentId.from_str(ONDO_ID),
+            info={"metadata_version": "12"},
+        ))
+        assert not ondo.metadata_ready
+        assert ondo.spec.taker_fee_bps is None, "a stale leg does not adopt a new fee"
+        assert ondo.metadata_version is None, "nor the version of a payload it cannot use"
+    finally:
+        watch.on_stop()
+
+    records = [
+        r for r in read_tape([tmp_path / "l2"])
+        if r["event_kind"] == "instrument" and r["venue"] == "ONDO"
+    ]
+    assert [(r["source"], r["valid"], r["invalid_reason"]) for r in records] == [
+        ("instrument_metadata", True, None),
+        ("instrument_update", False, "metadata_stale"),
+        ("instrument_update", False, "metadata_stale"),
+    ]
+    assert records[1]["metadata"]["taker_fee_bps"] == "2.50", (
+        "the stale marker republishes the last acceptable payload"
+    )
+    assert records[2]["metadata"]["metadata_version"] == "12", (
+        "the unusable refresh is on the tape and identified"
+    )
+    assert records[2]["metadata"]["fee_source"] == "metadata_stale", (
+        "…and it says the fee the leg prices against is withdrawn, not that this payload's "
+        "fee became the leg's rate"
+    )
+    assert records[2]["metadata"]["taker_fee_bps"] == "unknown"
+
+
+def test_a_runtime_instrument_update_lands_on_the_tape_and_moves_the_fee(tmp_path):
+    """F07/F08: a refresh mid-run is an arrival on the tape, not a start-up-only fact."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True, instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(Decimal("0.00025")),
+    })
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        assert watch._fee[("ONDO", "ASTER")] == pytest.approx(2.5 + 0.9 + 5.0)
+
+        # The adapter republishes the instrument with a new fee, step and version.
+        watch.on_instrument(FakeInstrument(
+            Decimal("0.00060"), instrument_id=InstrumentId.from_str(ONDO_ID),
+            size_increment=Quantity.from_str("0.003"),
+            price_increment=Price.from_str("0.01"), ts_init=1_700_000_000_000_000_000,
+            info={"metadata_version": "12"},
+        ))
+        assert ondo.spec.taker_fee_bps == pytest.approx(6.0)
+        assert ondo.metadata_version == "12"
+        assert watch._fee[("ONDO", "ASTER")] == pytest.approx(6.0 + 0.9 + 5.0)
+        assert ondo.metadata_updates == 2
+    finally:
+        watch.on_stop()
+
+    records = [
+        r for r in read_tape([tmp_path / "l2"])
+        if r["event_kind"] == "instrument" and r["venue"] == "ONDO"
+    ]
+    assert [r["source"] for r in records] == ["instrument_metadata", "instrument_update"]
+    assert records[0]["metadata"]["taker_fee_bps"] == "2.50"
+    assert records[1]["metadata"]["taker_fee_bps"] == "6.00"
+    assert records[1]["metadata"]["size_increment"] == "0.003", (
+        "the real quantity step travels with the update, never 10**-size_precision"
+    )
+    assert records[1]["metadata"]["metadata_version"] == "12"
+    assert records[1]["metadata"]["metadata_available_ns"] == 1_700_000_000_000_000_000
+    assert records[1]["valid"] is True and records[1]["invalid_reason"] is None
+
+
+def test_a_missing_size_increment_is_unknown_and_never_derived_from_precision(tmp_path):
+    """Contract E: no real `size_increment` means unknown - a precision is not a step.
+
+    The venue's own instruments measured 0.002/0.003 while ``10**-size_precision`` says
+    0.001; deriving one from the other is off by a factor of six on a real pair.
+    """
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True, instruments={
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(
+            Decimal("0.00025"), price_precision=2, size_precision=3,  # a precision, no step
+        ),
+    })
+    watch.on_start()
+    watch.on_stop()
+    records = [
+        r for r in read_tape([tmp_path / "l2"])
+        if r["event_kind"] == "instrument" and r["venue"] == "ONDO"
+    ]
+    assert records[0]["metadata"]["size_increment"] is None
+    assert records[0]["metadata"]["price_increment"] is None
+    assert records[0]["metadata"]["size_precision"] == 3, "the precision is still recorded"
+    assert records[0]["metadata"]["metadata_available_ns"] is None, (
+        "an instrument that stamps no receive time leaves the availability unknown"
+    )
+
+
+def test_the_first_book_after_a_recovery_snapshot_is_valid_on_the_tape(tmp_path):
+    """F18: the replacement snapshot arrives *before* the ready notice and is good depth.
+
+    The adapter publishes the new Deltas and only then `adapter:snapshot_ready`, so the
+    first book of the recovery lands while `feed_ready` is still False. Folding that feed
+    state into the record's `valid` wrote the one usable book of the recovery as invalid,
+    and a replay held an unusable book until a second frame arrived.
+    """
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        now = watch.clock.timestamp_ns()
+        watch.on_book_deltas(make_batch(
+            ondo.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+            ts=now,
+        ))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+        ))
+        # One recovery frame, then the ready notice - the adapter's own order.
+        watch.on_book_deltas(make_batch(
+            ondo.instrument_id, bids=[("100.06", "0.003")], asks=[("100.11", "0.004")],
+            ts=now + 1,
+        ))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:snapshot_ready", is_trading=None, is_quoting=True,
+        ))
+        assert ondo.feed_ready and ondo.book_valid
+    finally:
+        watch.on_stop()
+
+    books = [r for r in read_tape([tmp_path / "l2"]) if r["event_kind"] == "book"]
+    assert len(books) == 2, "one record per fully applied batch"
+    recovery = books[1]
+    assert recovery["bids"] == [["100.06", "0.003"]]
+    assert recovery["valid"] is True, (
+        "the replacement snapshot is good depth: the feed state belongs to the replay, "
+        "not to this record's own verdict"
+    )
+    assert recovery["invalid_reason"] is None
+
+
+def test_a_book_record_never_carries_the_feed_state_as_its_validity(tmp_path):
+    """Contract D: feed / market / metadata eligibility is replay state, never a record flag.
+
+    A two-sided uncrossed book that arrives while the feed is marked down, and while the
+    venue says the market is halted, is still a perfectly good snapshot: what makes it
+    *unusable* is the state of the axes at that arrival, and that is what a replay reads
+    the status records for. Writing ``feed-invalidated`` into the record instead put the
+    same fact in two places and made one snapshot's verdict depend on an unrelated event.
+    """
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    try:
+        ondo = watch._legs[0]
+        now = watch.clock.timestamp_ns()
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "adapter:disconnected", is_trading=None, is_quoting=False,
+        ))
+        watch.on_instrument_status(make_status(
+            ondo.instrument_id, "market halts", is_trading=False,
+            action=MarketStatusAction.HALT,
+        ))
+        watch.on_book_deltas(make_batch(
+            ondo.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+            ts=now,
+        ))
+        watch.on_book_depth(make_depth10(
+            ondo.instrument_id, bids=[("100.05", "0.001")], asks=[("100.10", "0.002")],
+            ts=now,
+        ))
+    finally:
+        watch.on_stop()
+
+    rows = list(read_tape([tmp_path / "l2"]))
+    assert "feed-invalidated" not in json.dumps(rows), (
+        "the feed's state is replayed from the status records, it is not a record's verdict"
+    )
+    books = [r for r in rows if r["event_kind"] == "book"]
+    assert len(books) == 2
+    for record in books:
+        assert record["valid"] is True and record["invalid_reason"] is None, (
+            "a two-sided uncrossed book is valid depth whatever the axes say"
+        )
+    statuses = [r for r in rows if r["event_kind"] == "status"]
+    assert [r["reason"] for r in statuses] == ["adapter:disconnected", "market halts"]
+    assert all(r["valid"] is True and r["invalid_reason"] is None for r in statuses), (
+        "a status notice's own validity is not the feed's state either"
+    )
+
+
+def test_the_depth_timer_drains_the_tape_without_new_market_data(tmp_path):
+    """F10: the watcher drives the writer's deadline from the event loop it already runs."""
+    watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True)
+    watch.on_start()
+    tape = watch._tape
+    try:
+        assert tape is not None
+        clock = [tape._last_flush]  # a hand-cranked monotonic clock for the deadline
+        tape._clock = lambda: clock[0]
+        tape.flush_secs = 1.0
+        now = watch.clock.timestamp_ns()
+        for leg in watch._legs:
+            watch.on_quote(make_quote(leg.instrument_id, "100.00", "100.01", now))
+        path = tmp_path / "l2" / "l2_NVDA_ONDO-ASTER_20260907T120000Z.jsonl"
+        on_disk = lambda: [  # noqa: E731 - the header is written directly, data is queued
+            r for r in read_tape([path]) if r["event_kind"] in ("quote", "book")
+        ]
+        assert on_disk() == [], "the records are queued, not on the disk"
+
+        clock[0] += 2.0
+        watch.on_time_event(TimeEvent("depth-NVDA", UUID4(), now, now))
+        assert [r["venue"] for r in on_disk()] == ["ONDO", "ASTER"], (
+            "no market data arrived, and the deadline still had to be met"
+        )
     finally:
         watch.on_stop()
 
@@ -1561,23 +1940,42 @@ def test_a_record_l2_run_records_every_leg_with_a_manifest(tmp_path):
 
 
 def test_the_ondo_leg_records_the_feeds_own_fee_metadata(tmp_path):
+    """Contract C: the fee, the real steps, the version and the availability all travel.
+
+    This assertion used to name the five-key record of schema 1 (fee, tick, precisions).
+    The record now also carries the venue's *real* quantity and price steps and the
+    adapter's metadata version/availability, so the expected shape moved with the
+    contract; nothing about the fee itself changed.
+    """
     watch = build_watch(tmp_path, "NVDA", ("ONDO", "ASTER"), record_l2=True, instruments={
-        InstrumentId.from_str(ONDO_ID): FakeInstrument(Decimal("0.00025")),
+        InstrumentId.from_str(ONDO_ID): FakeInstrument(
+            Decimal("0.00025"), size_increment=Quantity.from_str("0.002"),
+            price_increment=Price.from_str("0.01"), price_precision=2, size_precision=3,
+            tick_size=Price.from_str("0.01"), ts_init=1_700_000_000_000_000_000,
+            info={"metadata_version": "7"},
+        ),
     })
     watch.on_start()
     watch.on_stop()
     rows = list(read_tape([tmp_path / "l2"]))
-    metadata = [
-        r["metadata"] for r in rows
-        if r["event_kind"] == "instrument" and r["venue"] == "ONDO"
+    records = [
+        r for r in rows if r["event_kind"] == "instrument" and r["venue"] == "ONDO"
     ]
-    assert metadata == [{
+    assert [r["metadata"] for r in records] == [{
         "venue": "ONDO",
         "client_id": "ONDO",
         "taker_fee_bps": "2.50",
         "fee_source": "instrument_metadata",
-        "tick_size": None,
+        "price_precision": 2,
+        "size_precision": 3,
+        "tick_size": "0.01",
+        "size_increment": "0.002",
+        "price_increment": "0.01",
+        "metadata_version": "7",
+        "metadata_available_ns": 1_700_000_000_000_000_000,
     }]
+    assert records[0]["source"] == "instrument_metadata"
+    assert records[0]["valid"] is True and records[0]["invalid_reason"] is None
 
 
 def test_the_depth10_fallback_is_recorded_as_a_limited_source(tmp_path):
@@ -1714,6 +2112,116 @@ def test_a_recording_gap_fails_the_recording_acceptance_but_not_the_spread(tmp_p
     assert marker["valid"] is False and marker["invalid_reason"].startswith("recording_gap")
     assert rows[-1]["event_kind"] == "run_end" and rows[-1]["complete"] is False
     assert "FAILED" in watch.summary(), "the run prints the recording's failed acceptance"
+
+
+# ------------------------------------------------- the adapter's raw public recorder
+
+
+def write_raw_session(directory: Path, *, session_id: str, run_id: str, frames: int = 3,
+                      clean: bool = True, end: bool = True, part: int = 1,
+                      truncate: bool = False) -> Path:
+    """One session of the fork's raw public-frame recording, as it writes it."""
+    name = "raw_md.jsonl" if part <= 1 else f"raw_md_part{part:04d}.jsonl"
+    path = directory / name
+    directory.mkdir(parents=True, exist_ok=True)
+    lines = [
+        {"schema_version": 1, "kind": "run_start", "run_id": run_id,
+         "run_id_source": "configured", "session_id": session_id},
+        *({"kind": "frame", "session_id": session_id, "recv_seq": n,
+           "payload": "{}"} for n in range(1, frames + 1)),
+    ]
+    if end:
+        lines.append({
+            "schema_version": 1, "kind": "run_end", "run_id": run_id,
+            "session_id": session_id, "clean": clean, "dropped": 0 if clean else 1,
+            "gaps": 0 if clean else 1, "records": frames, "markers": 2,
+            "bytes": 100, "rotations": 0, "segments": 1, "last_recv_seq": frames,
+            "reason": None if clean else "1 frame(s) were dropped when the queue was full",
+        })
+    # Compact separators: the adapters write with serde_json's `to_string`, and the
+    # fixture is read back by a scanner that assumes no particular spacing.
+    path.write_text(
+        "".join(json.dumps(line, separators=(",", ":")) + "\n" for line in lines),
+        encoding="utf-8",
+    )
+    if truncate:
+        with path.open("ab") as handle:
+            handle.write(b'{"schema_version": 1, "kind": "frame", "recv')
+    return path
+
+
+def test_the_raw_recorder_stats_are_read_from_its_own_run_end(tmp_path):
+    """R2.1: the acceptance reads the adapter's own drop/gap/finalize statistics."""
+    raw_dir = tmp_path / "raw_ondo"
+    write_raw_session(raw_dir, session_id="s1", run_id="20260915T000000Z", frames=7)
+
+    report = spread_watch.raw_recorder_status(raw_dir, run_id="20260915T000000Z")
+    assert report["complete"] is True, report["problem"]
+    assert report["run_id_matches"] is True
+    assert report["records"] == 7 and report["dropped"] == 0 and report["gaps"] == 0
+    assert [s["session_id"] for s in report["sessions"]] == ["s1"]
+    assert report["sessions"][0]["clean"] is True
+    assert report["sessions"][0]["last_recv_seq"] == 7
+    assert report["segments"][0]["truncated"] is False
+    assert spread_watch.raw_recorder_text(report).startswith("complete:")
+
+
+def test_a_raw_recording_that_dropped_frames_is_never_reported_complete(tmp_path):
+    raw_dir = tmp_path / "raw_ondo"
+    write_raw_session(raw_dir, session_id="s1", run_id="r", frames=4, clean=False)
+
+    report = spread_watch.raw_recorder_status(raw_dir, run_id="r")
+    assert report["complete"] is False
+    assert report["dropped"] == 1 and report["gaps"] == 1
+    assert "not clean" in report["problem"]
+    assert spread_watch.raw_recorder_text(report).startswith("INCOMPLETE:")
+
+
+def test_a_raw_recording_that_never_finalized_is_incomplete(tmp_path):
+    """R2.1: 'the feed was still flowing' is never evidence that the recording is complete.
+
+    A session with no ``run_end`` (the process died, or the recorder never finished), a
+    segment whose last line has no newline, an empty directory and a run id that does not
+    join the tape are all incomplete - each with its own reason.
+    """
+    unfinalized = tmp_path / "unfinalized"
+    write_raw_session(unfinalized, session_id="s1", run_id="r", end=False)
+    report = spread_watch.raw_recorder_status(unfinalized, run_id="r")
+    assert report["complete"] is False and "never wrote its run_end" in report["problem"]
+    assert report["sessions"][0]["finalized"] is False
+
+    truncated = tmp_path / "truncated"
+    write_raw_session(truncated, session_id="s1", run_id="r", truncate=True)
+    report = spread_watch.raw_recorder_status(truncated, run_id="r")
+    assert report["complete"] is False and "no newline" in report["problem"]
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    report = spread_watch.raw_recorder_status(empty, run_id="r")
+    assert report["complete"] is False and "no raw public-frame segment" in report["problem"]
+
+    wrong_id = tmp_path / "wrong-id"
+    write_raw_session(wrong_id, session_id="s1", run_id="someone-else")
+    report = spread_watch.raw_recorder_status(wrong_id, run_id="20260915T000000Z")
+    assert report["complete"] is False and "do not join" in report["problem"]
+    assert report["run_id_matches"] is False
+
+    silent = tmp_path / "silent"
+    write_raw_session(silent, session_id="s1", run_id="r", frames=0)
+    report = spread_watch.raw_recorder_status(silent, run_id="r")
+    assert report["complete"] is False and "without a single public frame" in report["problem"]
+
+
+def test_main_reports_an_unconfirmable_raw_recording_as_a_recording_failure(
+    monkeypatch, tmp_path,
+):
+    code, err, out = _run_main_with_a_fake_node(
+        monkeypatch, tmp_path, NVDA_ONDO_RECEIVED, [],
+        symbols="NVDA", venues="ONDO,ASTER", record_l2=True,
+    )
+    assert code == 1
+    assert "raw_ondo recording" in out
+    assert "RECORDING FAILED the raw public-frame recording under " in err
 
 
 def test_a_tape_write_failure_is_surfaced_and_does_not_kill_the_spread_run(

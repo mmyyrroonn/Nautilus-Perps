@@ -27,28 +27,39 @@ import analysis.ondo_depth as ondo_depth  # noqa: E402
 from analysis.ondo_depth import (  # noqa: E402
     DEFAULT_FUTURE_TOLERANCE_MS,
     DEFAULT_MAX_AGE_MS,
+    DEFAULT_MAX_EVENT_AGE_MS,
     DEFAULT_MAX_SKEW_MS,
     DEFAULT_SYMBOLS,
     DEFAULT_VENUES,
     MAPPING_UNVERIFIED,
+    NON_TRADING_ACTIONS,
     REJECT_BELOW_ONE_STEP,
     REJECT_BOOK_INVALID,
     REJECT_CROSSED,
     REJECT_DISCONNECTED,
     REJECT_EMPTY_BOOK,
+    REJECT_EVENT_AGE,
     REJECT_EVENT_SKEW,
     REJECT_FEE_UNKNOWN,
     REJECT_FUTURE_TIME,
     REJECT_INSUFFICIENT_DEPTH,
+    REJECT_MARKET_HALTED,
+    REJECT_METADATA_STALE,
     REJECT_METADATA_UNKNOWN,
     REJECT_NO_BOOK,
     REJECT_ONE_SIDED,
     REJECT_RECORDING_GAP,
     REJECT_SESSION_MISMATCH,
     REJECT_STALE_BOOK,
+    REJECT_STEP_UNKNOWN,
     REJECT_UNKNOWN_TIME,
+    STEP_ORIGIN_METADATA,
+    STEP_ORIGIN_OVERRIDE,
+    STEP_ORIGIN_UNKNOWN,
+    TAPE_SCHEMA_VERSIONS,
     BookState,
     DepthError,
+    LegMetadata,
     LegReading,
     Params,
     QualityParams,
@@ -59,15 +70,19 @@ from analysis.ondo_depth import (  # noqa: E402
     build_parser,
     common_quantity,
     common_step,
+    event_age_status,
+    leg_step,
     main,
+    metadata_state,
+    positive_decimal,
     quality_gate,
     replay_events,
     target_base_quantity,
     ts_utc,
-    venue_step,
     vwap_for_quantity,
 )
 from analysis.opportunities import hourly_bps  # noqa: E402
+import market_tape  # noqa: E402
 from market_tape import (  # noqa: E402
     BookTape,
     TapeWriter,
@@ -84,6 +99,18 @@ RUN_ID = "20260914T000000Z"
 SESSION = f"{RUN_ID}-aaaa"
 SESSION_B = f"{RUN_ID}-bbbb"
 MS = 1_000_000
+
+
+def tape_schema() -> int:
+    """The tape schema the installed writer/reader speak.
+
+    Records that carry the newer, per-arrival metadata are stamped with whatever the
+    installed ``market_tape`` currently writes (contract A: the reader accepts both
+    version 1 and version 2), while the tests that pin *old tape* behaviour stamp an
+    explicit 1. That way the two are never confused and neither depends on which
+    version happens to be current.
+    """
+    return market_tape.SCHEMA_VERSION
 
 
 # --------------------------------------------------------------------- fixtures
@@ -104,11 +131,17 @@ def rec(
     asks: list[list[str]] | None = None,
     valid: bool = True,
     invalid: str | None = None,
+    schema: int = 1,
     **extra,
 ) -> dict:
-    """One hand-written tape record: the reader's schema, no writer involved."""
+    """One hand-written tape record: the reader's schema, no writer involved.
+
+    ``schema`` defaults to the version-1 record shape (no per-arrival metadata, no
+    ``size_increment``); a test that writes the newer fields says
+    ``schema=tape_schema()`` so the stamp matches its content.
+    """
     record = {
-        "schema_version": 1,
+        "schema_version": schema,
         "run_id": run_id,
         "session_id": session,
         "arrival_seq": seq,
@@ -280,11 +313,42 @@ def test_target_base_quantity_uses_the_then_visible_bid_price():
         target_base_quantity(Decimal("100"), Decimal("0"), Decimal("0.001"))
 
 
-def test_venue_step_comes_from_the_published_size_precision():
-    assert venue_step(3) == Decimal("0.001")
-    assert venue_step(0) == Decimal("1")
-    assert venue_step(None) is None, "a step is never invented"
-    assert venue_step(True) is None
+def test_a_quantity_step_is_never_inferred_from_the_size_precision():
+    """F08: the old ``venue_step(size_precision)`` inference is gone on purpose.
+
+    The module used to expose ``venue_step(3) == 0.001``, and the analysis used it:
+    that is exactly how a run whose real increments were 0.002 / 0.003 produced a
+    common step of 0.001. A step now comes from the instrument's own
+    ``size_increment`` or not at all, so the function that could invent one no longer
+    exists - and ``size_precision`` (still recorded in the tape and still printed in
+    the fee snapshot as evidence) can no longer be turned into a step.
+    """
+    assert not hasattr(ondo_depth, "venue_step"), (
+        "the precision-to-step inference is removed, not merely unused"
+    )
+    assert positive_decimal("0.001") == Decimal("0.001")
+    assert positive_decimal(None) is None, "a step is never invented"
+    assert positive_decimal(True) is None
+    assert positive_decimal("0") is None
+    assert positive_decimal("-0.5") is None
+    assert positive_decimal("not a number") is None
+    # a metadata payload that only carries the precision yields no step at all
+    payload_only = metadata_state(
+        {"metadata": {"size_precision": 3, "taker_fee_bps": "2.5"},
+         "session_id": SESSION, "arrival_seq": 1}, "ONDO",
+    )
+    assert payload_only.size_precision == 3
+    assert payload_only.size_increment is None
+    assert leg_step("ONDO", payload_only, params()) == (None, STEP_ORIGIN_UNKNOWN)
+    assert leg_step(
+        "ONDO", payload_only, params(steps={"ONDO": Decimal("0.002")}),
+    ) == (Decimal("0.002"), STEP_ORIGIN_OVERRIDE)
+    # a *stale* metadata state carries no usable increment either, even when the record
+    # repeated one: nothing is derived from a payload the tape called untrustworthy
+    stale = LegMetadata(venue="ONDO", known=False, stale=True,
+                        size_increment=Decimal("0.002"), arrival_seq=1)
+    assert stale.usable is False
+    assert leg_step("ONDO", stale, params()) == (None, STEP_ORIGIN_UNKNOWN)
 
 
 # ----------------------------------------------------------------- replay
@@ -384,10 +448,15 @@ def test_the_quality_defaults_are_the_plans_research_parameters():
     assert DEFAULT_MAX_AGE_MS == 2_000
     assert DEFAULT_MAX_SKEW_MS == 500
     assert DEFAULT_FUTURE_TOLERANCE_MS == 1_000
-    params = QualityParams()
-    assert (params.max_age_ms, params.max_skew_ms, params.future_tolerance_ms) == (
+    quality = QualityParams()
+    assert (quality.max_age_ms, quality.max_skew_ms, quality.future_tolerance_ms) == (
         2_000, 500, 1_000,
     )
+    # F09: the event age is measured and published, but a threshold on it is a decision
+    # the caller makes explicitly - it is off unless asked for, because the age carries
+    # the unmeasured local clock offset.
+    assert DEFAULT_MAX_EVENT_AGE_MS is None
+    assert quality.max_event_age_ms is None
 
 
 def test_the_gate_passes_a_fresh_two_sided_pair():
@@ -507,7 +576,12 @@ def test_the_gate_fails_empty_one_sided_crossed_and_invalid_books():
         "a crossed book fails even when the record claims valid=True"
     )
     invalidated = bookstate("ONDO", valid=False, reason="feed-invalidated")
-    assert verdict(invalidated).reject_reason == REJECT_BOOK_INVALID
+    assert verdict(invalidated).reject_reason == REJECT_BOOK_INVALID, (
+        "a version-1 tape's 'feed-invalidated' marker folded the feed axis into the "
+        "depth's validity (F18). It is refused on the depth, and the note says the v1 "
+        "tape cannot separate the two axes - the reader never guesses which one it was"
+    )
+    assert "cannot say which axis" in verdict(invalidated).notes[0]
 
 
 def test_the_gate_fails_a_gap_a_disconnect_unknown_metadata_and_a_missing_book():
@@ -604,38 +678,64 @@ def test_a_replay_over_a_written_tape_reads_the_decimal_strings(tmp_path):
 # ======================================================= the analysis and the CLI
 
 
-def push(leg, *, bids, asks, at_ms, receive_ms=None, valid=None, reason=None,
+def push(leg, *, bids, asks, at_ms, receive_ms=None, init_ms=None, valid=None, reason=None,
          source="snapshot"):
-    """One leg's complete book at ``at_ms``, received at ``receive_ms``."""
+    """One leg's complete book at ``at_ms``, received at ``receive_ms``.
+
+    ``init_ms`` is the record's own local epoch receipt stamp and defaults to one
+    millisecond after its venue event (what a real tape shows). A test that asserts an
+    exact event age - the age is measured from this stamp - passes it explicitly.
+    """
     return leg.replace(
         bids, asks, coverage_limit=100, source=source,
-        ts_event_ns=int(at_ms * MS), ts_init_ns=int(at_ms * MS) + MS,
+        ts_event_ns=int(at_ms * MS),
+        ts_init_ns=int((init_ms if init_ms is not None else at_ms) * MS) + (
+            0 if init_ms is not None else MS
+        ),
         recorded_mono_ns=int(receive_ms * MS) if receive_ms is not None else int(at_ms * MS),
         valid=valid, invalid_reason=reason,
     )
 
 
-def push_quote(writer, *, venue, symbol="NVDA", at_ms, receive_ms=None, bid="100.00",
-               ask="100.10", bid_size="1", ask_size="1"):
+def push_quote(writer, *, venue, symbol="NVDA", at_ms, receive_ms=None, init_ms=None,
+               bid="100.00", ask="100.10", bid_size="1", ask_size="1"):
     """A top-of-book update: it must never refresh the leg's depth time."""
     return writer.write_event(quote_event(
         symbol=symbol, venue=venue, instrument_id=f"{symbol}-USD-PERP.{venue}",
         bid=bid, ask=ask, bid_size=bid_size, ask_size=ask_size, source="quotes",
-        ts_event_ns=int(at_ms * MS), ts_init_ns=int(at_ms * MS) + MS,
+        ts_event_ns=int(at_ms * MS),
+        ts_init_ns=int((init_ms if init_ms is not None else at_ms) * MS) + (
+            0 if init_ms is not None else MS
+        ),
         recorded_mono_ns=int(receive_ms * MS) if receive_ms is not None else int(at_ms * MS),
     ))
 
 
 def write_run_dir(tmp_path, body, *, symbol="NVDA", venues=("ONDO", "ASTER"), fees=None,
                   fee_source="instrument_metadata", size_precision=3, stamp=RUN_ID,
-                  manifest=True, rotate_bytes=None, run_dir=None):
-    """A recorded run directory written by the real writer, in plan 5.1's layout."""
+                  manifest=True, rotate_bytes=None, run_dir=None, size_increments=None,
+                  metadata_extra=None, instruments=True):
+    """A recorded run directory written by the real writer, in plan 5.1's layout.
+
+    ``size_increments`` is the *real* per-venue ``size_increment`` the tape's instrument
+    records carry, and it defaults to the value ``size_precision`` describes (0.001 for
+    the default 3 decimals) - a v2 tape of an instrument whose step matches its
+    precision. Pass ``{"ONDO": None}`` for a venue with no increment at all (a legacy
+    tape), which the analysis must then call ``quantity_step_unknown``: it never falls
+    back to ``10**-size_precision``. ``instruments=False`` writes no instrument record
+    at all, for the "this session announced no metadata" case.
+    """
     run_dir = Path(run_dir) if run_dir is not None else tmp_path / "run"
     l2 = run_dir / "l2"
     l2.mkdir(parents=True, exist_ok=True)
     path = l2 / f"l2_{symbol}_{'-'.join(venues)}_{stamp}.jsonl"
     if fees is None:
         fees = {"ONDO": "2.5", "ASTER": "0.9"}
+    if size_increments is None:
+        implied = None if size_precision is None else Decimal(1).scaleb(-size_precision)
+        size_increments = {
+            venue: (None if implied is None else str(implied)) for venue in venues
+        }
     extra = {} if rotate_bytes is None else {"rotate_bytes": int(rotate_bytes)}
     with TapeWriter(path, run_id=RUN_ID, symbol=symbol,
                     legs=[{"venue_key": v, "venue": v} for v in venues], **extra) as writer:
@@ -644,13 +744,18 @@ def write_run_dir(tmp_path, body, *, symbol="NVDA", venues=("ONDO", "ASTER"), fe
             instrument = f"{symbol}-USD-PERP.{venue}"
             legs[venue] = BookTape(writer, symbol=symbol, venue=venue,
                                    instrument_id=instrument, coverage_limit=100)
-            writer.write_event(instrument_event(
-                symbol=symbol, venue=venue, instrument_id=instrument,
-                metadata={"venue": venue, "client_id": venue,
-                          "taker_fee_bps": fees.get(venue), "fee_source": fee_source,
-                          "price_precision": 2, "size_precision": size_precision,
-                          "tick_size": "0.01"},
-                coverage_limit=100))
+            if instruments:
+                payload = {"venue": venue, "client_id": venue,
+                           "taker_fee_bps": fees.get(venue), "fee_source": fee_source,
+                           "price_precision": 2, "size_precision": size_precision,
+                           "tick_size": "0.01"}
+                increment = size_increments.get(venue)
+                if increment is not None:
+                    payload["size_increment"] = increment
+                payload.update(metadata_extra or {})
+                writer.write_event(instrument_event(
+                    symbol=symbol, venue=venue, instrument_id=instrument,
+                    metadata=payload, coverage_limit=100))
         body(writer, legs)
     if manifest:
         write_run_manifest(l2)
@@ -659,10 +764,11 @@ def write_run_dir(tmp_path, body, *, symbol="NVDA", venues=("ONDO", "ASTER"), fe
 
 def params(*, symbols=("NVDA",), notionals=(Decimal("100"),), venues=("ONDO", "ASTER"),
            max_age_ms=2_000, max_skew_ms=500, steps=None, mapping_verified=(),
-           max_hits=200):
+           max_hits=200, max_event_age_ms=None):
     return Params(
         symbols=tuple(symbols), venues=tuple(venues), notionals=tuple(notionals),
-        quality=QualityParams(max_age_ms=max_age_ms, max_skew_ms=max_skew_ms),
+        quality=QualityParams(max_age_ms=max_age_ms, max_skew_ms=max_skew_ms,
+                              max_event_age_ms=max_event_age_ms),
         steps=dict(steps or {}), mapping_verified=frozenset(mapping_verified),
         max_hits=max_hits,
     )
@@ -1183,13 +1289,20 @@ def frozen_venue_tape(tmp_path, *, run_dir=None):
     other run tests use, so the only unusual thing about this tape is time: each
     book's own ``ts_event_ns`` is two minutes behind the record being evaluated,
     while its ``recorded_mono_ns`` is one millisecond behind it.
+
+    The local epoch receipt stamps are passed explicitly (``init_ms``) rather than
+    left at the helper's "venue event + 1 ms" default, so the numbers the plan's
+    regression names - event 1000 ms, local receipt 121000 ms, event age 120000 ms -
+    are the numbers this tape actually carries. The age is measured from that local
+    receipt stamp (F09), so the two must agree exactly for the assertion to mean what
+    it says.
     """
     def body(writer, legs):
         push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]],
-             at_ms=OLD_EVENT_MS, receive_ms=NOW_MS - 1)
+             at_ms=OLD_EVENT_MS, receive_ms=NOW_MS - 1, init_ms=OLD_EVENT_MS)
         push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]],
-             at_ms=OLD_EVENT_MS, receive_ms=NOW_MS - 1)
-        push_quote(writer, venue="ONDO", at_ms=NOW_MS, receive_ms=NOW_MS)
+             at_ms=OLD_EVENT_MS, receive_ms=NOW_MS - 1, init_ms=OLD_EVENT_MS)
+        push_quote(writer, venue="ONDO", at_ms=NOW_MS, receive_ms=NOW_MS, init_ms=NOW_MS)
 
     return write_run_dir(tmp_path, body, run_dir=run_dir)
 
@@ -1332,7 +1445,12 @@ def test_an_unusable_event_time_is_unknown_and_never_a_fabricated_zero(tmp_path)
     assert verdict.event_age_ms["ONDO"] is None
     assert verdict.event_age_ms["ASTER"] == Decimal("0")
 
-    # a record with no event time of its own leaves both legs' event age unknown
+    # A record with no *venue event* stamp of its own still measures both legs' ages:
+    # the age is the record's LOCAL receipt time minus the book's venue event time
+    # (F09), so the record's own exchange stamp is not part of it. Both legs' books
+    # carry the same event stamp as the record's receipt here, hence 0 - and 0 is a
+    # real measurement of "the venue event is now", not the old two-venue difference
+    # that read 0 for a two-minute-old pair.
     no_record_event = TimePoint(label="book", event_ns=None, init_ns=NOW_MS * MS,
                                 receive_mono_ns=NOW_MS * MS, session_id=SESSION)
     verdict = quality_gate(no_record_event, [
@@ -1340,8 +1458,23 @@ def test_an_unusable_event_time_is_unknown_and_never_a_fabricated_zero(tmp_path)
                                      mono_ns=NOW_MS * MS)),
         other,
     ])
-    assert verdict.event_age_ms == {"ONDO": None, "ASTER": None}
+    assert verdict.event_age_ms == {"ONDO": Decimal("0"), "ASTER": Decimal("0")}
     assert verdict.reject_reason == REJECT_UNKNOWN_TIME
+
+    # What does make the age unknown is a missing *local receipt* stamp on the record
+    # being evaluated (or on the book's event): there is then no local epoch time to
+    # measure from, and 'unknown' is reported instead of a fabricated 0.
+    no_receipt = TimePoint(label="book", event_ns=NOW_MS * MS, init_ns=None,
+                           receive_mono_ns=NOW_MS * MS, session_id=SESSION)
+    verdict = quality_gate(no_receipt, [
+        LegReading("ONDO", bookstate("ONDO", event_ns=NOW_MS * MS, init_ns=NOW_MS * MS,
+                                     mono_ns=NOW_MS * MS)),
+        other,
+    ])
+    assert verdict.event_age_ms == {"ONDO": None, "ASTER": None}
+    assert event_age_status(QualityParams(max_event_age_ms=1_000), verdict.event_age_ms) == (
+        "unknown"
+    )
 
     # and the row serialization turns a missing event age into 'unknown', never 0
     blank = {f.name: None for f in dataclasses.fields(ondo_depth.Row)}
@@ -1367,4 +1500,647 @@ def test_the_cli_refuses_a_corrupt_tape_and_says_so(tmp_path, capsys):
     code = main(["--dir", str(tmp_path / "run"), "--out", str(tmp_path / "out")])
     assert code == 2
     assert "not valid JSON" in capsys.readouterr().err
+
+
+# =============================== R2.2 — replay priced by then-available information
+#
+# The plan's numeric regressions, one test each:
+#
+# | input                                                      | expected              |
+# |------------------------------------------------------------|-----------------------|
+# | metadata 2.5/0.9 bps -> seq4 book -> seq5 ONDO 100 bps      | seq4 stays 3.4 bps,   |
+# |                                                             | later 100.9 bps       |
+# | two legs fresh -> ONDO HALT -> quote, then                  | quality rejects; the  |
+# | disconnect -> snapshot_ready                                | HALT survives         |
+# | real lots 0.002 / 0.003, sell 110.00, $100 tier             | step 0.006, Q 0.906   |
+# | event=1000 ms, local epoch init=121000 ms, both legs alike  | age ~120000 ms, not 0 |
+# | a new session with no metadata / no increment               | unknown; no reuse of  |
+# |                                                             | another session       |
+#
+# Everything here is offline: hand-written records and the real writer, no network.
+
+
+def example_rows(report, symbol="NVDA", sell="ONDO", buy="ASTER",
+                 notional=Decimal("100")):
+    """Every row this bucket actually computed a quantity for, in arrival order."""
+    return notional_agg(report, symbol, sell, buy, notional)["examples"]
+
+
+def instrument_rec(seq: int, venue: str, *, fee: str | None, increment: str | None,
+                   session: str = SESSION, source: str = "instrument_metadata",
+                   valid: bool = True, invalid: str | None = None,
+                   symbol: str = "NVDA", schema: int | None = None) -> dict:
+    """One hand-written instrument record, in the newer per-arrival metadata shape."""
+    metadata: dict[str, object] = {
+        "venue": venue, "client_id": venue, "taker_fee_bps": fee,
+        "fee_source": "instrument_metadata" if fee is not None else "missing",
+        "price_precision": 2, "size_precision": 3, "tick_size": "0.01",
+    }
+    if increment is not None:
+        metadata["size_increment"] = increment
+    return rec(seq, kind="instrument", venue=venue, symbol=symbol, session=session,
+               schema=tape_schema() if schema is None else schema,
+               metadata=metadata, source=source,
+               instrument_id=f"{symbol}-USD-PERP.{venue}", coverage_limit=100,
+               valid=valid, invalid=invalid)
+
+
+def book_rec(seq: int, venue: str, *, at_ms: int, receive_ms: int | None = None,
+             session: str = SESSION, symbol: str = "NVDA",
+             bid: str = "100.00", ask: str = "100.10", init_ms: int | None = None) -> dict:
+    """One hand-written complete book: the record *is* the book's own arrival."""
+    return rec(seq, venue=venue, symbol=symbol, session=session, schema=tape_schema(),
+               event_ns=int(at_ms * MS),
+               init_ns=int((init_ms if init_ms is not None else at_ms) * MS),
+               mono_ns=int((receive_ms if receive_ms is not None else at_ms) * MS),
+               bids=[[bid, "100"]], asks=[[ask, "100"]], coverage_limit=100,
+               source="snapshot")
+
+
+def mark(session: str, kind: str, **extra) -> dict:
+    """A run_start / run_end marker, stamped with the current tape schema."""
+    start, end = markers(session=session)
+    record = {**(start if kind == "run_start" else end), "schema_version": tape_schema()}
+    record.update(extra)
+    return record
+
+
+def two_fragment_tape(l2: Path, *, first: list[dict], second: list[dict]) -> None:
+    """One tape written as two fragments, the second appended later (a rotation)."""
+    l2.mkdir(parents=True, exist_ok=True)
+    write_lines(l2 / f"l2_NVDA_ONDO-ASTER_{RUN_ID}.jsonl", first)
+    write_lines(l2 / f"l2_NVDA_ONDO-ASTER_{RUN_ID}_part0002.jsonl", second)
+
+
+# ------------------------------------------------- F06: metadata applies by arrival
+
+
+def test_a_metadata_update_prices_only_the_arrivals_after_it(tmp_path):
+    """The plan's F06 regression: seq4 is 3.4 bps and never becomes 100.9 bps."""
+    def body(writer, legs):
+        push(legs["ONDO"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=1_000)
+        push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=1_000)
+        # the venue's ONDO taker fee changes to 100 bps from this arrival on
+        writer.write_event(instrument_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            metadata={"venue": "ONDO", "client_id": "ONDO", "taker_fee_bps": "100",
+                      "fee_source": "instrument_metadata", "price_precision": 2,
+                      "size_precision": 3, "tick_size": "0.01",
+                      "size_increment": "0.001"},
+            coverage_limit=100, source="instrument_update"))
+        push(legs["ONDO"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=3_000)
+        push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=3_000)
+
+    report = analyse_run(
+        write_run_dir(tmp_path, body),
+        params(max_age_ms=500_000, max_skew_ms=500_000),
+    )
+    rows = example_rows(report)
+    assert [(row["arrival_seq"], row["entry_fees_bps"]) for row in rows] == [
+        (4, "3.4"), (6, "100.9"), (7, "100.9"),
+    ], (
+        "the two legs' fees are 2.5 + 0.9 = 3.4 before the update and 100 + 0.9 = 100.9 "
+        "after it: the update reaches the arrivals after it, never the ones before"
+    )
+    # the numbers the early row was priced with are the early ones, all the way through
+    early = rows[0]
+    assert Decimal(early["entry_after_fees_bps"]) == (
+        Decimal(early["gross_entry_bps"]) - Decimal("3.4")
+    )
+    assert Decimal(early["exit_fee_assumption_bps"]) == Decimal("3.4")
+    assert rows[1]["quality_ok"] is True and rows[1]["cost_qualified"] is True
+
+    # the bucket refuses to elect one of the two fees, and names both instead
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["entry_fees_bps"] == "unknown"
+    assert "3.4, 100.9" in agg["entry_fees_note"]
+    snapshot = report.document["fee_snapshot"]["NVDA"]["ONDO"]
+    assert snapshot["taker_fee_bps_values"] == ["2.5", "100"]
+    assert [arrival["source"] for arrival in snapshot["arrivals"]] == [
+        "instrument_metadata", "instrument_update",
+    ]
+    assert snapshot["metadata_records"] == 2
+
+
+def test_appending_a_later_fragment_never_reprices_the_prefix_already_reported(tmp_path):
+    """F06's second half: the prefix of one tape is invariant under a later file."""
+    l2 = tmp_path / "run" / "l2"
+    prefix = [
+        mark(SESSION, "run_start"),
+        instrument_rec(1, "ONDO", fee="2.5", increment="0.001"),
+        instrument_rec(2, "ASTER", fee="0.9", increment="0.001"),
+        book_rec(3, "ONDO", at_ms=1_000),
+        book_rec(4, "ASTER", at_ms=1_000),
+    ]
+    two_fragment_tape(l2, first=prefix, second=[])
+    before = analyse_run(tmp_path / "run", params(max_age_ms=500_000, max_skew_ms=500_000))
+    assert [(row["arrival_seq"], row["entry_fees_bps"]) for row in example_rows(before)] == [
+        (4, "3.4"),
+    ]
+
+    # the recording continues: the fee changes and two more books arrive
+    two_fragment_tape(l2, first=prefix, second=[
+        instrument_rec(5, "ONDO", fee="100", increment="0.001",
+                       source="instrument_update"),
+        book_rec(6, "ONDO", at_ms=3_000),
+        book_rec(7, "ASTER", at_ms=3_000),
+        mark(SESSION, "run_end"),
+    ])
+    after = analyse_run(tmp_path / "run", params(max_age_ms=500_000, max_skew_ms=500_000))
+    rows_after = [(row["arrival_seq"], row["entry_fees_bps"]) for row in example_rows(after)]
+    assert rows_after == [(4, "3.4"), (6, "100.9"), (7, "100.9")]
+    assert rows_after[:1] == [
+        (row["arrival_seq"], row["entry_fees_bps"]) for row in example_rows(before)
+    ], "the appended file changed no number the earlier report had already published"
+
+    # and the whole earlier row is what it was, not only its fee
+    old_row, new_row = example_rows(before)[0], example_rows(after)[0]
+    assert json.dumps(old_row, sort_keys=True) == json.dumps(new_row, sort_keys=True)
+
+
+def test_an_instrument_record_marked_stale_withdraws_the_metadata_from_then_on(tmp_path):
+    """Contract B: valid=false + metadata_stale means 'do not use this from here'."""
+    l2 = tmp_path / "run" / "l2"
+    two_fragment_tape(l2, first=[
+        mark(SESSION, "run_start"),
+        instrument_rec(1, "ONDO", fee="2.5", increment="0.001"),
+        instrument_rec(2, "ASTER", fee="0.9", increment="0.001"),
+        book_rec(3, "ONDO", at_ms=1_000),
+        book_rec(4, "ASTER", at_ms=1_000),
+        # the venue's metadata can no longer be trusted; the record repeats the old
+        # numbers, and none of them may be used from this arrival on
+        instrument_rec(5, "ONDO", fee="2.5", increment="0.001",
+                       source="instrument_update", valid=False, invalid="metadata_stale"),
+        book_rec(6, "ONDO", at_ms=3_000),
+        book_rec(7, "ASTER", at_ms=3_000),
+        mark(SESSION, "run_end"),
+    ], second=[])
+
+    report = analyse_run(tmp_path / "run", params(max_age_ms=500_000, max_skew_ms=500_000))
+    rows = example_rows(report)
+    assert [(row["arrival_seq"], row["entry_fees_bps"]) for row in rows] == [(4, "3.4")], (
+        "only the arrival before the stale record computed numbers: the stale record "
+        "withdraws ONDO's metadata for everything after it"
+    )
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["reject_reasons"].get(REJECT_METADATA_STALE, 0) == 2, (
+        "the two moments after the stale record are refused on the metadata axis"
+    )
+    snapshot = report.document["fee_snapshot"]["NVDA"]["ONDO"]
+    assert snapshot["metadata_records"] == 2 and snapshot["metadata_stale_records"] == 1
+    assert snapshot["taker_fee_bps"] == "2.5", (
+        "the record-level view still lists the value the tape announced, while no row "
+        "after the stale record was priced with it"
+    )
+
+
+# ------------------------- a session announces its own metadata (and only its own)
+
+
+def two_session_tape(l2: Path, *, first_metadata: bool, second_metadata: bool) -> None:
+    """One tape, two sessions; each may or may not announce instrument metadata."""
+    first = [mark(SESSION, "run_start")]
+    if first_metadata:
+        first += [instrument_rec(1, "ONDO", fee="2.5", increment="0.001"),
+                  instrument_rec(2, "ASTER", fee="0.9", increment="0.001")]
+        seq = 3
+    else:
+        seq = 1
+    first += [book_rec(seq, "ONDO", at_ms=1_000), book_rec(seq + 1, "ASTER", at_ms=1_000),
+              mark(SESSION, "run_end")]
+
+    second = [mark(SESSION_B, "run_start")]
+    if second_metadata:
+        second += [instrument_rec(1, "ONDO", fee="2.5", increment="0.001",
+                                  session=SESSION_B),
+                   instrument_rec(2, "ASTER", fee="0.9", increment="0.001",
+                                  session=SESSION_B)]
+        seq = 3
+    else:
+        seq = 1
+    second += [book_rec(seq, "ONDO", at_ms=3_000, session=SESSION_B),
+               book_rec(seq + 1, "ASTER", at_ms=3_000, session=SESSION_B),
+               mark(SESSION_B, "run_end")]
+    two_fragment_tape(l2, first=first, second=second)
+
+
+def test_a_session_that_announces_no_metadata_is_unknown_for_its_whole_span(tmp_path):
+    l2 = tmp_path / "run" / "l2"
+    two_session_tape(l2, first_metadata=True, second_metadata=False)
+    report = analyse_run(tmp_path / "run", params(max_age_ms=500_000, max_skew_ms=500_000))
+    rows = example_rows(report)
+    assert [row["session_id"] for row in rows] == [SESSION], (
+        "the second session published no instrument record, so none of its moments "
+        "produced a priced row"
+    )
+    assert Decimal(rows[0]["entry_fees_bps"]) == Decimal("3.4")
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["reject_reasons"].get(REJECT_METADATA_UNKNOWN, 0) >= 1
+    assert all(
+        row["session_id"] == SESSION
+        for row in agg["examples"] + report.document["hits"]
+    ), "no row of the metadata-less session was priced with the other session's fee"
+
+
+def test_a_later_session_never_reprices_an_earlier_one(tmp_path):
+    """The other direction: the first session has no metadata, the second one does."""
+    l2 = tmp_path / "run" / "l2"
+    two_session_tape(l2, first_metadata=False, second_metadata=True)
+    report = analyse_run(tmp_path / "run", params(max_age_ms=500_000, max_skew_ms=500_000))
+    rows = example_rows(report)
+    assert [row["session_id"] for row in rows] == [SESSION_B], (
+        "only the session that announced its own instrument metadata is priced"
+    )
+    assert Decimal(rows[0]["entry_fees_bps"]) == Decimal("3.4")
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["reject_reasons"].get(REJECT_METADATA_UNKNOWN, 0) >= 1, (
+        "the first session's moments stay metadata_unknown: the second session's fee "
+        "is not priced backwards into them"
+    )
+
+
+# ----------------------------------------------------- F08: the real quantity step
+
+
+def test_the_common_step_is_the_lcm_of_the_real_size_increments(tmp_path):
+    """The plan's regression: lots 0.002 / 0.003 at a 110.00 bid -> 0.006 and 0.906."""
+    def body(writer, legs):
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+        push(legs["ASTER"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+
+    report = analyse_run(
+        write_run_dir(tmp_path, body,
+                      size_increments={"ONDO": "0.002", "ASTER": "0.003"}),
+        params(),
+    )
+    row = first_row(report, "NVDA", "ONDO", "ASTER")
+    assert Decimal(row["common_step"]) == Decimal("0.006"), (
+        "0.006 is the smallest quantity both a 0.002 and a 0.003 increment can "
+        "represent exactly; 0.003 (the maximum) cannot"
+    )
+    assert Decimal(row["quantity"]) == Decimal("0.906"), (
+        "100 / 110.00 floored to a whole 0.006 step"
+    )
+    assert row["step_origin"] == STEP_ORIGIN_METADATA
+    snapshot = report.document["fee_snapshot"]["NVDA"]
+    assert snapshot["ONDO"]["size_increment"] == "0.002"
+    assert snapshot["ASTER"]["size_increment"] == "0.003"
+    assert snapshot["ONDO"]["step_origin"] == STEP_ORIGIN_METADATA
+    assert Decimal(row["sell_vwap"]) == Decimal("110.00")
+
+
+def test_a_tape_with_no_increment_leaves_the_quantity_step_unknown(tmp_path):
+    """F08a: precision-only metadata never becomes a step, and the row says so."""
+    def body(writer, legs):
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+        push(legs["ASTER"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+
+    report = analyse_run(
+        write_run_dir(tmp_path, body, size_increments={"ONDO": None, "ASTER": None}),
+        params(),
+    )
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["reject_reasons"].get(REJECT_STEP_UNKNOWN, 0) == 1, (
+        "the one moment that passed the gate is refused for an unknown step: "
+        "10**-size_precision (0.001 here) is never used as a quantity step"
+    )
+    assert agg["common_step"] == "unknown"
+    assert agg["step_origin"] == STEP_ORIGIN_UNKNOWN
+    assert "quantity_step_unknown" in agg["common_step_note"]
+    assert agg["examples"] == [], "no quantity was computed, so nothing is shown as one"
+    snapshot = report.document["fee_snapshot"]["NVDA"]["ONDO"]
+    assert snapshot["size_increment"] == "unknown"
+    assert snapshot["step"] == "unknown" and snapshot["step_origin"] == STEP_ORIGIN_UNKNOWN
+    assert snapshot["size_precision"] == 3, (
+        "the published precision is still reported as evidence; it is just never a step"
+    )
+    assert agg["entry_fees_bps"] == "3.4", (
+        "the fee is a separate axis from the step: it is still known and published"
+    )
+
+
+def test_a_legacy_tape_without_increments_reads_and_downgrades_honestly(tmp_path):
+    """A version-1 tape (no per-arrival metadata fields) still reads, as unknown."""
+    l2 = tmp_path / "run" / "l2"
+    l2.mkdir(parents=True)
+    write_lines(l2 / f"l2_NVDA_ONDO-ASTER_{RUN_ID}.jsonl", [
+        mark(SESSION, "run_start", schema_version=1),
+        instrument_rec(1, "ONDO", fee="2.5", increment=None, schema=1),
+        instrument_rec(2, "ASTER", fee="0.9", increment=None, schema=1),
+        book_rec(3, "ONDO", at_ms=1_000),
+        book_rec(4, "ASTER", at_ms=1_000),
+        mark(SESSION, "run_end", schema_version=1),
+    ])
+    assert TAPE_SCHEMA_VERSIONS[0] == 1, "the reader states the versions it accepts"
+    report = analyse_run(tmp_path / "run", params())
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert Decimal(agg["entry_fees_bps"]) == Decimal("3.4"), (
+        "a v1 tape's metadata block still prices its arrivals: the fee is there"
+    )
+    assert agg["reject_reasons"].get(REJECT_STEP_UNKNOWN, 0) == 1
+    assert agg["step_origin"] == STEP_ORIGIN_UNKNOWN
+
+
+def test_a_cli_step_override_is_published_as_an_override_not_as_a_venue_fact(tmp_path):
+    def body(writer, legs):
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+        push(legs["ASTER"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+
+    # the tape carries a real increment (0.001); the caller overrides it with 0.006
+    report = analyse_run(
+        write_run_dir(tmp_path, body),
+        params(steps={"ONDO": Decimal("0.006"), "ASTER": Decimal("0.006")}),
+    )
+    row = first_row(report, "NVDA", "ONDO", "ASTER")
+    assert Decimal(row["common_step"]) == Decimal("0.006")
+    assert row["step_origin"] == STEP_ORIGIN_OVERRIDE
+    assert Decimal(row["quantity"]) == Decimal("0.906"), "100 / 110 floored to 0.006"
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["step_origin"] == STEP_ORIGIN_OVERRIDE
+    assert "never evidence that either venue verified" in agg["common_step_note"]
+    snapshot = report.document["fee_snapshot"]["NVDA"]["ONDO"]
+    assert snapshot["step_origin"] == STEP_ORIGIN_OVERRIDE
+    assert snapshot["size_increment"] == "0.001", (
+        "the venue's own increment stays reported as evidence; the override is what "
+        "sized the row, and it is never presented as a verified venue step"
+    )
+
+
+# ------------------------------------------- F07/F18: three axes, and the first frame
+
+
+def test_a_real_halt_blocks_the_judgement_and_only_a_resume_lifts_it():
+    """The gate's market axis, on its own, with no report or tape involved."""
+    record = TimePoint(label="quote", event_ns=10_000 * MS, init_ns=10_000 * MS,
+                       receive_mono_ns=10_000 * MS, session_id=SESSION)
+    book = bookstate("ONDO", event_ns=10_000 * MS, init_ns=10_000 * MS, mono_ns=10_000 * MS)
+    other = bookstate("ASTER", event_ns=10_000 * MS, init_ns=10_000 * MS, mono_ns=10_000 * MS)
+
+    halted = LegReading("ONDO", book, market_halted=True)
+    verdict = quality_gate(record, [halted, LegReading("ASTER", other)])
+    assert verdict.reject_reason == REJECT_MARKET_HALTED, (
+        "a halt is its own reason, never confused with a disconnect or a bad book"
+    )
+    assert verdict.reject_reason != REJECT_DISCONNECTED
+    assert quality_gate(record, [
+        LegReading("ONDO", book), LegReading("ASTER", other),
+    ]).quality_ok
+
+
+def test_the_replay_separates_the_feed_the_market_and_the_metadata_axes():
+    """The three axes are independent state, and each has its own reason (F07)."""
+    status = lambda seq, **extra: rec(  # noqa: E731 - one local record builder
+        seq, kind="status", venue="ONDO", mono_ns=seq * MS, **extra)
+    steps = list(replay_events([
+        status(1, action="HALT", reason="", is_trading=False, is_quoting=False),
+        status(2, action="HALT", reason="adapter:disconnected", is_trading=False),
+        status(3, action="HALT", reason="adapter:snapshot_ready", is_trading=False),
+        status(4, action="TRADING", reason="", is_trading=True),
+    ]))
+    assert steps[0].market_halted["ONDO"] is True
+    assert steps[0].feed_ready == {}, "a halt says nothing about the local feed"
+    assert steps[1].disconnected["ONDO"] is True
+    assert steps[1].market_halted["ONDO"] is True, "a disconnect never lifts a halt"
+    assert steps[2].disconnected["ONDO"] is False
+    assert steps[2].market_halted["ONDO"] is True, (
+        "snapshot_ready re-arms the feed and leaves the market halt exactly where it "
+        "was: a reconnect is not evidence that the venue resumed trading"
+    )
+    assert steps[3].market_halted["ONDO"] is False, "an explicit resume lifts it"
+
+    # the action set the replay mirrors is the watcher's own, name for name
+    import spread_watch
+
+    assert NON_TRADING_ACTIONS == frozenset(
+        str(action.name) for action in spread_watch.NON_TRADING_ACTIONS
+    )
+
+
+def test_a_halt_survives_a_disconnect_and_the_recovery_snapshot(tmp_path):
+    """F07 + F18 in one tape: HALT -> disconnect -> one frame -> snapshot_ready."""
+    def body(writer, legs):
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+        push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=1_000)
+        writer.write_event(status_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            action="HALT", reason="", is_trading=False, is_quoting=False,
+            ts_event_ns=1_500 * MS, ts_init_ns=1_500 * MS + 1,
+            recorded_mono_ns=1_500 * MS))
+        writer.write_event(status_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            action="HALT", reason="adapter:disconnected", is_trading=None,
+            ts_event_ns=2_000 * MS, ts_init_ns=2_000 * MS + 1,
+            recorded_mono_ns=2_000 * MS))
+        # ONE recovery frame per leg, then the adapter says the feed is ready again
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=3_000)
+        push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=3_000)
+        writer.write_event(status_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            action="HALT", reason="adapter:snapshot_ready", is_trading=None,
+            ts_event_ns=3_000 * MS, ts_init_ns=3_000 * MS + 1,
+            recorded_mono_ns=3_000 * MS))
+        push_quote(writer, venue="ONDO", at_ms=4_000, receive_ms=4_000)
+
+    report = analyse_run(
+        write_run_dir(tmp_path, body), params(max_age_ms=500_000, max_skew_ms=500_000),
+    )
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["reject_reasons"] == {
+        REJECT_NO_BOOK: 1,       # before ASTER's first book
+        REJECT_DISCONNECTED: 2,  # the recovery frames, while the feed was still down
+        REJECT_MARKET_HALTED: 1,  # the quote after snapshot_ready: the halt survived it
+    }, (
+        "each moment is refused on the axis that actually blocked it: the feed while it "
+        "was down, the market halt even after the feed was re-armed"
+    )
+    assert agg["pass"] == 1, "the moment before the halt is still a usable comparison"
+
+
+def test_the_first_recovery_frame_is_usable_once_the_feed_is_ready(tmp_path):
+    """F18: no second depth frame is needed, and the frame keeps its own time."""
+    def body(writer, legs):
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000,
+             init_ms=1_000)
+        push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=1_000,
+             init_ms=1_000)
+        writer.write_event(status_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            action="HALT", reason="adapter:disconnected", is_trading=None,
+            ts_event_ns=2_000 * MS, ts_init_ns=2_000 * MS + 1,
+            recorded_mono_ns=2_000 * MS))
+        # exactly one new depth frame per leg - the recovery snapshot
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=3_000,
+             init_ms=3_000)
+        push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=3_000,
+             init_ms=3_000)
+        writer.write_event(status_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            action="HALT", reason="adapter:snapshot_ready", is_trading=None,
+            ts_event_ns=3_000 * MS, ts_init_ns=3_000 * MS + 1,
+            recorded_mono_ns=3_000 * MS))
+        push_quote(writer, venue="ONDO", at_ms=4_000, receive_ms=4_000, init_ms=4_000)
+
+    report = analyse_run(
+        write_run_dir(tmp_path, body), params(max_age_ms=500_000, max_skew_ms=500_000),
+    )
+    rows = example_rows(report)
+    assert [(row["arrival_seq"], row["receive_age_sell_ms"], row["event_age_sell_ms"])
+            for row in rows] == [
+        (4, "0", "0"),        # the first frame's own arrival: fresh, it just arrived
+        (9, "1000", "1000"),  # a quote 1 s later does not refresh the frame's time
+    ], (
+        "the single recovery frame is usable as soon as the feed is ready, and its own "
+        "receipt and venue times are what the ages are measured from - the later quote "
+        "refreshes neither"
+    )
+    agg = notional_agg(report, "NVDA", "ONDO", "ASTER")
+    assert agg["reject_reasons"].get(REJECT_BOOK_INVALID, 0) == 0, (
+        "F18: a recovery frame is not 'invalid' because it landed while the feed was "
+        "being re-armed; a book record's validity is about the depth itself"
+    )
+    assert agg["reject_reasons"].get(REJECT_MARKET_HALTED, 0) == 0, (
+        "no market halt was announced here, so the market axis never blocked a row"
+    )
+
+
+# --------------------------------------------- F09: the age is a local-clock quantity
+
+
+def test_the_event_age_is_measured_from_the_local_receipt_not_between_two_events():
+    """The plan's F09 regression: both legs delayed together report 120000 ms, not 0."""
+    record = TimePoint(label="quote", event_ns=NOW_MS * MS, init_ns=NOW_MS * MS,
+                       receive_mono_ns=NOW_MS * MS, session_id=SESSION)
+    legs = [
+        LegReading(venue, bookstate(venue, event_ns=OLD_EVENT_MS * MS,
+                                    init_ns=OLD_EVENT_MS * MS, mono_ns=NOW_MS * MS))
+        for venue in ("ONDO", "ASTER")
+    ]
+    verdict = quality_gate(record, legs)
+    assert verdict.quality_ok, (
+        "the receive ages are what the gate decides on, and both receipts are fresh"
+    )
+    assert verdict.receive_age_ms == {"ONDO": Decimal("0"), "ASTER": Decimal("0")}
+    assert verdict.event_age_ms == {
+        "ONDO": Decimal("120000"), "ASTER": Decimal("120000"),
+    }, (
+        "each leg's venue event is two minutes before this record's local receipt, so "
+        "each leg reports 120000 ms - the difference between the two venue stamps is "
+        "0 and is reported as event_skew_ms, never as the age"
+    )
+    assert verdict.event_skew_ms == Decimal("0")
+    assert verdict.event_age_ms["ONDO"] != verdict.event_skew_ms
+
+
+def test_a_negative_event_age_is_kept_as_clock_evidence_and_never_zeroed():
+    """A venue stamp ahead of the local receipt is evidence, not something to hide."""
+    record = TimePoint(label="book", event_ns=NOW_MS * MS, init_ns=NOW_MS * MS,
+                       receive_mono_ns=NOW_MS * MS, session_id=SESSION)
+    ahead = LegReading("ONDO", bookstate(
+        "ONDO", event_ns=(NOW_MS + 500) * MS, init_ns=(NOW_MS + 500) * MS,
+        mono_ns=NOW_MS * MS,
+    ))
+    other = LegReading("ASTER", bookstate("ASTER", event_ns=NOW_MS * MS,
+                                          init_ns=NOW_MS * MS, mono_ns=NOW_MS * MS))
+    verdict = quality_gate(record, [ahead, other])
+    assert verdict.event_age_ms["ONDO"] == Decimal("-500"), (
+        "the venue's stamp is 500 ms ahead of the local receipt: the age stays "
+        "negative (neither floored to 0 nor made absolute), which is the only visible "
+        "evidence that the two clocks disagree by at least that much"
+    )
+    assert verdict.event_age_ms["ASTER"] == Decimal("0")
+
+
+def test_the_event_age_threshold_is_an_explicit_parameter_and_an_output_field(tmp_path):
+    """F09: the threshold is configuration that is printed, never a silent default."""
+    # off by default: the frozen tape's books are two minutes old on the local clock,
+    # and the rows are still produced, each carrying the status that says so
+    relaxed = analyse_run(frozen_venue_tape(tmp_path / "relaxed", run_dir=(
+        tmp_path / "relaxed" / "run")), params())
+    relaxed_agg = notional_agg(relaxed, "NVDA", "ONDO", "ASTER")
+    assert relaxed_agg["pass"] == 2
+    assert relaxed_agg["max_event_age_ms"] is None
+    assert relaxed_agg["event_age_rejects"] == 0
+    assert {row["event_age_status"] for row in example_rows(relaxed)} == {"not_checked"}
+    assert relaxed.document["research_parameters"]["max_event_age_ms"] is None
+
+    # a threshold the ages pass: the rows say the check ran and passed
+    wide = analyse_run(frozen_venue_tape(tmp_path / "wide", run_dir=(
+        tmp_path / "wide" / "run")), params(max_event_age_ms=200_000))
+    assert {row["event_age_status"] for row in example_rows(wide)} == {"ok"}
+    assert notional_agg(wide, "NVDA", "ONDO", "ASTER")["event_age_rejects"] == 0
+
+    # a threshold the ages fail: the refusal is its own reason, and the report prints
+    # the limit it was decided against
+    strict = analyse_run(frozen_venue_tape(tmp_path / "strict", run_dir=(
+        tmp_path / "strict" / "run")), params(max_event_age_ms=1_000))
+    strict_agg = notional_agg(strict, "NVDA", "ONDO", "ASTER")
+    assert strict_agg["pass"] == 1, (
+        "the moment the book itself arrived is still fresh - its venue event IS its "
+        "own arrival - so exactly one moment survives a 1 s event-age limit"
+    )
+    assert strict_agg["reject_reasons"].get(REJECT_EVENT_AGE, 0) == 1, (
+        "the quote two minutes later is refused: the fresh receipt does not make the "
+        "book it re-uses any younger"
+    )
+    assert strict_agg["event_age_rejects"] == 1
+    assert strict_agg["max_event_age_ms"] == 1_000
+    assert REJECT_STALE_BOOK not in strict_agg["reject_reasons"], (
+        "the receive ages were a millisecond: only the event-age axis rejected this"
+    )
+    assert {row["event_age_status"] for row in example_rows(strict)} == {"ok"}
+
+    # the CLI parameter and the printed research parameters agree with it
+    out = tmp_path / "cli-out"
+    assert main(["--dir", str(tmp_path / "strict" / "run"), "--out", str(out),
+                 "--max-event-age-ms", "1000"]) == 0
+    document = json.loads((out / "ondo_depth.json").read_text(encoding="utf-8"))
+    assert document["research_parameters"]["max_event_age_ms"] == 1_000
+    assert "unmeasured" in document["research_parameters"]["max_event_age_note"]
+    assert "not enforced" not in json.dumps(document)
+    bucket = document["markets"][0]["directions"][0]["notionals"][0]
+    assert bucket["event_age_rejects"] == 1
+    assert bucket["max_event_age_ms"] == 1_000
+    assert "event_age_exceeded" in bucket["reject_reasons"]
+    assert "event_age_exceeded" in document["field_notes"]["reject_reason"]
+    assert "event_age_status" in document["field_notes"]
+    assert "event_age_status" in ondo_depth.ROW_FIELDS
+    summary = (out / "ondo_depth_summary.csv").read_text(encoding="utf-8")
+    assert "max_event_age_ms" in summary.splitlines()[0]
+
+
+def test_the_new_axis_fields_reach_the_json_the_csv_and_the_markdown(tmp_path):
+    """Everything this round added is published, not only computed."""
+    def body(writer, legs):
+        push(legs["ONDO"], bids=[["110.00", "100"]], asks=[["110.10", "100"]], at_ms=1_000)
+        push(legs["ASTER"], bids=[["100.00", "100"]], asks=[["100.10", "100"]], at_ms=1_000)
+
+    run_dir = write_run_dir(
+        tmp_path, body, size_increments={"ONDO": "0.002", "ASTER": "0.003"},
+    )
+    out = tmp_path / "out"
+    assert main(["--dir", str(run_dir), "--out", str(out)]) == 0
+    document = json.loads((out / "ondo_depth.json").read_text(encoding="utf-8"))
+    assert document["schema_version"] == ondo_depth.SCHEMA_VERSION
+    assert document["research_parameters"]["tape_schema_versions"] == list(
+        TAPE_SCHEMA_VERSIONS
+    )
+    assert document["research_parameters"]["metadata_rule"]
+    assert document["research_parameters"]["axes_rule"]
+    row = document["hits"][0]
+    assert row["step_origin"] == STEP_ORIGIN_METADATA
+    assert row["session_id"], "the row names the session it was priced in"
+    assert row["event_age_status"] == "not_checked"
+    with open(out / "ondo_depth_hits.csv", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        header = set(reader.fieldnames or ())
+        csv_rows = list(reader)
+    assert {"session_id", "step_origin", "event_age_status"} <= header
+    assert all(row["session_id"] for row in csv_rows)
+    markdown = (out / "ondo_depth.md").read_text(encoding="utf-8")
+    assert "`session_id`" in markdown and "`step_origin`" in markdown
+    assert "`event_age_status`" in markdown
+    assert "not enforced" in markdown, "the disabled event-age threshold is printed"
+    assert "`10**-size_precision` was therefore not used" in markdown
+    assert "| NVDA | ONDO |" in markdown and "0.002" in markdown
+    assert "instrument_metadata |" in markdown, "the step's origin is printed per venue"
 

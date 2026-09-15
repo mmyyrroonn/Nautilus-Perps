@@ -112,6 +112,16 @@ def write_records(path: Path, records) -> Path:
     return path
 
 
+def crash_after(path: Path, records, partial: bytes = b'{"schema_version": 2, "run_id": "x"'
+                ) -> Path:
+    """A fragment whose last line was cut in half: what a dying process leaves behind."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_records(path, records)
+    with path.open("ab") as handle:
+        handle.write(partial)
+    return path
+
+
 def hand_record(*, session_id="s1", arrival_seq=1, run_id=RUN_ID, event_kind=BOOK,
                 **overrides):
     """A hand-written line: the reader's own validation is what is under test."""
@@ -192,6 +202,68 @@ def test_a_float_never_reaches_the_tape(tmp_path):
     rows = books(list(read_tape([path])))
     assert rows[0]["bids"] == [["100.050", "0.00100"]]
     assert all(isinstance(text, str) for pair in rows[0]["bids"] for text in pair)
+
+
+def test_the_writer_stamps_schema_two_and_the_reader_still_accepts_schema_one(tmp_path):
+    """Contract B: write 2, read 1 and 2.
+
+    A schema 1 tape (one run-start metadata record, no per-arrival metadata, no
+    ``size_increment``) must keep reading after the writer moved to schema 2. The
+    reader reports which versions it actually saw, so a consumer can tell an old tape
+    from a new one instead of guessing from a missing field.
+    """
+    from market_tape import SCHEMA_VERSION_V1, SUPPORTED_SCHEMA_VERSIONS
+
+    assert SCHEMA_VERSION == 2
+    assert SCHEMA_VERSION_V1 == 1
+    assert set(SUPPORTED_SCHEMA_VERSIONS) == {1, 2}
+
+    path = tmp_path / "l2.jsonl"
+    with TapeWriter(path, run_id=RUN_ID, flush_secs=0.0) as writer:
+        writer.write_event(make_book_event(bids=[["100.05", "0.001"]], arrival_seq=None))
+    reader = read_tape([path])
+    rows = list(reader)
+    assert {r["schema_version"] for r in rows} == {2}
+    assert reader.status.schema_versions == [2]
+    assert reader.status.complete is True
+
+    old = write_records(tmp_path / "old.jsonl", [
+        hand_record(session_id="s1", arrival_seq=1, schema_version=1),
+        hand_record(session_id="s1", arrival_seq=2, schema_version=1,
+                    event_kind=RUN_END, complete=True),
+    ])
+    old_reader = read_tape([old])
+    list(old_reader)
+    assert old_reader.status.schema_versions == [1]
+    assert old_reader.status.complete is True, "a schema 1 tape is not corrupt"
+
+
+def test_an_instrument_record_can_carry_the_stale_marker_and_its_source(tmp_path):
+    """Contract C: source names the arrival, ``valid``/``invalid_reason`` the verdict.
+
+    A stale marker keeps the last known payload on the record for traceability while
+    telling every reader not to use it.
+    """
+    path = tmp_path / "l2.jsonl"
+    with TapeWriter(path, run_id=RUN_ID, flush_secs=0.0) as writer:
+        writer.write_event(instrument_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            metadata={"taker_fee_bps": "2.50", "size_increment": "0.001"},
+            source="instrument_metadata", ts_event_ns=1, ts_init_ns=1,
+        ))
+        writer.write_event(instrument_event(
+            symbol="NVDA", venue="ONDO", instrument_id="NVDA-USD-PERP.ONDO",
+            metadata={"taker_fee_bps": "2.50", "size_increment": "0.001"},
+            source="instrument_update", valid=False, invalid_reason="metadata_stale",
+            ts_event_ns=2, ts_init_ns=2,
+        ))
+    rows = [r for r in read_tape([path]) if r["event_kind"] == INSTRUMENT]
+    assert [r["source"] for r in rows] == ["instrument_metadata", "instrument_update"]
+    assert rows[0]["valid"] is True and rows[0]["invalid_reason"] is None
+    assert rows[1]["valid"] is False and rows[1]["invalid_reason"] == "metadata_stale"
+    assert rows[1]["metadata"] == rows[0]["metadata"], (
+        "the stale marker keeps the last known payload for traceability"
+    )
 
 
 def test_the_reader_refuses_levels_that_are_not_decimal_strings(tmp_path):
@@ -290,17 +362,26 @@ def test_a_clear_only_batch_is_an_explicitly_invalid_empty_book(tmp_path):
             assert record["valid"] is False, "an empty book is never valid depth"
 
 
-def test_a_feed_disconnect_marks_the_book_record_invalid(tmp_path):
+def test_a_caller_may_mark_a_record_invalid_with_a_reason_of_its_own(tmp_path):
+    """``BookTape`` passes an explicit verdict through; the watcher never supplies one.
+
+    Renamed from ``test_a_feed_disconnect_marks_the_book_record_invalid``: the watcher used
+    to fold the feed's state into a book record's ``valid`` that way, and contract D removed
+    that (a record's validity is its own snapshot's, and the feed's state is replayed from
+    the status records). The *API* still takes an explicit verdict, because a caller that
+    knows a snapshot itself is bad - a truncated depth10 fallback, say - must be able to say
+    so with its own reason. No caller in ``src/`` passes one today.
+    """
     path = tmp_path / "l2.jsonl"
     writer = TapeWriter(path, run_id=RUN_ID, flush_secs=0.0)
     book = BookTape(writer, symbol="NVDA", venue="ONDO",
                     instrument_id="NVDA-USD-PERP.ONDO", coverage_limit=100)
     ops, _bids, _asks = full_book("ONDO")
     book.apply_batch(ops, ts_event_ns=1, ts_init_ns=2, valid=False,
-                     invalid_reason="feed-invalidated")
+                     invalid_reason="depth10_truncated")
     writer.close()
     record = books(list(read_tape([path])))[0]
-    assert record["valid"] is False and record["invalid_reason"] == "feed-invalidated"
+    assert record["valid"] is False and record["invalid_reason"] == "depth10_truncated"
     assert record["bids"], "the levels are still recorded, the record is just not valid"
 
 
@@ -518,6 +599,105 @@ def test_a_full_queue_accumulates_a_gap_and_never_claims_complete(tmp_path):
     assert doc["segments"][0]["gaps"] == 1
 
 
+class FakeClock:
+    """A hand-cranked monotonic clock for the writer's flush deadline."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, secs: float) -> None:
+        self.now += secs
+
+
+def test_a_full_queue_still_reaches_the_flush_deadline(tmp_path):
+    """F10: queue_max=1, flush_secs=1, writes at t=0/2/5 - every one of them lands.
+
+    Before the fix the full queue returned before the deadline check, so the write at
+    t=2 and the one at t=5 were both dropped *and* the flush that would have emptied the
+    queue never ran: accepted=1, dropped=2, last_flush=0, and the tape only moved when
+    something outside it flushed.
+    """
+    path = tmp_path / "l2.jsonl"
+    clock = FakeClock()
+    writer = TapeWriter(path, run_id=RUN_ID, queue_max=1, flush_secs=1.0, clock=clock)
+    for at in (0.0, 2.0, 5.0):
+        clock.now = at
+        writer.write_event(make_book_event(bids=[["100.05", "0.001"]], arrival_seq=None))
+
+    assert writer.records == 3, "every write of the run was accepted"
+    assert writer.dropped == 0 and writer.gaps == 0, "a one-slot queue is not a gap"
+    assert writer._last_flush == 5.0, "the deadline moved with each flush"
+    assert len(writer._queue) == 1, "only the record written at t=5 is still queued"
+    writer.close()
+
+    reader = read_tape([path])
+    rows = list(reader)
+    assert [r["arrival_seq"] for r in books(rows)] == [1, 2, 3]
+    assert reader.status.complete is True and reader.status.dropped == 0
+
+
+def test_a_quiet_tape_flushes_on_its_deadline_without_a_new_record(tmp_path):
+    """F10: the periodic flush is a time promise, not a side effect of accepting a message.
+
+    One record is written and nothing else ever arrives; the caller's event-loop timer
+    calls ``tick()`` and the record must reach the disk by its deadline.
+    """
+    path = tmp_path / "l2.jsonl"
+    clock = FakeClock()
+    writer = TapeWriter(path, run_id=RUN_ID, flush_secs=1.0, clock=clock)
+    writer.write_event(make_book_event(bids=[["100.05", "0.001"]], arrival_seq=None))
+    assert writer._queue, "nothing is on the disk yet: the deadline has not passed"
+
+    clock.advance(0.5)
+    writer.tick()
+    assert writer._queue, "half the interval is not a deadline"
+
+    clock.advance(0.6)
+    writer.tick()
+    assert not writer._queue, "no new record arrived, the deadline still had to be met"
+    rows = books(list(read_tape([path])))
+    assert [r["arrival_seq"] for r in rows] == [1], "the quiet record is on the disk"
+    writer.close()
+    assert list(read_tape([path]))[-1]["event_kind"] == RUN_END
+
+
+def test_a_gap_marker_never_starves_a_one_slot_queue(tmp_path):
+    """F10: the marker that names a gap must not take the queue hostage.
+
+    With one slot, a burst fills it, the overflow is dropped into a pending gap, and the
+    next deadline writes the marker *and* clears it - so the record after the burst is
+    accepted again instead of every later record being dropped forever.
+    """
+    path = tmp_path / "l2.jsonl"
+    clock = FakeClock()
+    writer = TapeWriter(path, run_id=RUN_ID, queue_max=1, flush_secs=1.0, clock=clock)
+    writer.write_event(make_book_event(bids=[["100.05", "0.001"]], arrival_seq=None))
+    clock.advance(0.25)
+    for _ in range(3):  # a burst with no deadline in sight: dropped, and named
+        writer.write_event(make_book_event(bids=[["100.06", "0.001"]], arrival_seq=None))
+    assert writer.dropped == 3 and writer._pending_gap is not None
+
+    clock.advance(1.0)  # the deadline passes: the gap is written out with its range
+    writer.tick()
+    assert writer._pending_gap is None and not writer._queue
+
+    clock.advance(1.0)  # and the next record is accepted again, not starved
+    writer.write_event(make_book_event(bids=[["100.07", "0.001"]], arrival_seq=None))
+    assert writer.records == 2, "the queue recovered after the gap"
+    assert writer.dropped == 3
+    writer.close()
+
+    reader = read_tape([path])
+    rows = list(reader)
+    gap = next(r for r in rows if r["event_kind"] == GAP)
+    assert (gap["missing_from"], gap["missing_to"], gap["dropped"]) == (2, 4, 3)
+    assert [r["arrival_seq"] for r in books(rows)] == [1, 5]
+    assert reader.status.complete is False, "a dropped range still fails the recording"
+
+
 def test_a_skipped_arrival_seq_is_recorded_as_a_gap(tmp_path):
     path = tmp_path / "l2.jsonl"
     writer = TapeWriter(path, run_id=RUN_ID, flush_secs=0.0)
@@ -624,6 +804,111 @@ def test_a_truncated_tail_is_reported_and_the_good_records_are_readable(tmp_path
     assert reader.status.truncated_at.startswith(str(path))
 
 
+def test_an_old_sessions_truncated_tail_does_not_hide_a_later_complete_session(tmp_path):
+    """F11: the reader must keep reading past an old crash, not stop at its cut line.
+
+    A session that died mid-line leaves a truncated tail; the restart writes a new
+    fragment under a new session and ends it with its own run-end. Reading stopped at the
+    old cut, so the complete new session was never seen and the handle stayed open.
+    """
+    path = tmp_path / "l2" / "l2_NVDA.jsonl"
+    # Session one died mid-line: its fragment ends without a newline and without a run-end.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    crash_after(path, [hand_record(session_id="old", arrival_seq=1)])
+
+    # The restart appends a fragment of its own under a new session, and closes it.
+    revived = TapeWriter(path, run_id=RUN_ID, flush_secs=0.0, symbol="NVDA")
+    revived.write_event(make_book_event(bids=[["100.06", "0.001"]], arrival_seq=None))
+    revived.close()
+
+    fragments = sorted(path.parent.glob("*.jsonl"))
+    assert len(fragments) == 2, "the restart appended its own fragment"
+    reader = read_tape(fragments)
+    rows = list(reader)
+
+    assert [s.session_id for s in reader.status.sessions] == ["old", revived.session_id], (
+        "the new session is read, not hidden behind the old cut line"
+    )
+    assert [s.complete for s in reader.status.sessions] == [False, True]
+    assert "truncated_tail" in reader.status.sessions[0].reason
+    assert reader.status.complete is False, "the old session stays incomplete"
+    assert reader.status.truncated_tail is True
+    assert [(r["venue"], r["arrival_seq"]) for r in books(rows)] == [
+        ("ONDO", 1), ("ONDO", 1),
+    ], "both the old session's record and the new session's record were read"
+    assert [r["bids"][0][0] for r in books(rows)] == ["100.05", "100.06"]
+
+
+def test_damage_inside_one_session_after_a_cut_is_a_hard_failure(tmp_path):
+    """F11: a cut tail that the *same* session continues is corruption, not a tail.
+
+    Skipping it would silently drop the middle of a session and call the rest of it
+    readable. Only a cut at the end of a session is a tail.
+    """
+    first = crash_after(tmp_path / "l2_part0001.jsonl", [
+        hand_record(session_id="s1", arrival_seq=1),
+    ])
+    second = write_records(tmp_path / "l2_part0002.jsonl", [
+        hand_record(session_id="s1", arrival_seq=2),
+    ])
+
+    reader = read_tape([first, second])
+    with pytest.raises(TapeCorruptionError) as caught:
+        list(reader)
+    assert "damage inside a session" in str(caught.value)
+    assert reader.status.truncated_tail is True
+    assert [s.complete for s in reader.status.sessions] == [False]
+
+
+def test_reading_a_tape_never_keeps_a_file_handle(tmp_path):
+    """F11: every exit path releases the fragment, so Windows can rename/delete it.
+
+    An open tape file cannot be renamed or deleted on Windows, which is how the leak
+    the review found showed up: the reader stopped at a cut line and kept the generator
+    (and its file) alive.
+    """
+    def assert_released(path: Path) -> None:
+        moved = path.with_name(path.name + ".moved")
+        path.rename(moved)
+        moved.unlink()
+
+    # 1. a normal end, with an old cut tail followed by a complete new session.
+    first = crash_after(tmp_path / "normal_part0001.jsonl", [
+        hand_record(session_id="old", arrival_seq=1),
+    ])
+    second = write_records(tmp_path / "normal_part0002.jsonl", [
+        hand_record(session_id="new", arrival_seq=1),
+        hand_record(session_id="new", arrival_seq=2, event_kind=RUN_END, complete=True),
+    ])
+    reader = read_tape([first, second])  # held alive: the reader owns the handles
+    list(reader)
+    assert reader.status.truncated_tail is True
+    assert_released(first)
+    assert_released(second)
+
+    # 2. an early stop: the caller stops iterating long before the fragments are done.
+    abandoned = write_records(tmp_path / "abandoned.jsonl", [
+        hand_record(session_id="s-early", arrival_seq=seq) for seq in (1, 2, 3)
+    ])
+    reader = read_tape([abandoned])
+    next(reader)
+    reader.close()
+    assert_released(abandoned)
+
+    # 3. a hard failure in the middle of a fragment.
+    broken = write_records(tmp_path / "broken.jsonl", [
+        hand_record(session_id="s-bad", arrival_seq=1),
+        hand_record(session_id="s-bad", arrival_seq=2),
+    ])
+    lines = broken.read_text(encoding="utf-8").splitlines()
+    lines[1] = "{not json at all}"
+    broken.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    failing = read_tape([broken])
+    with pytest.raises(TapeCorruptionError):
+        list(failing)
+    assert_released(broken)
+
+
 def test_a_bad_line_in_the_middle_is_a_hard_failure(tmp_path):
     path = tmp_path / "l2.jsonl"
     with TapeWriter(path, run_id=RUN_ID, flush_secs=0.0) as writer:
@@ -652,9 +937,19 @@ def test_a_bad_last_line_with_its_newline_is_a_hard_failure(tmp_path):
 
 
 def test_an_unknown_or_missing_schema_version_is_rejected(tmp_path):
+    """Schema 2 is the current version and 1 is still read: 3 and "absent" are not.
+
+    The version this test calls unknown moved from 2 to 3 when the writer moved to
+    schema 2 (per-arrival instrument metadata); the rule itself is unchanged.
+    """
     good = hand_record()
-    for broken in ({**good, "schema_version": 2}, {k: v for k, v in good.items()
-                                                  if k != "schema_version"}):
+    for broken in ({**good, "schema_version": 3}, {**good, "schema_version": 2},
+                   {k: v for k, v in good.items() if k != "schema_version"}):
+        if broken.get("schema_version") == 2:
+            # The current version, not an unknown one: read, never refused.
+            path = write_records(tmp_path / "v2.jsonl", [broken])
+            assert list(read_tape([path]))
+            continue
         path = write_records(tmp_path / f"v{broken.get('schema_version')}.jsonl", [broken])
         with pytest.raises(TapeSchemaError):
             list(read_tape([path]))

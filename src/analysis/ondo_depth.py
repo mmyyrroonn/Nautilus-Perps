@@ -8,7 +8,7 @@ it actually cost to cross *both* books with *one* base quantity?") is answered
 from the standardized tape alone (``src/market_tape.py``, plan 5.1) - the fragments
 under ``<runDir>/l2``, read in the manifest's order.
 
-Four rules this module exists to keep honest:
+Seven rules this module exists to keep honest:
 
 1. **Receive order is the only order.** :func:`replay_events` advances the books by
    ``arrival_seq`` and never sorts by ``ts_event_ns``: sorting by exchange time
@@ -18,23 +18,49 @@ Four rules this module exists to keep honest:
 2. **One base quantity, not two "$100 each" scans.** A nominal tier
    ($100/$500/$1000) only *chooses* one base quantity: it is computed from the
    then-visible bid price of the leg being sold and snapped to the quantity both
-   venues can represent exactly (the integer-scaled LCM of the two legs' steps,
-   never ``max(step_a, step_b)``). Both legs are then filled for that one quantity.
+   venues can represent exactly (the integer-scaled LCM of the two legs' *real*
+   quantity steps, never ``max(step_a, step_b)``). Both legs are then filled for
+   that one quantity.
 3. **Freshness is per arrival and per session.** The quality gate measures each
    leg's own book against the local receipt time of the record being evaluated
    (``recorded_mono_ns``), inside one session: two sessions' monotonic clocks are
-   not comparable, and the difference of two legs' ``ts_init`` is not "how old
-   this is now". A *fresh receipt* still proves nothing about the *venue event*:
-   every row carries each leg's own **event age** (on the venues' clock) beside the
-   receive ages, and ``clock_offset_unknown`` says plainly that the local clock
-   offset - and therefore the network latency - is not measured here.
-4. **Fees come from this run's tape.** The snapshot is the tape's own instrument
-   records; a fee that is missing there withholds the leg's cost qualification and
-   is never replaced by today's static registry (plan 5.2 precedence: account rate
-   > live public metadata > a dated documentation assumption).
-   ``mapping_verified`` is published next to every row and today no venue pair is
-   verified, so ``executable`` is always ``False``: this is research observation,
-   never an order promise.
+   not comparable. A *fresh receipt* proves nothing about the *venue event*: every
+   row carries each leg's own **event age** - the *local epoch receipt time of this
+   record* (``ts_init_ns``) minus that leg's book *venue* event time - and
+   ``clock_offset_unknown`` says plainly that the local clock offset, and therefore
+   the network latency, is not measured here. A negative age is kept as the clock
+   evidence it is: it is never floored to zero and never turned into an absolute
+   value, because that would hide the very skew the field exists to show.
+4. **Fees and steps come from this run's tape, arrival by arrival.** Instrument
+   metadata is applied in receive order (F06): an arrival is priced with the
+   metadata *it* could see, so a metadata update - or a whole new session - never
+   rewrites the numbers already published for the arrivals before it. The fee
+   snapshot is the tape's own instrument records; a fee that is missing there
+   withholds the leg's cost qualification and is never replaced by today's static
+   registry (plan 5.2 precedence: account rate > live public metadata > a dated
+   documentation assumption). The quantity step is the instrument's real
+   ``size_increment`` or it is ``quantity_step_unknown``: ``10 ** -size_precision``
+   is **never** used as a step (F08), and a CLI ``--steps`` override is published
+   as ``override``, never as a venue-verified increment.
+5. **Feed, market and metadata are three separate axes.** A book record's own
+   ``valid`` says whether *that depth* is usable; it does not say whether the local
+   feed is up, whether the venue is trading, or whether the instrument metadata is
+   trusted. The replay keeps the three as independent state: only an explicit
+   ``adapter:snapshot_ready`` re-arms the feed, only an explicit trading status
+   (``is_trading=True``) lifts a real halt, ``snapshot_ready`` **never** lifts one,
+   and a ``metadata_stale`` instrument record makes that venue's metadata unusable
+   from that arrival on. Each refusal names its own axis (F07).
+6. **A new session re-announces its own facts.** One tape session is one writer's
+   run: the three axes above start each session the way the recorder's own state
+   starts (feed up, market trading, metadata unknown until the session's instrument
+   records arrive). A session that publishes no instrument metadata is
+   ``metadata_unknown`` for its whole span - it never inherits another session's
+   fee or step, and no future session can re-price it.
+7. **``mapping_verified`` is published next to every row** and today no venue pair
+   is verified, so ``executable`` is always ``False``: this is research
+   observation, never an order promise. Fixing the quantity, the VWAP or the fee
+   arithmetic proves nothing about the contract multiplier, the settlement asset,
+   the trading session or the underlying/index equivalence of the two legs.
 
 The report names follow plan 5.2 exactly: ``gross_entry_bps``, ``entry_fees_bps``,
 ``entry_after_fees_bps``, ``exit_fee_assumption_bps``, ``reserve_bps``,
@@ -58,6 +84,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import json
 import math
 import sys
@@ -95,8 +122,16 @@ from market_tape import (  # noqa: E402
 )
 from spread_watch import L2_DIRNAME, RESERVE_BPS  # noqa: E402
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # this *report* document's schema (it gained the axis fields)
 REPORT_STEM = "ondo_depth"
+
+# The tape schemas this reader accepts (contract A). Version 1 is the historical
+# tape: one metadata block at the top of the run, no per-arrival metadata and no
+# ``size_increment``. Version 2 adds the per-arrival instrument records. The reader
+# never branches on the version itself - a missing field is simply unknown, which is
+# exactly how a v1 tape reads - but it states the contract here so the two versions
+# cannot drift apart silently.
+TAPE_SCHEMA_VERSIONS = (1, 2)
 
 # ---------------------------------------------------------------- parameters
 
@@ -104,6 +139,12 @@ REPORT_STEM = "ondo_depth"
 DEFAULT_MAX_AGE_MS = 2_000  # both legs' receive age, measured per arrival
 DEFAULT_MAX_SKEW_MS = 500  # both legs' own event-time difference
 DEFAULT_FUTURE_TOLERANCE_MS = 1_000  # an event claiming to be from the future
+# F09: an event-age threshold is a *decision*, not a default. The event age is the
+# local epoch receipt time minus the venue event time, so it contains the (unmeasured)
+# local clock offset to that venue; rejecting on it while that offset is unknown would
+# turn a clock skew into a market conclusion. ``None`` means "reported, not enforced"
+# and the report says so on every row (``event_age_status``).
+DEFAULT_MAX_EVENT_AGE_MS: int | None = None
 DEFAULT_SYMBOLS = ("NVDA", "TSLA")  # the initial default comparison (plan 5.2)
 DEFAULT_VENUES = ("ONDO", "ASTER")  # both directions
 DEFAULT_NOTIONALS = (Decimal("100"), Decimal("500"), Decimal("1000"))
@@ -131,27 +172,74 @@ REJECT_FUTURE_TIME = "future_event_time"
 REJECT_STALE_BOOK = "stale_book"
 REJECT_EVENT_SKEW = "event_skew"
 REJECT_FEE_UNKNOWN = "fee_unknown"
-REJECT_STEP_UNKNOWN = "step_unknown"
+# The plan's own name for "no real size_increment reached this moment": the quantity
+# step is unknown and is never inferred from ``size_precision`` (F08).
+REJECT_STEP_UNKNOWN = "quantity_step_unknown"
 REJECT_BELOW_ONE_STEP = "below_one_step"
 REJECT_INSUFFICIENT_DEPTH = "insufficient_depth"
+# F07: the market axis and the metadata axis get their own reasons, so a refusal says
+# which of the three axes (feed / market / metadata) caused it. ``metadata_stale`` is
+# the same text the tape's own invalid_reason uses for a metadata record (contract B).
+REJECT_MARKET_HALTED = "market_halted"
+REJECT_METADATA_STALE = "metadata_stale"
+# F09: only reachable when the caller explicitly sets ``--max-event-age-ms``.
+REJECT_EVENT_AGE = "event_age_exceeded"
 
 BOOK_REASONS_IN_TAPE = frozenset({REJECT_EMPTY_BOOK, REJECT_ONE_SIDED, REJECT_CROSSED})
+
+# The *version-1* watcher wrote this marker on a book record whose leg had
+# ``feed_ready and book_valid`` false, i.e. it folded the feed axis into the depth's own
+# validity (F18). Version-2 tapes never carry it. A v1 tape therefore cannot say which
+# axis it meant, and the report says exactly that instead of assuming either one.
+V1_FEED_INVALIDATED = "feed-invalidated"
+V1_FEED_INVALIDATED_NOTE = (
+    "this book record carries the version-1 marker 'feed-invalidated', which folded "
+    "the local feed state into the depth's own validity: a version-1 tape cannot say "
+    "which axis it meant, so the depth is refused here and neither axis is assumed"
+)
+
+# MarketStatusAction *names* that mean "not tradable right now", mirroring
+# ``spread_watch.NON_TRADING_ACTIONS`` (the tape stores the action's name as text, and
+# a test pins the two sets against each other so they cannot drift). ``None``
+# ``is_trading`` with a non-halting action keeps the state it had: readiness is never
+# assumed from a status that does not say "trading".
+NON_TRADING_ACTIONS = frozenset({
+    "HALT", "SUSPEND", "CLOSE", "PRE_CLOSE", "POST_CLOSE", "NOT_AVAILABLE_FOR_TRADING",
+})
+# The adapter's own *local feed* notices: they travel on the same status record as a
+# venue halt and must never be read as one (plan 4.2).
+ADAPTER_REASON_PREFIX = "adapter:"
+ADAPTER_DISCONNECTED = "adapter:disconnected"
+ADAPTER_SNAPSHOT_READY = "adapter:snapshot_ready"
+
+# Where a venue's quantity step came from. ``override`` is the caller's CLI declaration
+# and never claims the venue verified anything (contract D); ``instrument_metadata``
+# means the tape carried a real ``size_increment``; ``quantity_step_unknown`` means it
+# did not and no override was given.
+STEP_ORIGIN_OVERRIDE = "override"
+STEP_ORIGIN_METADATA = "instrument_metadata"
+STEP_ORIGIN_UNKNOWN = "quantity_step_unknown"
+STEP_ORIGIN_MIXED = "mixed"
 
 # Plan 5.2: "接收新鲜也不证明交易所事件新鲜；报告同时给出 event age 和时钟偏差未知标记，
 # 不将本地 clock offset 混成网络延迟结论". The two texts below are the report's own words
 # for that rule; they are published in the JSON, in the Markdown and (as a field note)
 # next to the field names, so a reader can never see a receive age without them.
 EVENT_AGE_RULE = (
-    "the record's own ts_event_ns minus the leg's own book ts_event_ns, in exact "
-    "integer-nanosecond milliseconds: both stamps are the venue's, so a local clock "
-    "offset cancels out, and a missing/unusable stamp is 'unknown' (never 0)"
+    "the local epoch receipt time of the record being evaluated (ts_init_ns) minus the "
+    "leg's own book venue event time (ts_event_ns), in exact integer-nanosecond "
+    "milliseconds: it is the age measured on the local clock, so two legs delayed "
+    "together by the same feed never cancel out to 0, and a missing/unusable stamp is "
+    "'unknown' (never 0). A negative value is kept: it is clock evidence (the venue's "
+    "stamp is ahead of the local receipt), never floored to 0 and never made absolute"
 )
 CLOCK_OFFSET_NOTE = (
     "a fresh local receipt never proves a fresh venue event: the local clock offset to "
     "either venue is NOT measured (clock_offset_unknown), so receive_age_sell_ms / "
     "receive_age_buy_ms are local RECEIVE ages and are never network latency; read them "
     "beside event_age_sell_ms / event_age_buy_ms, which can be minutes while the receive "
-    "age is one millisecond"
+    "age is one millisecond, and remember that the event age itself carries the "
+    "unmeasured offset between the local clock and the venue's"
 )
 
 MAPPING_UNVERIFIED = "mapping_unverified"
@@ -271,6 +359,110 @@ def common_quantity(quantity: Decimal, step: Decimal) -> Decimal:
     return (Decimal(quantity) / step).to_integral_value(rounding=ROUND_FLOOR) * step
 
 
+def fee_bps(value: Any, source: Any) -> Decimal | None:
+    """A leg's taker fee from a tape metadata payload, or ``None`` (unknown).
+
+    Mirrors the watcher: a leg whose recorded ``fee_source`` is ``missing`` is
+    unknown even if a number travelled next to it, and a negative or unparsable rate
+    is unknown too. ``None`` withholds the leg's cost qualification.
+    """
+    if isinstance(source, str) and source == "missing":
+        return None
+    if value is None:
+        return None
+    try:
+        rate = Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    if not rate.is_finite() or rate < 0:
+        return None
+    return rate
+
+
+@dataclass(frozen=True)
+class LegMetadata:
+    """One venue's instrument metadata **as of one arrival** (F06, contract B).
+
+    The replay applies metadata records in receive order, so this is a snapshot: the
+    values a later arrival may use are the ones its own predecessors published. A
+    record whose own ``valid`` is false (``invalid_reason="metadata_stale"``) says the
+    venue's metadata is not trustworthy *from that arrival on*; the payload it carries
+    is the previous, known-to-be-stale one, so **nothing is derived from it** - the
+    derived fields go to ``None`` and ``stale`` names why.
+    """
+
+    venue: str
+    known: bool = False
+    stale: bool = False
+    fee_bps: Decimal | None = None
+    fee_source: Any = None
+    size_increment: Decimal | None = None
+    size_precision: int | None = None
+    price_increment: Decimal | None = None
+    tick_size: str | None = None
+    version: str | None = None
+    available_ns: int | None = None
+    arrival_seq: int | None = None
+    session_id: str | None = None
+    source: str | None = None
+    record_valid: bool = True
+    invalid_reason: str | None = None
+
+    @property
+    def usable(self) -> bool:
+        """Whether this metadata may price an arrival at all (the metadata axis)."""
+        return self.known and not self.stale
+
+
+def metadata_state(record: Mapping[str, Any], venue: str) -> LegMetadata:
+    """The metadata state one ``instrument`` record leaves behind.
+
+    Read from the record's own ``metadata`` block, never from a scan of the whole
+    tape: the caller applies this in receive order, which is what keeps a later
+    update (or a later session) from re-pricing an earlier arrival (F06).
+    """
+    payload = record.get("metadata")
+    payload = payload if isinstance(payload, Mapping) else {}
+    raw_valid = record.get("valid")
+    valid = True if raw_valid is None else bool(raw_valid)
+    reason = record.get("invalid_reason")
+    reason = reason if isinstance(reason, str) else None
+    session = record.get("session_id")
+    seq = record.get("arrival_seq")
+    origin = record.get("source")
+    version = payload.get("metadata_version")
+    available = payload.get("metadata_available_ns")
+    state = LegMetadata(
+        venue=venue,
+        known=valid,
+        stale=not valid,
+        version=version if isinstance(version, str) else None,
+        available_ns=available if isinstance(available, int) and not isinstance(
+            available, bool) else None,
+        arrival_seq=seq if isinstance(seq, int) and not isinstance(seq, bool) else None,
+        session_id=session if isinstance(session, str) else None,
+        source=origin if isinstance(origin, str) else None,
+        record_valid=valid,
+        invalid_reason=reason,
+    )
+    if not valid:
+        # The record itself says the metadata is not usable: keep the record-level
+        # facts as evidence, derive nothing from the payload it repeats.
+        return state
+    precision = payload.get("size_precision")
+    tick = payload.get("tick_size")
+    return dataclasses.replace(
+        state,
+        fee_bps=fee_bps(payload.get("taker_fee_bps"), payload.get("fee_source")),
+        fee_source=payload.get("fee_source"),
+        size_increment=positive_decimal(payload.get("size_increment")),
+        size_precision=precision if isinstance(precision, int) and not isinstance(
+            precision, bool) else None,
+        price_increment=positive_decimal(payload.get("price_increment")),
+        tick_size=None if tick is None else str(tick),
+    )
+
+
 def target_base_quantity(notional: Decimal, bid_price: Decimal, step: Decimal) -> Decimal:
     """The one base quantity a nominal tier chooses.
 
@@ -286,20 +478,22 @@ def target_base_quantity(notional: Decimal, bid_price: Decimal, step: Decimal) -
     return common_quantity(Decimal(notional) / bid_price, step)
 
 
-def venue_step(size_precision: int | None) -> Decimal | None:
-    """A venue's quantity step from the size precision its instrument published.
+def positive_decimal(value: Any) -> Decimal | None:
+    """An exact positive Decimal from a tape payload, or ``None`` (never invented).
 
-    ``None`` (no published precision) stays ``None``: a step is never invented.
+    The tape stores decimals as text; this reads that text exactly and refuses
+    anything that is not a finite positive number (F08: a step is either the real
+    ``size_increment`` or it is unknown - ``10 ** -size_precision`` is never used).
     """
-    if size_precision is None or isinstance(size_precision, bool):
+    if value is None or isinstance(value, bool):
         return None
     try:
-        precision = int(size_precision)
-    except (TypeError, ValueError):
+        dec = Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
         return None
-    if precision < 0 or precision > 30:
+    if not dec.is_finite() or dec <= 0:
         return None
-    return Decimal(1).scaleb(-precision)
+    return dec
 
 
 # ------------------------------------------------------------------------ time
@@ -425,9 +619,14 @@ class GapState:
 class ReplayStep:
     """The book state as of one record, in receive order.
 
-    ``books``/``quotes``/``funding``/``disconnected`` are snapshots: the next step
-    gets its own copies, so a consumer cannot be surprised by a later record
-    mutating the step it is holding.
+    ``books``/``quotes``/``funding``/``metadata``/``feed_ready``/``market_halted``
+    are snapshots: the next step gets its own copies, so a consumer cannot be
+    surprised by a later record mutating the step it is holding.
+
+    The last three are the three *axes* F07 separates. A venue that never appeared
+    in a status record has no entry at all in ``feed_ready``/``market_halted`` -
+    absence means "this tape never said", which is not the same as "ready" and not
+    the same as "halted", and the gate never reads an absent entry as an event.
     """
 
     record: Mapping[str, Any]
@@ -437,10 +636,21 @@ class ReplayStep:
     books: Mapping[str, BookState]
     quotes: Mapping[str, QuoteState]
     funding: Mapping[str, FundingState]
-    disconnected: Mapping[str, bool]
+    metadata: Mapping[str, LegMetadata]
+    feed_ready: Mapping[str, bool]
+    market_halted: Mapping[str, bool]
     gap: GapState | None
     gaps_seen: int
     dropped_seen: int
+
+    @property
+    def disconnected(self) -> Mapping[str, bool]:
+        """The feed axis in the negative: venues whose local feed is known to be down.
+
+        Derived from ``feed_ready`` so the two views cannot disagree; a venue with
+        no feed notice is simply absent, exactly as before.
+        """
+        return {venue: not ready for venue, ready in self.feed_ready.items()}
 
 
 class ReplayError(Exception):
@@ -469,11 +679,26 @@ class _ReplayState:
         self.books: dict[str, BookState] = {}
         self.quotes: dict[str, QuoteState] = {}
         self.funding: dict[str, FundingState] = {}
-        self.disconnected: dict[str, bool] = {}
+        self.metadata: dict[str, LegMetadata] = {}
+        self.feed_ready: dict[str, bool] = {}
+        self.market_halted: dict[str, bool] = {}
         self.last_seq: dict[str, int] = {}
         self.gaps = 0
         self.dropped = 0
         self.last_session: str | None = None
+
+    def _new_session(self) -> None:
+        """Start a session the way the recorder's own state starts (rule 6).
+
+        A session is one writer's run. Its first records say what *it* saw: the feed
+        axis and the market axis begin with the recorder's documented defaults (feed
+        up, market trading) and the metadata axis begins unknown, because a session
+        that publishes no instrument metadata has not told us the fee or the step -
+        it must never inherit another session's, and no later session may re-price it.
+        """
+        self.metadata.clear()
+        self.feed_ready.clear()
+        self.market_halted.clear()
 
     # ------------------------------------------------------------------ helpers
 
@@ -506,6 +731,7 @@ class _ReplayState:
         session = session if isinstance(session, str) else None
         if session is not None and session != self.last_session:
             self.last_session = session
+            self._new_session()
         seq: int | None = None
         gap: GapState | None = None
         if kind in (RUN_START, RUN_END):
@@ -574,14 +800,14 @@ class _ReplayState:
                         receive_mono_ns=record.get("recorded_mono_ns"),
                         arrival_seq=seq,
                     )
+            elif kind == INSTRUMENT and isinstance(venue, str) and venue:
+                # F06: applied here, in receive order, so the arrivals before it keep
+                # the metadata they could see and a later session starts unknown.
+                self.metadata[venue] = metadata_state(record, venue)
             elif kind == STATUS and isinstance(venue, str) and venue:
-                reason = record.get("reason")
-                if reason == "adapter:disconnected":
-                    self.disconnected[venue] = True
-                elif reason == "adapter:snapshot_ready":
-                    self.disconnected[venue] = False
-            # Any other kind (instrument metadata, a later stage's record) is carried
-            # by the step's ``record`` and changes no book state.
+                self._apply_status(venue, record)
+            # Any other kind (a later stage's record) is carried by the step's
+            # ``record`` and changes no state.
         return ReplayStep(
             record=record,
             kind=kind,
@@ -590,11 +816,50 @@ class _ReplayState:
             books=dict(self.books),
             quotes=dict(self.quotes),
             funding=dict(self.funding),
-            disconnected=dict(self.disconnected),
+            metadata=dict(self.metadata),
+            feed_ready=dict(self.feed_ready),
+            market_halted=dict(self.market_halted),
             gap=gap,
             gaps_seen=self.gaps,
             dropped_seen=self.dropped,
         )
+
+    def _apply_status(self, venue: str, record: Mapping[str, Any]) -> None:
+        """Update the feed axis or the market axis - never both (F07).
+
+        The two travel on one record type and mean opposite things. A reason under
+        ``adapter:`` is the adapter talking about its *own local feed*: it moves the
+        feed axis and nothing else. Anything else is a real venue market status, and
+        it moves the market axis, where only an explicit ``is_trading=True`` lifts a
+        halt - the mirror of ``spread_watch._on_market_status``, so the live watcher
+        and this replay cannot disagree about a leg.
+        """
+        reason = record.get("reason")
+        reason = reason if isinstance(reason, str) else ""
+        if reason == ADAPTER_DISCONNECTED:
+            self.feed_ready[venue] = False
+            return
+        if reason == ADAPTER_SNAPSHOT_READY:
+            # A complete new snapshot landed: the feed is usable again. It says
+            # nothing about the market, so a venue halt the tape announced survives
+            # its own reconnect (F07/F18) - the adapter resolves the market axis with
+            # the same rule on the live side.
+            self.feed_ready[venue] = True
+            return
+        if reason.startswith(ADAPTER_REASON_PREFIX):
+            # Any other local feed notice (a bare "socket connected", a subscribe ack)
+            # is not a recovery and changes nothing.
+            return
+        action = record.get("action")
+        action = str(action) if action is not None else ""
+        trading = record.get("is_trading")
+        if trading is False or action in NON_TRADING_ACTIONS:
+            self.market_halted[venue] = True
+        elif trading is True:
+            # An explicit resume - the only thing that lifts a real halt.
+            self.market_halted[venue] = False
+        # is_trading=None with a non-halting action: keep what we had. Readiness is
+        # never assumed from a status that does not say "trading".
 
 
 def replay_events(events: Iterable[Mapping[str, Any]]) -> Iterator[ReplayStep]:
@@ -619,12 +884,20 @@ def replay_events(events: Iterable[Mapping[str, Any]]) -> Iterator[ReplayStep]:
 
 @dataclass(frozen=True)
 class LegReading:
-    """One leg's own state as visible at the record being evaluated."""
+    """One leg's own state as visible at the record being evaluated.
+
+    The three axes are separate fields on purpose (F07): ``disconnected`` is the
+    feed, ``market_halted`` the venue's own trading state and ``metadata_known`` /
+    ``metadata_stale`` the instrument metadata. A caller that only fills in the book
+    gets the historical defaults, which is what a v1 tape describes.
+    """
 
     venue: str
     book: BookState | None
     disconnected: bool = False
     metadata_known: bool = True
+    metadata_stale: bool = False
+    market_halted: bool = False
 
 
 @dataclass(frozen=True)
@@ -634,16 +907,20 @@ class QualityParams:
     max_age_ms: int = DEFAULT_MAX_AGE_MS
     max_skew_ms: int = DEFAULT_MAX_SKEW_MS
     future_tolerance_ms: int = DEFAULT_FUTURE_TOLERANCE_MS
+    # F09: ``None`` = measured and reported, never enforced (the default). Set it and
+    # the gate adds one check, reported as its own reject reason.
+    max_event_age_ms: int | None = DEFAULT_MAX_EVENT_AGE_MS
 
 
 @dataclass(frozen=True)
 class QualityVerdict:
     """The gate's verdict, with the numbers it was decided on.
 
-    ``event_age_ms`` is *reported*, never decided on: the gate's checks are the
-    receive age, the future offsets and the skew, and adding the event ages here
-    changed no threshold and no outcome (they belong to the same two legs, so they
-    travel with the verdict the row already reads its receive ages from).
+    ``event_age_ms`` is *reported* by default: the gate's checks are the receive age,
+    the future offsets and the skew, and an event age only becomes a check when the
+    caller configured ``QualityParams.max_event_age_ms`` (F09 - the age carries the
+    unmeasured local clock offset). Either way the ages travel with the verdict, so a
+    row always shows the evidence behind its own decision.
     """
 
     quality_ok: bool
@@ -670,20 +947,41 @@ def _age_ms(record: TimePoint, leg: LegReading) -> Decimal | None:
 
 
 def _event_age_ms(record: TimePoint, leg: LegReading) -> Decimal | None:
-    """A leg's *venue* event age: how much older its own book event is than this record.
+    """A leg's event age: the local epoch receipt time of *this record* minus its book's
+    own venue event time (F09, contract E).
 
-    Both stamps are the exchange's own (``ts_event_ns``), so this is measured on the
-    venues' clock and no local clock offset enters it - which is exactly why it is
-    published *beside* the receive age instead of being derived from it: a book whose
-    venue event is minutes old while its local receipt is one millisecond old looks
-    perfectly fresh from the receive age alone (plan 5.2). Unlike the monotonic
-    receive age, exchange stamps are absolute epoch times, so they stay comparable
-    across sessions. ``None`` (never ``0``) when either stamp is missing.
+    The left-hand stamp is the record being evaluated, not another venue event. That
+    matters: two legs whose feeds were both delayed by the same two minutes arrive
+    together, so the difference between their two event stamps is zero - which is a
+    measurement of *skew*, not of age, and reading it as age is exactly the defect
+    this field replaces. Here both legs report the same ~120000 ms, because both are
+    two minutes old, while ``event_skew_ms`` still reports their 0 ms of disagreement.
+
+    A negative value is kept as-is: it says the venue's stamp is ahead of the local
+    receipt, i.e. the (unmeasured) clock offset is at least that size. Flooring it to
+    zero or taking an absolute value would hide that evidence, so neither happens.
+    ``None`` (never ``0``) when either stamp is missing.
     """
     book = leg.book
-    if book is None or record.event_ns is None or book.ts_event_ns is None:
+    if book is None or record.init_ns is None or book.ts_event_ns is None:
         return None
-    return _ms_between(record.event_ns, book.ts_event_ns)
+    return _ms_between(record.init_ns, book.ts_event_ns)
+
+
+def event_age_status(params: QualityParams, ages: Mapping[str, Decimal | None]) -> str:
+    """Whether the event-age threshold was checked, and what it said (F09).
+
+    One of ``not_checked`` (no threshold configured - the default, because the local
+    clock offset is unmeasured), ``unknown`` (a leg's age is not measurable),
+    ``exceeded`` or ``ok``. The value is published on every row so a report can never
+    imply that an unconfigured threshold was passed.
+    """
+    if params.max_event_age_ms is None:
+        return "not_checked"
+    if any(age is None for age in ages.values()):
+        return "unknown"
+    limit = Decimal(params.max_event_age_ms)
+    return "exceeded" if any(age > limit for age in ages.values()) else "ok"
 
 
 def _skew_ms(legs: Sequence[LegReading]) -> Decimal | None:
@@ -726,18 +1024,18 @@ def quality_gate(
 
     The gate receives the *current record's* time and each leg's *own book* time
     (the depth time, never the quote's), and fails on: a recording gap, a missing
-    book, empty/one-sided/crossed levels, an unknown instrument metadata, a
-    disconnected feed, ages that are not comparable (two sessions), a missing
-    receipt time, an exchange timestamp more than ``future_tolerance_ms`` in the
-    future, a leg older than ``max_age_ms`` and two legs whose own event times
-    differ by more than ``max_skew_ms``. Checks run in that documented order and the
-    first failure is the reported reason.
+    book, a stale or unknown instrument metadata, a disconnected feed, a halted
+    market, empty/one-sided/crossed levels, ages that are not comparable (two
+    sessions), a missing receipt time, an exchange timestamp more than
+    ``future_tolerance_ms`` in the future, a leg older than ``max_age_ms``, two legs
+    whose own event times differ by more than ``max_skew_ms`` and - only when the
+    caller set it - an event age over ``max_event_age_ms``. Checks run in that
+    documented order and the first failure is the reported reason.
 
-    Each leg's *event* age is measured here too and returned in the verdict, but it
-    is **not** one of those checks: the gate is left exactly as it was (plan 5.2's
-    thresholds are the receive age, the future offsets and the skew), and the event
-    age exists so a report can show a book that is fresh on the local clock while it
-    is old on the venue's own.
+    Each leg's *event* age is measured here too and returned in the verdict. It is
+    **not** one of those checks unless the caller configured ``max_event_age_ms``
+    (F09: the age carries the unmeasured local clock offset, so enforcing a threshold
+    is an explicit decision, and the report says which state applies).
     """
     ages: dict[str, Decimal | None] = {leg.venue: _age_ms(record, leg) for leg in legs}
     event_ages: dict[str, Decimal | None] = {
@@ -775,22 +1073,38 @@ def quality_gate(
                 REJECT_NO_BOOK,
                 f"{leg.venue}: no complete book has been replayed for this leg",
             )
+        if leg.metadata_stale:
+            return verdict(
+                REJECT_METADATA_STALE,
+                f"{leg.venue}: the tape's last instrument record marked this venue's "
+                f"metadata stale, so no fee, step or increment from it may be used "
+                f"from that arrival on",
+            )
         if not leg.metadata_known:
             return verdict(
                 REJECT_METADATA_UNKNOWN,
-                f"{leg.venue}: this run's tape carries no instrument metadata for the leg",
+                f"{leg.venue}: this session's tape carries no instrument metadata for "
+                f"the leg, and another session's is never inherited",
             )
         if leg.disconnected:
             return verdict(
                 REJECT_DISCONNECTED,
                 f"{leg.venue}: the adapter reported the local feed disconnected",
             )
+        if leg.market_halted:
+            return verdict(
+                REJECT_MARKET_HALTED,
+                f"{leg.venue}: a venue market status said this market is not trading "
+                f"and no explicit resume has lifted it (a feed reconnect does not)",
+            )
         reason = _book_reason(book)
         if reason is not None:
             return verdict(
                 reason,
                 f"{leg.venue}: book is not a two-sided uncrossed depth"
-                + (f" ({book.invalid_reason})" if book.invalid_reason else ""),
+                + (f" ({book.invalid_reason})" if book.invalid_reason else "")
+                + (f" - {V1_FEED_INVALIDATED_NOTE}"
+                   if book.invalid_reason == V1_FEED_INVALIDATED else ""),
             )
         if book.session_id != record.session_id:
             return verdict(
@@ -828,6 +1142,17 @@ def quality_gate(
                 f"{leg.venue}: depth is {age} ms old at this record "
                 f"(> {params.max_age_ms} ms)",
             )
+        if params.max_event_age_ms is not None:
+            event_age = event_ages.get(leg.venue)
+            if event_age is not None and event_age > Decimal(params.max_event_age_ms):
+                return verdict(
+                    REJECT_EVENT_AGE,
+                    f"{leg.venue}: the book's venue event is {event_age} ms before this "
+                    f"record's local receipt (> the configured "
+                    f"{params.max_event_age_ms} ms event-age limit): the age carries the "
+                    f"unmeasured local clock offset, which is why this check only runs "
+                    f"when the caller asks for it",
+                )
     if skew is not None and skew > Decimal(params.max_skew_ms):
         return verdict(
             REJECT_EVENT_SKEW,
@@ -913,8 +1238,29 @@ def discover_tapes(l2_dir: Path) -> list[TapeFiles]:
 
 
 @dataclass(frozen=True)
+class MetadataArrival:
+    """One instrument record the scan saw, in arrival order (F06).
+
+    The scan's job is to *list* the metadata a tape carried, never to elect one of
+    them as "the run's metadata": the replay applies them in receive order, and a
+    report that wants a run-level view must say which arrival it is describing.
+    """
+
+    venue: str
+    arrival_seq: int | None
+    session_id: str | None
+    source: str | None
+    state: LegMetadata
+
+
+@dataclass(frozen=True)
 class TapeScan:
-    """What one tape says about itself, read once and reused by the report."""
+    """What one tape says about itself, read once and reused by the report.
+
+    ``metadata_arrivals`` is a *list*, deliberately: no part of this module may read
+    the last one as the whole run's fact (that was F06's defect). Only the run-level
+    fee snapshot describes the arrivals, and it names every one of them.
+    """
 
     tape: str
     files: tuple[str, ...]
@@ -924,7 +1270,7 @@ class TapeScan:
     last_arrival_seq: int | None
     symbol: str | None
     book_venues: tuple[str, ...]
-    metadata: Mapping[str, Mapping[str, Any]]
+    metadata_arrivals: Mapping[str, tuple[MetadataArrival, ...]]
     instrument_records: int
     sessions: tuple[Mapping[str, Any], ...]
     complete: bool
@@ -935,6 +1281,11 @@ class TapeScan:
     run_ids: tuple[str, ...]
     failure_reason: str | None
     manifest: str | None = None
+
+    @property
+    def metadata_venues(self) -> tuple[str, ...]:
+        """Venues this tape announced instrument metadata for, in first-seen order."""
+        return tuple(self.metadata_arrivals)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -960,7 +1311,13 @@ class TapeScan:
 
 
 def scan_tape(files: TapeFiles) -> TapeScan:
-    """Read one tape once for its run-level facts: metadata, venues, verdict."""
+    """Read one tape once for its run-level facts: which venues, which records, what verdict.
+
+    It counts the instrument records and lists them in arrival order. It deliberately
+    does **not** keep "the" metadata of the tape: the arrivals are the fact, and only
+    the replay (in receive order) may turn them into fees and steps for a given
+    moment (F06).
+    """
     for fragment in files.fragments:
         if not Path(fragment).is_file():
             raise DepthError(
@@ -968,7 +1325,7 @@ def scan_tape(files: TapeFiles) -> TapeScan:
                 f"{fragment}",
             )
     reader = read_tape(list(files.fragments))
-    metadata: dict[str, dict[str, Any]] = {}
+    metadata: dict[str, list[MetadataArrival]] = {}
     book_venues: list[str] = []
     instrument_records = 0
     symbol: str | None = None
@@ -981,15 +1338,17 @@ def scan_tape(files: TapeFiles) -> TapeScan:
             continue
         if kind == INSTRUMENT:
             instrument_records += 1
-            payload = record.get("metadata")
-            payload = payload if isinstance(payload, Mapping) else {}
-            metadata[venue] = {
-                "taker_fee_bps": payload.get("taker_fee_bps"),
-                "fee_source": payload.get("fee_source"),
-                "price_precision": payload.get("price_precision"),
-                "size_precision": payload.get("size_precision"),
-                "tick_size": payload.get("tick_size"),
-            }
+            session = record.get("session_id")
+            seq = record.get("arrival_seq")
+            origin = record.get("source")
+            metadata.setdefault(venue, []).append(MetadataArrival(
+                venue=venue,
+                arrival_seq=seq if isinstance(seq, int) and not isinstance(seq, bool)
+                else None,
+                session_id=session if isinstance(session, str) else None,
+                source=origin if isinstance(origin, str) else None,
+                state=metadata_state(record, venue),
+            ))
         elif kind in (BOOK, QUOTE) and venue not in book_venues:
             book_venues.append(venue)
     status = reader.status
@@ -1022,7 +1381,9 @@ def scan_tape(files: TapeFiles) -> TapeScan:
         ),
         symbol=symbol,
         book_venues=tuple(book_venues),
-        metadata=metadata,
+        metadata_arrivals={
+            venue: tuple(arrivals) for venue, arrivals in metadata.items()
+        },
         instrument_records=instrument_records,
         sessions=sessions,
         complete=status.complete,
@@ -1064,13 +1425,15 @@ class Params:
 # stays ``unclosed``.
 ROW_FIELDS = (
     "symbol", "direction", "sell_venue", "buy_venue", "notional_usd", "quantity",
-    "common_step", "arrival_seq", "ts_utc", "sell_vwap", "buy_vwap", "reference_price",
-    "fill_usd_est", "gross_entry_bps", "entry_fees_bps", "entry_after_fees_bps",
-    "entry_after_fees_and_reserve_bps", "exit_fee_assumption_bps", "reserve_bps",
-    "funding_estimate_bps", "funding_status", "quality_ok", "cost_qualified",
-    "mapping_verified", "mapping_status", "reject_reason", "executable",
-    "receive_age_sell_ms", "receive_age_buy_ms", "event_skew_ms", "event_age_sell_ms",
-    "event_age_buy_ms", "clock_offset_unknown", "exit_status", "note",
+    "common_step", "step_origin", "arrival_seq", "session_id", "ts_utc",
+    "sell_vwap", "buy_vwap",
+    "reference_price", "fill_usd_est", "gross_entry_bps", "entry_fees_bps",
+    "entry_after_fees_bps", "entry_after_fees_and_reserve_bps",
+    "exit_fee_assumption_bps", "reserve_bps", "funding_estimate_bps", "funding_status",
+    "quality_ok", "cost_qualified", "mapping_verified", "mapping_status",
+    "reject_reason", "executable", "receive_age_sell_ms", "receive_age_buy_ms",
+    "event_skew_ms", "event_age_sell_ms", "event_age_buy_ms", "event_age_status",
+    "clock_offset_unknown", "exit_status", "note",
 )
 
 FIELD_NOTES = {
@@ -1106,8 +1469,13 @@ FIELD_NOTES = {
         "verified; False means the row is a nominal comparison only"
     ),
     "reject_reason": (
-        "why this row is not a usable comparison: a gate reason, or fee_unknown / "
-        "insufficient_depth / below_one_step / step_unknown; empty when it passed"
+        "why this row is not a usable comparison: a gate reason (recording_gap, "
+        "no_book, empty/one_sided/crossed book, metadata_unknown, metadata_stale, "
+        "disconnected, market_halted, session_mismatch, unknown_time, "
+        "future_event_time, stale_book, event_skew, event_age_exceeded), or fee_unknown "
+        "/ insufficient_depth / below_one_step / quantity_step_unknown; empty when it "
+        "passed. The three axes of F07 report separately: disconnected is the local "
+        "feed, market_halted the venue's trading state, metadata_* the instrument facts"
     ),
     "executable": "always False: this is a research observation, never an order promise",
     "exit_status": (
@@ -1120,7 +1488,20 @@ FIELD_NOTES = {
     ),
     "common_step": (
         "the integer-scaled LCM of the two legs' quantity steps (never the maximum), so "
-        "both venues can represent the quantity exactly"
+        "both venues can represent the quantity exactly. Each leg's step is its own "
+        "instrument's real size_increment as of this arrival, or the caller's CLI "
+        "override; a step is never inferred from size_precision"
+    ),
+    "session_id": (
+        "the tape session this row was priced in. Metadata is announced per session: a "
+        "session that published no instrument record is metadata_unknown for its whole "
+        "span and never inherits another session's fee or step"
+    ),
+    "step_origin": (
+        "where this row's quantity step came from: 'instrument_metadata' (both legs' "
+        "own size_increment), 'override' (the caller's --steps declaration, which is "
+        "never a statement that the venue verified anything), 'mixed' (one leg each) or "
+        "'quantity_step_unknown'"
     ),
     "reference_price": (
         "the two legs' touch mids averaged, the same reference the watcher divides by"
@@ -1144,6 +1525,13 @@ FIELD_NOTES = {
         "and it is no part of the bounded median sample, which is unchanged"
     ),
     "clock_offset_unknown": CLOCK_OFFSET_NOTE,
+    "event_age_status": (
+        "'not_checked' when no event-age threshold is configured (the default: the "
+        "local clock offset to either venue is unmeasured, so an age threshold would "
+        "turn a clock skew into a market conclusion), 'unknown' when a leg's age is not "
+        "measurable, else 'exceeded' / 'ok' against max_event_age_ms. Published on every "
+        "row so a report can never imply that an unconfigured threshold was passed"
+    ),
     "event_age_sell_ms_max": (
         "the largest VENUE event age this bucket saw on the sell leg, across every moment "
         "it evaluated (not only the bounded examples and stored hits), 'unknown' when no "
@@ -1161,26 +1549,6 @@ FIELD_NOTES = {
 
 def _dec_text(value: Decimal | int | None) -> str:
     return UNKNOWN if value is None else str(value)
-
-
-def _fee_bps(value: Any, source: Any) -> Decimal | None:
-    """A leg's taker fee from the run's snapshot, or ``None`` (unknown).
-
-    Mirrors the watcher: a leg whose recorded ``fee_source`` is ``missing`` is
-    unknown even if a number travelled next to it, and a negative or unparsable rate
-    is unknown too. ``None`` withholds the leg's cost qualification.
-    """
-    if isinstance(source, str) and source == "missing":
-        return None
-    if value is None:
-        return None
-    try:
-        rate = Decimal(str(value))
-    except (ArithmeticError, TypeError, ValueError):
-        return None
-    if not rate.is_finite() or rate < 0:
-        return None
-    return rate
 
 
 def _median(values: Sequence[Decimal]) -> Decimal | None:
@@ -1203,9 +1571,11 @@ class Row:
     buy_venue: str
     notional_usd: Decimal
     arrival_seq: int | None
+    session_id: str | None
     ts_utc: str
     quantity: Decimal | None
     common_step: Decimal | None
+    step_origin: str
     sell_vwap: Decimal | None
     buy_vwap: Decimal | None
     reference_price: Decimal | None
@@ -1228,6 +1598,7 @@ class Row:
     event_skew_ms: Decimal | None
     event_age_sell_ms: Decimal | None
     event_age_buy_ms: Decimal | None
+    event_age_status: str
     note: str
 
     @property
@@ -1265,7 +1636,9 @@ class Row:
             "notional_usd": str(self.notional_usd),
             "quantity": _dec_text(self.quantity),
             "common_step": _dec_text(self.common_step),
+            "step_origin": self.step_origin,
             "arrival_seq": self.arrival_seq,
+            "session_id": self.session_id if self.session_id is not None else UNKNOWN,
             "ts_utc": self.ts_utc,
             "sell_vwap": _dec_text(self.sell_vwap),
             "buy_vwap": _dec_text(self.buy_vwap),
@@ -1292,6 +1665,7 @@ class Row:
             "event_skew_ms": _dec_text(self.event_skew_ms),
             "event_age_sell_ms": _dec_text(self.event_age_sell_ms),
             "event_age_buy_ms": _dec_text(self.event_age_buy_ms),
+            "event_age_status": self.event_age_status or UNKNOWN,
             "clock_offset_unknown": self.clock_offset_unknown,
             "exit_status": UNCLOSED,
             "note": self.note,
@@ -1309,7 +1683,6 @@ class _Acc:
     sell: str
     buy: str
     notional: Decimal
-    step: Decimal | None = None
     note: str | None = None
     samples: int = 0
     quality_pass: int = 0
@@ -1332,14 +1705,28 @@ class _Acc:
     # carried it, so the bounded example/hit samples cannot hide it.
     event_age_sell_max: Decimal | None = None
     event_age_buy_max: Decimal | None = None
-    # The bucket's two entry taker fees from the run's snapshot, or None when either
-    # leg's fee is unknown (the cost qualification is then withheld).
-    fees: Decimal | None = None
+    # The metadata this bucket's *moments* used, in first-seen order. A bucket is a bag
+    # of arrivals, and under F06 the fee and the step are properties of an arrival, not
+    # of the tape: the bucket reports a single value only when every row agreed on one,
+    # and says so explicitly otherwise (never silently electing the last one).
+    fee_values: list[Decimal] = field(default_factory=list)
+    step_values: list[Decimal] = field(default_factory=list)
+    step_origins: list[str] = field(default_factory=list)
+    event_age_rejects: int = 0
 
     def add(self, row: Row) -> None:
         self.samples += 1
         if row.quality_ok:
             self.quality_pass += 1
+        if row.entry_fees_bps is not None and row.entry_fees_bps not in self.fee_values:
+            self.fee_values.append(row.entry_fees_bps)
+        if row.common_step is not None:
+            if row.common_step not in self.step_values:
+                self.step_values.append(row.common_step)
+            if row.step_origin not in self.step_origins:
+                self.step_origins.append(row.step_origin)
+        if row.reject_reason == REJECT_EVENT_AGE:
+            self.event_age_rejects += 1
         # Every row contributes its own event ages, even the rows that never reach the
         # bounded examples/hits samples: the staleness is a property of the moment.
         self.event_age_sell_max = _max_of(self.event_age_sell_max, row.event_age_sell_ms)
@@ -1398,27 +1785,17 @@ def _max_of(current: Decimal | None, value: Decimal | None) -> Decimal | None:
 
 
 class _TapeContext:
-    """Everything one tape contributes to the analysis."""
+    """What one tape contributes to the analysis that is *not* per-arrival.
+
+    Only the tape's own shape lives here: which venues published depth, and therefore
+    which directions can be compared at all. Fees and steps are per-arrival facts and
+    are read from each replayed step's metadata state, never from this object (F06).
+    """
 
     def __init__(self, symbol: str, scan: TapeScan, params: Params) -> None:
         self.symbol = symbol
         self.scan = scan
         self.params = params
-        self.steps: dict[str, tuple[Decimal | None, str | None, int | None]] = {}
-        for venue in params.venues:
-            self.steps[venue] = _resolve_step(venue, scan, params)
-        self.direction_step: dict[tuple[str, str], Decimal | None] = {
-            (sell, buy): common_step([self.steps[sell][0], self.steps[buy][0]])
-            for sell, buy in params.directions
-        }
-        self.fees: dict[str, Decimal | None] = {}
-        self.metadata_known: dict[str, bool] = {}
-        for venue in params.venues:
-            payload = scan.metadata.get(venue)
-            self.metadata_known[venue] = payload is not None
-            self.fees[venue] = None if payload is None else _fee_bps(
-                payload.get("taker_fee_bps"), payload.get("fee_source"),
-            )
         self.directions: list[tuple[str, str]] = [
             (sell, buy) for sell, buy in params.directions
             if sell in scan.book_venues and buy in scan.book_venues
@@ -1429,19 +1806,32 @@ class _TapeContext:
         ]
 
 
-def _resolve_step(
-    venue: str, scan: TapeScan, params: Params,
-) -> tuple[Decimal | None, str | None, int | None]:
-    """A venue's quantity step: the CLI override first, then the run's metadata."""
+def leg_step(
+    venue: str, metadata: LegMetadata | None, params: Params,
+) -> tuple[Decimal | None, str]:
+    """One leg's quantity step and where it came from, as of one arrival.
+
+    The CLI override wins (a caller's explicit research parameter, published as
+    ``override`` and never as a venue-verified increment). Otherwise the step is the
+    instrument's real ``size_increment`` - or nothing at all: ``size_precision`` is
+    never turned into a step (F08, contract D).
+    """
     override = params.steps.get(venue)
     if override is not None:
-        return Decimal(override), "cli", None
-    payload = scan.metadata.get(venue) or {}
-    precision = payload.get("size_precision")
-    step = venue_step(precision if isinstance(precision, int) else None)
-    if step is None:
-        return None, None, None
-    return step, "instrument_metadata", int(precision)
+        return Decimal(override), STEP_ORIGIN_OVERRIDE
+    if metadata is None or not metadata.usable or metadata.size_increment is None:
+        return None, STEP_ORIGIN_UNKNOWN
+    return metadata.size_increment, STEP_ORIGIN_METADATA
+
+
+def _direction_step(
+    step: ReplayStep, sell: str, buy: str, params: Params,
+) -> tuple[Decimal | None, str]:
+    """The common quantity step of a direction at one arrival, and its origin."""
+    sell_step, sell_origin = leg_step(sell, step.metadata.get(sell), params)
+    buy_step, buy_origin = leg_step(buy, step.metadata.get(buy), params)
+    origin = sell_origin if sell_origin == buy_origin else STEP_ORIGIN_MIXED
+    return common_step([sell_step, buy_step]), origin
 
 
 def _funding_estimate(
@@ -1471,6 +1861,19 @@ def _funding_estimate(
     return values[sell] - values[buy], "observed"
 
 
+def _leg_reading(step: ReplayStep, venue: str) -> LegReading:
+    """One leg's three axes as of this arrival - feed, market and metadata, separately."""
+    metadata = step.metadata.get(venue)
+    return LegReading(
+        venue,
+        step.books.get(venue),
+        disconnected=bool(step.disconnected.get(venue)),
+        metadata_known=bool(metadata is not None and metadata.known),
+        metadata_stale=bool(metadata is not None and metadata.stale),
+        market_halted=bool(step.market_halted.get(venue)),
+    )
+
+
 def _evaluate(
     ctx: _TapeContext, step: ReplayStep, sell: str, buy: str, notional: Decimal,
 ) -> Row:
@@ -1479,20 +1882,19 @@ def _evaluate(
     record_time = TimePoint.of_record(step.record)
     sell_book = step.books.get(sell)
     buy_book = step.books.get(buy)
-    legs = (
-        LegReading(sell, sell_book, disconnected=bool(step.disconnected.get(sell)),
-                   metadata_known=bool(ctx.metadata_known.get(sell))),
-        LegReading(buy, buy_book, disconnected=bool(step.disconnected.get(buy)),
-                   metadata_known=bool(ctx.metadata_known.get(buy))),
-    )
+    sell_metadata = step.metadata.get(sell)
+    buy_metadata = step.metadata.get(buy)
+    legs = (_leg_reading(step, sell), _leg_reading(step, buy))
     verdict = quality_gate(
         record_time, legs, params=params.quality, recording_gap=step.gap is not None,
     )
     reason = verdict.reject_reason
     note = " | ".join(verdict.notes)
 
-    fee_sell = ctx.fees.get(sell)
-    fee_buy = ctx.fees.get(buy)
+    # The fees this *arrival* could see: each leg's own metadata state, in receive
+    # order. A later instrument update (or a later session) cannot reach back (F06).
+    fee_sell = sell_metadata.fee_bps if sell_metadata is not None else None
+    fee_buy = buy_metadata.fee_bps if buy_metadata is not None else None
     cost_qualified = fee_sell is not None and fee_buy is not None
     entry_fees = (fee_sell + fee_buy) if cost_qualified else None
 
@@ -1504,14 +1906,23 @@ def _evaluate(
     gross: Decimal | None = None
     after: Decimal | None = None
     after_reserve: Decimal | None = None
-    step_q = ctx.direction_step.get((sell, buy))
+    step_q, step_origin = _direction_step(step, sell, buy, params)
+    if step_q is not None and step_origin == STEP_ORIGIN_MIXED:
+        # The two legs are sized from different kinds of source (an override on one,
+        # the venue's own increment on the other): the LCM is still exact, but the
+        # report says so instead of implying both venues verified their step.
+        note = (note + " | " if note else "") + (
+            "quantity step source is mixed: one leg's step is a CLI override and the "
+            "other's is the instrument's own size_increment"
+        )
 
     if verdict.quality_ok and sell_book is not None and buy_book is not None:
         if step_q is None:
             reason = REJECT_STEP_UNKNOWN
             note = (
-                "no quantity step is known for both legs, so the nominal comparison's "
-                "quantity is not known to be representable on both venues"
+                "no real size_increment reached this arrival for both legs, so the "
+                "nominal comparison's quantity is not known to be representable on "
+                "both venues (10**-size_precision is never used as a step)"
             )
         else:
             quantity = target_base_quantity(notional, sell_book.best_bid, step_q)
@@ -1570,6 +1981,7 @@ def _evaluate(
         ts_utc=ts_utc(record_time.init_ns),
         quantity=quantity,
         common_step=step_q,
+        step_origin=step_origin,
         sell_vwap=sell_vwap,
         buy_vwap=buy_vwap,
         reference_price=reference,
@@ -1587,11 +1999,13 @@ def _evaluate(
         mapping_verified=mapping_verified,
         mapping_status=MAPPING_VERIFIED if mapping_verified else MAPPING_UNVERIFIED,
         reject_reason=reason,
+        session_id=step.session_id,
         receive_age_sell_ms=verdict.receive_age_ms.get(sell),
         receive_age_buy_ms=verdict.receive_age_ms.get(buy),
         event_skew_ms=verdict.event_skew_ms,
         event_age_sell_ms=verdict.event_age_ms.get(sell),
         event_age_buy_ms=verdict.event_age_ms.get(buy),
+        event_age_status=event_age_status(params.quality, verdict.event_age_ms),
         note=note,
     )
 
@@ -1684,13 +2098,16 @@ def _write_csv(path: Path, fields: Sequence[str], rows: Sequence[Mapping[str, An
 
 
 SUMMARY_FIELDS = (
-    "symbol", "sell_venue", "buy_venue", "notional_usd", "common_step", "samples",
+    "symbol", "sell_venue", "buy_venue", "notional_usd", "common_step", "step_origin",
+    "common_step_note", "samples",
     "quality_pass", "pass", "reject", "hits", "executable_hits", "zero_opportunity",
-    "entry_fees_bps", "exit_fee_assumption_bps", "reserve_bps", "mapping_verified",
+    "entry_fees_bps", "entry_fees_note", "exit_fee_assumption_bps", "reserve_bps",
+    "mapping_verified",
     "executable", "gross_entry_bps_median", "gross_entry_bps_min", "gross_entry_bps_max",
     "entry_after_fees_bps_median", "entry_after_fees_bps_min", "entry_after_fees_bps_max",
     "funding_estimate_bps_median", "funding_estimate_bps_min", "funding_estimate_bps_max",
-    "event_age_sell_ms_max", "event_age_buy_ms_max",
+    "event_age_sell_ms_max", "event_age_buy_ms_max", "max_event_age_ms",
+    "event_age_rejects",
     "median_sample", "reject_reasons", "note",
 )
 
@@ -1700,12 +2117,73 @@ def _reason_text(reasons: Mapping[str, int]) -> str:
     return ";".join(f"{name}={count}" for name, count in ordered)
 
 
+def _one_value_text(values: Sequence[Decimal]) -> str:
+    """A bucket's single metadata value, or ``unknown`` when its rows did not agree.
+
+    A bucket is a bag of arrivals: under F06 the entry fee and the quantity step
+    belong to an arrival, not to the tape. One value means every row that carried one
+    carried the same; no value means none did; several mean the tape changed its
+    metadata mid-run and the bucket refuses to elect one of them.
+    """
+    if len(values) == 1:
+        return str(values[0])
+    return UNKNOWN
+
+
+def _fee_note(acc: _Acc) -> str:
+    if len(acc.fee_values) == 1:
+        return ""
+    if not acc.fee_values:
+        return (
+            "no moment this bucket evaluated had both legs' taker fee in this run's "
+            "tape, so no entry fee is published for the bucket (each row still carries "
+            "the fee of its own moment, and the dated assumption is never substituted)"
+        )
+    return (
+        "the entry fee changed during this tape ("
+        + ", ".join(str(value) for value in acc.fee_values)
+        + " bps): each row carries the fee of its own arrival, and the bucket does not "
+        "elect one of them"
+    )
+
+
+def _step_note(acc: _Acc) -> str:
+    unknown_rows = acc.reasons.get(REJECT_STEP_UNKNOWN, 0)
+    if len(acc.step_values) > 1:
+        return (
+            "the quantity step changed during this tape ("
+            + ", ".join(str(value) for value in acc.step_values)
+            + "): each row carries the step of its own arrival"
+        )
+    if not acc.step_values:
+        if unknown_rows:
+            return (
+                f"quantity_step_unknown: {unknown_rows} moment(s) passed the quality "
+                f"gate but no real size_increment reached both legs, and 10**-"
+                f"size_precision is never used as a quantity step"
+            )
+        return "no moment this bucket evaluated reached a quantity step"
+    if acc.step_origins and acc.step_origins[0] == STEP_ORIGIN_OVERRIDE:
+        return (
+            "the step is the caller's CLI override, published as 'override': it is a "
+            "research parameter and never evidence that either venue verified a step"
+        )
+    return ""
+
+
 def _acc_dict(acc: _Acc, params: Params) -> dict[str, Any]:
     verified = (acc.sell, acc.buy) in params.mapping_verified
     reject = acc.samples - acc.passed
     return {
         "notional_usd": str(acc.notional),
-        "common_step": _dec_text(acc.step),
+        "common_step": _one_value_text(acc.step_values),
+        "common_step_note": _step_note(acc),
+        "step_origin": (
+            acc.step_origins[0] if len(acc.step_origins) == 1
+            else (STEP_ORIGIN_MIXED if acc.step_origins else STEP_ORIGIN_UNKNOWN)
+        ),
+        "max_event_age_ms": params.quality.max_event_age_ms,
+        "event_age_rejects": acc.event_age_rejects,
         "samples": acc.samples,
         "quality_pass": acc.quality_pass,
         "pass": acc.passed,
@@ -1717,8 +2195,9 @@ def _acc_dict(acc: _Acc, params: Params) -> dict[str, Any]:
             name: count
             for name, count in sorted(acc.reasons.items(), key=lambda item: (-item[1], item[0]))
         },
-        "entry_fees_bps": _dec_text(acc.fees),
-        "exit_fee_assumption_bps": _dec_text(acc.fees),
+        "entry_fees_bps": _one_value_text(acc.fee_values),
+        "entry_fees_note": _fee_note(acc),
+        "exit_fee_assumption_bps": _one_value_text(acc.fee_values),
         "reserve_bps": str(params.reserve_bps),
         "mapping_verified": verified,
         "executable": False,
@@ -1745,10 +2224,13 @@ def analyse_run(
     """Read one recorded run directory and produce the whole report.
 
     The ``l2`` directory (or the directory itself, if it already is one) is read once
-    per tape for its run-level facts and once more for the replay, so the fee snapshot
-    and the metadata a row sees are *run* facts rather than an accident of arrival
-    order. Every requested (market, direction, notional) bucket exists in the output
-    even when the tape has nothing for it: an empty result is a result.
+    per tape for its run-level facts and once more for the replay. The two passes are
+    deliberately different: the scan counts files, records and venues, while every
+    *price* - the fee, the increment, the availability of the metadata - comes from the
+    replay's own receive-ordered state, so no later arrival (and no later session) can
+    re-price a row that was already computed (F06). Every requested (market,
+    direction, notional) bucket exists in the output even when the tape has nothing
+    for it: an empty result is a result.
     """
     run_dir = Path(run_dir)
     l2_dir = resolve_l2_dir(run_dir)
@@ -1786,15 +2268,6 @@ def analyse_run(
                     f"tape {files.tape} carries no depth record for "
                     + ", ".join(missing) + ": the direction cannot be compared"
                 )
-        for sell, buy in params.directions:
-            fee_sell, fee_buy = ctx.fees.get(sell), ctx.fees.get(buy)
-            bucket_fees = (
-                None if fee_sell is None or fee_buy is None else fee_sell + fee_buy
-            )
-            for notional in params.notionals:
-                acc = accs[(symbol, sell, buy, Decimal(notional))]
-                acc.step = ctx.direction_step.get((sell, buy))
-                acc.fees = bucket_fees
         _replay_tape(files, ctx, params, accs, hits)
 
     document = _document(
@@ -1899,6 +2372,13 @@ def _document(
             "max_age_ms": params.quality.max_age_ms,
             "max_skew_ms": params.quality.max_skew_ms,
             "future_tolerance_ms": params.quality.future_tolerance_ms,
+            "max_event_age_ms": params.quality.max_event_age_ms,
+            "max_event_age_note": (
+                "null means the event age is measured and published on every row but "
+                "never enforced: the age is measured on the local clock, so it carries "
+                "the unmeasured local offset to the venue's clock, and a threshold is a "
+                "decision the caller has to make explicitly (--max-event-age-ms)"
+            ),
             "reserve_bps": str(params.reserve_bps),
             "funding_basis": "bps_per_hour",
             "exit_status": UNCLOSED,
@@ -1906,7 +2386,20 @@ def _document(
             "clock_offset_unknown_note": CLOCK_OFFSET_NOTE,
             "event_age_ms_rule": EVENT_AGE_RULE,
             "quantity_reference": "sell_leg_best_bid",
-            "common_step_rule": "integer_scaled_lcm",
+            "common_step_rule": "integer_scaled_lcm_of_real_size_increments",
+            "tape_schema_versions": list(TAPE_SCHEMA_VERSIONS),
+            "metadata_rule": (
+                "instrument metadata is applied in receive order: a row uses the fee, "
+                "step and availability of the arrivals at or before its own, so a later "
+                "update or a later session never re-prices it; a session that published "
+                "no instrument record is metadata_unknown for its whole span"
+            ),
+            "axes_rule": (
+                "feed (adapter:disconnected / adapter:snapshot_ready), market "
+                "(is_trading / non-trading actions, lifted only by an explicit resume) "
+                "and metadata (known / stale) are three separate states, and each "
+                "refusal names the axis that caused it"
+            ),
             "median_sample": f"first {SAMPLE_KEEP} passing rows per bucket",
             "mapping_verified_pairs": [f"{sell}>{buy}" for sell, buy in sorted(
                 params.mapping_verified)],
@@ -1936,6 +2429,21 @@ def _document(
             "each leg's own venue event age (event_age_sell_ms / event_age_buy_ms) beside "
             "the receive ages, and the local clock offset is not measured "
             "(clock_offset_unknown), so a receive age is never network latency",
+            "the event age is measured from the local epoch receipt time of the record "
+            "being evaluated, so two legs delayed together by the same feed both report "
+            "the full age instead of cancelling out to zero; a negative age is kept as "
+            "clock evidence and is never floored to zero",
+            "instrument metadata is applied in receive order (F06): a fee or increment "
+            "that arrived later never re-prices an earlier arrival, and a bucket whose "
+            "moments disagreed reports 'unknown' with a note instead of electing one "
+            "value",
+            "a quantity step is the instrument's real size_increment (the LCM of the two "
+            "legs') or it is quantity_step_unknown: 10**-size_precision is never used as "
+            "a step, and a CLI --steps override is published as 'override', never as a "
+            "venue-verified increment",
+            "the three axes of F07 are separate states: a feed reconnect "
+            "(adapter:snapshot_ready) never lifts a venue halt, and a metadata record "
+            "marked stale makes that venue's metadata unusable from that arrival on",
             "'unknown' is the one marker for a value this run's tape did not carry; it "
             "is never replaced by a registry default",
         ],
@@ -1945,43 +2453,78 @@ def _document(
 def _fee_snapshot(
     params: Params, tapes_by_symbol: Mapping[str, Sequence[TapeScan]],
 ) -> dict[str, Any]:
-    """Every leg's fee and step as *this run's tape* recorded them."""
+    """Every leg's fee and step as *this run's tape* recorded them, arrival by arrival.
+
+    This is a description of the tape, not a value any row was priced with: a leg whose
+    metadata changed mid-run shows every value it announced (``*_values`` and the
+    ``arrivals`` list) instead of a single elected one, and a leg whose session never
+    announced any is ``instrument_metadata: false`` with an unknown fee and step.
+    """
     snapshot: dict[str, Any] = {}
     for symbol in params.symbols:
         symbol_scans = list(tapes_by_symbol.get(symbol, ()))
         entry: dict[str, Any] = {}
         for venue in params.venues:
-            step, origin, precision = _resolve_scan_step(venue, symbol_scans, params)
-            payload: Mapping[str, Any] = {}
-            for scan in symbol_scans:
-                if venue in scan.metadata:
-                    payload = scan.metadata[venue]
-            fee = _fee_bps(payload.get("taker_fee_bps"), payload.get("fee_source")) if (
-                payload
-            ) else None
+            arrivals = [
+                arrival
+                for scan in symbol_scans
+                for arrival in scan.metadata_arrivals.get(venue, ())
+            ]
+            usable = [arrival for arrival in arrivals if arrival.state.usable]
+            fees: list[Decimal] = []
+            increments: list[Decimal] = []
+            for arrival in usable:
+                state = arrival.state
+                if state.fee_bps is not None and state.fee_bps not in fees:
+                    fees.append(state.fee_bps)
+                if state.size_increment is not None and state.size_increment not in (
+                    increments
+                ):
+                    increments.append(state.size_increment)
+            override = params.steps.get(venue)
+            if override is not None:
+                step, origin = Decimal(override), STEP_ORIGIN_OVERRIDE
+            elif len(increments) == 1:
+                step, origin = increments[0], STEP_ORIGIN_METADATA
+            else:
+                step, origin = None, STEP_ORIGIN_UNKNOWN
+            last = usable[-1].state if usable else None
             entry[venue] = {
-                "taker_fee_bps": _dec_text(fee),
-                "fee_source": payload.get("fee_source") if payload else None,
-                "size_precision": precision,
+                # One value only when every usable announcement agreed; otherwise the
+                # arrivals themselves are listed below rather than a value being elected
+                # (F06: the tape's metadata is a sequence, not a fact).
+                "taker_fee_bps": _one_value_text(fees),
+                "taker_fee_bps_values": [str(value) for value in fees],
+                "fee_source": last.fee_source if last is not None else None,
+                "size_increment": _one_value_text(increments),
+                "size_increment_values": [str(value) for value in increments],
+                "size_precision": last.size_precision if last is not None else None,
                 "step": _dec_text(step),
                 "step_origin": origin,
-                "instrument_metadata": bool(payload),
+                "metadata_version": last.version if last is not None else None,
+                "metadata_available_ns": last.available_ns if last is not None else None,
+                "instrument_metadata": bool(usable),
+                "metadata_records": len(arrivals),
+                "metadata_stale_records": len(arrivals) - len(usable),
+                "sessions_with_metadata": sorted({
+                    arrival.session_id for arrival in arrivals
+                    if arrival.session_id is not None
+                }),
+                "arrivals": [
+                    {
+                        "arrival_seq": arrival.arrival_seq,
+                        "session_id": arrival.session_id,
+                        "source": arrival.source,
+                        "valid": arrival.state.record_valid,
+                        "invalid_reason": arrival.state.invalid_reason,
+                        "taker_fee_bps": _dec_text(arrival.state.fee_bps),
+                        "size_increment": _dec_text(arrival.state.size_increment),
+                    }
+                    for arrival in arrivals
+                ],
             }
         snapshot[symbol] = entry
     return snapshot
-
-
-def _resolve_scan_step(venue, scans, params):
-    for scan in scans:
-        if venue in scan.metadata:
-            return _resolve_step(venue, scan, params)
-    return _resolve_step(venue, TapeScan(
-        tape="", files=(), fragments=0, records=0, first_arrival_seq=None,
-        last_arrival_seq=None, symbol=None, book_venues=(),
-        metadata={}, instrument_records=0, sessions=(), complete=False, gaps=0,
-        dropped=0, truncated_tail=False, truncated_at=None, run_ids=(),
-        failure_reason=None,
-    ), params)
 
 
 def _summary_rows(document: Mapping[str, Any], params: Params) -> list[dict[str, Any]]:
@@ -1995,6 +2538,8 @@ def _summary_rows(document: Mapping[str, Any], params: Params) -> list[dict[str,
                     "buy_venue": direction_entry["buy_venue"],
                     "notional_usd": entry["notional_usd"],
                     "common_step": entry["common_step"],
+                    "step_origin": entry["step_origin"],
+                    "common_step_note": entry["common_step_note"],
                     "samples": entry["samples"],
                     "quality_pass": entry["quality_pass"],
                     "pass": entry["pass"],
@@ -2003,6 +2548,7 @@ def _summary_rows(document: Mapping[str, Any], params: Params) -> list[dict[str,
                     "executable_hits": entry["executable_hits"],
                     "zero_opportunity": entry["zero_opportunity"],
                     "entry_fees_bps": entry["entry_fees_bps"],
+                    "entry_fees_note": entry["entry_fees_note"],
                     "exit_fee_assumption_bps": entry["exit_fee_assumption_bps"],
                     "reserve_bps": entry["reserve_bps"],
                     "mapping_verified": direction_entry["mapping_verified"],
@@ -2018,6 +2564,8 @@ def _summary_rows(document: Mapping[str, Any], params: Params) -> list[dict[str,
                     "funding_estimate_bps_max": entry["funding_estimate_bps_max"],
                     "event_age_sell_ms_max": entry["event_age_sell_ms_max"],
                     "event_age_buy_ms_max": entry["event_age_buy_ms_max"],
+                    "max_event_age_ms": entry["max_event_age_ms"],
+                    "event_age_rejects": entry["event_age_rejects"],
                     "median_sample": entry["median_sample"],
                     "reject_reasons": _reason_text(entry["reject_reasons"]),
                     "note": entry["note"],
@@ -2027,6 +2575,10 @@ def _summary_rows(document: Mapping[str, Any], params: Params) -> list[dict[str,
 
 def _markdown(document: Mapping[str, Any], summary_rows: Sequence[Mapping[str, Any]]) -> str:
     params = document["research_parameters"]
+    event_age_limit = (
+        params["max_event_age_ms"] if params["max_event_age_ms"] is not None
+        else "not enforced"
+    )
     lines = [
         f"# Ondo depth analysis — same-quantity VWAP ({REPORT_STEM}, plan 5.2 / P2)",
         "",
@@ -2037,7 +2589,8 @@ def _markdown(document: Mapping[str, Any], summary_rows: Sequence[Mapping[str, A
         f"{', '.join(params['directions'])}  |  notionals "
         f"${'/'.join(params['notionals_usd'])}  |  thresholds: receive age "
         f"{params['max_age_ms']} ms, event skew {params['max_skew_ms']} ms, future "
-        f"tolerance {params['future_tolerance_ms']} ms  |  reserve "
+        f"tolerance {params['future_tolerance_ms']} ms, event age "
+        f"{event_age_limit}  |  reserve "
         f"{params['reserve_bps']} bps  |  quantity from the sell leg's best bid, common "
         f"step {params['common_step_rule']}  |  funding {params['funding_basis']}  |  "
         f"exit {params['exit_status']}",
@@ -2056,14 +2609,25 @@ def _markdown(document: Mapping[str, Any], summary_rows: Sequence[Mapping[str, A
             f"is a result, not a missing section.",
             "",
         ]
-    lines += ["## Fee snapshot (from this run's tape, never today's registry)", ""]
-    lines += ["| market | venue | taker bps | source | step | origin |", "|---|---|---|---|---|---|"]
+    lines += [
+        "## Fee snapshot (from this run's tape, never today's registry)", "",
+        "`taker bps` is a value only when every usable instrument record in the tape "
+        "agreed on one; when the run changed its metadata mid-tape the values it "
+        "announced are listed and no single value is elected (F06). `increment` is the "
+        "real `size_increment` - `quantity_step_unknown` means the tape carried none and "
+        "`10**-size_precision` was therefore not used.", "",
+    ]
+    lines += [
+        "| market | venue | taker bps | fee values | source | increment | step | origin |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
     for symbol, venues in document["fee_snapshot"].items():
         for venue, entry in venues.items():
+            values = ", ".join(entry["taker_fee_bps_values"]) or UNKNOWN
             lines.append(
-                f"| {symbol} | {venue} | {entry['taker_fee_bps']} | "
-                f"{entry['fee_source'] or UNKNOWN} | {entry['step']} | "
-                f"{entry['step_origin'] or UNKNOWN} |",
+                f"| {symbol} | {venue} | {entry['taker_fee_bps']} | {values} | "
+                f"{entry['fee_source'] or UNKNOWN} | {entry['size_increment']} | "
+                f"{entry['step']} | {entry['step_origin'] or UNKNOWN} |",
             )
     lines += ["", "## Tape verdict", ""]
     lines += [
@@ -2118,15 +2682,17 @@ def _markdown(document: Mapping[str, Any], summary_rows: Sequence[Mapping[str, A
             )
             for note in direction_entry["notes"]:
                 lines.append(f"*{note}*")
-    lines += ["", "## Event age vs receive age (venue clock, per example row)", ""]
+    lines += ["", "## Event age vs receive age (local epoch vs venue clock, per example row)", ""]
     lines.append(
-        f"`event_age_sell_ms` / `event_age_buy_ms` are the venue's own: "
-        f"{params['event_age_ms_rule']}. They are printed beside the receive ages so a "
-        f"book that is minutes old on the venue's clock while its local receipt is fresh "
-        f"is visible instead of passing as a fresh quote. Each bucket's own table also "
-        f"reports the largest event age it saw on each leg "
-        f"(`event_age_sell_ms_max` / `event_age_buy_ms_max`), which no bounded sample of "
-        f"example or hit rows can hide.",
+        f"`event_age_sell_ms` / `event_age_buy_ms`: {params['event_age_ms_rule']}. They "
+        f"are printed beside the receive ages so a book that is minutes old on the "
+        f"venue's clock while its local receipt is fresh is visible instead of passing as "
+        f"a fresh quote - and because the age is measured against the record's own local "
+        f"receipt, two legs delayed together report their full age instead of cancelling "
+        f"out to 0. Each bucket's own table also reports the largest event age it saw on "
+        f"each leg (`event_age_sell_ms_max` / `event_age_buy_ms_max`), which no bounded "
+        f"sample of example or hit rows can hide, and every row carries "
+        f"`event_age_status`: {params['max_event_age_note']}.",
     )
     age_rows = [
         (market_entry["symbol"], direction_entry["direction"], entry, row)
@@ -2138,16 +2704,17 @@ def _markdown(document: Mapping[str, Any], summary_rows: Sequence[Mapping[str, A
     if age_rows:
         lines += [
             "",
-            "| market | direction | notional | arrival_seq | receive sell/buy ms | "
-            "event sell/buy ms |",
-            "|---|---|---|---|---|---|",
+            "| market | direction | notional | arrival_seq | session | "
+            "receive sell/buy ms | event sell/buy ms | event age status |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for symbol, direction_name, entry, row in age_rows:
             lines.append(
                 f"| {symbol} | {direction_name} | ${entry['notional_usd']} | "
-                f"{row['arrival_seq']} | {row['receive_age_sell_ms']}/"
+                f"{row['arrival_seq']} | {row['session_id']} | "
+                f"{row['receive_age_sell_ms']}/"
                 f"{row['receive_age_buy_ms']} | {row['event_age_sell_ms']}/"
-                f"{row['event_age_buy_ms']} |",
+                f"{row['event_age_buy_ms']} | {row['event_age_status']} |",
             )
     else:
         lines.append("")
@@ -2160,7 +2727,8 @@ def _markdown(document: Mapping[str, Any], summary_rows: Sequence[Mapping[str, A
                  "exit_fee_assumption_bps", "reserve_bps", "funding_estimate_bps",
                  "quality_ok", "mapping_verified", "reject_reason", "executable",
                  "receive_age_sell_ms", "receive_age_buy_ms",
-                 "event_age_sell_ms", "event_age_buy_ms", "clock_offset_unknown"):
+                 "event_age_sell_ms", "event_age_buy_ms", "event_age_status",
+                 "clock_offset_unknown", "common_step", "step_origin", "session_id"):
         lines.append(f"- `{name}`: {document['field_notes'][name]}")
     lines += ["", "## What P2 acceptance still needs", ""]
     lines += [
@@ -2242,6 +2810,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="max difference of the two legs' own event times")
     parser.add_argument("--future-ms", type=int, default=DEFAULT_FUTURE_TOLERANCE_MS,
                         help="a timestamp this far in the future fails")
+    parser.add_argument("--max-event-age-ms", type=int, default=DEFAULT_MAX_EVENT_AGE_MS,
+                        help="reject a leg whose book venue event is older than this "
+                             "many ms before the local receipt; unset by default "
+                             "because the age carries the unmeasured clock offset")
     parser.add_argument("--steps", default=None,
                         help="optional VENUE=DECIMAL quantity-step override")
     parser.add_argument("--mapping-verified", default=None,
@@ -2278,6 +2850,9 @@ def _params_from_args(args) -> Params:
         quality=QualityParams(
             max_age_ms=int(args.max_age_ms), max_skew_ms=int(args.max_skew_ms),
             future_tolerance_ms=int(args.future_ms),
+            max_event_age_ms=(
+                None if args.max_event_age_ms is None else int(args.max_event_age_ms)
+            ),
         ),
         steps=parse_steps(args.steps),
         mapping_verified=parse_pairs(args.mapping_verified),

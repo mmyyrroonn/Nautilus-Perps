@@ -50,6 +50,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Any
 
 from nautilus_trader.common import Environment, LogColor, LogLevel, LoggerConfig, TimeEvent
 from nautilus_trader.config import StrategyConfig
@@ -125,11 +126,24 @@ ONDO_FEE_SOURCE = "documented_assumption_2026-09-14"
 FEE_SOURCE_REGISTRY = "registry"  # the static fee in INSTRUMENTS (non-ONDO venues)
 FEE_SOURCE_METADATA = "instrument_metadata"
 FEE_SOURCE_MISSING = "missing"  # no fee published: cost judgement withheld
-# InstrumentStatus reasons the adapter publishes for its own *local* feed. They
-# are not venue halts and must never be read as one (plan 4.2).
+FEE_SOURCE_STALE = "metadata_stale"  # the metadata that carried it is no longer trusted
+# InstrumentStatus reasons the adapter publishes for its own *local* feed and for its
+# metadata. They are not venue halts and must never be read as one (plan 4.2).
 ADAPTER_DISCONNECTED = "adapter:disconnected"
 ADAPTER_SNAPSHOT_READY = "adapter:snapshot_ready"
+# The metadata axis (R2, contract A): `metadata_stale` means the metadata the venue
+# publishes is no longer acceptable - the fee, tick and quantity step derived from it are
+# withdrawn - and `metadata_ready` means acceptable, non-stale metadata is in force again.
+# Neither is a feed notice and neither is a trading halt: they move their own axis only.
+ADAPTER_METADATA_STALE = "adapter:metadata_stale"
+ADAPTER_METADATA_READY = "adapter:metadata_ready"
 ADAPTER_REASON_PREFIX = "adapter:"
+# The two `source` values of an instrument record on the tape (contract C): the metadata
+# the run started from, and one published while it runs (a refresh, or the stale marker
+# that withdraws the last one).
+INSTRUMENT_METADATA_SOURCE = "instrument_metadata"
+INSTRUMENT_UPDATE_SOURCE = "instrument_update"
+INVALID_METADATA_STALE = "metadata_stale"
 # MarketStatusAction values that mean "not tradable right now".
 NON_TRADING_ACTIONS = frozenset({
     MarketStatusAction.HALT,
@@ -218,6 +232,165 @@ def ondo_book_limit() -> int | None:
     except ImportError:
         return None
     return int(OndoDataClientConfig().book_limit)
+
+
+# The fork-side raw public-frame recorder's own segment naming and record kinds
+# (crates/adapters/ondo/src/recording.rs). They are read here, never produced here.
+RAW_MD_SEGMENT_STEM = "raw_md"
+RAW_MD_GLOB = f"{RAW_MD_SEGMENT_STEM}*.jsonl"
+# Only the marker lines are parsed: a frame line can be a very large venue payload and
+# there is no statistic in it that the run's own `run_end` does not already state. The
+# filter is the marker's own value string, so it does not care how the writer spaced its
+# JSON; a frame that happens to carry the word is parsed too and dropped by its `kind`.
+RAW_MD_MARKERS = {
+    '"run_start"': "run_start",
+    '"run_end"': "run_end",
+    '"gap"': "gap",
+}
+RAW_MD_END_STAT_FIELDS = (
+    "clean", "reason", "records", "markers", "bytes", "dropped", "gaps", "rotations",
+    "segments", "last_recv_seq", "ended_at_ns",
+)
+
+
+def raw_recorder_status(raw_dir: Path, *, run_id: str | None = None) -> dict:
+    """The Ondo adapter's raw public-frame recording, as its own files state it.
+
+    The fork-side recorder writes its statistics *into* the recording (plan 5.2): a
+    ``run_start`` header per session and a ``run_end`` record carrying ``clean``,
+    ``dropped``, ``gaps``, ``records`` and ``last_recv_seq``. The acceptance reads them
+    from the files. It never infers a complete recording from the fact that market data
+    was still flowing - that says nothing about what reached the disk.
+
+    ``complete`` is True only when every session in the directory finalized cleanly, no
+    segment ends mid-line, at least one public frame was written, and (when the caller
+    names one) the recorder's ``run_id`` is the run's own. Anything else is incomplete
+    with ``problem`` naming why.
+    """
+    raw_dir = Path(raw_dir)
+    report: dict[str, object] = {
+        "dir": str(raw_dir),
+        "expected_run_id": None if run_id is None else str(run_id),
+        "segments": [],
+        "sessions": [],
+        "run_ids": [],
+        "run_id_matches": None,
+        "records": 0,
+        "dropped": 0,
+        "gaps": 0,
+        "complete": False,
+        "problem": None,
+    }
+    segments = sorted(raw_dir.glob(RAW_MD_GLOB)) if raw_dir.is_dir() else []
+    if not segments:
+        report["problem"] = (
+            f"no raw public-frame segment ({RAW_MD_GLOB}) was written under {raw_dir}: "
+            f"nothing can be replayed from it and completeness cannot be confirmed"
+        )
+        return report
+
+    starts: dict[str, dict] = {}
+    ends: dict[str, dict] = {}
+    problems: list[str] = []
+    for segment in segments:
+        truncated = False
+        try:
+            with segment.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    truncated = not line.endswith("\n")
+                    for marker, kind in RAW_MD_MARKERS.items():
+                        if marker not in line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            problems.append(f"{segment.name}: a {kind} marker is not JSON")
+                            break
+                        if not isinstance(record, dict) or record.get("kind") != kind:
+                            continue
+                        session_id = str(record.get("session_id") or "")
+                        if kind == "run_start":
+                            starts[session_id] = record
+                        elif kind == "run_end":
+                            ends[session_id] = record
+                        break
+        except OSError as exc:
+            problems.append(f"{segment.name}: cannot be read: {exc!r}")
+            continue
+        report["segments"].append({
+            "path": segment.name,
+            "bytes": segment.stat().st_size,
+            "truncated": truncated,
+        })
+        if truncated:
+            # The last line has no newline: the process died mid-record, so this segment
+            # cannot be read to its end and no completeness can be claimed for it.
+            problems.append(
+                f"{segment.name}: the last line has no newline (a process that died "
+                f"mid-write), so the segment's end is not confirmable",
+            )
+
+    records = dropped = gaps = 0
+    for session_id, end in ends.items():
+        records += int(end.get("records") or 0)
+        dropped += int(end.get("dropped") or 0)
+        gaps += int(end.get("gaps") or 0)
+        session_run_id = str(end.get("run_id") or "")
+        if session_run_id and session_run_id not in report["run_ids"]:
+            report["run_ids"].append(session_run_id)
+        if end.get("clean") is not True:
+            why = end.get("reason") or f"{end.get('dropped')} frame(s) were dropped"
+            problems.append(f"session {session_id or '?'}: run_end is not clean ({why})")
+        report["sessions"].append({
+            "session_id": session_id, "run_id": session_run_id,
+            "finalized": True,
+            **{field: end.get(field) for field in RAW_MD_END_STAT_FIELDS},
+        })
+    for session_id, start in starts.items():
+        if session_id in ends:
+            continue
+        session_run_id = str(start.get("run_id") or "")
+        if session_run_id and session_run_id not in report["run_ids"]:
+            report["run_ids"].append(session_run_id)
+        problems.append(
+            f"session {session_id or '?'}: the recording never wrote its run_end, so what "
+            f"it wrote cannot be confirmed complete",
+        )
+        report["sessions"].append({
+            "session_id": session_id, "run_id": session_run_id, "finalized": False,
+        })
+
+    report["records"] = records
+    report["dropped"] = dropped
+    report["gaps"] = gaps
+    if run_id is not None:
+        report["run_id_matches"] = report["run_ids"] == [str(run_id)]
+        if not report["run_id_matches"]:
+            problems.append(
+                f"the recording carries run id(s) {report['run_ids']} but this run is "
+                f"{run_id!r}: the raw frames and the tape do not join",
+            )
+    if records == 0 and not problems:
+        problems.append(
+            "the recording finalized without a single public frame: nothing was recorded",
+        )
+    report["problems"] = problems
+    report["complete"] = not problems
+    report["problem"] = None if not problems else "; ".join(problems)
+    return report
+
+
+def raw_recorder_text(report: dict) -> str:
+    """One line of the raw recorder's own facts, for the run's log and its report."""
+    if not report["segments"]:
+        return f"INCOMPLETE ({report['problem']})"
+    verdict = "complete" if report["complete"] else "INCOMPLETE"
+    text = (
+        f"{verdict}: segments={len(report['segments'])} sessions={len(report['sessions'])} "
+        f"records={report['records']} dropped={report['dropped']} gaps={report['gaps']} "
+        f"run_ids={report['run_ids']}"
+    )
+    return text if report["complete"] else f"{text} - {report['problem']}"
 
 
 def ref_header(legs: Sequence[LegSpec]) -> list[str]:
@@ -741,6 +914,17 @@ class LegState:
     # "a two-sided BBO" rule and nothing about an existing venue changes.
     feed_ready: bool = True  # the adapter's local feed has a usable snapshot
     market_ready: bool = True  # the venue says this market is tradable
+    # The third axis: whether the runtime metadata this leg's fee/step come from is still
+    # trusted. Its own axis on purpose - a feed reconnect is not a metadata refresh, and a
+    # metadata refresh is not a venue halt (contract A).
+    metadata_ready: bool = True
+    metadata_stale_reason: str | None = None
+    # The last metadata written to the tape for this leg (the *acceptable* one), with the
+    # version and availability the adapter published. None = unknown, never invented.
+    metadata_payload: dict | None = None
+    metadata_version: str | None = None
+    metadata_available_ns: int | None = None
+    metadata_updates: int = 0  # instrument records written for this leg on this run's tape
     book_valid: bool = True  # the cached book belongs to the current feed
     market_halted: bool = False  # a real venue status currently says "not trading"
     status_tracked: bool = False  # this leg reacts to InstrumentStatus
@@ -753,15 +937,18 @@ class LegState:
     book_tape: object | None = None
 
     def ready(self) -> bool:
-        """Tradable: the feed is up, the market is trading and both sides exist.
+        """Tradable: the feed is up, the market is trading, the metadata is trusted, both sides exist.
 
-        The first two are True by default, which is the pre-Ondo behaviour; for a
-        status-tracked leg a local disconnect takes them down in the same
-        event-loop turn, without waiting for the old quote to age out.
+        All three axes are True by default, which is the pre-Ondo behaviour; for a
+        status-tracked leg a local disconnect (or a metadata invalidation) takes its own
+        axis down in the same event-loop turn, without waiting for the old quote to age
+        out. No axis can move another: a reconnect does not clear a halt, and neither
+        clears stale metadata.
         """
         return (
             self.feed_ready
             and self.market_ready
+            and self.metadata_ready
             and self.bid > 0.0
             and self.ask > 0.0
         )
@@ -779,6 +966,8 @@ class LegState:
             reasons.append("local-feed-disconnected")
         if not self.market_ready:
             reasons.append("market-not-trading")
+        if not self.metadata_ready:
+            reasons.append("metadata-stale")
         if not self.book_valid:
             reasons.append("book-invalidated")
         if self.bid <= 0.0 or self.ask <= 0.0:
@@ -852,11 +1041,87 @@ def tape_deltas(deltas: OrderBookDeltas) -> list[Delta]:
     return ops
 
 
+def _exact_decimal_text(value: Any) -> str | None:
+    """The exact decimal text of a Nautilus Price/Quantity, or None when there is none.
+
+    ``str`` of a Price/Quantity renders from its integer and precision, so it never goes
+    through an f64; anything that is not an exact finite decimal is reported as unknown
+    rather than guessed.
+    """
+    if value is None:
+        return None
+    try:
+        text = str(value).strip()
+        number = Decimal(text)
+    except (InvalidOperation, ValueError, AttributeError, TypeError):
+        return None
+    return text if number.is_finite() else None
+
+
+def instrument_size_increment(instrument: object) -> str | None:
+    """The venue's *real* quantity step, as exact text, or None when it is not published.
+
+    Contract E: this is the only admissible source of a quantity step. A precision is not
+    an increment (``10**-size_precision`` was measured wrong by a factor of six on the
+    venue's own instruments), so a missing increment stays unknown and the caller must
+    withhold any common-step arithmetic rather than derive one.
+    """
+    return _exact_decimal_text(getattr(instrument, "size_increment", None))
+
+
+def instrument_price_increment(instrument: object) -> str | None:
+    """The venue's price step, as exact text, or None when it is not published."""
+    return _exact_decimal_text(getattr(instrument, "price_increment", None))
+
+
+def instrument_metadata_version(instrument: object) -> str | None:
+    """The adapter's version stamp for this instrument's metadata, or None.
+
+    The adapter publishes it on the instrument's ``info`` map (the venue-metadata carrier
+    Nautilus instruments carry); an adapter that publishes no version leaves it unknown.
+    """
+    info = getattr(instrument, "info", None)
+    if isinstance(info, dict) and info.get("metadata_version") is not None:
+        return str(info["metadata_version"])
+    value = getattr(instrument, "metadata_version", None)
+    return None if value is None else str(value)
+
+
+def instrument_metadata_available_ns(instrument: object) -> int | None:
+    """When this metadata became available locally, in epoch nanoseconds, or None.
+
+    An adapter that stamps the availability explicitly (``info["metadata_available_ns"]``)
+    is believed. Otherwise the instrument's own ``ts_init`` is used: that is the local
+    receive time the adapter stamps when it builds the instrument from the venue payload,
+    which is exactly the moment this metadata became usable here. Nothing is inferred from
+    a wall clock the application does not have.
+    """
+    info = getattr(instrument, "info", None)
+    if isinstance(info, dict):
+        value = info.get("metadata_available_ns")
+        if isinstance(value, bool):
+            value = None
+        elif isinstance(value, str) and value.strip().lstrip("-").isdigit():
+            value = int(value)
+        if isinstance(value, int):
+            return value
+    ts_init = getattr(instrument, "ts_init", None)
+    if isinstance(ts_init, bool) or not isinstance(ts_init, int):
+        return None
+    return ts_init if ts_init > 0 else None
+
+
 def tape_instrument_metadata(leg: LegState, instrument: object) -> dict:
-    """The normalized instrument facts a run started from, for the tape's header block.
+    """The normalized instrument facts of one arrival, for the tape's instrument record.
 
     The taker fee travels as the same text the CSV/summary use (:func:`_fee_text`), so the
     tape never carries an f64 and a report can still see which source the fee came from.
+
+    Contract C: `size_increment` and `price_increment` are the venue's real steps as exact
+    decimal text (never ``10**-precision``), and `metadata_version`/`metadata_available_ns`
+    are the adapter's own stamp of which metadata this is and when it arrived. Every one of
+    them is ``None`` when it is not published - a missing quantity step is unknown, and a
+    reader that cannot see one must not compute a representable quantity from a precision.
     """
     metadata: dict[str, object] = {
         "venue": leg.spec.client_id,
@@ -870,6 +1135,10 @@ def tape_instrument_metadata(leg: LegState, instrument: object) -> dict:
             metadata[name] = value
     tick = getattr(instrument, "tick_size", None)
     metadata["tick_size"] = None if tick is None else str(tick)
+    metadata["size_increment"] = instrument_size_increment(instrument)
+    metadata["price_increment"] = instrument_price_increment(instrument)
+    metadata["metadata_version"] = instrument_metadata_version(instrument)
+    metadata["metadata_available_ns"] = instrument_metadata_available_ns(instrument)
     return metadata
 
 
@@ -1062,7 +1331,7 @@ class SpreadWatch(Strategy):
                 self._fee[key] = fees[0] + fees[1] + self._cfg.reserve_bps
 
     def _read_runtime_fees(self) -> None:
-        """Take the ONDO leg's taker fee from the loaded instrument metadata.
+        """Take a runtime-metadata leg's taker fee from the loaded instrument.
 
         Plan 5.2's precedence is account rate > live public metadata > the dated
         documentation assumption. The account rate needs a private feed this stage
@@ -1073,25 +1342,42 @@ class SpreadWatch(Strategy):
         for leg in self._legs:
             if not VENUES[leg.spec.venue_key].reads_runtime_fee:
                 continue
-            fee = ondo_metadata_fee_bps(self.cache.instrument(leg.instrument_id))
-            if fee is None:
-                leg.spec = replace(leg.spec, taker_fee_bps=None)
-                leg.fee_source = FEE_SOURCE_MISSING
+            self._read_runtime_fee(leg, self.cache.instrument(leg.instrument_id))
+
+    def _read_runtime_fee(self, leg: LegState, instrument: object) -> None:
+        """Re-read one leg's taker fee from the metadata in force *now*.
+
+        Called at start-up and again whenever the adapter refreshes the instrument: a fee
+        that changed mid-run must move this leg's threshold from that arrival on, or the
+        run would price the rest of its life against the value it started with (F06/F07).
+        """
+        if not VENUES[leg.spec.venue_key].reads_runtime_fee:
+            return
+        fee = ondo_metadata_fee_bps(instrument)
+        if fee is None:
+            leg.spec = replace(leg.spec, taker_fee_bps=None)
+            leg.fee_source = FEE_SOURCE_MISSING
+            self.log.warning(
+                f"[{self.symbol}/{leg.spec.label}] no taker fee in the runtime "
+                f"instrument metadata of {leg.instrument_id}: fee unknown, so the "
+                f"dated documentation assumption is NOT used and this leg's "
+                f"cost-qualified judgement is withheld until the fee is known",
+            )
+        else:
+            if fee != leg.spec.taker_fee_bps and leg.fee_source == FEE_SOURCE_METADATA:
                 self.log.warning(
-                    f"[{self.symbol}/{leg.spec.label}] no taker fee in the runtime "
-                    f"instrument metadata of {leg.instrument_id}: fee unknown, so the "
-                    f"dated documentation assumption is NOT used and this leg's "
-                    f"cost-qualified judgement is withheld until the fee is known",
+                    f"[{self.symbol}/{leg.spec.label}] taker fee changed in the runtime "
+                    f"instrument metadata: {_fee_text(leg.spec.taker_fee_bps)} -> "
+                    f"{fee:.4f} bps ({leg.instrument_id})",
                 )
-            else:
-                leg.spec = replace(leg.spec, taker_fee_bps=fee)
-                leg.fee_source = FEE_SOURCE_METADATA
-                self.log.info(
-                    f"[{self.symbol}/{leg.spec.label}] taker fee from the runtime "
-                    f"instrument metadata: {fee:.4f} bps ({leg.instrument_id})",
-                    LogColor.GREEN,
-                )
-            self._recompute_fees()
+            leg.spec = replace(leg.spec, taker_fee_bps=fee)
+            leg.fee_source = FEE_SOURCE_METADATA
+            self.log.info(
+                f"[{self.symbol}/{leg.spec.label}] taker fee from the runtime "
+                f"instrument metadata: {fee:.4f} bps ({leg.instrument_id})",
+                LogColor.GREEN,
+            )
+        self._recompute_fees()
 
     def on_start(self) -> None:
         for leg in self._legs:
@@ -1128,9 +1414,15 @@ class SpreadWatch(Strategy):
             if not leg.status_tracked:
                 continue
             self.subscribe_instrument_status(leg.instrument_id, client_id=leg.client_id)
+            # Runtime instrument updates: the adapter republishes the instrument when its
+            # metadata refresh succeeds, and the fee, tick and real quantity step can all
+            # change mid-run. Without this subscription `on_instrument` would never fire
+            # and the tape would carry the start-up metadata for the whole run (F07/F08).
+            self.subscribe_instrument(leg.instrument_id, client_id=leg.client_id)
             self.log.info(
                 f"[{self.symbol}/{leg.spec.label}] subscribed instrument status "
-                f"(local feed disconnect vs real market halt) {leg.instrument_id}",
+                f"(local feed disconnect vs real market halt) and instrument updates "
+                f"(metadata refresh) {leg.instrument_id}",
                 LogColor.GREEN,
             )
 
@@ -1307,6 +1599,16 @@ class SpreadWatch(Strategy):
         except (TapeError, OSError) as exc:
             self._tape_failed(f"the L2 tape stopped writing: {exc}")
 
+    def _tick_tape(self) -> None:
+        """Drive the writer's own flush deadline from the event loop timer (F10)."""
+        tape = self._tape
+        if tape is None:
+            return
+        try:
+            tape.tick()
+        except (TapeError, OSError) as exc:
+            self._tape_failed(f"the L2 tape stopped writing: {exc}")
+
     def _tape_failed(self, message: str) -> None:
         """Abort the recorder, keep the spread running and make the failure visible."""
         self._tape_error = message
@@ -1328,13 +1630,54 @@ class SpreadWatch(Strategy):
         except (TapeError, OSError) as exc:
             self._tape_failed(str(exc))
 
-    def _write_instrument_record(self, leg: LegState) -> None:
+    def _emit_instrument(self, leg: LegState, metadata: dict, *, source: str,
+                         valid: bool, invalid_reason: str | None) -> None:
+        """Write one instrument record (contract C). Never mutates the leg's axes."""
+        if self._tape is not None and self._tape_error is None:
+            leg.metadata_updates += 1  # one arrival, counted where a tape can hold it
         self._write_tape(instrument_event(
             symbol=self.symbol, venue=leg.spec.venue_key,
             instrument_id=leg.spec.instrument_id,
-            metadata=tape_instrument_metadata(leg, self.cache.instrument(leg.instrument_id)),
+            metadata=metadata, source=source, valid=valid, invalid_reason=invalid_reason,
             coverage_limit=self._tape_coverage_limits().get(leg.spec.venue_key),
         ))
+
+    def _write_instrument_record(
+        self, leg: LegState, *, source: str = INSTRUMENT_METADATA_SOURCE,
+        instrument: object | None = None,
+    ) -> None:
+        """Record a metadata arrival and remember it as this leg's last known payload.
+
+        The record carries the leg's metadata axis as its own `valid` (contract C): a
+        payload that arrived while the venue's metadata was stale is on the tape, with the
+        marker that says it is not to be used, and it does not become the remembered
+        payload either - a later stale marker must republish the last metadata that *was*
+        acceptable, not the one that replaced it while nobody trusted it.
+        """
+        if instrument is None:
+            instrument = self.cache.instrument(leg.instrument_id)
+        metadata = tape_instrument_metadata(leg, instrument)
+        usable = bool(leg.metadata_ready)
+        if usable:
+            leg.metadata_payload = metadata
+            leg.metadata_version = metadata["metadata_version"]
+            leg.metadata_available_ns = metadata["metadata_available_ns"]
+        self._emit_instrument(
+            leg, metadata, source=source, valid=usable,
+            invalid_reason=None if usable else INVALID_METADATA_STALE,
+        )
+
+    def _refresh_instrument_metadata(self, leg: LegState, instrument: object) -> None:
+        """A refreshed instrument arrived: re-read the fee, then record the new metadata.
+
+        The fee is re-read only while the metadata axis is up: a refresh that arrives while
+        the venue's metadata is stale is recorded (marked unusable) but does not become the
+        rate this leg prices against until `metadata_ready` says the metadata is good again.
+        """
+        if leg.metadata_ready:
+            self._read_runtime_fee(leg, instrument)
+        self._write_instrument_record(leg, source=INSTRUMENT_UPDATE_SOURCE,
+                                      instrument=instrument)
 
     def _record_book_depth(self, leg: LegState, depth: OrderBookDepth10) -> None:
         """Record a depth10 snapshot as limited coverage, never as complete L2."""
@@ -1343,13 +1686,13 @@ class SpreadWatch(Strategy):
             return
         bids = [[str(level.price), str(level.size)] for level in depth.bids]
         asks = [[str(level.price), str(level.size)] for level in depth.asks]
-        feed_ok = leg.book_valid and leg.feed_ready
         try:
+            # `valid` is left to the record's own levels (contract D): feed, market and
+            # metadata eligibility are replayed from the status and instrument records,
+            # never folded into one snapshot's verdict.
             book_tape.replace(
                 bids, asks, source="depth10", coverage_limit=DEPTH10_LEVELS,
                 ts_event_ns=depth.ts_event, ts_init_ns=depth.ts_init,
-                valid=None if feed_ok else False,
-                invalid_reason=None if feed_ok else "feed-invalidated",
             )
         except (TapeError, OSError) as exc:
             self._tape_failed(str(exc))
@@ -1364,14 +1707,17 @@ class SpreadWatch(Strategy):
         book_tape = leg.book_tape
         if book_tape is None or self._tape_error is not None:
             return
-        feed_ok = leg.book_valid and leg.feed_ready
         try:
+            # The record's own levels decide `valid` (contract D). In particular the
+            # first deltas batch after a reconnect lands while `feed_ready` is still
+            # False - the adapter publishes the replacement snapshot *before* its
+            # snapshot_ready notice - and it is a perfectly good book: writing it as
+            # feed-invalidated is what left a replay holding an unusable book until a
+            # second frame arrived (F18).
             book_tape.apply_batch(
                 tape_deltas(deltas),
                 ts_event_ns=deltas.ts_event, ts_init_ns=deltas.ts_init,
                 coverage_limit=self._tape_coverage_limits().get(leg.spec.venue_key),
-                valid=None if feed_ok else False,
-                invalid_reason=None if feed_ok else "feed-invalidated",
             )
         except (TapeError, OSError) as exc:
             self._tape_failed(str(exc))
@@ -1494,41 +1840,62 @@ class SpreadWatch(Strategy):
 
     # ----------------------------------------------------- instrument status
 
-    def on_instrument_status(self, status: InstrumentStatus) -> None:
-        """Two unrelated things travel on InstrumentStatus (plan 4.2).
+    def on_instrument(self, instrument: object) -> None:
+        """A runtime instrument (re)publication: re-read its metadata and record it.
 
-        ``reason="adapter:disconnected"`` and ``reason="adapter:snapshot_ready"``
-        are the adapter's notices about its *local* feed: they are not venue halts
-        and never pretend to be. Every other reason is a real market status. Only
-        a leg whose registry spec sets ``tracks_feed_status`` (ONDO) is affected;
-        every other leg keeps the plain "a two-sided BBO means ready" rule.
+        The adapter republishes the instrument when its metadata refresh succeeds, and a
+        refresh can change the fee, the tick, the real quantity step, the metadata version
+        and when it became available. All of it belongs on the tape at the arrival it
+        happened at: recording the start-up values once would price a whole prefix against
+        metadata that did not exist yet (F06/F07/F08).
+        """
+        instrument_id = getattr(instrument, "instrument_id", None)
+        leg = self._by_id.get(instrument_id) if instrument_id is not None else None
+        if leg is None:
+            return
+        self._refresh_instrument_metadata(leg, instrument)
+
+    def on_instrument_status(self, status: InstrumentStatus) -> None:
+        """Three unrelated things travel on InstrumentStatus (plan 4.2, contract A).
+
+        ``adapter:disconnected`` / ``adapter:snapshot_ready`` are the adapter's notices
+        about its *local* feed, ``adapter:metadata_stale`` / ``adapter:metadata_ready``
+        about its metadata: none of them is a venue halt and none may pretend to be. Every
+        other reason is a real market status. Only a leg whose registry spec sets
+        ``tracks_feed_status`` (ONDO) is affected; every other leg keeps the plain "a
+        two-sided BBO means ready" rule.
         """
         leg = self._by_id.get(status.instrument_id)
         if leg is None or not leg.status_tracked:
             return
         reason = status.reason or ""
-        # Every status the leg subscribes to is recorded, the local feed notices
-        # included: a replay must see why a quote gap or a book invalidation happened.
+        # Every status the leg subscribes to is recorded, the local feed and metadata
+        # notices included: a replay must see why a quote gap, a book invalidation or a
+        # withdrawn fee happened. The record's own `valid` is not the feed's state - the
+        # notice is a fact and replays into the axes it belongs to (contract D).
         self._write_tape(status_event(
             symbol=self.symbol, venue=leg.spec.venue_key,
             instrument_id=leg.spec.instrument_id,
             action=str(getattr(status.action, "name", status.action)), reason=reason,
             is_trading=status.is_trading, is_quoting=status.is_quoting,
             ts_event_ns=status.ts_event, ts_init_ns=status.ts_init,
-            valid=leg.book_valid and leg.feed_ready,
-            invalid_reason=None if (leg.book_valid and leg.feed_ready)
-            else "feed-invalidated",
         ))
         if reason == ADAPTER_DISCONNECTED:
             self._on_feed_disconnected(leg, status)
         elif reason == ADAPTER_SNAPSHOT_READY:
             self._on_feed_snapshot_ready(leg, status)
+        elif reason == ADAPTER_METADATA_STALE:
+            self._on_metadata_stale(leg, status)
+        elif reason == ADAPTER_METADATA_READY:
+            self._on_metadata_ready(leg, status)
         elif reason.startswith(ADAPTER_REASON_PREFIX):
-            # Any other local feed notice (a bare "socket connected", a subscribe
-            # ack) is NOT recovery: only a new snapshot re-arms the leg.
+            # Any other local notice (a bare "socket connected", a subscribe ack) is NOT
+            # recovery: only a new snapshot re-arms the feed, and only a metadata notice
+            # moves the metadata axis.
             self.log.info(
-                f"[{self.symbol}/{leg.spec.label}] local feed notice {reason!r}: "
-                f"readiness untouched (feed_ready={leg.feed_ready})",
+                f"[{self.symbol}/{leg.spec.label}] local notice {reason!r}: readiness "
+                f"untouched (feed_ready={leg.feed_ready}, "
+                f"metadata_ready={leg.metadata_ready})",
             )
         else:
             self._on_market_status(leg, status)
@@ -1579,6 +1946,67 @@ class SpreadWatch(Strategy):
             LogColor.GREEN,
         )
 
+    def _on_metadata_stale(self, leg: LegState, status: InstrumentStatus) -> None:
+        """The adapter's metadata is no longer acceptable: withdraw what rested on it.
+
+        Its own axis and nothing else's (contract A): no feed state moves, no market state
+        moves, and only ``adapter:metadata_ready`` clears it. What the leg *used* from that
+        metadata is withdrawn with it - the taker fee this leg's cost judgement came from
+        becomes unknown, so the directions that touch it are withheld instead of being
+        priced against a rate nobody trusts (plan 5.2's precedence, one rung down).
+
+        The tape gets an instrument record that republishes the **last known** payload with
+        ``valid=false`` / ``invalid_reason="metadata_stale"``, so a replay stops using it
+        from this arrival on while still being able to see which metadata it was.
+        """
+        leg.metadata_ready = False
+        leg.metadata_stale_reason = status.reason
+        if VENUES[leg.spec.venue_key].reads_runtime_fee and leg.fee_source != FEE_SOURCE_STALE:
+            leg.spec = replace(leg.spec, taker_fee_bps=None)
+            leg.fee_source = FEE_SOURCE_STALE
+            self._recompute_fees()
+        payload = leg.metadata_payload
+        if payload is None:
+            payload = tape_instrument_metadata(leg, None)
+        self._emit_instrument(
+            leg, dict(payload), source=INSTRUMENT_UPDATE_SOURCE,
+            valid=False, invalid_reason=INVALID_METADATA_STALE,
+        )
+        self.log.error(
+            f"[{self.symbol}/{leg.spec.label}] METADATA STALE ({status.reason!r}, "
+            f"is_quoting={status.is_quoting}): the fee/step this leg used from the venue "
+            f"metadata are withdrawn, market_ready={leg.market_ready} and the feed are "
+            f"untouched; only {ADAPTER_METADATA_READY!r} restores it",
+        )
+
+    def _on_metadata_ready(self, leg: LegState, status: InstrumentStatus) -> None:
+        """Acceptable, non-stale metadata is in force again (contract A).
+
+        The metadata axis is re-armed and the fee is re-read from the instrument in force
+        now, so a fee that changed while the leg was stale is picked up rather than
+        restored from a stale memory. Nothing else moves: a metadata refresh is not a
+        feed reconnect and never clears a venue halt.
+        """
+        leg.metadata_ready = True
+        leg.metadata_stale_reason = None
+        instrument = self.cache.instrument(leg.instrument_id)
+        if instrument is None:
+            # The adapter owns the verdict, so the axis goes ready - but there is no
+            # metadata here to re-read and none is invented; the fee stays withdrawn.
+            self.log.warning(
+                f"[{self.symbol}/{leg.spec.label}] metadata ready (is_quoting="
+                f"{status.is_quoting}) but the cache holds no instrument for "
+                f"{leg.instrument_id}: nothing is re-read, the fee stays unknown",
+            )
+            return
+        self._refresh_instrument_metadata(leg, instrument)
+        self.log.info(
+            f"[{self.symbol}/{leg.spec.label}] metadata ready again (is_quoting="
+            f"{status.is_quoting}): re-read from {leg.instrument_id}, "
+            f"metadata_ready={leg.metadata_ready}",
+            LogColor.GREEN,
+        )
+
     def _on_market_status(self, leg: LegState, status: InstrumentStatus) -> None:
         """A real venue market status - never mixed with the local feed state."""
         was_ready = leg.market_ready
@@ -1609,6 +2037,9 @@ class SpreadWatch(Strategy):
             self._log_status()
         elif name.startswith("depth-"):
             self._sample_depth()
+            # The tape's flush deadline rides this existing 1 s timer: no new thread, no
+            # work in a market-data callback, and a quiet tape still gets drained (F10).
+            self._tick_tape()
 
     def _ensure_depth10(self, leg: LegState, reason: str) -> bool:
         """Subscribe depth10 for this leg once, if the venue offers it."""
@@ -1792,11 +2223,12 @@ class SpreadWatch(Strategy):
             f"{leg.spec.venue_key}={leg.updates}({leg.source}/{leg.book_mode}:"
             f"{leg.depth_updates},trades={leg.trades}"
         )
-        if leg.status_tracked:  # the two extra axes only exist where they are read
+        if leg.status_tracked:  # the extra axes only exist where they are read
             text += (
                 f",feed={'up' if leg.feed_ready else 'DOWN'}"
                 f",market={'up' if leg.market_ready else 'HALT'}"
                 f",book={'ok' if leg.book_valid else 'STALE'}"
+                f",metadata={'ok' if leg.metadata_ready else 'STALE'}"
                 f",disconnects={leg.disconnects}"
             )
         return text + ")"
@@ -1933,6 +2365,9 @@ class SpreadWatch(Strategy):
                 + (
                     f"feed_ready={leg.feed_ready} market_ready={leg.market_ready} "
                     f"book_valid={leg.book_valid} disconnects={leg.disconnects} "
+                    f"metadata_ready={leg.metadata_ready} "
+                    f"metadata_version={leg.metadata_version} "
+                    f"metadata_available_ns={leg.metadata_available_ns} "
                     if leg.status_tracked else ""
                 )
                 + f"{leg.spec.instrument_id}",
@@ -2424,6 +2859,15 @@ def main() -> None:
         )
         time.sleep(RESTART_PAUSE_SECS)
 
+    # The adapter's raw public-frame recorder finalizes (writes its own run_end) when the
+    # node that owns it is released, so the last node - and the handle that can keep it
+    # alive through run_state - is dropped before its recording is read. Reading a
+    # recorder that is still running would call every run incomplete.
+    node = None
+    handle = None
+    run_state.stop_node = None
+    strategies = []
+
     if restarts:
         print(f"[stage1] node restarts during this run: {restarts}", flush=True)
     if node_plan.record_l2:
@@ -2436,6 +2880,22 @@ def main() -> None:
             note_recording_failure(
                 f"no tape fragment was written under {node_plan.l2_dir}",
             )
+        if any(leg.venue_key == ONDO_VENUE_KEY for legs in plan.values() for leg in legs):
+            # The adapter's own raw public-frame recording: read its verdict from the
+            # files it wrote, never from the fact that the feed was still flowing (plan
+            # §8). A recording that cannot be confirmed complete is an incomplete
+            # recording, and this run says so.
+            raw = raw_recorder_status(node_plan.raw_md_dir, run_id=node_plan.stamp)
+            print(
+                f"[stage1] raw_ondo recording ({node_plan.raw_md_dir}): "
+                f"{raw_recorder_text(raw)}",
+                flush=True,
+            )
+            if not raw["complete"]:
+                note_recording_failure(
+                    f"the raw public-frame recording under {node_plan.raw_md_dir} is "
+                    f"incomplete: {raw['problem']}",
+                )
     if recording_failures:
         # Plan 5.1 and §8: a gap or a dead recorder means this recording's acceptance
         # failed, so the run must be reportable as failed - an orchestrator keyed on the
