@@ -45,10 +45,11 @@
 
 > **状态：已完成（2026-09-15）。** 验收报告：`reports/ondo-acceptance/20260915T085556Z-r0/README.md`
 >
-> - FORK `onde-perps`：`5c2ba5a` → **`635b916`**（11 文件，+4208 −660）
+> - FORK `onde-perps`：`5c2ba5a` → **`cef58bc`**（R0 主体 `635b916`，11 文件 +4208 −660；收尾 `cef58bc` 修 lint）
 > - APP `main`：`e49716b` → 见 `reports/ondo-acceptance/20260915T085556Z-r0/app_head_after_r0.txt`
 > - 验收命令退出码 **0**：execution 44 / http_client 39 / reconciliation 63 / signing 63；全 crate 712 passed / 0 failed
 > - 关闭 review 发现：**F01、F02、F15**
+> - **clippy 在 HEAD 上仍是红的**（29 处既有发现，`5c2ba5a` 起就在）。R0 新增的那 1 处已修：blame 逐行归属确认修复后 R0 贡献为 0。**R1 开工前别把这条红当成回归**——`cargo test` 才是本仓库的门，原因见报告 §5.1
 >
 > **一处有意偏离**：R0.1 第 5 条要求断言 `OrderDenied`。准入拒绝路径实际发 **`OrderRejected`**——`Submitted → Denied` 不是合法状态机转换（`crates/model/src/orders/mod.rs:217` 只有 `(Initialized, Denied)`），发 Denied 会触发引擎的 forced-cleanup 路径。命令在 gate 1 被拒（订单尚未 submitted）时仍发 `OrderDenied`。依据与备选方案的取舍见报告 §3.4。
 >

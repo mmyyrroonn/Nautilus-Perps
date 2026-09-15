@@ -16,9 +16,11 @@
 | | commit | 说明 |
 |---|---|---|
 | 起点 | `5c2ba5aedfe35625a1787d0468d6885771aa2e51` | ondo adapter crate 落地 |
-| 终点 | `635b916a13ee71fafd1ecb7e7b5ecfdeeb3fa9a2` | R0 修复（本阶段唯一提交） |
+| R0 主体 | `635b916a13ee71fafd1ecb7e7b5ecfdeeb3fa9a2` | 新风险 gate 与 endpoint 边界 |
+| R0 收尾 | `cef58bcf9453af89221560fa7960154a8fccbde9` | 修掉 R0 唯一新增的 clippy 发现（见 §5.1） |
+| **当前 HEAD** | **`cef58bc`** | |
 
-任务分支 `task/r0-execution-guards` 已 `--ff-only` 合并进 `onde-perps` 并删除。合并后 `git branch` 只剩 `aster` 与 `onde-perps`。
+两个任务分支（`task/r0-execution-guards`、`task/r0-lint-fix`）都已 `--ff-only` 合并进 `onde-perps` 并删除。合并后 `git branch` 只剩 `aster` 与 `onde-perps`。
 
 **改动范围**（11 文件，+4208 −660）：
 
@@ -86,7 +88,7 @@ cargo +1.98.0 test -p nautilus-ondo --locked --offline \
 
 **格式检查**：`cargo +1.98.0 fmt -p nautilus-ondo -- --check` → 退出码 0（仅有 nightly 选项不可用的 warning）。
 
-**构建 warning**：未在本机严格模式下重跑 `-D warnings`；本阶段改动未新增 warning（`cargo build` 输出无 crate 内 warning）。**这一点属于未验证**——见 §5。
+**clippy**：`cargo +1.98.0 clippy -p nautilus-ondo --all-targets` → **退出码 101，仍然红**。这是既有状态，不是 R0 造成的。归属分析见 §5.1。
 
 ---
 
@@ -233,13 +235,31 @@ src/common/credential.rs:129
 
 | # | 项 | 状态 |
 |---|---|---|
-| 1 | **严格 warning 构建** | 本阶段**未**跑 `-D warnings`。改动未新增 warning，但「严格构建通过」这句话**本阶段没有证据**，不能引用 |
+| 1 | **clippy 在 HEAD 上是红的** | 见 §5.1。既有的 29 处未修（不属于 R0 范围）；R0 新增的那 1 处已修 |
 | 2 | **私有 WS transport** | 仍然一行未写。这不是 R0 范围，但 R0.3 的 endpoint policy 已按「REST 与未来私有 WS 共用」的结构写成，接 transport 时直接复用 `OndoSchemeFamily::WebSocket` 分支 |
 | 3 | ~~`allow_production_orders=true` 组合未测~~ | **已核实，撤回原先的「未验证」说法。** `src/config.rs:310` 的 `validate()` 在该标志为 true 时直接返回 `OndoExecutionConfigError::ProductionOrdersUnsupported`，**早于任何 client 构造、更早于 endpoint gate**。有测试：`tests/execution.rs` 用 `allow_production_orders: true` 遍历生产与相似域 URL，断言错误是 `ProductionOrdersUnsupported`（"the flag is refused by name whatever the endpoint says"）且 `mock.captured().is_empty()`（"the refusal happens before a socket is opened"）；`factories.rs` 另有 `test_the_execution_factory_refuses_production_order_entry` |
 | 4 | **对真实 venue 的请求** | 全程零请求。所有 fixture 仍是合成的；sandbox 从未被连接过 |
 | 5 | **`Rejected` 事件的引擎侧影响** | §3.4 的裁决基于状态机源码。**未在真实引擎上跑过端到端**验证 `Rejected` 在策略侧的观感（策略是否把 `Rejected` 当作终态处理） |
 | 6 | **wheel 未重编** | venv 里装的仍是旧 wheel；R0.3 的 endpoint policy 与 Python 面无关，但**要跑 app 侧集成需先重编 wheel**（`--release`，记录 SHA256） |
 | 7 | **`r03_full_crate_tests.txt` 与 `r0_full_crate_tests.txt` 的差异** | 前者是 R0.3 收尾时的全 crate 快照，后者是合并后 HEAD 的重跑。两者 target 计数意义不同，引用时以 `r0_full_crate_tests.txt` 为准 |
+
+### 5.1 clippy 的归属分析（R0 只新增了 1 处，已修）
+
+`cargo clippy -p nautilus-ondo --all-targets` 在 R0 的 HEAD 上退出码 101，报 30 个 error。**这个状态在本阶段之前就存在。**
+
+**为什么 `cargo test` 是绿的而 clippy 是红的**（这不是矛盾）：`.cargo/config.toml` 里有 `warnings = "deny"` 与 `rustflags = ["-Dwarnings"]`，但 **clippy lint 只由 clippy-driver 发出**。跑 `cargo test` 时用的是普通 rustc，没有 clippy lint 可提升，所以构建是干净的。
+
+**归属方法**：对每个 error 的 `--> file:line` 做 `git blame -L line,line --porcelain`，看该行由哪个 commit 引入。
+
+| | 数量 | 位置 |
+|---|---|---|
+| 既有（`5c2ba5a`） | 29 | `recording.rs` 13、`websocket/client.rs` 6、`http/client.rs` 2、`http/error.rs` 2、`common/credential.rs` 1、`data.rs` 1、`execution.rs` 1、`http/orders.rs` 1、`http/query.rs` 1、`websocket/parse.rs` 1 |
+| **R0 引入** | **1** | `execution.rs:2887` — R0 新写的 `register_market_cancel(reason: String)` 只按订单 clone 该参数，两个调用点都是内联 `format!`，触发 `needless_pass_by_value` |
+| **修复后 R0 引入** | **0** | 改为 `reason: &str`（提交 `cef58bc`），`cargo test` 仍 712 passed / 退出码 0 |
+
+修复前后的 clippy 输出都在本目录：`clippy_at_r0_head.txt`（修复前）、`clippy_after_r0_lintfix.txt`（修复后）。
+
+**那 29 处既有发现被有意留着不修**——它们全部落在 R0 未触及的文件里，修它们会让本阶段的 diff 扩散到与 R0 无关的代码，且 plan 没有授权。**它们是 R1+ 的候选清理项。**
 
 ---
 
@@ -261,7 +281,9 @@ plan 的 R1..R5 未开始。**R1（修恢复一致性与报告契约）的入口
 | `fork_status_after_r03.txt` / `fork_diffstat_after_r03.txt` | R0.3 收尾时的 fork 状态 |
 | `r03_full_crate_tests.txt` / `r03_reviewer_checks.txt` | R0.3 收尾时的全 crate 快照与核查清单 |
 | `r0_plan_acceptance_command.txt` | **plan 指定的原始验收命令完整输出** |
-| `r0_full_crate_tests.txt` | 合并后 HEAD 的全 crate 套件输出 |
+| `r0_full_crate_tests.txt` | 合并后 HEAD 的全 crate 套件输出（712 passed / 退出码 0） |
+| `clippy_at_r0_head.txt` | clippy 在 R0 HEAD 上的完整输出（30 error，退出码 101） |
+| `clippy_after_r0_lintfix.txt` | 修掉 R0 那处后的 clippy 输出（29 error，退出码 101） |
 | `app_head_after_r0.txt` | APP 侧终点 SHA |
 
 **安全声明**：本目录只含 URL、路径、测试计数与源码行号。**不含账户信息、不含密钥、不含任何签名或登录帧。** 按 plan §0 要求，这些内容不得进入报告、公共原始磁带或 Git——本阶段未产生任何此类内容。

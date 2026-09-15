@@ -1,0 +1,391 @@
+    Checking nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+error: this `if` statement can be collapsed
+   --> crates\adapters\ondo\src\common\credential.rs:278:9
+    |
+278 | /         if let Ok(secret) = std::str::from_utf8(&self.api_secret) {
+279 | |             if !secret.is_empty() {
+280 | |                 redacted = redacted.replace(secret, REDACTED);
+281 | |             }
+282 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+278 ~         if let Ok(secret) = std::str::from_utf8(&self.api_secret)
+279 ~             && !secret.is_empty() {
+280 |                 redacted = redacted.replace(secret, REDACTED);
+281 ~             }
+    |
+
+error: redundant clone
+   --> crates\adapters\ondo\src\data.rs:478:39
+    |
+478 |             .apply(&infos, instruments.clone());
+    |                                       ^^^^^^^^ help: remove this
+    |
+note: this value is dropped without further use
+   --> crates\adapters\ondo\src\data.rs:478:28
+    |
+478 |             .apply(&infos, instruments.clone());
+    |                            ^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+    = note: `-D clippy::redundant-clone` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::redundant_clone)]`
+
+error: consider adding a `;` to the last statement for consistent formatting
+   --> crates\adapters\ondo\src\execution.rs:532:17
+    |
+532 |                 self.emit_status_report(&advance.snapshot, payload, event_time(payload, self.now()))
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: add a `;` here: `self.emit_status_report(&advance.snapshot, payload, event_time(payload, self.now()));`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#semicolon_if_nothing_returned
+    = note: `-D clippy::semicolon-if-nothing-returned` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::semicolon_if_nothing_returned)]`
+
+error: this argument is passed by value, but not consumed in the function body
+    --> crates\adapters\ondo\src\execution.rs:2887:13
+     |
+2887 |     reason: String,
+     |             ^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+     = note: `-D clippy::needless-pass-by-value` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider changing the type to
+     |
+2887 -     reason: String,
+2887 +     reason: &str,
+     |
+help: change `reason.clone()` to
+     |
+2895 -             reason.clone(),
+2895 +             reason.to_string(),
+     |
+
+error: this argument is passed by value, but not consumed in the function body
+   --> crates\adapters\ondo\src\http\client.rs:357:19
+    |
+357 |         base_url: String,
+    |                   ^^^^^^ help: consider changing the type to: `&str`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+
+error: this argument is passed by value, but not consumed in the function body
+    --> crates\adapters\ondo\src\http\client.rs:1311:15
+     |
+1311 |     response: HttpResponse,
+     |               ^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1311 |     response: &HttpResponse,
+     |               +
+
+error: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates\adapters\ondo\src\http\error.rs:334:5
+    |
+334 |     const MARKER: &str = "error code:";
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+    = note: `-D clippy::items-after-statements` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::items_after_statements)]`
+
+error: this `continue` expression is redundant
+   --> crates\adapters\ondo\src\http\error.rs:329:22
+    |
+329 |                 _ => continue,
+    |                      ^^^^^^^^
+    |
+    = help: consider dropping the `continue` expression
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_continue
+    = note: `-D clippy::needless-continue` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_continue)]`
+
+error: docs for function which may panic missing `# Panics` section
+   --> crates\adapters\ondo\src\http\orders.rs:580:1
+    |
+580 | pub fn batch_body(commands: &[OndoOrderCommand]) -> Result<Vec<u8>, OndoBatchError> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates\adapters\ondo\src\http\orders.rs:614:9
+    |
+614 | /         serde_json::to_vec(&RawBatchAddOrderRequest { orders: &raw })
+615 | |             .expect("the batch shape of strings and booleans always serializes"),
+    | |________________________________________________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#missing_panics_doc
+note: the lint level is defined here
+   --> crates\adapters\ondo\src\lib.rs:88:9
+    |
+ 88 | #![deny(clippy::missing_panics_doc)]
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this function has a `#[must_use]` attribute with no message, but returns a type already marked as `#[must_use]`
+   --> crates\adapters\ondo\src\recording.rs:744:5
+    |
+744 |     pub fn record_inbound(&self, raw: &str, received_at_ns: UnixNanos) -> RecordOutcome {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove `must_use`
+   --> crates\adapters\ondo\src\recording.rs:743:5
+    |
+743 |     #[must_use]
+    |     ^^^^^^^^^^^
+    = note: alternatively, you may add an explicit reason to the `must_use` attribute
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#double_must_use
+    = note: `-D clippy::double-must-use` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::double_must_use)]`
+
+error: this function has a `#[must_use]` attribute with no message, but returns a type already marked as `#[must_use]`
+   --> crates\adapters\ondo\src\recording.rs:758:5
+    |
+758 |     pub fn record_outbound(&self, body: &str, sent_at_ns: UnixNanos) -> RecordOutcome {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove `must_use`
+   --> crates\adapters\ondo\src\recording.rs:757:5
+    |
+757 |     #[must_use]
+    |     ^^^^^^^^^^^
+    = note: alternatively, you may add an explicit reason to the `must_use` attribute
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#double_must_use
+
+error: this function has a `#[must_use]` attribute with no message, but returns a type already marked as `#[must_use]`
+   --> crates\adapters\ondo\src\recording.rs:775:5
+    |
+775 |     pub fn record_metadata_snapshot(&self, snapshot: &MetadataSnapshot) -> RecordOutcome {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove `must_use`
+   --> crates\adapters\ondo\src\recording.rs:774:5
+    |
+774 |     #[must_use]
+    |     ^^^^^^^^^^^
+    = note: alternatively, you may add an explicit reason to the `must_use` attribute
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#double_must_use
+
+error: this argument is passed by value, but not consumed in the function body
+   --> crates\adapters\ondo\src\recording.rs:882:26
+    |
+882 |     pub fn start(config: RawMdRecorderConfig) -> anyhow::Result<Self> {
+    |                          ^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+    |
+882 |     pub fn start(config: &RawMdRecorderConfig) -> anyhow::Result<Self> {
+    |                          +
+
+error: docs for function which may panic missing `# Panics` section
+   --> crates\adapters\ondo\src\websocket\client.rs:138:1
+    |
+138 | pub fn request_quota() -> Quota {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates\adapters\ondo\src\websocket\client.rs:139:22
+    |
+139 |     let per_second = NonZeroU32::new(ONDO_WS_REQUEST_RATE_PER_SECOND).expect("non-zero rate");
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#missing_panics_doc
+
+error: this argument is passed by value, but not consumed in the function body
+   --> crates\adapters\ondo\src\websocket\client.rs:834:41
+    |
+834 |     fn protocol_error(&mut self, error: anyhow::Error, raw: &str) -> Vec<WsOutcome> {
+    |                                         ^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+    |
+834 |     fn protocol_error(&mut self, error: &anyhow::Error, raw: &str) -> Vec<WsOutcome> {
+    |                                         +
+
+error: this `if` statement can be collapsed
+   --> crates\adapters\ondo\src\websocket\client.rs:903:17
+    |
+903 | /                 if is_valid && self.depth10.contains(&instrument_id) {
+904 | |                     if let Some(wire) = wire {
+905 | |                         match parse_depth10(&wire, instrument, ts_event, ts_init) {
+906 | |                             Ok(depth) => {
+...   |
+912 | |                 }
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+903 ~                 if is_valid && self.depth10.contains(&instrument_id)
+904 ~                     && let Some(wire) = wire {
+905 |                         match parse_depth10(&wire, instrument, ts_event, ts_init) {
+...
+910 |                         }
+911 ~                     }
+    |
+
+error: this argument is passed by value, but not consumed in the function body
+    --> crates\adapters\ondo\src\websocket\client.rs:1135:23
+     |
+1135 |         depth_levels: Option<String>,
+     |                       ^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1135 |         depth_levels: Option<&String>,
+     |                              +
+
+error: redundant clone
+    --> crates\adapters\ondo\src\websocket\client.rs:1149:39
+     |
+1149 |             depth_levels: depth_levels.clone(),
+     |                                       ^^^^^^^^ help: remove this
+     |
+note: this value is dropped without further use
+    --> crates\adapters\ondo\src\websocket\client.rs:1149:27
+     |
+1149 |             depth_levels: depth_levels.clone(),
+     |                           ^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+error: this parameter is a mutable reference but is not used mutably
+   --> crates\adapters\ondo\src\websocket\client.rs:941:9
+    |
+941 |         &mut self,
+    |         ^----^^^^
+    |          |
+    |          help: consider removing this `mut`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_ref_mut
+    = note: `-D clippy::needless-pass-by-ref-mut` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_ref_mut)]`
+
+error: could not compile `nautilus-ondo` (lib) due to 19 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: this assertion has a constant value
+   --> crates\adapters\ondo\src\http\query.rs:260:9
+    |
+260 |         assert!(ONDO_MAX_PAGES > 0);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider moving this into a const block: `const { assert!(..) }`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assertions_on_constants
+    = note: `-D clippy::assertions-on-constants` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assertions_on_constants)]`
+
+error: single-character string constant used as pattern
+    --> crates\adapters\ondo\src\recording.rs:1923:66
+     |
+1923 |             end[0]["reason"].as_str().is_some_and(|r| r.contains("3")),
+     |                                                                  ^^^ help: consider using a `char`: `'3'`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#single_char_pattern
+     = note: `-D clippy::single-char-pattern` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::single_char_pattern)]`
+
+error: redundant clone
+    --> crates\adapters\ondo\src\recording.rs:2204:28
+     |
+2204 |             segment_name(3).to_string(),
+     |                            ^^^^^^^^^^^^ help: remove this
+     |
+note: this value is dropped without further use
+    --> crates\adapters\ondo\src\recording.rs:2204:13
+     |
+2204 |             segment_name(3).to_string(),
+     |             ^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+error: redundant clone
+    --> crates\adapters\ondo\src\recording.rs:2205:28
+     |
+2205 |             segment_name(1).to_string(),
+     |                            ^^^^^^^^^^^^ help: remove this
+     |
+note: this value is dropped without further use
+    --> crates\adapters\ondo\src\recording.rs:2205:13
+     |
+2205 |             segment_name(1).to_string(),
+     |             ^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+error: redundant clone
+    --> crates\adapters\ondo\src\recording.rs:2206:28
+     |
+2206 |             segment_name(2).to_string(),
+     |                            ^^^^^^^^^^^^ help: remove this
+     |
+note: this value is dropped without further use
+    --> crates\adapters\ondo\src\recording.rs:2206:13
+     |
+2206 |             segment_name(2).to_string(),
+     |             ^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+error: redundant clone
+    --> crates\adapters\ondo\src\recording.rs:2207:29
+     |
+2207 |             segment_name(10).to_string(),
+     |                             ^^^^^^^^^^^^ help: remove this
+     |
+note: this value is dropped without further use
+    --> crates\adapters\ondo\src\recording.rs:2207:13
+     |
+2207 |             segment_name(10).to_string(),
+     |             ^^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+error: implicitly cloning a `String` by calling `to_string` on its dereferenced type
+    --> crates\adapters\ondo\src\recording.rs:2204:13
+     |
+2204 |             segment_name(3).to_string(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using: `segment_name(3).clone()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+     = note: `-D clippy::implicit-clone` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::implicit_clone)]`
+
+error: implicitly cloning a `String` by calling `to_string` on its dereferenced type
+    --> crates\adapters\ondo\src\recording.rs:2205:13
+     |
+2205 |             segment_name(1).to_string(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using: `segment_name(1).clone()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+
+error: implicitly cloning a `String` by calling `to_string` on its dereferenced type
+    --> crates\adapters\ondo\src\recording.rs:2206:13
+     |
+2206 |             segment_name(2).to_string(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using: `segment_name(2).clone()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+
+error: implicitly cloning a `String` by calling `to_string` on its dereferenced type
+    --> crates\adapters\ondo\src\recording.rs:2207:13
+     |
+2207 |             segment_name(10).to_string(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using: `segment_name(10).clone()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+
+error: redundant clone
+   --> crates\adapters\ondo\src\websocket\parse.rs:921:33
+    |
+921 |             bids: two_sided.bids.clone(),
+    |                                 ^^^^^^^^ help: remove this
+    |
+note: this value is dropped without further use
+   --> crates\adapters\ondo\src\websocket\parse.rs:921:19
+    |
+921 |             bids: two_sided.bids.clone(),
+    |                   ^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+error: could not compile `nautilus-ondo` (lib test) due to 30 previous errors
+CLIPPY_EXIT=101

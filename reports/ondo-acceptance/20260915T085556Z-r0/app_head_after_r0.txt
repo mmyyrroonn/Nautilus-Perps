@@ -17,3 +17,7 @@ r0_head: d442123f7b35788cdb5f456e1f0d23c62baced1d
 #     subject: nautilus-ondo: close the new-risk gate and the signed-endpoint
 #              boundary (R0)
 #     files: 11 changed, +4208 -660
+#   final:     cef58bcf9453af89221560fa7960154a8fccbde9
+#     subject: nautilus-ondo: take the market cancel reason by reference
+#     files: 1 changed, +4 -4
+#     note: the only clippy finding R0 added; 29 pre-existing ones remain
