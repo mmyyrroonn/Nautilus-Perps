@@ -1,0 +1,27 @@
+repo: E:\Nautilus-Perps (APP)
+branch: main
+base_head: a7a49fa0afdf2f8b8f45e2a2acb53c304198232b
+  subject: reports: pin the R0 acceptance artifacts to the final fork HEAD
+r1_head: cd959df
+  subject: reports: R1 acceptance — the merged account read and the report-query contract
+  files: 10 changed, 2327 insertions(+)
+
+# cd959df is the commit carrying the R1 acceptance artifacts. The file you are
+# reading was written after that commit, so it lands in a follow-up commit; the
+# r1_head SHA above is the one to cite.
+
+# FORK counterpart (recorded here so both SHAs are in one file):
+#   repo: E:\nautilus_trader (FORK), branch onde-perps
+#   base_head: cef58bcf9453af89221560fa7960154a8fccbde9
+#     subject: nautilus-ondo: take the market cancel reason by reference
+#   r1_head:   5b7d2db6694c8f1707482d07ce83de19888213c7
+#     subject: nautilus-ondo: square the account across recovery and honour
+#              the report-query contract (R1)
+#     files: 8 changed, +3583 -276
+#     note: rustdoc and clippy are still red at this commit and were red before
+#           it; attribution by added-line membership puts 0 findings on lines R1
+#           wrote. See the acceptance report's §4.3 for why the count basis
+#           differs from R0's 29.
+
+# Test totals: 746 passed / 0 failed crate-wide (R0: 712), both acceptance
+# commands exit 0. No test annotation and no test function was deleted.
