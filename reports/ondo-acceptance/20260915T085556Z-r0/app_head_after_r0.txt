@@ -1,0 +1,19 @@
+repo: E:\Nautilus-Perps (APP)
+branch: main
+base_head: e49716b7ec8bc16648aa0f2c3e1450c8d73284e0
+  subject: ondo: add the Ondo leg to the stage-1 spread watcher
+r0_head: d442123f7b35788cdb5f456e1f0d23c62baced1d
+  subject: reports: R0 acceptance — the new-risk gate and the signed-endpoint boundary
+  files: 14 changed, 1981 insertions(+)
+
+# d442123 is the commit carrying the R0 plan / review / acceptance artifacts.
+# The file you are reading was written after that commit, so it lands in a
+# follow-up commit; the R0 content SHA above is the one to cite.
+
+# FORK counterpart (recorded here so both SHAs are in one file):
+#   repo: E:\nautilus_trader (FORK), branch onde-perps
+#   base_head: 5c2ba5aedfe35625a1787d0468d6885771aa2e51
+#   r0_head:   635b916a13ee71fafd1ecb7e7b5ecfdeeb3fa9a2
+#     subject: nautilus-ondo: close the new-risk gate and the signed-endpoint
+#              boundary (R0)
+#     files: 11 changed, +4208 -660
