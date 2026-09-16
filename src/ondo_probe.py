@@ -1082,8 +1082,16 @@ def resolve_stop_target(node: object | None) -> tuple[object | None, str]:
     return None, "none"
 
 
+# How long ``bounded_stop`` waits for a stop to take effect, and how long the run then waits
+# for the watchdog thread. The second is derived from the first rather than written next to it:
+# the watchdog's own stop uses the default grace, so a shorter join would give up on a watchdog
+# that was merely still inside its stop.
+STOP_GRACE_SECS = 2.0
+WATCHDOG_JOIN_SECS = STOP_GRACE_SECS + 1.0
+
+
 def bounded_stop(target: object | None, *, label: str, via: str = "node",
-                 grace_secs: float = 2.0, poll_secs: float = 0.05) -> dict[str, object]:
+                 grace_secs: float = STOP_GRACE_SECS, poll_secs: float = 0.05) -> dict[str, object]:
     """Stop ``target`` and wait for it, for a bounded number of poll iterations.
 
     ``target`` is whatever :func:`resolve_stop_target` returned - a ``LiveNodeHandle`` for a
@@ -1891,6 +1899,9 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
     stop_target: list[object] = []
     stop_via: list[str] = ["none"]
     done = threading.Event()
+    # Filled where the watchdog is started. The slot lives here because the `finally` below runs
+    # even when the node was never built, and must not read an unbound name.
+    watchdog_slot: list[threading.Thread] = []
     failure: str | None = None
     stop_condition = STOP_NOT_STARTED
     exit_code = EXIT_OK
@@ -1913,6 +1924,7 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
         watchdog, watchdog_state = start_stop_watchdog(
             done, _stop_holder, float(plan.minutes) * 60.0,
         )
+        watchdog_slot.append(watchdog)
         log(f"ondo_probe: banner\n{json.dumps(banner_document(plan, run_id=run_id), indent=2, default=_json_default)}")
         log("ondo_probe: caps\n" + "\n".join(caps_lines(plan)))
         log(f"ondo_probe: envelope {json.dumps(envelope_document(plan), default=_json_default)}")
@@ -1950,6 +1962,15 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
         log(traceback.format_exc())
     finally:
         done.set()
+        # The watchdog writes its own outcome into `stops` from its own thread, and the document
+        # at the end of this block is built from that list: without this join the same run
+        # publishes a `stops` list with or without the "watchdog" entry depending on which thread
+        # won, and an interrupted run - the operator's Ctrl-C ends the session before the deadline
+        # - is exactly the path that races. Bounded, so a watchdog still running after the bound
+        # costs this wait and no more; the run carries on either way, because a report that is
+        # missing one entry still beats no report.
+        if watchdog_slot:
+            watchdog_slot[0].join(WATCHDOG_JOIN_SECS)
         outcome = bounded_stop(stop_target[0] if stop_target else None, label="final",
                                via=stop_via[0])
         stops.append(outcome)

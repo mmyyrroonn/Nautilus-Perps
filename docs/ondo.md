@@ -146,8 +146,11 @@ Write-Output "depth_exit_code=$LASTEXITCODE"
 
 ### 3.4 账户只读（`account-readonly`）
 
-这一模式用 `account_read_only=True`：读账户，**不武装死手开关**（武装它会撤掉挂单）、不撤单、
-**永不进入 trading-ready**。它需要 `.env` 里的 sandbox 凭据与账户名。
+这一模式用 `account_read_only=True`：读账户，**不武装死手开关**、不撤单、**永不进入 trading-ready**。
+它需要 `.env` 里的 sandbox 凭据与账户名。
+
+只读会话不订阅那个频道，所以它不武装任何计时器——注意这里说的是**不武装**，而不是「武装了但不撤单」：
+武装与撤单是两件事，第 6 节把它拆开说。
 
 ```powershell
 # 1. 账户只读，有限时；没有 DMS、没有 DELETE、没有订单
@@ -306,7 +309,7 @@ maker 费率缺失只记录、不致命（venue 有权不发布它）。
 | 事实 | 细节 |
 |---|---|
 | **共享 REST 预算** | 预算是**按环境**共享的，不是按 factory：`ENVIRONMENT_BUDGETS` 以 `OndoEnvironment` 为键，`shared_rest_budget(env)` 返回同一个桶。Python 侧 `OndoDataClientFactory()` 与 `OndoExecutionClientFactory()` 构造时**不接参数**，各自按**自己配置里写的环境**去注册表解析——所以同一环境的一次 metadata 刷新与一次撤单不会各拿一半限流 |
-| **死手开关（DMS）** | 账户级，武装它会撤掉挂单。`dms_timeout_secs` 默认 30，私有 transport 在**一半**的间隔上续期。续期只有**发送失败**计数（没有 ACK 可等），连续失败到 `dms_max_failed_renewals`（默认 3）后客户端**不再信任开关并拒绝新订单**。该值有**上限**：配置只能把它调紧，**不能调松**。**只读模式从不订阅它，因此没有任何撤单副作用** |
+| **死手开关（DMS）** | 账户级。**订阅这个频道不是只读操作，但「武装」本身也不撤单**——武装的是**venue 侧的一个计时器**，撤掉账户上全部挂单发生在**续期没有按时到达**的时候（`websocket/private/messages.rs` 的原文：*"arms a venue-side timer that cancels every resting order on the account when no renewal arrives in time"*）。**失效才撤，武装不撤**，这个区分正是下面那条隐患的由来。`dms_timeout_secs` 默认 30，私有 transport 在**一半**的间隔上续期。续期只有**发送失败**计数（没有 ACK 可等），连续失败到 `dms_max_failed_renewals`（默认 3）后客户端**不再信任开关并拒绝新订单**。该值有**上限**：配置只能把它调紧，**不能调松**。**只读模式从不订阅它，因此不武装任何计时器。** **一个带凭据的 `sandbox` 会话会武装它，而且不会解除**：`account_read_only=False` 让 `stream_mode()` 返回 `Trading`，TRADING 频道表含 `cancelAllOrdersAfterPerps`，`connect()` 无条件启动私有 transport，而 `disconnect()` **刻意不解除**它（原文：*"deliberately **not** done here is releasing the dead man's switch"*）。那样的会话退出时会留下一个**没人解除的计时器**，约 `dms_timeout_secs` 后由 venue 撤掉账户上所有挂单。见第 8 节 |
 | **断线/恢复** | run state 至少区分 `Disconnected` / `Authenticating` / `Recovering` / `ReadOnlySynced` / `TradingReady` / `Uncertain` / `Stopping`；**socket connected 不等于账户 Ready**。空闲超时 180 s、登录应答超时 10 s、登录尝试有界（3 次）；`signature`/`api key`/`unauthorized`/`forbidden`/`ip_not_permitted`/`timestamp` 这类错误是**终止性**的，不会无限重连。重连走指数退避；解码丢失或恢复缓冲溢出会把账户推成 `Uncertain`（**保持 socket**），新风险在恢复收敛前一律被拒 |
 | **journal 在哪里** | `journal_path` **默认 `None`**：这是**受支持的模式**，不是静默失败——**只在内存里，一个文件都不写**，账本、订单索引与未决写入只活在本次进程里，运行会说明这一点（`JournalStatus::NotConfigured`）。给了路径时它是原子写（写同目录临时文件 + rename），重启先读回未决信息再接受新风险；读不出来就拒绝新风险。已配置的路径**中途写不进去**是 `Degraded`：它**声明**这次失效（并给出最后一次成功写入的时刻）但**不拒绝订单**——丢持久化不等于丢内存。要一份跨重启的账本，必须显式给 `journal_path` |
 | **收敛停止不可达** | 见开篇第 2 条。**关机时不会撤本次运行的订单、不会确认撤单、不会解除死手开关**；框架侧同步的 `stop()` 只中止 task group 并丢掉 private stream 句柄。未决信息靠 journal 跨重启继承（前提是配了 `journal_path`） |
@@ -338,6 +341,10 @@ maker 费率缺失只记录、不致命（venue 有权不发布它）。
   不订阅死手开关、永不进入 trading-ready。不该为了"把账户弄干净"而自动撤单或下单。
 - **`sandbox` 通过不等于任何生产资格。** sandbox 不足以证明生产资格、容量、提现或收益；合约映射未验证
   期间 `executable=false` 继续成立。
+- **一个带凭据的 `sandbox` 会话会武装一个它不解除的死手开关计时器**（细节见第 6 节）。所以在收敛停止接通
+  之前（开篇第 2 条），真实 sandbox 会话退出后约 `dms_timeout_secs`（默认 30 s），venue 会撤掉**那个账户上的
+  所有挂单**——不只是这一次运行留下的。**R4 从未建立过带凭据的会话，所以这件事没有发生过**；写下它是因为
+  **R5.2 第一次真跑 sandbox 之前必须先处理它**。不要靠这个 probe 得到一个「跑完就干净」的账户。
 - 应用侧**不复制** REST 签名或重试 POST：这条路径复用原生执行 factory 与 R3 的生命周期，不另建一套下单
   实现。`ondo_depth.py` 与 `spread_watch.py` 的只读分析也不修改 Rust 侧行为。
 - `src/exec_probe.py` 是 **Aster** 的 testnet probe，与这条路径**相互独立**（原方案 §3.2 的文件表写明

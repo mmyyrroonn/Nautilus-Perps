@@ -47,6 +47,7 @@ import re
 import socket
 import sys
 import threading
+import time
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -407,13 +408,20 @@ class FakeHandle:
     the shutdown was synchronous.
     """
 
-    def __init__(self, node: "FakeNode") -> None:
+    def __init__(self, node: "FakeNode", *, stop_delay_off_thread: float = 0.0) -> None:
         self.node = node
         self.stop_calls = 0
+        self.stop_delay_off_thread = stop_delay_off_thread
         self._stopping = threading.Event()
 
     def stop(self) -> None:
         self.stop_calls += 1
+        # A schedule rather than a sleep for its own sake. The watchdog is the only stop that
+        # does not come from the owning thread, and an off-thread stop that finishes *after*
+        # the owning thread's final stop is exactly the ordering that used to decide whether
+        # the report carried the watchdog entry at all.
+        if self.stop_delay_off_thread and threading.current_thread() is not threading.main_thread():
+            time.sleep(self.stop_delay_off_thread)
         self._stopping.set()
         self.node.release()
 
@@ -463,14 +471,17 @@ class FakeNode:
     """
 
     def __init__(self, registry: Registry, *, failure: BaseException | None = None,
-                 blocking: bool = False, with_handle: bool = True) -> None:
+                 blocking: bool = False, with_handle: bool = True,
+                 handle_stop_delay: float = 0.0) -> None:
         self.registry = registry
         self.failure = failure
         self.blocking = blocking
         self.with_handle = with_handle
         self.cache = FakeCache()
         self.stop_calls = 0
-        self.the_handle = FakeHandle(self) if with_handle else None
+        self.the_handle = (
+            FakeHandle(self, stop_delay_off_thread=handle_stop_delay) if with_handle else None
+        )
         self._release = threading.Event()
         self._running = bool(blocking)
         self.calls: list[tuple[str, tuple, dict]] = []
@@ -547,6 +558,25 @@ class NodeFactory:
         self.calls.append((args, kwargs))
         return FakeNode(self.registry, failure=self.failure, blocking=self.blocking,
                         with_handle=self.with_handle)
+
+
+class SlowWatchdogFactory:
+    """Builds the node whose *off-thread* stop finishes last.
+
+    The watchdog is the only stop that comes from a thread other than the owning one, so a
+    handle that sleeps off-thread is the schedule in which the watchdog's own entry is
+    appended to ``stops`` after the run has already finished - the ordering the report used
+    to be built in the middle of.
+    """
+
+    def __init__(self, registry: Registry, *, delay: float) -> None:
+        self.registry = registry
+        self.delay = delay
+        self.calls: list[tuple[tuple, dict]] = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return FakeNode(self.registry, handle_stop_delay=self.delay)
 
 
 class FailingFactory:
@@ -1631,9 +1661,9 @@ def test_a_completed_run_stops_through_the_handle_and_never_touches_the_node(tmp
         f"watchdog thread trips PyO3's unsendable assertion, which is a BaseException: the "
         f"blocking run() never returns and nothing is ever published"
     )
-    # Not an exact count: the watchdog thread is never joined, so whether its stop has landed
-    # by the time the report is built is a scheduling matter. That it *was* the handle is not.
-    assert handle.stop_calls >= 1, "the run was never stopped at all"
+    # Exactly two, and deterministic: the run returns on its own, `finally` wakes the watchdog
+    # and joins it before the owning thread performs its own final stop. One stop each.
+    assert handle.stop_calls == 2, "the run was stopped once by the watchdog and once by the run"
     stops = probe_report(out_dir)["stops"]
     assert stops, "the report names the stops it performed"
     for entry in stops:
@@ -1655,8 +1685,8 @@ def test_the_watchdog_stop_is_delivered_to_the_handle_too(tmp_path):
     The blocking node makes this airtight - ``run()`` returns only when something releases it,
     and the only thing that can is the stop. So ``run()`` returning at all, with the node's own
     ``stop`` never called, *is* the proof that the watchdog went through the handle. The
-    report's own watchdog entry is checked when it is there, but not required: it is appended
-    by the watchdog thread, which nothing joins.
+    report's own watchdog entry is required: the watchdog thread is joined before the document
+    is built, so the stop that actually ended this run is always in ``stops``.
     """
     out_dir = tmp_path / "out"
     argv = sandbox_argv(out_dir)
@@ -1673,9 +1703,38 @@ def test_the_watchdog_stop_is_delivered_to_the_handle_too(tmp_path):
     assert handle.stop_calls >= 1, "the deadline released the run, so a stop was delivered"
     stops = probe_report(out_dir)["stops"]
     assert all(entry["stop_target"] == "handle" for entry in stops), stops
-    for entry in [e for e in stops if e["label"] == "watchdog"]:
-        assert entry["requested"] is True, entry
+    watchdog_entries = [entry for entry in stops if entry["label"] == "watchdog"]
+    assert watchdog_entries, f"the stop that ended the run is missing from the report: {stops}"
+    assert watchdog_entries[0]["requested"] is True, watchdog_entries[0]
     assert_no_secret_anywhere(result, out_dir)
+
+
+def test_the_watchdog_entry_is_in_the_report_even_when_its_stop_finishes_last(tmp_path):
+    """The document is built from a settled ``stops`` list, not from whichever thread won.
+
+    A run that returns on its own leaves the watchdog still waiting: ``finally`` sets the done
+    event, which wakes it, and the entry it appends is written from that thread. Build the
+    document without waiting for it and the same run publishes two different reports - one
+    with the watchdog entry and one without - which is a report that cannot be cited as
+    evidence of what the run did.
+
+    The 0.3 s is the schedule, not a slow machine: it puts the watchdog's append after the
+    owning thread's final stop every time. What is asserted is the invariant, not the timing
+    - every stop that was performed is in the list.
+    """
+    out_dir = tmp_path / "out"
+    registry = Registry()
+    factory = SlowWatchdogFactory(registry, delay=0.3)
+    result = run_probe(["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5",
+                        "--out", str(out_dir)], registry=registry, factory=factory)
+    assert result.code == EXIT_OK, result.streams
+    stops = probe_report(out_dir)["stops"]
+    labels = sorted(entry["label"] for entry in stops)
+    assert labels == ["final", "watchdog"], (
+        f"the report's stops list is {labels}, and both stops were performed: the watchdog's "
+        f"entry is appended from the watchdog thread, so a document built without joining it "
+        f"records the stop that ran last as one that never happened"
+    )
 
 
 def test_a_node_without_a_handle_is_stopped_and_the_report_says_which_target(tmp_path):
