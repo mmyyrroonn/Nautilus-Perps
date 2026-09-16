@@ -1,0 +1,50 @@
+repo: E:\Nautilus-Perps (APP)
+branch: main
+base_head: 0fd91976d7606b68f94f71306d2b5fd96bd51237
+  subject: reports: record the R2 SHAs for both repositories
+r3_report_head: bd25b58de6dcb0cf874e1a747b8aadd18c9016c8
+  subject: reports: R3 acceptance — the private runtime lifecycle, the account,
+           and a switch that dates itself at the venue
+  files: 51 changed, 13585 insertions(+)
+
+# R3 has no APP source commit. This is worth stating rather than leaving as a
+# gap in the table, because R2 had one (39f714e touched src/analysis/ondo_depth.py,
+# src/market_tape.py and three others) and a reader comparing the two stages
+# would reasonably expect the symmetry. R3 is adapter-only: every one of its six
+# plan requirements lands in crates/adapters/ondo/ on the FORK side. The Python
+# face of the adapter changed only inside the crate (src/python/config.rs, for
+# journal_path then dead_mans_switch_max_failed_renewals), which is FORK work.
+# So the APP's entire R3 contribution is the report and its evidence.
+
+# The file you are reading was written after bd25b58, so it lands in a follow-up
+# commit - the SHA above is the one to cite for the report.
+
+# FORK counterpart (recorded here so both SHAs are in one file):
+#   repo: E:\nautilus_trader (FORK), branch onde-perps
+#   base_head: 3133e2501b990745655d2b6226801099b60e6b77
+#     subject: nautilus-ondo: publish market truth one axis at a time and share
+#              one REST budget per environment (R2)
+#   r3_head:   4356f1f4d678cc7565397e8ce2389f266f895a91
+#     subject: ondo: date the switch at the venue and make the stop converge (R3.3)
+#     files: 9 changed, 2146 insertions(+), 136 deletions(-)  (this commit)
+#     R3 as a whole is four commits (7729e9e, 1895978, 498ff9c, 4356f1f):
+#     24 files changed, 13200 insertions(+), 317 deletions(-), all under
+#     crates/adapters/ondo/ - no other crate is touched and Cargo.lock is
+#     unchanged. See fork_head_after_r3.txt for the per-commit breakdown.
+
+# Test totals: FORK 881 passed / 0 failed across 9 targets (exit 0), plus the
+# python-feature target at 6 passed / 0 failed (exit 0); the four acceptance
+# commands in the report's §2 all exit 0. No test annotation and no test function
+# was deleted - the report's §6 compares the 862 and 881 name sets and finds 0
+# removals.
+
+# Dirty scope, unchanged from R2: the pre-existing untracked trees
+# (reports/stage1/*.csv, reports/perps-*, reports/polymarket-*, reports/entropy-*,
+# the older reports/ondo-acceptance/2026091* dirs, .commandcode/, 学习课题/) keep
+# their existing attribution. This stage staged and committed nothing but the
+# R3 evidence directories.
+
+# Not verified, and stated as such in the report: the DMS renewal and release
+# semantics are unverified against the venue until the R5 sandbox; nothing in
+# this stage was sent to any venue; and three of the six R3.3 requirements have
+# only partial counterproof coverage.

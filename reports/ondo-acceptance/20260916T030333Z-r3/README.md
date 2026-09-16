@@ -17,9 +17,11 @@ R3 是一个阶段、一次验收，但它的三个任务是在三个时间窗�
 |---|---|---|
 | `20260916T030333Z-r3/`（本目录） | R3.1 | `fork_full_suite.txt`、`fork_private_runtime.txt`、`fork_python_feature.txt`、`fork_python_test_strict.txt`、`fork_python_test_diagnostic.txt`、`fork_fmt_check.txt`、`fork_clippy.txt`、`environment.txt`、`r31_mutation_decode_loss.txt`、`r31_mutation_stream_routing.txt` |
 | `20260916T042245Z-r32/` | R3.2 及其 follow-up | `mine_full_suite_after_followup.txt`（终态全套）、`mine_full_suite_after_degraded.txt`、`mine_full_suite_raw.txt`、`mine_fmt_and_suite.txt`、`mine_fmt_check_followup.txt`、`mine_python_check*.txt`、`mine_python_test_strict*.txt`、`mutation_counterproofs.md`（M1–M5）、`mutation_counterproofs_followup.md`（M6–M8）、`new-finding-pagination-ceiling.md`、`fork_head.txt`、`app_head.txt` |
-| `20260916T054423Z-r33/` | R3.3 | **终态验收**：`mine_environment.txt`（两个 HEAD + 全部 ondo `.rs` 的 sha256 清单）、`mine_fmt.txt`、`mine_suite.txt`、`mine_python_check.txt`、`mine_python_test.txt`；**被取代的第一次尝试**：`mine_full_suite.txt`、`mine_fmt_check.txt`、`mine_python_test_strict.txt`（见 §4.4，它们的字节在 13:49 被另一个写者改过）；**注入反证**：`r33_mutation_M9..M13.txt` 与 `r33_mutation_M9..M13.nff.txt`（前者没带 `--no-fail-fast`，只覆盖了第一个失败的 target，见 §5.1）、`mutate.py`、`run3.sh`、`run4.sh`（探针本身） |
+| `20260916T054423Z-r33/` | R3.3 | **终态验收**：`accept.sh`（跑出该目录全部 `mine_*` 的脚本，含逐命令的树稳定性检查）、`mine_environment.txt`（两个 HEAD + 全部 ondo `.rs` 的 sha256 清单）、`mine_fmt.txt`、`mine_suite.txt`、`mine_python_check.txt`、`mine_python_test.txt`；**被取代的第一次尝试**：`mine_full_suite.txt`、`mine_fmt_check.txt`、`mine_python_test_strict.txt`（见 §4.4，它们的字节在 13:49 被另一个写者改过）；**注入反证**：`r33_mutation_M9..M13.txt` 与 `r33_mutation_M9..M13.nff.txt`（前者没带 `--no-fail-fast`，只覆盖了第一个失败的 target，见 §5.1）、`mutate.py`、`run3.sh`、`run4.sh`（探针本身） |
 
 `.nff` 后缀 = `--no-fail-fast`。两批注入反证的文件名不同不是笔误，见 §5.1 最后一条。
+
+**要重跑这些脚本，先确认它们的行尾。** 四个脚本（`accept.sh`、`run3.sh`、`run4.sh`、`mutate.py`）在 **git blob 里是纯 LF**（逐个用 `git show :<path> | od -c | grep -cF '\r'` 验过，均为 0），本目录的工作区副本也是 LF。但本仓库 `core.autocrlf=true` 且没有 `.gitattributes`，所以**在 Windows 上重新 checkout 会把它们落成 CRLF**，而 CRLF 的 shell 脚本会让 `bash` 报 `\r` 相关的解析错。遇到这种情况用 `git show :<path> > <path>` 取回 LF 版本（或 `dos2unix`），不要据此怀疑证据本身——证据是 blob 里的字节。
 
 三个目录的 `environment.txt` / `fork_head.txt` / `app_head.txt` 各自记录该时间窗的两个仓库 HEAD 与脏范围，它们是「这份输出对应哪份代码」的唯一凭据。
 
@@ -27,7 +29,7 @@ R3 是一个阶段、一次验收，但它的三个任务是在三个时间窗�
 
 ## 1. 两个 SHA 与脏范围
 
-### 1.1 FORK `E:\nautilus_trader`，分支 `task/ondo-r3-private-lifecycle`
+### 1.1 FORK `E:\nautilus_trader`，工作分支 `task/ondo-r3-private-lifecycle` → 验收后 ff 合并进 `onde-perps`（两个 HEAD 的对照另见 `fork_head_after_r3.txt`）
 
 | | commit | 说明 |
 |---|---|---|
@@ -63,12 +65,15 @@ R3 是一个阶段、一次验收，但它的三个任务是在三个时间窗�
 
 **脏范围声明**：该 fork 工作区长期有一批 **CRLF-only 的 `.pyi`** 显示为 ` M`（R0 起既有）。它们**没有被暂存、没有被提交、也没有被修改** —— 每次提交都是按路径逐个 `git add` 的 ondo 文件，不是 `git add -A`。无跨 crate 改动，无 lockfile 改动，无 CI 改动。
 
-### 1.2 APP `E:\Nautilus-Perps`，分支 `task/ondo-r3-private-lifecycle`
+### 1.2 APP `E:\Nautilus-Perps`，工作分支 `task/ondo-r3-private-lifecycle` → 验收后 ff 合并进 `main`
 
 | | commit | 说明 |
 |---|---|---|
 | 起点（= `main`） | `0fd91976d7606b68f94f71306d2b5fd96bd51237` | R2 收尾（reports: record the R2 SHAs for both repositories） |
-| 终点 | **待填** | R3 的报告与本目录 |
+| R3 报告 | `bd25b58de6dcb0cf874e1a747b8aadd18c9016c8` | reports: R3 acceptance — the private runtime lifecycle, the account, and a switch that dates itself at the venue（51 个文件，+13585） |
+| 收尾记录 | 见 `app_head_after_r3.txt` | 两个仓库的 R3 HEAD、逐提交改动量、验收命令与退出码。**一个提交写不进自己的 SHA**，所以「终点」这个 SHA 只能从这份记录文件里取——即记录文件自己所在的那个提交 |
+
+**R3 没有 APP 侧源码提交，这不是漏记。** R2 有（`39f714e` 改了 `src/analysis/ondo_depth.py`、`src/market_tape.py` 等五个文件），R2 的记录文件也把 `r2_source_head` 和 `r2_report_head` 分开列了，所以读者拿两个阶段对比时会合理地期望这里也有一个；但 R3 的六条要求全部落在 FORK 的 `crates/adapters/ondo/` 内，Python 面只在 crate 内部变（`src/python/config.rs`，先是 `journal_path` 后是 `dead_mans_switch_max_failed_renewals`），那也是 FORK 的提交。**APP 在 R3 的全部产出就是本报告和它的证据。**
 
 **脏范围声明**：`reports/stage1/*.csv`、`reports/perps-*`、`reports/polymarket-*`、`reports/entropy-*`、`.commandcode/`、`学习课题/` 等既有 untracked 文件保持原归属，**本阶段未暂存、未提交、未清理**。本阶段只 `git add` 本目录及其兄弟目录内的 R3 证据。
 
@@ -85,7 +90,11 @@ R3 是一个阶段、一次验收，但它的三个任务是在三个时间窗�
 | `cargo +1.98.0 check -p nautilus-ondo --features python --locked --offline` | 0 | `Finished dev profile` | `mine_python_check.txt` |
 | `cargo +1.98.0 test -p nautilus-ondo --features python --locked --offline --test python` | 0 | **6 passed / 0 failed** | `mine_python_test.txt` |
 
-**「跑在哪些字节上」是可查的，不是承诺。** 验收脚本在每个命令执行前后各算一次全树哈希（`find src tests -name '*.rs' | sort | xargs sha256sum | sha256sum`），四次都是 `before == after`，即命令期间没有任何写者动过这棵树。这个前后哈希是本节唯一真正重要的部分：**一次绿的 suite 只是「它编译的那份字节」的证据**，没有这个哈希，任何「测试通过」都可以是另一个进程改完文件之后的读数。脚本与逐次的前后值在 `mine_acceptance_log.txt`。
+**「跑在哪些字节上」是可查的，不是承诺。** 验收脚本在每个命令执行前后各算一次全树哈希（`find src tests -name '*.rs' | sort | xargs sha256sum | sha256sum`），四次都是 `before == after`，即命令期间没有任何写者动过这棵树。这个前后哈希是本节唯一真正重要的部分：**一次绿的 suite 只是「它编译的那份字节」的证据**，没有这个哈希，任何「测试通过」都可以是另一个进程改完文件之后的读数。
+
+**这条声明里哪一半是落盘的、哪一半只是当时看到的——分开说，因为两者证据强度不同。** 脚本是 `accept.sh`（随本证据目录提交，2039 字节，即跑出上面四行原始输出的那一份）。它算前后值（第 49、53 行）并**打印到终端**（第 55、57–58 行），`mine_*.txt` 只装各命令自己的输出（第 51 行），**这八个数从来没有写进任何文件**——`mine_acceptance_log.txt` 这个名字是本报告初稿里的假引用，文件不存在，已删。所以「四次 `before == after`」是**当时在终端上看到的**，读者无法从落盘文件复核这句话本身；读者能复核的是脚本（自己重跑即可复现同一套检查）与 `mine_environment.txt` 里那份逐文件 sha256 清单。
+
+落盘证据能独立支撑的是更长、也更有用的那条链：**验收开始时的字节 = 本阶段结束时的字节 = 提交 `4356f1f` 里的字节**，三者聚合值都是 `ce0803dc…`（`mine_environment.txt` 的清单 → 现在的工作树重算 → 对 `git show 4356f1f:<path>` 逐文件比对，见 §1.1）。这条链证明的是「本节这套输出对应被提交的那份代码」；它**不能**证明命令与命令之间没有写者，后者只有终端记录。
 
 **基线对照**：R3.2 终态（`-r32/mine_full_suite_after_followup.txt`）是 862 passed，逐 target 为 438 / 71 / 39 / 77 / 43 / **23** / **107** / 63 / 1。R3.3 终态是同序的 438 / 71 / 39 / 77 / 43 / **32** / **117** / 63 / 1 = 881。差 **+19**，全部落在 `private_runtime`（+9）与 `reconciliation`（+10），**没有任何一组下降**，也没有任何一条既有测试消失（逐名比对见 §6）。
 
@@ -458,6 +467,7 @@ R3.3 这一轮把同一个坑以三种新形态又踩了一遍。三种都写下
 2. **两道检查用不同口径算同一个值（第二批什么都没跑的间接原因）。** 第二批的聚合把**绝对路径**喂给 `sha256sum`，而记录下来的期望值是**仓库根相对路径**算出来的；文件名参与哈希，所以这两个数在字节完全相同的情况下也永不相等。同一批里的逐文件检查也坏着（快照里的名字没有 `src/` 前缀，拼出来的路径不存在）。**两道检查其实是同一个坏检查**，而它们一起把 pre-flight 卡住了——这一次 fail-closed 挡住了假证据。**教训：一个检查要先在一个已知为真的输入上验证过「它会给真」**，否则它只是一段会打印「不一致」的代码。可迁移的形式：口径（相对/绝对、含不含文件名、含不含汇总行）必须和期望值的来源一致，并且写下来。
 3. **`cargo test` 不带 `--no-fail-fast` 时会在第一个失败的 test binary 停下。** 第三批跑的命令是 `--test private_runtime --test reconciliation`，而 target 顺序里 `private_runtime` 在前：它在五个变异里都先红，于是 **`reconciliation` 一次都没执行过**。如果不数 `test result` 的行数（每个 target 恰好一行），就会把「private_runtime 的两条红了」顺手写成「reconciliation 的两条也红了」——那是一句没有执行记录支撑的话。第四批（`.nff` 后缀）补了 `--no-fail-fast`，两个 target 都跑到完。**教训：数 `test result` 的行数，它必须等于 target 数。**
 4. **数失败数要用带边界的模式。** `grep -cE '^test .* FAILED'` 会把汇总行 `test result: FAILED. 30 passed; 2 failed; ...` 也算一条（它确实以 `test ` 开头），于是 2 条真失败被数成 3。**判据：逐条看一眼名字，而不是信计数。** 本报告的失败测试名一律从输出里复制，计数只当旁证。
+5. **报告引用了一个从未写过的文件（写这份报告时自己踩的，比前三条轻，但是同一类）。** §2 初稿结尾写「脚本与逐次的前后值在 `mine_acceptance_log.txt`」。真去查：`accept.sh` 把那八个数 `echo` 到终端（第 55、57–58 行）就完了，`mine_*.txt` 只装各命令自己的输出（第 51 行）——**这个名字是写报告时顺手造的，文件从来没有存在过**。它不改变任何结论（结论依赖的是 `mine_environment.txt` 的清单与提交里的字节，那两样都在），但它是一句关于证据的话，本身没有证据，和上面三条同源。**判据：写下「X 在 Y 里」的时候，当场对 `Y` 做一次 `ls`。** 处置：§2 改成把「哪一半落盘、哪一半只在终端上看到过」分开说，并把 `accept.sh` 一起提交，让读者能自己重跑那套检查。
 
 ---
 
@@ -496,6 +506,7 @@ R3.3 这一轮把同一个坑以三种新形态又踩了一遍。三种都写下
 8. **`-r33/mine_fmt_check.txt` 这个文件名会误导**：它是 13:45 的一次**通过**的检查，不是 13:49 那次失败的记录；那次失败的输出**没有落盘**（只有「修复后 `mine_fmt.txt` 通过」和 `cargo fmt` 写入过的 mtime 为证）。文件名保留是为了不改动已生成的证据目录，正确读法写在这里。
 9. **一条端到端测试的前置条件是竞态的**（§5 末尾的两次矛盾记录）：`test_the_stop_cancels_this_runs_own_orders_by_id_and_never_a_market` 只等到「订单被跟踪」就往下走，而 `venue_order_id` 要晚一步才从 private 流到达，于是它断言的「按 venue order id 撤单」在时序不利时会不成立。**不是产品缺陷**（两种标识符 venue 都接受），是测试前置写弱了；**本阶段未修**（改测试字节就要重做整套验收，且不在 R3 要求内）。留给 R4：把等待条件从「被跟踪」收紧为「venue id 已知」。
 10. **`§6.4` 这个引用不在续做计划里。** ondo crate 里有 109 处 `plan §6.4`（`src/reconciliation.rs` 37 处、`src/execution.rs` 46 处等），但 `2026-09-15-ondo-perps-continuation.md` 里「6.4」出现 **0** 次；定义它的是更早的 `2026-09-14-ondo-perps-full-integration.md:282`（`### 6.4 账户与恢复`）。**引用本身没问题，只是要顺着正确的文件去查**——写在这里，免得下一个读者在续做计划里翻不到。
+11. **每次命令的树稳定性检查没有落盘记录。** §2 讲了这条的口径：八次 before/after 值由 `accept.sh` 打印到终端，从未写进文件，所以「四次 `before == after`」这句话读者无法从文件复核（能复核的是脚本本身，以及 `ce0803dc…` 那条三段相等的字节链）。要让这一条以后可复核，改法很小——把第 55、57–58 行的 `echo` 也 `>> "$OUT/mine_stability.txt"`——但**本阶段不改**：改了就跑在一份与验收不同的 `accept.sh` 上，而验收已经完成。留给 R4 的 `accept` 脚本照此写。
 
 ---
 

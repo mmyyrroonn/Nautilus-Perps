@@ -1,0 +1,99 @@
+repo: E:\nautilus_trader (FORK)
+branch: onde-perps
+base_head: 3133e2501b990745655d2b6226801099b60e6b77
+  subject: nautilus-ondo: publish market truth one axis at a time and share one
+           REST budget per environment (R2)
+r3_head: 4356f1f4d678cc7565397e8ce2389f266f895a91
+  subject: ondo: date the switch at the venue and make the stop converge (R3.3)
+
+# R3 is four commits, not one. Two of them are follow-ups rather than amendments,
+# so the log shows what was found and in what order instead of a tidied result:
+#
+#   7729e9e  nautilus-ondo: own the private session, its socket and the account
+#            behind it (R3.1)
+#            23 files, 6130 insertions(+), 112 deletions(-)
+#   1895978  ondo: report the account, keep the ledger, and account for funding
+#            (R3.2)
+#            10 files, 4521 insertions(+), 89 deletions(-)
+#   498ff9c  ondo: bound the funding walk, keep the watermark, and answer the
+#            journal once (R3.2 follow-up)
+#             5 files, 437 insertions(+), 14 deletions(-)
+#   4356f1f  ondo: date the switch at the venue and make the stop converge (R3.3)
+#             9 files, 2146 insertions(+), 136 deletions(-)
+#
+# Working branch during the stage was task/ondo-r3-private-lifecycle, deleted
+# after fast-forwarding into onde-perps. Real output of the 收尾 step:
+#
+#   $ git switch onde-perps
+#   $ git merge --ff-only task/ondo-r3-private-lifecycle
+#     Updating 3133e25..4356f1f
+#     Fast-forward
+#     24 files changed, 13200 insertions(+), 317 deletions(-)
+#   $ git branch -d task/ondo-r3-private-lifecycle
+#     Deleted branch task/ondo-r3-private-lifecycle (was 4356f1f).
+#   $ git branch
+#     aster
+#   * onde-perps
+#
+# A fast-forward creates no commit of its own, so onde-perps is at 4356f1f
+# itself, and every commit this stage made is in the list above.
+
+# Stage total (git diff --stat 3133e25..4356f1f):
+#   24 files changed, 13200 insertions(+), 317 deletions(-)
+# All 24 are under crates/adapters/ondo/ - no other crate is touched, and the
+# stage added no dependency (Cargo.lock is not in the diff).
+
+# The accepted bytes are identified by hash, not by the commit alone. accept.sh
+# recorded the sha256 of every *.rs under crates/adapters/ondo/{src,tests} before
+# and after each acceptance command; all four agreed, and the same aggregate is
+# reproduced by the working tree now:
+#   ce0803dc9604504f83e0baa47b88b1790ca75fb9719a71a1a7e0021e329c138e
+# `git show 4356f1f:<path>` for execution.rs, reconciliation.rs and
+# private/stream.rs reproduces the three per-file digests printed by the same run
+# (f6a1e221..., df982eb3..., ca801839...), so the commit contains the bytes that
+# were accepted - not merely bytes that resemble them. The eight before/after
+# values themselves were printed to the terminal and never written to a file;
+# the report's §2 says so plainly rather than citing a ledger that does not
+# exist.
+
+# Acceptance commands, all against 4356f1f (real output in the report dir):
+#   cargo +1.98.0 fmt -p nautilus-ondo -- --check
+#       -> exit 0, no "Diff in" line            20260916T054423Z-r33/mine_fmt.txt
+#   cargo +1.98.0 test -p nautilus-ondo --locked --offline
+#       -> 881 passed; 0 failed; 9 targets; exit 0      .../mine_suite.txt
+#   cargo +1.98.0 check -p nautilus-ondo --features python --locked --offline
+#       -> exit 0, "Finished `dev` profile"       .../mine_python_check.txt
+#   cargo +1.98.0 test -p nautilus-ondo --features python --locked --offline \
+#       --test python
+#       -> 6 passed; 0 failed; exit 0             .../mine_python_test.txt
+#
+# Baseline: R3.2's terminal state was 862 passed, per target 438/71/39/77/43/23/
+# 107/63/1. R3.3 is 438/71/39/77/43/32/117/63/1 = 881. The delta is +19, all of
+# it in private_runtime (+9) and reconciliation (+10); no target went down and no
+# existing test disappeared (per-name comparison in the report's §6). An earlier
+# run in this stage read 879 over a superseded tree; 879 is not the accepted
+# number and is not cited as one.
+
+# What this stage did NOT verify, stated here as well as in the report's §7:
+#   - Nothing was sent to any venue. No sandbox run, no login, no order, no
+#     cancel. Everything is offline against the mock transport.
+#   - DMS renewal and release are implemented from the frozen spec and the mock
+#     contract, and are marked unverified in the source itself
+#     (reconciliation.rs:54, :495; private/stream.rs:799). Whether the venue
+#     behaves like the mock is an R5 sandbox question. The code does not depend
+#     on the protection being cancellable by guess: a renewal is believed only
+#     where its bytes reached the transport, and a stop refuses to release the
+#     switch while an unconfirmed order is outstanding.
+#   - Three of the six R3.3 requirements have only partial counterproof coverage;
+#     the report's §3.3 table names which, and §7 records the gaps.
+#   - rustdoc and clippy are still red at this commit, as they were before it.
+#     The report separates what was attributed by hash from what was not.
+
+# Two incidents are recorded rather than smoothed over (report §4.4, §5.1): a
+# second writer editing the same files, which is why the first counterproof batch
+# is void, and a race in one end-to-end test's precondition that two runs of
+# identical bytes disagree about. The latter is not a product defect - the venue
+# documents both cancel identifier forms - and was left unfixed, because editing
+# a test would invalidate the acceptance run it had just passed.
+
+# APP counterpart: see app_head_after_r3.txt in this directory.
