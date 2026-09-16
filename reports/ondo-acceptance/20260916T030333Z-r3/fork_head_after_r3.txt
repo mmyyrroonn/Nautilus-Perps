@@ -75,6 +75,17 @@ r3_head: 4356f1f4d678cc7565397e8ce2389f266f895a91
 # number and is not cited as one.
 
 # What this stage did NOT verify, stated here as well as in the report's §7:
+#   - The convergent stop executor is not called by the client lifecycle. Every
+#     call site of stop_and_wait is in tests/private_runtime.rs (6 of them); the
+#     adapter's synchronous stop() aborts the task group and drops the transport
+#     without running it, and its async disconnect() - the hook the framework
+#     actually awaits on node shutdown (node/mod.rs:2301 -> kernel.rs:1084 ->
+#     execution/client.rs:258) - does not run it either. So the stop machinery is
+#     complete, bounded, awaiting and counterproofed (M11/M12), but nothing in
+#     production invokes it, and a real shutdown still leaves this run's orders
+#     standing. Wiring it is a public-interface decision (a sync stop() cannot
+#     await; disconnect() means connection teardown), deliberately not taken in
+#     R3, and a prerequisite for any claim that a live stop converges.
 #   - Nothing was sent to any venue. No sandbox run, no login, no order, no
 #     cancel. Everything is offline against the mock transport.
 #   - DMS renewal and release are implemented from the frozen spec and the mock

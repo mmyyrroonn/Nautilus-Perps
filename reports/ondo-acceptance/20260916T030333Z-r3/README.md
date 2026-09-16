@@ -90,7 +90,7 @@ R3 是一个阶段、一次验收，但它的三个任务是在三个时间窗�
 | `cargo +1.98.0 check -p nautilus-ondo --features python --locked --offline` | 0 | `Finished dev profile` | `mine_python_check.txt` |
 | `cargo +1.98.0 test -p nautilus-ondo --features python --locked --offline --test python` | 0 | **6 passed / 0 failed** | `mine_python_test.txt` |
 
-**「跑在哪些字节上」是可查的，不是承诺。** 验收脚本在每个命令执行前后各算一次全树哈希（`find src tests -name '*.rs' | sort | xargs sha256sum | sha256sum`），四次都是 `before == after`，即命令期间没有任何写者动过这棵树。这个前后哈希是本节唯一真正重要的部分：**一次绿的 suite 只是「它编译的那份字节」的证据**，没有这个哈希，任何「测试通过」都可以是另一个进程改完文件之后的读数。
+**「跑在哪些字节上」是可查的，不是承诺。** 验收脚本在每个命令执行前后各算一次全树哈希（`find src tests -name '*.rs' | sort | xargs sha256sum | sha256sum`），四次都是 `before == after`，即命令期间没有任何写者动过这棵树。这个前后哈希是本节唯一真正重要的部分：**一次绿的 suite 只是「它编译的那份字节」的证据**，没有这个哈希，任何「测试通过」都可以是另一个进程改完文件之后的读数。**这句话的证据强度见下一段——它只有一半落盘。**
 
 **这条声明里哪一半是落盘的、哪一半只是当时看到的——分开说，因为两者证据强度不同。** 脚本是 `accept.sh`（随本证据目录提交，2039 字节，即跑出上面四行原始输出的那一份）。它算前后值（第 49、53 行）并**打印到终端**（第 55、57–58 行），`mine_*.txt` 只装各命令自己的输出（第 51 行），**这八个数从来没有写进任何文件**——`mine_acceptance_log.txt` 这个名字是本报告初稿里的假引用，文件不存在，已删。所以「四次 `before == after`」是**当时在终端上看到的**，读者无法从落盘文件复核这句话本身；读者能复核的是脚本（自己重跑即可复现同一套检查）与 `mine_environment.txt` 里那份逐文件 sha256 清单。
 
@@ -374,7 +374,9 @@ R3 是一个阶段、一次验收，但它的三个任务是在三个时间窗�
 | 5 | 真正执行停止动作并 await transport/task 退出；release 时机取决于已验证撤单/暴露状态；未确认订单存在时不得盲目解除保护 | `stop_and_wait` 是 `async` 且 `await` transport 退出（`execution.rs:2158-2168`，退出不了记 `StreamOutlivedStop`）；**解除门**在 `execution.rs:2126-2129`：只有步骤含 `ReleaseDeadMansSwitch` **且** `unconfirmed_cancels` 空 **且** `unknown_submissions` 空才发解除帧，否则走 `:2147-2155` 的 error 日志并把 `released_switch` 留 `false`（两种 `false` 的由来写在 `reconciliation.rs:2085-2089`） | `tests/private_runtime.rs`：`test_an_unconfirmed_cancel_keeps_the_switch_armed`、`test_a_stop_that_times_out_reports_a_timeout_and_not_a_completion`、`test_the_stop_confirms_the_cancels_before_it_releases_the_switch` | **M11**（门去掉两个空判定）→ 这 2 条红，panic 里带着 `released_switch: true` 的完整 `StopReport`；`reconciliation` 117 全绿 |
 | 6 | 记录 stop 的完成、超时、未决状态；重启必须继承未决信息，不能清空 map 获得 Ready | `reconciliation.rs:2049` `StopOutcome{Complete, TimedOut, StreamOutlivedStop}` 三态分立（`:2044-2047` 说明为什么不能合成一个 "stopped"）、`:2068` `StopReport` 带证据而非结论（`:2063`）；停止末尾落盘 `execution.rs:2173` `persist_journal`（在撤单**之后**写，checkpoint 记的是停止留下的状态）；重启经 `load_journal` 把未决项读回 | `tests/private_runtime.rs`：`test_a_restart_inherits_the_stops_outstanding_cancels`、`test_a_stop_that_times_out_reports_a_timeout_and_not_a_completion` | **M12**（删掉停止时的落盘）→ 只有 `test_a_restart_inherits_the_stops_outstanding_cancels` 红，其余 31 条 private_runtime 与 117 条 reconciliation 全绿。**本阶段最干净的一条特异性证据** |
 
-**六条里有三条只被部分覆盖，明确列出**（§7 有完整清单与理由）：第 2 条的「有界」、第 4 条的「不做 market-wide DELETE」在第 3–5 批注入里**没有**对应的突变；第 3 条的 run-state 轴只有 M9 的一条间接捕获。其余三条（1、5、6）各有一次**针对性**注入，且都能指出哪些测试**不该红而没红**。
+**上面第 4、5、6 行的执行器在生产路径上没有调用者——先说这一条，否则那三行会被读成「系统在停止时会执行它」。** 终态字节里 `stop_and_wait`（`execution.rs:2059`）的调用点**只有 `tests/private_runtime.rs` 的 6 处**；`stop_sequence()` 与 `StopReport` 在 `src/` 内除定义处外也只在它内部被用。框架侧两个停止钩子都没接：`fn stop()`（`execution.rs:3963`，同步、按契约不能 await，只 abort task group、丢掉 private stream 句柄、标记 stopped/disconnected）与 `async fn disconnect()`（`execution.rs:4056`，await 的是**传输自己的** stop，然后标记 disconnected）——而后者正是框架关机时真正 await 的那条路（`node/mod.rs:2301` → `kernel.rs:1084` → `execution/client.rs:258` → 适配器）。所以那三行证明的是**执行器内部的顺序、门与落盘是对的**，**不是**「它会被调用」；真实关机时这个 client 仍然是「丢掉传输、留下订单」。接进哪个钩子是一次**公开接口决定**（同步的 `stop()` 不能 await；`disconnect()` 的语义是连接拆除，把撤单放进去要先想清楚重连路径上的含义），本阶段刻意没做，列为 §7 第 1 条与 R5 的前置项。
+
+**六条里有三条只被部分覆盖，明确列出**（§7 有完整清单与理由）：第 2 条的「有界」、第 4 条的「不做 market-wide DELETE」在第 3–5 批注入里**没有**对应的突变；第 3 条的 run-state 轴只有 M9 的一条间接捕获。其余三条（1、5、6）各有一次**针对性**注入，且都能指出哪些测试**不该红而没红**。**但要注意这些注入覆盖的是哪一面**：M11/M12 证明的是解除门与落盘这两处**内部逻辑**，与上面那个「没有调用者」的缺口是两回事——把一个没人调用的执行器内部逻辑测透，不产生任何「停止会收敛」的保证。
 
 ---
 
@@ -496,17 +498,19 @@ R3.3 这一轮把同一个坑以三种新形态又踩了一遍。三种都写下
 
 ## 7. 未解决项（明确声明，不掩盖）
 
-1. **DMS 的续期与解除语义仍是 unverified。** 冻结规范只文档化了 subscribe 帧与 `timeout_seconds`，没有说明「什么是续期」。实现采用「重发 subscribe 帧」并在代码里标注 unverified（`src/websocket/private/stream.rs`）；**这靠的是规范与 mock 契约，不是靠推测，也尚未被真实 sandbox 证实**。真实语义留待 R5 sandbox 验证（plan §R5.1）。
-2. **没有任何 sandbox 协议验证。** R3 的验收标准本身写着「达到『离线生命周期已完成』，尚不等于 sandbox 协议通过」。本阶段**没有向任何真实 venue 发出过请求**。
-3. **冷编译下 `--features python` 测试 target 的 exit 101 假设未被证实。** 观察到的是：`nautilus-persistence-macros` 真正重链接时该 target 退出 101，热态时为 0。R3.1 的 `fork_python_test_strict.txt` 显示一次**局部重编**（5 个 crate，13.81s）后 strict 通过，这与「只有完全冷的时候才失败」不完全一致，因此该假设**收窄为待验证**，不是结论。它影响 R5.1 的构建纪律，不影响 R3 的结论。
-4. **`nautilus-ondo` 的 clippy / doc 在 HEAD 是红的**（`-Dwarnings` 使既有 clippy 发现直接让构建失败；`-r3/fork_clippy.txt` 是当时的输出）。`cargo test` 是实际闸门。这是既有状态，不是 R3 引入的，也**未**在本阶段修复。
-5. **endpoint policy 的那个调用点没有直接覆盖它的测试**（§3.1 判定 1）。`execution.rs` 里「按 policy 判定选 WS URL」这一行只被它自己的上游测试间接覆盖；判定本体有 4 个 case，调用点没有。补它的测试需要打桩调用本身，收益低于噪音，因此**接受为已知缺口**而不是补一个自证式的测试。
-6. **外部仓位没有以它命名的测试**（§3.2 判定 2）。外部**订单**的策略有四条文档化并被覆盖；外部**仓位**的语义散在 `PositionAbsent` 的基线退出里，没有专门测试。本阶段不新增范围。
-7. **「断言没被削弱」只有 5 个机制有反证，不是全部 881 条。** §6 的名字集合差能证明没有测试被删或改名，但一条测试可以在名字不变的前提下被改弱。这一面由 §5 的五个注入覆盖：DMS 的有效期投影、续期截止、解除门、停止的 journal 落盘、只读不触发副作用。**其余机制在这一阶段没有反证**——它们只有 R3.2 及更早的验证（`-r32/mutation_counterproofs*.md` 的 M1–M8）。§3.3 末尾列出了 R3.3 六条要求里哪三条只被部分覆盖及具体缺口。
-8. **`-r33/mine_fmt_check.txt` 这个文件名会误导**：它是 13:45 的一次**通过**的检查，不是 13:49 那次失败的记录；那次失败的输出**没有落盘**（只有「修复后 `mine_fmt.txt` 通过」和 `cargo fmt` 写入过的 mtime 为证）。文件名保留是为了不改动已生成的证据目录，正确读法写在这里。
-9. **一条端到端测试的前置条件是竞态的**（§5 末尾的两次矛盾记录）：`test_the_stop_cancels_this_runs_own_orders_by_id_and_never_a_market` 只等到「订单被跟踪」就往下走，而 `venue_order_id` 要晚一步才从 private 流到达，于是它断言的「按 venue order id 撤单」在时序不利时会不成立。**不是产品缺陷**（两种标识符 venue 都接受），是测试前置写弱了；**本阶段未修**（改测试字节就要重做整套验收，且不在 R3 要求内）。留给 R4：把等待条件从「被跟踪」收紧为「venue id 已知」。
-10. **`§6.4` 这个引用不在续做计划里。** ondo crate 里有 109 处 `plan §6.4`（`src/reconciliation.rs` 37 处、`src/execution.rs` 46 处等），但 `2026-09-15-ondo-perps-continuation.md` 里「6.4」出现 **0** 次；定义它的是更早的 `2026-09-14-ondo-perps-full-integration.md:282`（`### 6.4 账户与恢复`）。**引用本身没问题，只是要顺着正确的文件去查**——写在这里，免得下一个读者在续做计划里翻不到。
-11. **每次命令的树稳定性检查没有落盘记录。** §2 讲了这条的口径：八次 before/after 值由 `accept.sh` 打印到终端，从未写进文件，所以「四次 `before == after`」这句话读者无法从文件复核（能复核的是脚本本身，以及 `ce0803dc…` 那条三段相等的字节链）。要让这一条以后可复核，改法很小——把第 55、57–58 行的 `echo` 也 `>> "$OUT/mine_stability.txt"`——但**本阶段不改**：改了就跑在一份与验收不同的 `accept.sh` 上，而验收已经完成。留给 R4 的 `accept` 脚本照此写。
+1. **收敛停止的执行器在生产路径上没有调用者。** 终态字节里 `stop_and_wait`（`execution.rs:2059`）的调用点**只有 `tests/private_runtime.rs` 的 6 处**，`stop_sequence()` 与 `StopReport` 在 `src/` 内除定义处外也只在它内部被用。框架侧两个停止钩子都没接：`fn stop()`（`execution.rs:3963`，同步、按契约不能 await，只 abort task group、丢掉 private stream 句柄、标记 stopped/disconnected）与 `async fn disconnect()`（`execution.rs:4056`，await 的是**传输自己的** stop，然后标记 disconnected）。而 `disconnect()` 正是框架关机时真正 await 的那条路：`node/mod.rs:2301`（带 timeout）→ `kernel.disconnect_clients()`（`kernel.rs:1084`）→ 各 engine 的 `disconnect()` → `execution/client.rs:258` → 适配器的 `disconnect()`。准确的表述因此是：**R3.3 的收敛停止能力存在、有界、会 await、被 6 条测试与 M11/M12 两个注入覆盖——但客户端生命周期目前不会调用它；真实关机时这个 client 仍然是「丢掉传输、留下订单」。** 接进哪个钩子是一次**公开接口决定**（同步的 `stop()` 不能 await；`disconnect()` 的语义是连接拆除，把撤单放进去要先想清楚重连路径上的含义），本阶段刻意没做。**这是 R5 sandbox 的前置项之一**：在任何「真实/sandbox 停止会收敛」的说法成立之前，必须先决定它接到哪里。
+
+2. **DMS 的续期与解除语义仍是 unverified。** 冻结规范只文档化了 subscribe 帧与 `timeout_seconds`，没有说明「什么是续期」。实现采用「重发 subscribe 帧」并在代码里标注 unverified（`src/websocket/private/stream.rs`）；**这靠的是规范与 mock 契约，不是靠推测，也尚未被真实 sandbox 证实**。真实语义留待 R5 sandbox 验证（plan §R5.1）。
+3. **没有任何 sandbox 协议验证。** R3 的验收标准本身写着「达到『离线生命周期已完成』，尚不等于 sandbox 协议通过」。本阶段**没有向任何真实 venue 发出过请求**。
+4. **冷编译下 `--features python` 测试 target 的 exit 101 假设未被证实。** 观察到的是：`nautilus-persistence-macros` 真正重链接时该 target 退出 101，热态时为 0。R3.1 的 `fork_python_test_strict.txt` 显示一次**局部重编**（5 个 crate，13.81s）后 strict 通过，这与「只有完全冷的时候才失败」不完全一致，因此该假设**收窄为待验证**，不是结论。它影响 R5.1 的构建纪律，不影响 R3 的结论。
+5. **`nautilus-ondo` 的 clippy / doc 在 HEAD 是红的**（`-Dwarnings` 使既有 clippy 发现直接让构建失败；`-r3/fork_clippy.txt` 是当时的输出）。`cargo test` 是实际闸门。这是既有状态，不是 R3 引入的，也**未**在本阶段修复。
+6. **endpoint policy 的那个调用点没有直接覆盖它的测试**（§3.1 判定 1）。`execution.rs` 里「按 policy 判定选 WS URL」这一行只被它自己的上游测试间接覆盖；判定本体有 4 个 case，调用点没有。补它的测试需要打桩调用本身，收益低于噪音，因此**接受为已知缺口**而不是补一个自证式的测试。
+7. **外部仓位没有以它命名的测试**（§3.2 判定 2）。外部**订单**的策略有四条文档化并被覆盖；外部**仓位**的语义散在 `PositionAbsent` 的基线退出里，没有专门测试。本阶段不新增范围。
+8. **「断言没被削弱」只有 5 个机制有反证，不是全部 881 条。** §6 的名字集合差能证明没有测试被删或改名，但一条测试可以在名字不变的前提下被改弱。这一面由 §5 的五个注入覆盖：DMS 的有效期投影、续期截止、解除门、停止的 journal 落盘、只读不触发副作用。**其余机制在这一阶段没有反证**——它们只有 R3.2 及更早的验证（`-r32/mutation_counterproofs*.md` 的 M1–M8）。§3.3 末尾列出了 R3.3 六条要求里哪三条只被部分覆盖及具体缺口。
+9. **`-r33/mine_fmt_check.txt` 这个文件名会误导**：它是 13:45 的一次**通过**的检查，不是 13:49 那次失败的记录；那次失败的输出**没有落盘**（只有「修复后 `mine_fmt.txt` 通过」和 `cargo fmt` 写入过的 mtime 为证）。文件名保留是为了不改动已生成的证据目录，正确读法写在这里。
+10. **一条端到端测试的前置条件是竞态的**（§5 末尾的两次矛盾记录）：`test_the_stop_cancels_this_runs_own_orders_by_id_and_never_a_market` 只等到「订单被跟踪」就往下走，而 `venue_order_id` 要晚一步才从 private 流到达，于是它断言的「按 venue order id 撤单」在时序不利时会不成立。**不是产品缺陷**（两种标识符 venue 都接受），是测试前置写弱了；**本阶段未修**（改测试字节就要重做整套验收，且不在 R3 要求内）。留给 R4：把等待条件从「被跟踪」收紧为「venue id 已知」。
+11. **`§6.4` 这个引用不在续做计划里。** ondo crate 里有 109 处 `plan §6.4`（`src/reconciliation.rs` 37 处、`src/execution.rs` 46 处等），但 `2026-09-15-ondo-perps-continuation.md` 里「6.4」出现 **0** 次；定义它的是更早的 `2026-09-14-ondo-perps-full-integration.md:282`（`### 6.4 账户与恢复`）。**引用本身没问题，只是要顺着正确的文件去查**——写在这里，免得下一个读者在续做计划里翻不到。
+12. **每次命令的树稳定性检查没有落盘记录。** §2 讲了这条的口径：八次 before/after 值由 `accept.sh` 打印到终端，从未写进文件，所以「四次 `before == after`」这句话读者无法从文件复核（能复核的是脚本本身，以及 `ce0803dc…` 那条三段相等的字节链）。要让这一条以后可复核，改法很小——把第 55、57–58 行的 `echo` 也 `>> "$OUT/mine_stability.txt"`——但**本阶段不改**：改了就跑在一份与验收不同的 `accept.sh` 上，而验收已经完成。留给 R4 的 `accept` 脚本照此写。
 
 ---
 
