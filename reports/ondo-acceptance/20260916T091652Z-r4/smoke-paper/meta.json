@@ -1,0 +1,27 @@
+{
+  "account_reconciled": true,
+  "complete": true,
+  "converging_stop_available": false,
+  "environment": "production",
+  "exit_code": 0,
+  "failure": null,
+  "files": {
+    "probe": {
+      "bytes": 6530,
+      "path": "probe.json",
+      "sha256": "1ad5bcf092a1c2f070a9103296cecf3c34d52609ea2b99ec7368a6905b89f4e6"
+    }
+  },
+  "finished_at_utc": "2026-09-16T09:55:52.389+00:00",
+  "mode": "paper",
+  "outstanding_orders": 0,
+  "pending_ids": 0,
+  "protocol_verified": false,
+  "run_dir": "runs/20260916T095538790556Z",
+  "run_id": "20260916T095538790556Z",
+  "schema_version": 1,
+  "started_at_utc": "2026-09-16T09:55:38.790+00:00",
+  "stop_condition": "deadline (a normal end for this mode)",
+  "tool": "ondo_probe",
+  "venue": "ONDO"
+}

@@ -1,0 +1,132 @@
+[1m2026-09-16T09:53:36.275187500Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275255600Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001:  NAUTILUS TRADER - Automated Algorithmic Trading Platform[0m
+[1m2026-09-16T09:53:36.275256700Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001:  by Nautech Systems Pty Ltd.[0m
+[1m2026-09-16T09:53:36.275257000Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001:  Copyright (C) 2015-2026. All rights reserved.[0m
+[1m2026-09-16T09:53:36.275257500Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275258100Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⡤⠤⠤⠤⠤⠤⠤⠤⢤⡀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275258800Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠚⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⠁⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275259100Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠀⠀⠀⢀⣠⠖⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠚⠁⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275259300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠀⢀⡴⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275259600Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⣠⠏⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠒⠒⠒⠒⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275259800Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⡇⠀⠀⠀⠀⠀⠀⠀⢀⡖⠋⣠⢴⢪⠞⣩⢟⡭⠵⢤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275260000Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⣦⡙⠦⣄⡀⠀⢀⣠⠴⠋⢠⡐⣇⢸⡘⢦⡇⣏⡴⣋⡭⠖⠮⢥⡀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275260300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⢸⡉⠓⠦⠭⠭⠭⠴⣺⠃⠸⣷⢬⣓⣛⠒⠩⣌⢡⡷⢒⣫⠭⣝⡛⠆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275260500Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠙⠦⢤⣀⣠⠤⠞⣡⠞⡆⠺⣭⣭⡷⢇⣷⡻⠡⠾⣛⣒⠦⢤⡙⡆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275260700Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠈⠳⣖⠒⠒⠒⠋⠁⣠⠇⡼⢦⠀⣌⡉⢥⣄⣛⡻⢥⡈⠉⢳⡙⠇⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275260900Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠀⠀⠈⠙⣒⣒⣒⣋⡥⠞⠁⣸⠃⡇⠙⢦⢹⠀⠙⡆⢳⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275261200Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠀⠀⠀⠀⠈⠙⠒⠦⠤⠴⣚⣡⠞⠁⣠⠏⡼⢀⣠⠇⠞⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275261400Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⠉⠉⠑⠚⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-16T09:53:36.275261600Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275261900Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001:  SYSTEM SPECIFICATION[0m
+[1m2026-09-16T09:53:36.275262100Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275265000Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: CPU architecture: AMD Ryzen 9 9950X 16-Core Processor            [0m
+[1m2026-09-16T09:53:36.275266600Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: CPU(s): 32 @ 4300 MHz[0m
+[1m2026-09-16T09:53:36.275267300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: OS: kernel-26200 Windows 11 Pro[0m
+[1m2026-09-16T09:53:36.275347400Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275347800Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001:  MEMORY USAGE[0m
+[1m2026-09-16T09:53:36.275348100Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275352300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: RAM-Total: 93.65 GiB[0m
+[1m2026-09-16T09:53:36.275353000Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: RAM-Used: 29.47 GiB (31.47%)[0m
+[1m2026-09-16T09:53:36.275353800Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: RAM-Avail: 64.18 GiB (68.53%)[0m
+[1m2026-09-16T09:53:36.275360900Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: Swap-Total: 6.00 GiB[0m
+[1m2026-09-16T09:53:36.275362700Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: Swap-Used: 0.00 GiB (0.00%)[0m
+[1m2026-09-16T09:53:36.275363600Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: Swap-Avail: 6.00 GiB (100.00%)[0m
+[1m2026-09-16T09:53:36.275366200Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275366600Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001:  IDENTIFIERS[0m
+[1m2026-09-16T09:53:36.275366900Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275370500Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: trader_id: ONDO-PROBE-001[0m
+[1m2026-09-16T09:53:36.275371000Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: machine_id: 主力机器[0m
+[1m2026-09-16T09:53:36.275373700Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: instance_id: 57ad800e-42dc-4366-8e31-6f85109df0ee[0m
+[1m2026-09-16T09:53:36.275374300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: PID: 51144[0m
+[1m2026-09-16T09:53:36.275374600Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275375000Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001:  VERSIONING[0m
+[1m2026-09-16T09:53:36.275375300Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.275395400Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: nautilus_trader: 2.0.0rc4[0m
+[1m2026-09-16T09:53:36.275397400Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: nautilus_core: 0.63.0[0m
+[1m2026-09-16T09:53:36.275405200Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: python: 3.12.9[0m
+[1m2026-09-16T09:53:36.275424400Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: git_commit: 4356f1f4d678[0m
+[1m2026-09-16T09:53:36.275424900Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: rustc: 1.98.0 (88d9e12ae 2026-08-18)[0m
+[1m2026-09-16T09:53:36.275425300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: target: x86_64-pc-windows-msvc[0m
+[1m2026-09-16T09:53:36.275425600Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: profile: debug[0m
+[1m2026-09-16T09:53:36.275425900Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: panic: unwind[0m
+[1m2026-09-16T09:53:36.275426300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: precision: high (128-bit, 16 dp)[0m
+[1m2026-09-16T09:53:36.275426600Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: allocator: mimalloc 0.1.52[0m
+[1m2026-09-16T09:53:36.275427000Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: cargo_lock: a8235d35[0m
+[1m2026-09-16T09:53:36.275427300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: rust_decimal: 1.42.1[0m
+[1m2026-09-16T09:53:36.275438300Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: rustls: 0.23.43[0m
+[1m2026-09-16T09:53:36.275438700Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: aws_lc_rs: 1.18.0[0m
+[1m2026-09-16T09:53:36.275439000Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: tokio: 1.53.1[0m
+[1m2026-09-16T09:53:36.275439700Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: pyo3: 0.29.2[0m
+[1m2026-09-16T09:53:36.275440100Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: pyo3_async_runtimes: 0.29.0[0m
+[1m2026-09-16T09:53:36.310212000Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: numpy: 2.5.2[0m
+[1m2026-09-16T09:53:36.515624500Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: pandas: 3.0.5[0m
+[1m2026-09-16T09:53:36.518691200Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: msgspec: 0.21.1[0m
+[1m2026-09-16T09:53:36.518709700Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: pyarrow: 25.0.1[0m
+[1m2026-09-16T09:53:36.518712400Z[0m [INFO] ONDO-PROBE-001.ONDO-PROBE-001: pytz: 2026.3.post1[0m
+[1m2026-09-16T09:53:36.518802600Z[0m [36m[INFO] ONDO-PROBE-001.ONDO-PROBE-001: =================================================================[0m
+[1m2026-09-16T09:53:36.518849400Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Building system kernel[0m
+[1m2026-09-16T09:53:36.519885400Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node::builder: Registered DataClient-ONDO[0m
+[1m2026-09-16T09:53:36.520047700Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node::builder: Built successfully[0m
+[1m2026-09-16T09:53:36.521540800Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: Event loop starting[0m
+[1m2026-09-16T09:53:36.521556400Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Starting[0m
+[1m2026-09-16T09:53:36.521607700Z[0m [INFO] ONDO-PROBE-001.nautilus_execution::engine: Started[0m
+[1m2026-09-16T09:53:36.521613300Z[0m [INFO] ONDO-PROBE-001.nautilus_risk::engine: Started[0m
+[1m2026-09-16T09:53:36.521615200Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Initializing trader[0m
+[1m2026-09-16T09:53:36.521620800Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Started[0m
+[1m2026-09-16T09:53:36.521641000Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Connecting data clients...[0m
+[1m2026-09-16T09:53:36.521668300Z[0m [INFO] ONDO-PROBE-001.nautilus_ondo::data: Connecting ONDO[0m
+[1m2026-09-16T09:53:37.093147100Z[0m [INFO] ONDO-PROBE-001.nautilus_ondo::data: Connected ONDO with 1 instruments[0m
+[1m2026-09-16T09:53:37.093376900Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Connecting execution clients...[0m
+[1m2026-09-16T09:53:37.093398500Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: Awaiting engine connections (10s timeout)...[0m
+[1m2026-09-16T09:53:37.525003900Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: All engine clients connected[0m
+[1m2026-09-16T09:53:37.525067800Z[0m [94m[INFO] ONDO-PROBE-001.nautilus_live::node: Starting execution state reconciliation...[0m
+[1m2026-09-16T09:53:37.525114500Z[0m [INFO] ONDO-PROBE-001.nautilus_portfolio::portfolio: Initialized 0 open orders[0m
+[1m2026-09-16T09:53:37.525144700Z[0m [INFO] ONDO-PROBE-001.nautilus_portfolio::portfolio: Initialized 0 open positions[0m
+[1m2026-09-16T09:53:37.525163300Z[0m [INFO] ONDO-PROBE-001.nautilus_portfolio::portfolio: Initialized 0 Wallet reservations[0m
+[1m2026-09-16T09:53:37.525165400Z[0m [94m[INFO] ONDO-PROBE-001.nautilus_live::node: Startup reconciliation completed in 0.00s[0m
+[1m2026-09-16T09:53:37.525170200Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Starting trader...[0m
+[1m2026-09-16T09:53:37.525191400Z[0m [INFO] ONDO-PROBE-001.nautilus_execution::order_emulator::emulator: Started[0m
+[1m2026-09-16T09:53:37.525203000Z[0m [INFO] ONDO-PROBE-001.nautilus_system::trader: Starting[0m
+[1m2026-09-16T09:53:37.525212300Z[0m [INFO] ONDO-PROBE-001.nautilus_system::trader: Running[0m
+[1m2026-09-16T09:53:37.525213800Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Trader started[0m
+[1m2026-09-16T09:53:39.627660600Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: Received stop signal from handle[0m
+[1m2026-09-16T09:53:39.627724900Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Stopping trader...[0m
+[1m2026-09-16T09:53:39.627766900Z[0m [INFO] ONDO-PROBE-001.nautilus_system::trader: Stopping[0m
+[1m2026-09-16T09:53:39.628110700Z[0m [INFO] ONDO-PROBE-001.nautilus_system::trader: Stopped[0m
+[1m2026-09-16T09:53:39.628355800Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: Awaiting residual events (10s)...[0m
+[1m2026-09-16T09:53:49.642930200Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Disconnecting clients...[0m
+[1m2026-09-16T09:53:49.643230000Z[0m [INFO] ONDO-PROBE-001.nautilus_ondo::data: Disconnecting ONDO[0m
+[1m2026-09-16T09:53:49.769726200Z[0m [INFO] ONDO-PROBE-001.nautilus_ondo::data: Disconnected ONDO[0m
+[1m2026-09-16T09:53:49.769773800Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: Awaiting engine disconnections (10s timeout)...[0m
+[1m2026-09-16T09:53:49.769791900Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: All engine clients disconnected[0m
+[1m2026-09-16T09:53:49.769852600Z[0m [INFO] ONDO-PROBE-001.nautilus_execution::engine: Stopped[0m
+[1m2026-09-16T09:53:49.769857600Z[0m [INFO] ONDO-PROBE-001.nautilus_risk::engine: Stopped[0m
+[1m2026-09-16T09:53:49.769860700Z[0m [INFO] ONDO-PROBE-001.nautilus_execution::order_emulator::emulator: Stopped[0m
+[1m2026-09-16T09:53:49.769866900Z[0m [INFO] ONDO-PROBE-001.nautilus_system::kernel: Stopped[0m
+[1m2026-09-16T09:53:49.769885100Z[0m [INFO] ONDO-PROBE-001.nautilus_live::node: Event loop stopped[0m
+ondo_probe: banner
+{
+  "mode": "public",
+  "environment": "production",
+  "read_capable": true,
+  "write_capable": false,
+  "dms_armed": false,
+  "cancel_capable": false,
+  "synthetic": false,
+  "expected_stop_condition": "deadline (a normal end for this mode)",
+  "deadline_secs": "3.00",
+  "endpoint": "https://api.ondoperps.xyz",
+  "endpoint_source": "module-default",
+  "endpoint_class": "production",
+  "credentials_required": false,
+  "credential_variables": [],
+  "run_id": "20260916T095336139109Z"
+}
+ondo_probe: caps
+  minutes                        configured=      0.05  cap=        60  applied=      0.05
+  notional_per_order_usd         configured=         -  cap=        50  applied=         -
+  exposure_usd                   configured=         -  cap=       100  applied=         -
+  orders                         configured=         -  cap=        10  applied=         -
+ondo_probe: envelope {"instruments": [], "notional_usd": null, "max_orders": null, "max_exposure_usd": null, "allow_sandbox_orders": false, "armed": false}
+ondo_probe: published reports\ondo-acceptance\20260916T091652Z-r4\smoke-public\probe.json (run 20260916T095336139109Z, complete=True)
+ondo_probe: exit 0 does not mean the account is clean - the adapter's ordered bounded stop executor (OndoAccountRuntime::stop_and_wait: CancelOwnOrders -> ConfirmOwnOrders -> ReleaseDeadMansSwitch -> ClosePrivateStream) is tested in Rust but has no call site outside crates/adapters/ondo/tests/private_runtime.rs: the client lifecycle never reaches it, so the framework stop()/disconnect() this probe can call does not cancel this run's orders, does not confirm the cancels and does not release the dead-man switch. The client drops the transport and leaves orders behind (R3 acceptance section 7 item 1); this is the prerequisite the R5 sandbox submission is blocked on

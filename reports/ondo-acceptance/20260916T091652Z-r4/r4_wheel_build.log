@@ -1,0 +1,155 @@
+=== COMMAND ===
+maturin build --manifest-path python/pyproject.toml --profile nextest --out dist-r4 -i <fork-venv-python>
+=== FORK SHA ===
+4356f1f4d678cc7565397e8ce2389f266f895a91
+=== FORK dirty (non-pyi) ===
+ M crates/adapters/ondo/tests/private_runtime.rs
+=== TOOLCHAIN ===
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+=== START 2026-09-16T09:17:03Z ===
+error: the manifest-path must be a path to a Cargo.toml file: `E:\nautilus_trader\python\pyproject.toml`
+💥 maturin failed
+  Caused by: Cargo metadata failed. Does your crate compile with `cargo build`?
+  Caused by: `cargo metadata` exited with an error: 
+EXIT=1
+=== END 2026-09-16T09:17:04Z ===
+
+=== ATTEMPT 1 FAILED: 'maturin build --manifest-path python/pyproject.toml' -> maturin wants a Cargo.toml. Rerun from the python/ directory, where it finds pyproject.toml on its own. ===
+=== ATTEMPT 2 COMMAND (cwd=E:/nautilus_trader/python) ===
+maturin build --profile nextest --out ../dist-r4 -i <fork-venv-python>
+=== START 2026-09-16T09:17:16Z ===
+🍹 Building a mixed python/rust project
+🐍 Found CPython 3.12 at E:\nautilus_trader\.venv\Scripts\python.exe
+🔗 Found pyo3 bindings
+📡 Using build options features from pyproject.toml
+   Compiling ring v0.17.14
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+   Compiling aws-lc-sys v0.44.0
+   Compiling nautilus-common v0.63.0 (E:\nautilus_trader\crates\common)
+   Compiling blake3 v1.8.7
+   Compiling libmimalloc-sys v0.1.49
+   Compiling mimalloc v0.1.52
+   Compiling zstd-safe v7.2.4
+   Compiling zstd v0.13.3
+   Compiling arrow-ipc v59.2.0
+   Compiling compression-codecs v0.4.38
+   Compiling async-compression v0.4.43
+   Compiling dbn v0.68.0
+   Compiling arrow v59.2.0
+   Compiling arrow v57.3.1 (E:\nautilus_trader\patches\arrow-compat)
+   Compiling hypersync-schema v0.4.0
+   Compiling nautilus-model v0.63.0 (E:\nautilus_trader\crates\model)
+   Compiling aws-lc-rs v1.18.0
+   Compiling rustls v0.23.43
+   Compiling rustls-webpki v0.103.15
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling nautilus-cryptography v0.63.0 (E:\nautilus_trader\crates\cryptography)
+   Compiling tungstenite v0.30.0
+   Compiling hyper-rustls v0.27.9
+   Compiling sockudo-ws v2.0.1
+   Compiling tonic v0.13.1
+   Compiling redis v1.6.0
+   Compiling reqwest v0.12.28
+   Compiling reqwest v0.13.4
+   Compiling tokio-tungstenite v0.30.0
+   Compiling object_store v0.13.2
+   Compiling reqwest-eventsource v0.6.0
+   Compiling nautilus-network v0.63.0 (E:\nautilus_trader\crates\network)
+   Compiling alloy-transport-http v2.4.1
+   Compiling databento v0.60.0
+   Compiling cosmos-sdk-proto v0.27.0
+   Compiling alloy-rpc-client v2.4.1
+   Compiling alloy-provider v2.4.1
+   Compiling alloy-contract v2.4.1
+   Compiling alloy v2.4.1
+   Compiling parquet v59.2.0
+   Compiling dydx-proto v0.4.0
+   Compiling cosmrs v0.22.0
+   Compiling datafusion-common v55.0.0
+   Compiling parquet v57.3.1 (E:\nautilus_trader\patches\parquet-compat)
+   Compiling hypersync-client v1.4.0
+   Compiling datafusion-expr-common v55.0.0
+   Compiling datafusion-physical-expr-common v55.0.0
+   Compiling datafusion-functions-window-common v55.0.0
+   Compiling datafusion-functions-aggregate-common v55.0.0
+   Compiling datafusion-expr v55.0.0
+   Compiling datafusion-physical-expr v55.0.0
+   Compiling datafusion-execution v55.0.0
+   Compiling datafusion-functions v55.0.0
+   Compiling datafusion-functions-aggregate v55.0.0
+   Compiling datafusion-functions-window v55.0.0
+   Compiling datafusion-optimizer v55.0.0
+   Compiling datafusion-physical-plan v55.0.0
+   Compiling datafusion-physical-expr-adapter v55.0.0
+   Compiling datafusion-functions-nested v55.0.0
+   Compiling datafusion-sql v55.0.0
+   Compiling nautilus-indicators v0.63.0 (E:\nautilus_trader\crates\indicators)
+   Compiling nautilus-analysis v0.63.0 (E:\nautilus_trader\crates\analysis)
+   Compiling nautilus-serialization v0.63.0 (E:\nautilus_trader\crates\serialization)
+   Compiling datafusion-session v55.0.0
+   Compiling datafusion-datasource v55.0.0
+   Compiling nautilus-portfolio v0.63.0 (E:\nautilus_trader\crates\portfolio)
+   Compiling nautilus-execution v0.63.0 (E:\nautilus_trader\crates\execution)
+   Compiling nautilus-infrastructure v0.63.0 (E:\nautilus_trader\crates\infrastructure)
+   Compiling datafusion-catalog v55.0.0
+   Compiling datafusion-pruning v55.0.0
+   Compiling datafusion-datasource-arrow v55.0.0
+   Compiling datafusion-datasource-csv v55.0.0
+   Compiling datafusion-datasource-json v55.0.0
+   Compiling datafusion-physical-optimizer v55.0.0
+   Compiling datafusion-datasource-parquet v55.0.0
+   Compiling nautilus-trading v0.63.0 (E:\nautilus_trader\crates\trading)
+   Compiling nautilus-risk v0.63.0 (E:\nautilus_trader\crates\risk)
+   Compiling nautilus-testkit v0.63.0 (E:\nautilus_trader\crates\testkit)
+   Compiling datafusion-catalog-listing v55.0.0
+   Compiling datafusion-functions-table v55.0.0
+   Compiling datafusion v55.0.0
+   Compiling nautilus-persistence v0.63.0 (E:\nautilus_trader\crates\persistence)
+   Compiling nautilus-data v0.63.0 (E:\nautilus_trader\crates\data)
+   Compiling nautilus-system v0.63.0 (E:\nautilus_trader\crates\system)
+   Compiling nautilus-live v0.63.0 (E:\nautilus_trader\crates\live)
+   Compiling nautilus-backtest v0.63.0 (E:\nautilus_trader\crates\backtest)
+   Compiling nautilus-sandbox v0.63.0 (E:\nautilus_trader\crates\adapters\sandbox)
+   Compiling nautilus-binance v0.63.0 (E:\nautilus_trader\crates\adapters\binance)
+   Compiling nautilus-kraken v0.63.0 (E:\nautilus_trader\crates\adapters\kraken)
+   Compiling nautilus-coinbase v0.63.0 (E:\nautilus_trader\crates\adapters\coinbase)
+   Compiling nautilus-derive v0.63.0 (E:\nautilus_trader\crates\adapters\derive)
+   Compiling nautilus-hyperliquid v0.63.0 (E:\nautilus_trader\crates\adapters\hyperliquid)
+   Compiling nautilus-lighter v0.63.0 (E:\nautilus_trader\crates\adapters\lighter)
+   Compiling nautilus-okx v0.63.0 (E:\nautilus_trader\crates\adapters\okx)
+   Compiling nautilus-polymarket v0.63.0 (E:\nautilus_trader\crates\adapters\polymarket)
+   Compiling nautilus-dydx v0.63.0 (E:\nautilus_trader\crates\adapters\dydx)
+   Compiling nautilus-databento v0.63.0 (E:\nautilus_trader\crates\adapters\databento)
+   Compiling nautilus-deribit v0.63.0 (E:\nautilus_trader\crates\adapters\deribit)
+   Compiling nautilus-interactive-brokers v0.63.0 (E:\nautilus_trader\crates\adapters\interactive_brokers)
+   Compiling nautilus-betfair v0.63.0 (E:\nautilus_trader\crates\adapters\betfair)
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+   Compiling nautilus-blockchain v0.63.0 (E:\nautilus_trader\crates\adapters\blockchain)
+   Compiling nautilus-tardis v0.63.0 (E:\nautilus_trader\crates\adapters\tardis)
+   Compiling nautilus-architect-ax v0.63.0 (E:\nautilus_trader\crates\adapters\architect_ax)
+   Compiling nautilus-bitmex v0.63.0 (E:\nautilus_trader\crates\adapters\bitmex)
+   Compiling nautilus-bybit v0.63.0 (E:\nautilus_trader\crates\adapters\bybit)
+   Compiling nautilus-aster v0.63.0 (E:\nautilus_trader\crates\adapters\aster)
+   Compiling nautilus-pyo3 v0.63.0 (E:\nautilus_trader\crates\pyo3)
+    Finished `nextest` profile [unoptimized] target(s) in 3m 33s
+🔗 External shared libraries to be copied into the wheel:
+  E:\nautilus_trader\target\maturin\nautilus_pyo3.dll requires:
+    zlib.dll => \\?\C:\ProgramData\miniconda3\zlib.dll
+⚠️  Warning: Your library requires copying the above external libraries. Re-run with `--auditwheel=repair` to copy them into the wheel.
+📦 Including files matching "**/*.pyi"
+📦 Built wheel for CPython 3.12 to ../dist-r4\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+EXIT=0
+=== END 2026-09-16T09:21:03Z ===
+=== WHEEL ===
+path: E:/nautilus_trader/dist-r4/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+-rw-r--r-- 1 myron 197609 202125972 2026-09-16 17:21 dist-r4/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+sha256: 2e7b0b6e0511b08fe19628b81b17a25497d939de1aa72bb44c776fd4740498f0
+=== DISPLACED INSTALL (before) ===
+dist-p3: nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl (built 2026-09-15 14:05)
+dist-p3 sha256: b49ef609bbd42cc37ef3315f15ddeae44b7ae3ec83275bca86df07bcf70f6436
+=== FORK SHA THE WHEEL WAS BUILT FROM ===
+4356f1f4d678cc7565397e8ce2389f266f895a91
+=== FORK dirty scope at build time (non-pyi) ===
+ M crates/adapters/ondo/tests/private_runtime.rs
+?? dist-r4/

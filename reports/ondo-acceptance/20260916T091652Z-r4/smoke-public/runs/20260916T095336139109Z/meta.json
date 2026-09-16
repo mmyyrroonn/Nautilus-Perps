@@ -1,0 +1,27 @@
+{
+  "account_reconciled": false,
+  "complete": true,
+  "converging_stop_available": false,
+  "environment": "production",
+  "exit_code": 0,
+  "failure": null,
+  "files": {
+    "probe": {
+      "bytes": 6410,
+      "path": "probe.json",
+      "sha256": "bf30238a2094ad1dbaa6aba3d84c314b15dd817d899635dce7c899a7f9c9098d"
+    }
+  },
+  "finished_at_utc": "2026-09-16T09:53:49.772+00:00",
+  "mode": "public",
+  "outstanding_orders": 0,
+  "pending_ids": 0,
+  "protocol_verified": false,
+  "run_dir": "runs/20260916T095336139109Z",
+  "run_id": "20260916T095336139109Z",
+  "schema_version": 1,
+  "started_at_utc": "2026-09-16T09:53:36.139+00:00",
+  "stop_condition": "deadline (a normal end for this mode)",
+  "tool": "ondo_probe",
+  "venue": "ONDO"
+}

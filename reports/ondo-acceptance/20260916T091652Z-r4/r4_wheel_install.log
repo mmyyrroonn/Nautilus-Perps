@@ -1,0 +1,14 @@
+=== COMMAND ===
+uv pip install --python .venv/Scripts/python.exe E:/nautilus_trader/dist-r4/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+=== START 2026-09-16T09:22:03Z ===
+Resolved 1 package in 8ms
+Prepared 1 package in 482ms
+Uninstalled 1 package in 86ms
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 1 package in 292ms
+ - nautilus-trader==2.0.0rc4 (from file:///E:/nautilus_trader/dist-p3/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl)
+ + nautilus-trader==2.0.0rc4 (from file:///E:/nautilus_trader/dist-r4/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl)
+EXIT=0
+=== END 2026-09-16T09:22:05Z ===
