@@ -1,0 +1,3 @@
+$ cargo +1.98.0 check -p nautilus-ondo --features python --locked --offline
+    Finished `dev` profile [unoptimized] target(s) in 0.56s
+exit code: 0

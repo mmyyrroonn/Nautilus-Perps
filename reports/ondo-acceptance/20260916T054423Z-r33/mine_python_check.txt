@@ -1,0 +1,2 @@
+    Checking nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `dev` profile [unoptimized] target(s) in 1.73s

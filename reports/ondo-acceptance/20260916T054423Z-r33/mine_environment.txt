@@ -1,0 +1,71 @@
+# R3.3 acceptance environment
+
+date -u: 2026-09-16T05:52:49Z
+host shell: MINGW64_NT-10.0-26200 3.6.7-fb42d713.x86_64
+
+## FORK E:\nautilus_trader
+branch: task/ondo-r3-private-lifecycle
+HEAD:   498ff9c52ae61414f37f76f865db140d767ca79d
+HEAD message: ondo: bound the funding walk, keep the watermark, and answer the journal once (R3.2 follow-up)
+
+## APP E:\Nautilus-Perps
+branch: task/ondo-r3-private-lifecycle
+HEAD:   0fd91976d7606b68f94f71306d2b5fd96bd51237
+
+## ondo sources and tests, sha256
+71ead54a3e621bdc318ff32e3372b25ec5615763aa45cc1c38faf4d793542c14 *crates/adapters/ondo/src/common/consts.rs
+896ef79212d85bd14c3c6d85c94ef118e11412db4a7309069e03a1a7eff690c8 *crates/adapters/ondo/src/common/credential.rs
+6826f23caa449f166ba16c0692f28b8bbb33bf449c1c7fca33ed4ed46e3a3a9d *crates/adapters/ondo/src/common/endpoint.rs
+38c837fcdd4c25a17e0cdf40691448ebbcd121c54247673843a337c0b282da52 *crates/adapters/ondo/src/common/enums.rs
+0c9eb974169a148a4c4a3a9229a46c7970a45dd5268a4de4a5cc61d9b58e39bf *crates/adapters/ondo/src/common/mod.rs
+95521ef7bcf5ce15efbf35985d4fa777423be551006ad4efaba0005ea477bf75 *crates/adapters/ondo/src/common/parse.rs
+00a8336983fff73d2dac8a0ebd51eb7da0b0e2aceb799e588caf9f8eb7da479e *crates/adapters/ondo/src/config.rs
+eea550cdac6d70d07f3144330038d8f6dac17e90a31c3f6c89d294820b93dfc8 *crates/adapters/ondo/src/data.rs
+f6a1e2216e4df5e342b57ce083b833b658363232778a1b146bd4e2e578fc4552 *crates/adapters/ondo/src/execution.rs
+edae4b526f7e9669c43f900f7e14768f7057a134c900d96a75089a47ade811bc *crates/adapters/ondo/src/factories.rs
+235f57de6b562b91efd9581c097a357739fa0d216ff7fdcc36990bbcbc281561 *crates/adapters/ondo/src/http/client.rs
+0b6bd8a1a8bd67e9475330c91eaea7d08615d2e4f7e08772e7b8481a1868db9b *crates/adapters/ondo/src/http/error.rs
+83eb7410385d06417896d6665de0ee916d72bb0c6e1edcfc2503a33f2732169b *crates/adapters/ondo/src/http/mod.rs
+abd2e32148a1d203523368e8366bbe6c60de38af01f75a1661867a6068043b68 *crates/adapters/ondo/src/http/models.rs
+6e508a646ba242d08e70bf81a5cebe0fcfd00460d6d0d054f37682c4d4281d57 *crates/adapters/ondo/src/http/orders.rs
+3a0c39545a01f149fc2dc95722c1129bb12f0f09910fdd264c5db60b1f69fcc1 *crates/adapters/ondo/src/http/private.rs
+24c3072c0128195568f7b537a98cfaa043cac3a4b33af5494c5708855150f5b1 *crates/adapters/ondo/src/http/query.rs
+6460f4a1582591076fdba9a6182ad1a80187ee3a99bfc584a342720b0a0b1f95 *crates/adapters/ondo/src/http/rate_limit.rs
+427eb3b2ee75b6b07c6cad6f675ee03b3c7226d1d6a90528251b6d79ffac3237 *crates/adapters/ondo/src/lib.rs
+1a5f1093a41946f5eb3f06bd4c7b5c86dacbdf37332255c3367339d6cd38e7f6 *crates/adapters/ondo/src/python/config.rs
+d5938659efbc0b73ec44bd57210a91b6236aeb9c971110a5a1966b8ea85ebe53 *crates/adapters/ondo/src/python/factories.rs
+ea47b597f9de740ca297cdb6149f3dfce20f5d79e21b3d0569d81e7851f30fce *crates/adapters/ondo/src/python/http.rs
+85d9b8fdb6756810be96b8b412a863cc2c3922363b3f83141e486fc327d5d4ab *crates/adapters/ondo/src/python/mod.rs
+df982eb3014883146f20eed45a19191802517237f4c6e05120f21a5aa39fea64 *crates/adapters/ondo/src/reconciliation.rs
+11017ffa2aea32ce8834e202617725b159dfc519c59e94108025fa619f826401 *crates/adapters/ondo/src/recording.rs
+4d7bd009623d742bf2222d2549824430cf9526ea1420e0353bfe04f20db3baef *crates/adapters/ondo/src/signing.rs
+d5134a4e76e69af94349f5f39fcd1331fee3fb2497b3f3225e0670c5b5dbc740 *crates/adapters/ondo/src/websocket/book.rs
+546cee22a4ccdfc1940d0fc670a29ae0dd7e8b0a65c14b01c262b0b8e4a82b22 *crates/adapters/ondo/src/websocket/client.rs
+449b2bad2ea4a6d6f8a5fb9712e66bf59cd5d3674ab1ac3bea9c6dc16d512e48 *crates/adapters/ondo/src/websocket/messages.rs
+debd4f6ca9903d69c6a445b21de4f571e2ff721581fb15b10c7831b69df3cdff *crates/adapters/ondo/src/websocket/mod.rs
+b62e60cd482dbe8a948084a1b232c09acf3f30d444d68932fdabe5aada2b40a5 *crates/adapters/ondo/src/websocket/parse.rs
+5622009d737da68e3e3d32f48b8d4c96f88c99d1a98afbfafaa318c8bcdaa35a *crates/adapters/ondo/src/websocket/private/diagnostics.rs
+4fc088dc28715793660e20479d51d23dddc6cbc3db63cc14d6c19bd85a36efd8 *crates/adapters/ondo/src/websocket/private/messages.rs
+84bd7e18a314b1ac2892563b4d746188ac23964c77b498a7400be7fc4ccc74f1 *crates/adapters/ondo/src/websocket/private/mod.rs
+0500fcffc82a2c2eb4c19a8ad8766fcccf9913bca38bca387b735cf389077cd6 *crates/adapters/ondo/src/websocket/private/parse.rs
+9803e2049e22b7a2300680c02c70c9ab0c67dc23b0a360bf22ece23d48461dfd *crates/adapters/ondo/src/websocket/private/session.rs
+ca801839d5067395a34820ff8b66611ca027adafe177aaa8e0139e1af7c0c961 *crates/adapters/ondo/src/websocket/private/stream.rs
+b2a84a21022e75b253f07afced950f4888b967cdf957f1e1c58f0593a29836ac *crates/adapters/ondo/tests/execution.rs
+eede82b10833983b835b0d16966b462c7dcb7ea922185927238524b610c273a1 *crates/adapters/ondo/tests/http_client.rs
+2896b7c2ec7cd192bb4dc44bc39109109e5ce43d8ffb75827d3595153013c485 *crates/adapters/ondo/tests/http_contract.rs
+62026500abab249ada626348ad86a7f4bc228dbf32868cdea2f327308955b7e0 *crates/adapters/ondo/tests/market_data.rs
+0bf7b8d2cabb906cc0c90cd079a624c9a9364b948c4a13ff7d2bc10ea5c9908f *crates/adapters/ondo/tests/private_runtime.rs
+02e821c9b87407d0c361689c2f6cb59142b0021fc469121e54eaae8dc209dce5 *crates/adapters/ondo/tests/python.rs
+93b329d7cee613a05410e6c6291169e09fdbf1eb10edbd5cf32ce4b7ef615f66 *crates/adapters/ondo/tests/reconciliation.rs
+4a489a35771e565913e93e63bf47db882787647e0b756e9f0e48b402e4b03a2e *crates/adapters/ondo/tests/signing.rs
+
+## git status --porcelain, ondo only, non-.pyi
+ M crates/adapters/ondo/src/config.rs
+ M crates/adapters/ondo/src/execution.rs
+ M crates/adapters/ondo/src/python/config.rs
+ M crates/adapters/ondo/src/reconciliation.rs
+ M crates/adapters/ondo/src/websocket/private/diagnostics.rs
+ M crates/adapters/ondo/src/websocket/private/session.rs
+ M crates/adapters/ondo/src/websocket/private/stream.rs
+ M crates/adapters/ondo/tests/private_runtime.rs
+ M crates/adapters/ondo/tests/reconciliation.rs

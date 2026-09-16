@@ -1,0 +1,13 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.53s
+     Running tests\python.rs (target\debug\deps\python-dc83a5aa5ce41358.exe)
+
+running 6 tests
+test test_the_data_client_config_and_the_http_client_take_no_secret ... ok
+test test_the_data_client_config_defaults_match_the_plan ... ok
+test test_the_private_session_is_configurable_from_python_and_carries_no_secret ... ok
+test test_the_http_client_constructs_offline_and_exposes_the_four_reads ... ok
+test test_the_python_module_registers_the_documented_surface ... ok
+test test_the_python_factories_share_one_environment_budget_under_concurrency ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+

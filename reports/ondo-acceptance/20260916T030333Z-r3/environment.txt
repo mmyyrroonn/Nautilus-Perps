@@ -1,0 +1,16 @@
+# R3.1 environment and heads
+date(UTC): 2026-09-16T03:09:12Z
+
+FORK: E:\nautilus_trader
+branch: task/ondo-r3-private-lifecycle
+branch point (onde-perps): 3133e2501b990745655d2b6226801099b60e6b77
+HEAD: 3133e2501b990745655d2b6226801099b60e6b77
+working tree changes: 18 non-py files
+
+APP: E:\Nautilus-Perps
+branch (app): task/ondo-r3-private-lifecycle
+app HEAD: 0fd91976d7606b68f94f71306d2b5fd96bd51237
+
+post-mutation-restore hashes (proves the tree carries no injected byte):
+9e636a1266f7c38cd8ad6d35f38ba4650a2b84cfc3907ac4be69d9185c82afba *crates/adapters/ondo/src/execution.rs
+ff9725ac445ccc62b3003baee0bfffbec4bb7a2f03cc903a8385e39eca7781fa *crates/adapters/ondo/src/websocket/private/stream.rs

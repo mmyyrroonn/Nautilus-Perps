@@ -1,0 +1,100 @@
+### fmt --check
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+Warning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.
+Warning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.
+Warning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.
+Warning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.
+EXIT=0
+### full suite
+test test_decimals_and_utf8_survive_the_signature::case_1_decimal_strings ... ok
+test test_decimals_and_utf8_survive_the_signature::case_2_utf8_query_value ... ok
+test test_an_expired_timestamp_is_not_a_401_and_not_a_forbidden ... ok
+test test_the_documented_key_prefixes_are_kept_intact ... ok
+test test_the_documented_auth_failures_are_distinct_and_explicit::case_6_wrong_scope ... ok
+test test_the_documented_auth_failures_are_distinct_and_explicit::case_7_ip_not_permitted ... ok
+test test_empty_and_delete_bodies_are_signed_over_exactly::case_2_delete_with_body ... ok
+test test_the_documented_auth_failures_are_distinct_and_explicit::case_3_unparseable_timestamp ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_1_the_official_sandbox_host ... ok
+test test_changing_one_byte_of_the_query_or_the_body_changes_the_signature ... ok
+test test_every_reference_vector_matches_the_rust_signature ... ok
+test test_decimals_and_utf8_survive_the_signature::case_3_utf8_body ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_2_the_official_host_in_another_case ... ok
+test test_the_documented_auth_failures_are_distinct_and_explicit::case_9_bare_403 ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_3_the_official_host_with_a_trailing_root_dot ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_5_a_loopback_test_service ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_6_a_loopback_test_service_with_a_path ... ok
+test test_the_documented_auth_failures_are_distinct_and_explicit::case_1_wrong_key ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_7_an_ipv6_loopback_test_service ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_8_an_encrypted_loopback_test_service ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_8_a_scheme_less_production_host ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_1_the_production_host ... ok
+test test_the_endpoint_gate_admits_the_sandbox_authority_and_a_loopback_test_service::case_4_the_official_host_with_its_default_port ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_2_the_production_apex ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_3_another_production_subdomain ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_03_a_subdomain_of_the_sandbox_host ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_5_the_production_host_on_another_port ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_7_the_production_host_behind_userinfo ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_01_an_unrelated_remote_host ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_02_a_host_that_merely_contains_the_sandbox_host ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_04_the_loopback_name ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_4_the_production_host_in_another_case ... ok
+test test_the_endpoint_gate_is_not_weaker_than_the_production_blacklist_it_replaces::case_6_the_production_host_with_a_trailing_root_dot ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_05_a_private_network_address ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_08_the_sandbox_host_on_another_port ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_06_an_unencrypted_remote_service ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_07_the_sandbox_host_over_plain_http ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_10_userinfo_in_front_of_an_unrelated_host ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_11_a_homoglyph_of_the_sandbox_host ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_09_userinfo_in_front_of_the_sandbox_host ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_12_an_empty_url ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_13_a_bare_word ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_15_a_scheme_relative_url ... ok
+test test_the_endpoint_gate_refuses_every_authority_outside_the_allowlist::case_14_a_scheme_less_host ... ok
+test test_the_sandbox_credential_variables_are_the_documented_names ... ok
+test test_the_sandbox_gate_refuses_production_in_every_form ... ok
+test test_the_reference_fixture_is_the_python_generated_one ... ok
+test test_the_secret_wrapper_never_renders_the_secret ... ok
+test test_the_ws_login_digest_is_the_timestamp_first_order_and_not_the_other ... ok
+test test_a_production_base_url_cannot_bypass_the_sandbox_gate ... ok
+
+test result: ok. 63 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests nautilus_ondo
+
+running 1 test
+test crates\adapters\ondo\src\recording.rs - recording::PublicFrame (line 228) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+PIPE_EXIT=0

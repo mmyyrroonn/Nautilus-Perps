@@ -1,0 +1,26 @@
+# mutation: removed the note_lost_reports call from PrivateEvent::ProtocolError
+# file: crates/adapters/ondo/src/websocket/private/stream.rs  sha256 before: ff9725ac445ccc62b3003baee0bfffbec4bb7a2f03cc903a8385e39eca7781fa
+$ cargo +1.98.0 test -p nautilus-ondo --locked --offline --test private_runtime test_a_decode_loss
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.95s
+     Running tests\private_runtime.rs (target\debug\deps\private_runtime-18fa3675b245edee.exe)
+
+running 1 test
+test test_a_decode_loss_makes_the_account_uncertain_and_keeps_the_socket ... FAILED
+
+failures:
+
+---- test_a_decode_loss_makes_the_account_uncertain_and_keeps_the_socket stdout ----
+
+thread 'test_a_decode_loss_makes_the_account_uncertain_and_keeps_the_socket' (42908) panicked at crates\adapters\ondo\tests\private_runtime.rs:687:9:
+timed out waiting for the loss to be recorded after 10.0235669s; run state is PrivateRunSnapshot { state: TradingReady, detail: "the account was read and the switch is confirmed" }, the account is Ready, refusal is None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_a_decode_loss_makes_the_account_uncertain_and_keeps_the_socket
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 10.30s
+
+error: test failed, to rerun pass `-p nautilus-ondo --test private_runtime`
+exit code: 101

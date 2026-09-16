@@ -1,0 +1,53 @@
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.38s
+     Running tests\private_runtime.rs (target\debug\deps\private_runtime-18fa3675b245edee.exe)
+
+running 32 tests
+test test_the_session_state_machine_needs_no_socket ... ok
+test test_the_runtime_and_the_client_share_one_account ... ok
+test test_an_unconnected_client_has_no_private_session ... ok
+test test_a_buffer_overflow_makes_the_account_uncertain ... ok
+test test_a_report_that_arrives_during_a_pass_is_replayed_rather_than_lost ... ok
+test test_a_run_with_no_journal_path_says_so_and_keeps_reading_the_account ... ok
+test test_a_run_whose_journal_cannot_be_restored_refuses_new_risk ... ok
+test test_the_login_frame_is_outside_every_recording_boundary ... ok
+test test_a_read_only_session_never_arms_the_switch_and_never_trades ... ok
+test test_a_synchronous_stop_also_ends_the_transport_task ... ok
+test test_the_account_state_travels_from_the_emitter_into_the_cache ... ok
+test test_the_verified_account_and_its_positions_reach_the_engine ... ok
+test test_a_new_order_after_the_deadline_is_refused_with_nothing_sent ... ok
+test test_the_release_step_has_a_frame_to_send ... ok
+test test_a_journal_that_stops_accepting_writes_is_reported_and_does_not_stop_trading ... ok
+test test_a_decode_loss_makes_the_account_uncertain_and_keeps_the_socket ... ok
+test test_a_refused_login_ends_the_session_and_never_becomes_ready ... ok
+test test_a_read_only_session_triggers_no_switch_side_effect_and_no_cancel ... ok
+test test_a_refused_subscription_never_becomes_ready ... ok
+test test_the_stop_confirms_the_cancels_before_it_releases_the_switch ... ok
+test test_the_stop_cancels_this_runs_own_orders_by_id_and_never_a_market ... ok
+test test_an_order_after_the_stop_is_refused_with_nothing_sent ... ok
+test test_a_lapsed_switch_takes_the_run_state_out_of_trading_ready ... ok
+test test_a_fill_recorded_in_the_checkpoint_is_not_replayed_after_a_restart ... ok
+test test_a_fill_reported_before_the_checkpoint_crash_is_replayed_under_one_identity ... ok
+test test_stop_leaves_no_task_behind ... ok
+test test_a_stop_that_times_out_reports_a_timeout_and_not_a_completion ... ok
+test test_an_armed_switch_is_renewed_before_its_timeout ... FAILED
+test test_the_whole_private_lifecycle_from_login_to_a_refused_reconnect ... ok
+test test_a_periodic_pass_and_a_second_caller_cannot_both_own_the_account ... ok
+test test_an_unconfirmed_cancel_keeps_the_switch_armed ... ok
+test test_a_restart_inherits_the_stops_outstanding_cancels ... ok
+
+failures:
+
+---- test_an_armed_switch_is_renewed_before_its_timeout stdout ----
+
+thread 'test_an_armed_switch_is_renewed_before_its_timeout' (25784) panicked at crates\adapters\ondo\tests\private_runtime.rs:2241:5:
+and the renewal that reached the socket is the one that moved the deadline: the count is kept where the deadline moves, not where the frame is built
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_an_armed_switch_is_renewed_before_its_timeout
+
+test result: FAILED. 31 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.79s
+
+error: test failed, to rerun pass `-p nautilus-ondo --test private_runtime`

@@ -1,0 +1,184 @@
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.56s
+     Running tests\private_runtime.rs (target\debug\deps\private_runtime-18fa3675b245edee.exe)
+
+running 32 tests
+test test_the_session_state_machine_needs_no_socket ... ok
+test test_an_unconnected_client_has_no_private_session ... ok
+test test_the_runtime_and_the_client_share_one_account ... ok
+test test_a_buffer_overflow_makes_the_account_uncertain ... ok
+test test_a_report_that_arrives_during_a_pass_is_replayed_rather_than_lost ... ok
+test test_a_run_with_no_journal_path_says_so_and_keeps_reading_the_account ... ok
+test test_a_new_order_after_the_deadline_is_refused_with_nothing_sent ... ok
+test test_a_synchronous_stop_also_ends_the_transport_task ... ok
+test test_the_release_step_has_a_frame_to_send ... ok
+test test_the_account_state_travels_from_the_emitter_into_the_cache ... ok
+test test_the_login_frame_is_outside_every_recording_boundary ... ok
+test test_a_read_only_session_never_arms_the_switch_and_never_trades ... ok
+test test_the_verified_account_and_its_positions_reach_the_engine ... ok
+test test_a_journal_that_stops_accepting_writes_is_reported_and_does_not_stop_trading ... ok
+test test_a_run_whose_journal_cannot_be_restored_refuses_new_risk ... ok
+test test_a_decode_loss_makes_the_account_uncertain_and_keeps_the_socket ... ok
+test test_a_read_only_session_triggers_no_switch_side_effect_and_no_cancel ... ok
+test test_a_refused_subscription_never_becomes_ready ... ok
+test test_a_refused_login_ends_the_session_and_never_becomes_ready ... ok
+test test_the_stop_cancels_this_runs_own_orders_by_id_and_never_a_market ... ok
+test test_an_order_after_the_stop_is_refused_with_nothing_sent ... ok
+test test_the_stop_confirms_the_cancels_before_it_releases_the_switch ... ok
+test test_a_lapsed_switch_takes_the_run_state_out_of_trading_ready ... ok
+test test_a_fill_reported_before_the_checkpoint_crash_is_replayed_under_one_identity ... ok
+test test_a_fill_recorded_in_the_checkpoint_is_not_replayed_after_a_restart ... ok
+test test_stop_leaves_no_task_behind ... ok
+test test_a_stop_that_times_out_reports_a_timeout_and_not_a_completion ... FAILED
+test test_an_armed_switch_is_renewed_before_its_timeout ... ok
+test test_the_whole_private_lifecycle_from_login_to_a_refused_reconnect ... ok
+test test_a_periodic_pass_and_a_second_caller_cannot_both_own_the_account ... ok
+test test_an_unconfirmed_cancel_keeps_the_switch_armed ... FAILED
+test test_a_restart_inherits_the_stops_outstanding_cancels ... ok
+
+failures:
+
+---- test_a_stop_that_times_out_reports_a_timeout_and_not_a_completion stdout ----
+
+thread 'test_a_stop_that_times_out_reports_a_timeout_and_not_a_completion' (28996) panicked at crates\adapters\ondo\tests\private_runtime.rs:1897:5:
+the switch is not released over an order that may still be resting: StopReport { steps: [CancelOwnOrders, ConfirmOwnOrders, ReleaseDeadMansSwitch, ClosePrivateStream], outcome: TimedOut, cancellations_issued: 0, unresolved_orders: [], unconfirmed_cancels: ["ondo_private_1"], unknown_submissions: [], released_switch: true, stream_ended: true }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_an_unconfirmed_cancel_keeps_the_switch_armed stdout ----
+
+thread 'test_an_unconfirmed_cancel_keeps_the_switch_armed' (12104) panicked at crates\adapters\ondo\tests\private_runtime.rs:1838:5:
+the switch stays armed over an order this client cannot account for: StopReport { steps: [CancelOwnOrders, ConfirmOwnOrders, ReleaseDeadMansSwitch, ClosePrivateStream], outcome: TimedOut, cancellations_issued: 0, unresolved_orders: [], unconfirmed_cancels: ["ondo_private_1"], unknown_submissions: [], released_switch: true, stream_ended: true }
+
+
+failures:
+    test_a_stop_that_times_out_reports_a_timeout_and_not_a_completion
+    test_an_unconfirmed_cancel_keeps_the_switch_armed
+
+test result: FAILED. 30 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.77s
+
+error: test failed, to rerun pass `-p nautilus-ondo --test private_runtime`
+     Running tests\reconciliation.rs (target\debug\deps\reconciliation-2cb7380bf6147eb5.exe)
+
+running 117 tests
+test test_a_journal_status_permits_exactly_what_it_raises_no_refusal_for::case_1_failed ... ok
+test test_a_journal_status_permits_exactly_what_it_raises_no_refusal_for::case_3_degraded ... ok
+test test_a_buffer_that_is_full_refuses_reports_and_counts_them ... ok
+test test_a_journal_status_permits_exactly_what_it_raises_no_refusal_for::case_2_restored ... ok
+test test_a_journal_status_permits_exactly_what_it_raises_no_refusal_for::case_4_not_configured ... ok
+test test_a_404_inside_the_window_is_not_evidence_the_order_was_never_submitted ... ok
+test test_a_balance_that_could_not_be_mapped_verifies_nothing ... ok
+test test_a_balance_whose_own_numbers_do_not_add_up_is_uncertain ... ok
+test test_a_balance_with_no_member_the_mapping_can_use_is_not_a_zero_balance ... ok
+test test_a_balance_is_reported_only_when_it_is_the_whole_account ... ok
+test test_a_journal_from_another_account_is_refused_rather_than_merged ... ok
+test test_a_balance_without_a_cumulative_total_does_not_reuse_the_earlier_one ... ok
+test test_a_balance_carries_every_documented_member_distinctly_and_adds_up ... ok
+test test_a_cumulative_total_that_moved_with_no_payment_record_is_reported_not_booked ... ok
+test test_a_funding_history_that_could_not_be_read_is_reported_and_books_nothing ... ok
+test test_a_disconnect_after_a_session_refuses_new_risk_until_it_is_recovered_again ... ok
+test test_a_cancel_whose_answer_was_lost_is_confirmed_by_a_query_before_the_account_is_ready ... ok
+test test_a_flat_row_and_an_absent_row_are_different_statements ... ok
+test test_a_journal_that_disagrees_with_its_checkpoint_is_refused ... ok
+test test_a_journal_of_a_newer_schema_is_refused_by_its_version ... ok
+test test_a_failed_switch_stops_new_orders ... ok
+test test_a_journal_that_stopped_accepting_writes_is_stated_and_refuses_no_order ... ok
+test test_a_journal_of_an_older_schema_is_refused_rather_than_read_with_defaults ... ok
+test test_a_journal_round_trips_the_ledger_the_orders_and_the_unsettled_writes ... ok
+test test_a_liquidation_condition_nobody_read_is_not_a_clear_one ... ok
+test test_a_lapsed_switch_and_a_fired_switch_are_two_different_refusals ... ok
+test test_a_late_renewal_does_not_revive_a_failed_switch ... ok
+test test_a_lost_submission_answer_is_probed_under_its_own_client_id ... ok
+test test_a_liquidation_leaves_ready_and_stops_new_risk ... ok
+test test_a_live_record_wins_over_the_journal_it_was_written_from ... ok
+test test_a_machine_that_has_never_held_a_session_refuses_new_risk ... ok
+test test_a_negative_balance_is_verified_and_carries_its_negative_signs ... ok
+test test_a_neutral_position_is_an_explicit_zero_and_not_an_absent_one ... ok
+test test_a_renewal_moves_the_deadline_and_repeats_the_arm_frame ... ok
+test test_a_pass_that_could_not_read_leaves_the_baseline_alone ... ok
+test test_a_pass_that_could_not_read_the_account_leaves_it_uncertain ... ok
+test test_a_payment_from_before_the_baseline_is_recorded_but_not_counted_against_it ... ok
+test test_a_permit_issued_before_a_revocation_is_not_valid_afterwards ... ok
+test test_a_position_that_vanishes_with_no_fill_to_explain_it_is_uncertain ... ok
+test test_a_position_the_applied_fills_do_not_explain_is_uncertain_and_never_ready ... ok
+test test_a_journal_is_written_atomically_and_reads_back_whole ... ok
+test test_a_position_the_venue_stops_listing_is_reported_and_its_baseline_retired ... ok
+test test_a_position_this_clients_own_fills_closed_is_not_one_that_vanished ... ok
+test test_a_ready_account_is_refused_by_name_while_the_switch_is_unconfirmed_or_failed ... ok
+test test_a_recovery_generation_changes_when_a_recovery_starts_or_a_session_ends ... ok
+test test_a_renewal_moves_the_deadline_the_admission_reads ... ok
+test test_a_position_on_a_market_that_does_not_map_is_uncertain ... ok
+test test_a_renewal_of_a_switch_that_was_never_armed_is_not_sent ... ok
+test test_a_renewal_that_never_went_out_extends_nothing ... ok
+test test_a_renewal_that_reaches_the_socket_clears_the_run_of_failures ... ok
+test test_a_restored_ledger_still_dedupes_the_fills_it_holds ... ok
+test test_a_run_with_no_journal_path_still_trades_and_says_so ... ok
+test test_a_restored_journal_puts_the_unsettled_writes_back_with_their_window ... ok
+test test_a_run_of_failed_renewals_fails_the_switch_at_its_bound ... ok
+test test_a_row_that_cannot_be_read_is_not_a_statement_about_the_rows_that_are_missing ... ok
+test test_an_account_with_nothing_in_it_is_clean ... ok
+test test_a_short_position_is_negative_from_the_venues_own_positive_number ... ok
+test test_a_short_position_the_venue_already_signed_is_not_negated_twice ... ok
+test test_a_switch_that_fired_stops_new_risk_and_does_not_report_a_position_flat ... ok
+test test_a_terminal_order_with_no_readable_filled_quantity_is_not_confirmed ... ok
+test test_a_pass_that_cannot_walk_the_fills_page_leaves_the_account_uncertain ... ok
+test test_an_account_under_liquidation_refuses_new_risk_by_name ... ok
+test test_an_absent_journal_is_a_first_run_rather_than_a_failure ... ok
+test test_a_run_whose_journal_failed_refuses_new_risk_whatever_the_account_reads ... ok
+test test_an_order_whose_status_is_unknown_leaves_the_account_uncertain ... ok
+test test_an_inconclusive_probe_keeps_the_submission_unknown ... ok
+test test_an_order_the_fills_do_not_add_up_to_leaves_the_account_uncertain ... ok
+test test_an_uncertain_finding_never_becomes_ready_however_often_it_repeats ... ok
+test test_an_untriggered_foreign_order_is_an_unknown_state_the_adapter_does_not_create ... ok
+test test_an_order_this_run_did_not_create_is_preserved_and_never_cancelled ... ok
+test test_an_outstanding_unknown_submission_keeps_a_recovered_account_uncertain ... ok
+test test_only_a_stated_payment_is_accounted_and_a_rate_is_never_multiplied_into_one ... ok
+test test_fills_applied_before_the_first_pass_are_judged_and_not_skipped ... ok
+test test_multi_collateral_is_reported_as_unsupported_rather_than_folded_in ... ok
+test test_a_recovery_reads_the_account_and_needs_two_agreeing_passes_to_be_ready ... ok
+test test_an_unconfirmed_cancel_is_settled_by_a_probe_and_returns_the_account_to_trading ... ok
+test test_a_submission_may_be_refused_while_the_account_is_being_recovered ... ok
+test test_a_disconnect_stops_new_risk_until_the_account_is_recovered_again ... ok
+test test_releasing_the_switch_sends_the_unsubscribe_frame_and_leaves_the_state_unknown ... ok
+test test_reports_the_recovery_could_not_apply_cost_a_bounded_re_read_rather_than_a_silent_drop ... ok
+test test_negative_equity_is_kept_raw_and_stops_new_risk_rather_than_clamped_to_zero ... ok
+test test_stale_metadata_or_a_disarmed_switch_keeps_a_ready_account_from_trading ... ok
+test test_the_buffer_dedupes_by_id_and_keeps_arrival_order ... ok
+test test_recovery_needs_two_agreeing_passes_before_it_is_ready ... ok
+test test_the_renewal_bound_is_capped_at_the_crates_own ... ok
+test test_a_neutral_position_the_venue_reports_flat_is_read_as_flat_and_zeroed ... ok
+test test_the_buffer_holds_every_update_of_one_order_in_arrival_order ... ok
+test test_the_maintenance_requirement_travels_with_the_mapping_only_when_it_was_read ... ok
+test test_the_buffer_refuses_reports_from_a_superseded_recovery_and_counts_them ... ok
+test test_the_deadline_takes_the_switch_out_of_permitting_orders ... ok
+test test_the_lapsed_switch_is_reported_as_lapsed_with_its_deadline ... ok
+test test_a_buffer_that_overflows_leaves_the_account_uncertain_until_a_re_read ... ok
+test test_the_switch_frame_is_the_documented_channel_and_timeout ... ok
+test test_thirty_seconds_of_an_unresolved_submission_ends_the_probe_and_keeps_the_ids ... ok
+test test_an_order_this_run_did_not_place_is_reported_and_the_account_is_never_swept ... ok
+test test_the_switch_permits_orders_only_once_the_venue_has_confirmed_it ... ok
+test test_two_passes_that_read_different_accounts_are_not_a_confirmation ... ok
+test test_stopping_a_client_with_no_switch_has_nothing_to_release ... ok
+test test_a_cancel_that_carried_no_order_stays_unconfirmed_when_its_query_fails ... ok
+test test_a_submission_whose_answer_was_lost_is_probed_by_its_client_id_and_never_resent ... ok
+test test_a_404_probe_inside_the_window_neither_settles_nor_resubmits_the_order ... ok
+test test_a_report_that_arrived_while_the_account_was_read_is_replayed_once ... ok
+test test_a_duplicated_frame_is_applied_once_and_leaves_the_state_where_it_was ... ok
+test test_a_report_from_a_superseded_recovery_is_refused_and_named ... ok
+test test_stopping_releases_the_switch_only_after_the_runs_own_orders_are_cancelled ... ok
+test test_the_reports_of_one_order_are_replayed_in_arrival_order_and_the_last_one_wins ... ok
+test test_interleaved_fill_and_order_reports_are_each_applied_exactly_once ... ok
+test test_the_fill_history_is_walked_across_pages_and_every_fill_is_applied_once ... ok
+test test_a_settled_submission_restores_the_account_without_a_permanent_lock ... ok
+test test_thirty_seconds_without_an_answer_stops_the_probe_and_keeps_the_order_unknown ... ok
+test test_a_cancel_whose_answer_was_lost_is_settled_by_a_query_not_by_the_cancel_call ... ok
+test test_a_fill_that_lands_while_a_cancel_is_in_flight_is_counted_and_the_position_agrees ... ok
+test test_the_cancel_path_still_works_while_the_account_is_not_ready ... ok
+test test_a_fresh_client_refuses_a_submission_and_a_batch_before_any_session_exists ... ok
+test test_a_disconnect_after_a_recovery_refuses_the_next_submission_without_a_request ... ok
+test test_a_submission_is_refused_when_the_account_is_invalidated_before_its_request ... ok
+test test_a_lost_submission_answer_stops_the_next_order_from_being_sent ... ok
+
+test result: ok. 117 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+error: 1 target failed:
+    `-p nautilus-ondo --test private_runtime`

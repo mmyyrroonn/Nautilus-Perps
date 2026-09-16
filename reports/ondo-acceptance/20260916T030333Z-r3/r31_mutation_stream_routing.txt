@@ -1,0 +1,26 @@
+# mutation: forced the pass-in-flight test false in ingest_stream_order only
+# file: crates/adapters/ondo/src/execution.rs  sha256 before: 9e636a1266f7c38cd8ad6d35f38ba4650a2b84cfc3907ac4be69d9185c82afba
+$ cargo +1.98.0 test -p nautilus-ondo --locked --offline --test private_runtime test_a_report_that_arrives_during_a_pass
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\crates\adapters\ondo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.82s
+     Running tests\private_runtime.rs (target\debug\deps\private_runtime-18fa3675b245edee.exe)
+
+running 1 test
+test test_a_report_that_arrives_during_a_pass_is_replayed_rather_than_lost ... FAILED
+
+failures:
+
+---- test_a_report_that_arrives_during_a_pass_is_replayed_rather_than_lost stdout ----
+
+thread 'test_a_report_that_arrives_during_a_pass_is_replayed_rather_than_lost' (960) panicked at crates\adapters\ondo\tests\private_runtime.rs:895:5:
+the report the stream delivered mid-pass is in the reading that pass concluded: []
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_a_report_that_arrives_during_a_pass_is_replayed_rather_than_lost
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.15s
+
+error: test failed, to rerun pass `-p nautilus-ondo --test private_runtime`
+exit code: 101
