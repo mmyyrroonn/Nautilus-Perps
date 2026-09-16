@@ -9,6 +9,10 @@ R4 的可交付物是 `src/ondo_probe.py`（四模式统一入口）、`tests/te
 而是：第一次真的把它跑起来时，它跑不通。** 第 4 节是那个缺陷与它的修法，第 5 节是它在测试里
 被钉住的证据。
 
+> **§1–§9 是 `83742aa` 那一刻的记录，其中的数字不再改动。** 验收之后又在 R4 **自己的**可交付物里
+> 发现两处缺陷，已在 `2bee7da` 修掉。**第 10 节**是那两处、它们让哪些数字变了、以及新的注入反证。
+> 要读**现在这棵树**的数字，以第 10 节为准；要读 R4 当时被验收成什么样，看 §1–§9。
+
 ## 0. 证据分布
 
 | 位置 | 内容 |
@@ -256,6 +260,10 @@ R4 要求必须**能分别读出**的组，在 `smoke-public/probe.json` 里逐�
    `docs/ondo.md` §3.6 已写明这一点。
 5. **`envelope` 的语义在 R4 内变过一次**（第 4 节末）。若 R5 需要同时看到请求值与执行值，
    应当读 `caps`，不要读 `envelope`。
+6. **带凭据的 `sandbox` 会话会武装一个它自己不解除的死手开关计时器。** R4 从未建立过带凭据的会话，
+   所以这件事**没有发生过**；它是 R5.2 的前置项，机制与逐行出处见 **第 10.2 节**。它和第 1 条是同一
+   台机器的两面：第 1 条说关机时不撤本次运行的订单，这一条说关机时还**留下一个会自动撤单的计时器**，
+   而且它撤的是**那个账户上所有挂单**，不只是这一次运行留下的。
 
 ## 9. 下一阶段入口（R5）
 
@@ -268,5 +276,135 @@ R4 要求必须**能分别读出**的组，在 `smoke-public/probe.json` 里逐�
 - **R5.2 的 sandbox 分步**：A（鉴权 / 账户只读）→ B（私有订阅 / 恢复）→ C（受限下单），
   计划写明 **A 通过不能替代 B/C**。R4 建起来的是 A/B 那一层会话的**授权前提**（模式 + 允许旗标
   + allowlist 端点 + 四个边界），**C 那一层不在 R4 里**。
-- **R5 的前置阻塞项**是本报告 §8 第 1 条：把收敛停止执行器接到客户端生命周期上。
-  在它接通之前，任何 sandbox 提交都会在关机时把订单留在 venue 上。
+- **R5 的前置阻塞项是 §8 的第 1 条与第 6 条**：把收敛停止执行器接到客户端生命周期上，
+  **并且**让它（或别的什么）解除死手开关。只接通前者、不解除后者的话，第一次带凭据的 sandbox
+  会话退出后，仍会在约 `dms_timeout_secs`（默认 30 s）后由 venue 撤掉该账户上所有挂单。
+
+## 10. 验收之后：两处修正（`2bee7da`）
+
+§1–§9 记录的是 `83742aa` 那一刻的树。本节记录验收之后在 R4 **自己的**可交付物里发现的两处缺陷、
+它们的修法、以及修正之后的实测。**本节里的数字是现在这棵树的数字。**
+
+### 10.1 `probe.json` 的 `stops` 会随线程调度多一项或少一项
+
+`src/ondo_probe.py` 的 watchdog 回调在自己的线程里往 `stops` 里 append，而 `report_document` 是在
+主线程里从这个 list 建文档的，**中间没有 join**：
+
+```
+1898  def _stop_holder() -> dict[str, object]:
+1899      outcome = bounded_stop(...)
+1901      stops.append(outcome)          # watchdog 线程
+...
+1952      done.set()
+1953      outcome = bounded_stop(...)     # 主线程
+1955      stops.append(outcome)
+1963      document = report_document(..., stops=stops, ...)
+```
+
+在**截止到期**这条路径上这不是问题：watchdog 是在 `run()` 返回**之前**就 append 完了的，所以 list 是
+确定的（第 4 节那两次 smoke 就是这样）。问题在**运行自己返回**的路径上——操作员 Ctrl-C、`run()`
+抛异常、会话提前结束——主线程 `done.set()` 之后立刻往下走，和 watchdog 的 append 抢：
+
+**同一份 run 的 `probe.json`，可能带 `"watchdog"` 那一项，也可能不带。** 一份要被引用为证据的报告
+不该这样。
+
+修法是在 `done.set()` 之后、建文档之前 join 那个线程：
+
+```python
+if watchdog_slot:
+    watchdog_slot[0].join(WATCHDOG_JOIN_SECS)
+```
+
+上界**从 `bounded_stop` 的 grace 推出来**（`WATCHDOG_JOIN_SECS = STOP_GRACE_SECS + 1.0`），不是旁边另写
+一个魔数：watchdog 自己的 stop 用的就是这个 grace，join 短于它等于对一个**只是还没停完**的 watchdog
+放弃等待。join 之后仍然照常走后面的路径——少一项的报告也比没有报告好。
+
+**这一条原来没有任何测试钉住。** 新增的
+`test_the_watchdog_entry_is_in_the_report_even_when_its_stop_finishes_last` 是**构造**出那个调度，
+而不是等它发生：替身的 `stop()` 在**非主线程**上多睡 0.3 秒，于是 watchdog 的 append 必然落在主线程
+final stop 之后。断言的是不变量（`sorted(labels) == ["final", "watchdog"]`），不是时序。
+
+同时两处**已经过时的注释**被改掉了——它们原来写着「watchdog 线程没有被 join，所以那一项在不在是
+调度问题」。那句话在 `2bee7da` 之后不再成立，留着就是假的记录。
+
+### 10.2 `docs/ondo.md` 把 DMS 的「武装」与「撤单」混为一谈
+
+原文 §6 写「账户级，**武装它会撤掉挂单**」，§3.4 写「不武装死手开关（**武装它会撤掉挂单**）」。
+适配器自己的文档比这精确（`crates/adapters/ondo/src/websocket/private/messages.rs:64-70`，逐字引用
+现在也写进了 §6）：
+
+> *"Subscribing to this channel is **not** read-only: it **arms a venue-side timer that cancels every
+> resting order on the account when no renewal arrives in time**."*
+
+**武装的是计时器，撤单发生在续期没有按时到达的时候——武装本身不撤，失效才撤。** 这不是措辞洁癖：
+这个区分正是「收敛停止不可达」之所以危险的机制，也是下面那条隐患的由来。
+
+核实这句话时顺带确认了一件**还没发生过、但 R5.2 必须先处理**的事：**带凭据的 `sandbox` 会话会
+自己武装这个开关，而且不解除。**
+
+| 环节 | 位置 | 事实 |
+|---|---|---|
+| 模式 | `config.rs:393-399` | `account_read_only == false` → `stream_mode()` 返回 `PrivateStreamMode::Trading` |
+| 频道 | `websocket/private/messages.rs:78-82` | `TRADING` 频道表含 `CancelAllOrdersAfterPerps`（`READ_ONLY` 表刻意不含）|
+| 启动 | `execution.rs:4017-4034` | `connect()` **无条件**启动这条私有 transport（不像那个够不着的收敛停止）|
+| 关闭 | `execution.rs:4056-4065` | `disconnect()` 的文档明写 *"deliberately **not** done here is releasing the dead man's switch"* |
+
+net effect：那样的会话退出时留下一个**没人解除的计时器**，约 `dms_timeout_secs`（默认 30 s）后由
+venue 撤掉**该账户上所有挂单**。
+
+**R4 从未建立过带凭据的会话，所以这件事没有发生过**——它是一条对 R5.2 的前置约束，不是一次事故。
+已写进 `docs/ondo.md` §6 与 §8，并作为本报告 §8 的第 6 条。
+
+### 10.3 注入反证（新）
+
+把 §10.1 的修法**注入回缺陷**：`watchdog_slot[0].join(WATCHDOG_JOIN_SECS)` 换成 `None`。
+
+```
+FAILED tests/test_ondo_probe.py::test_the_watchdog_entry_is_in_the_report_even_when_its_stop_finishes_last
+1 failed, 111 passed
+```
+
+失败信息直接说出后果，而不只是数字不等：
+
+```
+AssertionError: the report's stops list is ['final'], and both stops were performed: the watchdog's
+entry is appended from the watchdog thread, so a document built without joining it records the stop
+that ran last as one that never happened
+assert ['final'] == ['final', 'watchdog']
+```
+
+**恰好红 1 个、其余 111 个不受影响**，说明这一个钉住的是那个机制而不是无关的实现细节。
+恢复同样是**字节级**的（备份 + `cp`，不用 `git checkout`）：恢复后 sha256 回到
+`7dffa176eb571e1e1d03c60f4e29b3947de3e8fcea5fea8ec57487d5eb850340`，`cmp` 报 `IDENTICAL`。
+
+### 10.4 修正之后的实测
+
+改动 3 个文件，`+101/−14`：
+
+| 文件 | +/− | 现在行数 | sha256 |
+|---|---|---|---|
+| `src/ondo_probe.py` | +22/−1 | 2089 | `7dffa176eb571e1e1d03c60f4e29b3947de3e8fcea5fea8ec57487d5eb850340` |
+| `tests/test_ondo_probe.py` | +69/−10 | 2083（67 个测试函数）| `6d25a251a1e1341a9fc184f46507aa63c73cb6b58ea9a4dd6fabf9ae06ba450f` |
+| `docs/ondo.md` | +10/−3 | 354 | — |
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `pytest tests/test_ondo_probe.py -q -p no:cacheprovider` | 0 | **112 passed** in 2.27s（R4 收尾时是 111，§10.1 的那个新测试加 1）|
+| `pytest -q -p no:cacheprovider`（全量）| 0 | **816 passed**, 1 warning, 97 subtests（R4 收尾时 815）|
+
+**join 改的是停机路径，所以必须再跑一次真的**——R4 的教训正是「单元测试全绿而真实路径是坏的」。
+两次真实运行，证据在 `smoke-public-r4b/` 与 `smoke-paper-r4b/`：
+
+| 运行 | 命令行 | 退出码 | 墙钟 | `stop_condition` | `stops` | `verify_run` |
+|---|---|---|---|---|---|---|
+| public | `--mode public --symbols NVDA --minutes 0.05` | **0** | 13 s | `deadline (a normal end for this mode)` | `['watchdog', 'final']`，两次都是 `stop_target: "handle"` | `verified: true, problems: []` |
+| paper | `--mode paper --symbols NVDA --minutes 0.05` | **0** | 14 s | 同上 | 同上 | `verified: true, problems: []` |
+
+`smoke-paper-r4b` 另标 `synthetic: true`、`write_capable: false`；两次的 `orders_submitted_by_probe`
+都是 `0`。
+
+**还有一次失败，要写下来。** public 的**第一次**尝试（在 paper 之前）以 `RuntimeError: data-connect
+timeout` 结束，退出码 `1`，墙钟 11 秒，报告照常发布（`complete=False`）。这条本身是**有用的**证据：
+`run()` 抛异常这条路径同样在**有界时间**内停机并发布，没有挂死。它是瞬时的（venue 数据面 10 秒没连上），
+重试即成功。**但它的产物没有被保留**——重试前我删掉了那个目录，日志也被覆盖了，所以这里只有观察记录，
+没有可核验的 artifact。下一次不该这么删。

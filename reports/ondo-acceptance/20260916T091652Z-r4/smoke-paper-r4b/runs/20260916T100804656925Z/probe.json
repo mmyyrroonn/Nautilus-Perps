@@ -1,0 +1,154 @@
+{
+  "account": {
+    "account_id": "ONDO-SANDBOX-001",
+    "synthetic": true
+  },
+  "account_coverage_proven": false,
+  "account_coverage_reason": "this run requested no venue response, so no coverage of the account could be proven from one: an account object in the cache is the client's view, not a reconciliation against the venue",
+  "account_reconciled": true,
+  "acked": [],
+  "cache_errors": [],
+  "cancel_capable": false,
+  "canceled": [],
+  "caps": {
+    "exposure_usd": {
+      "applied": null,
+      "cap": "100",
+      "capped": false,
+      "configured": null
+    },
+    "minutes": {
+      "applied": 0.05,
+      "cap": 60.0,
+      "capped": false,
+      "configured": 0.05
+    },
+    "notional_per_order_usd": {
+      "applied": null,
+      "cap": "50",
+      "capped": false,
+      "configured": null
+    },
+    "orders": {
+      "applied": null,
+      "cap": 10,
+      "capped": false,
+      "configured": null
+    }
+  },
+  "complete": true,
+  "converging_stop": {
+    "available": false,
+    "blocks": "R5 sandbox submission (R3 acceptance section 7 item 1)",
+    "cancels_own_orders": false,
+    "confirms_cancels": false,
+    "reason": "the adapter's ordered bounded stop executor (OndoAccountRuntime::stop_and_wait: CancelOwnOrders -> ConfirmOwnOrders -> ReleaseDeadMansSwitch -> ClosePrivateStream) is tested in Rust but has no call site outside crates/adapters/ondo/tests/private_runtime.rs: the client lifecycle never reaches it, so the framework stop()/disconnect() this probe can call does not cancel this run's orders, does not confirm the cancels and does not release the dead-man switch. The client drops the transport and leaves orders behind (R3 acceptance section 7 item 1); this is the prerequisite the R5 sandbox submission is blocked on",
+    "releases_dead_mans_switch": false
+  },
+  "converging_stop_available": false,
+  "converging_stop_reason": "the adapter's ordered bounded stop executor (OndoAccountRuntime::stop_and_wait: CancelOwnOrders -> ConfirmOwnOrders -> ReleaseDeadMansSwitch -> ClosePrivateStream) is tested in Rust but has no call site outside crates/adapters/ondo/tests/private_runtime.rs: the client lifecycle never reaches it, so the framework stop()/disconnect() this probe can call does not cancel this run's orders, does not confirm the cancels and does not release the dead-man switch. The client drops the transport and leaves orders behind (R3 acceptance section 7 item 1); this is the prerequisite the R5 sandbox submission is blocked on",
+  "credential_variables": [],
+  "credentials_required": false,
+  "deadline_secs": "3.00",
+  "dms_armed": false,
+  "duplicate_receipts": {
+    "acked": 0,
+    "fills": 0
+  },
+  "endpoint": "https://api.ondoperps.xyz",
+  "endpoint_class": "production",
+  "endpoint_source": "module-default",
+  "envelope": {
+    "allow_sandbox_orders": false,
+    "armed": false,
+    "instruments": [],
+    "max_exposure_usd": null,
+    "max_orders": null,
+    "notional_usd": null
+  },
+  "environment": "production",
+  "exit_code": 0,
+  "exit_code_zero_means_clean_account": false,
+  "expected_stop_condition": "deadline (a normal end for this mode)",
+  "failure": null,
+  "filled": [],
+  "finished_at_utc": "2026-09-16T10:08:18.204+00:00",
+  "lookup_failures": {},
+  "mode": "paper",
+  "no_trade": [],
+  "orders_submitted_by_probe": 0,
+  "outstanding_orders": [],
+  "partial": [],
+  "pending_ids": {},
+  "protocol_verified": false,
+  "protocol_verified_reason": "no request has ever been sent to the real Ondo venue: REST auth header names, the WS login signature concatenation order, the real private frame shapes and the dead-man-switch renewal semantics are documented, not host-confirmed. Nothing in this report may be read as a host fact",
+  "read_capable": true,
+  "run_dir": "runs/20260916T100804656925Z",
+  "run_id": "20260916T100804656925Z",
+  "schema_version": 1,
+  "session": {
+    "account_read_only": false,
+    "data_client": "nautilus_trader.adapters.ondo.OndoDataClientFactory",
+    "exec_client": "nautilus_trader.adapters.sandbox.SandboxExecutionClientFactory",
+    "node_environment": "SANDBOX",
+    "simulated": true
+  },
+  "started_at_utc": "2026-09-16T10:08:04.656+00:00",
+  "stop_condition": "deadline (a normal end for this mode)",
+  "stops": [
+    {
+      "attempted": true,
+      "cancels_own_orders": false,
+      "confirms_cancels": false,
+      "error": null,
+      "iterations": 2,
+      "label": "watchdog",
+      "releases_dead_mans_switch": false,
+      "requested": true,
+      "stop_target": "handle",
+      "stopped": true
+    },
+    {
+      "attempted": true,
+      "cancels_own_orders": false,
+      "confirms_cancels": false,
+      "error": null,
+      "iterations": 1,
+      "label": "final",
+      "releases_dead_mans_switch": false,
+      "requested": true,
+      "stop_target": "handle",
+      "stopped": true
+    }
+  ],
+  "submitted": [],
+  "synthetic": true,
+  "tool": "ondo_probe",
+  "unknown": [],
+  "unverified": [
+    {
+      "documented_not_confirmed": [
+        "REST authentication header names",
+        "the WebSocket login signature concatenation order",
+        "the real private frame shapes",
+        "dead-man-switch renewal and release semantics"
+      ],
+      "item": "protocol",
+      "reason": "no request has ever been sent to the real Ondo venue: REST auth header names, the WS login signature concatenation order, the real private frame shapes and the dead-man-switch renewal semantics are documented, not host-confirmed. Nothing in this report may be read as a host fact",
+      "verified": false
+    },
+    {
+      "consequence": "a zero exit code must not be read as a cleaned account: outstanding orders and pending ids are reported instead",
+      "item": "converging_stop",
+      "reason": "the adapter's ordered bounded stop executor (OndoAccountRuntime::stop_and_wait: CancelOwnOrders -> ConfirmOwnOrders -> ReleaseDeadMansSwitch -> ClosePrivateStream) is tested in Rust but has no call site outside crates/adapters/ondo/tests/private_runtime.rs: the client lifecycle never reaches it, so the framework stop()/disconnect() this probe can call does not cancel this run's orders, does not confirm the cancels and does not release the dead-man switch. The client drops the transport and leaves orders behind (R3 acceptance section 7 item 1); this is the prerequisite the R5 sandbox submission is blocked on",
+      "verified": false
+    }
+  ],
+  "venue": "ONDO",
+  "watchdog": {
+    "fired": false,
+    "stopped": true,
+    "timed_out": true
+  },
+  "write_capable": false
+}
