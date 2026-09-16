@@ -147,6 +147,12 @@ run; each is an independent handle that stays usable while the node runs."*
   `stop_target: "handle" | "node" | "none"`；
 - watchdog 只拿到 handle，**永远不碰 node**。
 
+**这个正确做法在仓库里本来就有。** `src/exec_probe.py:1139-1142`（Aster probe）就是在主线程先
+`handle = node.handle()`，再把 `handle.stop` 交给 watchdog 的。新模块的 `start_stop_watchdog`
+文档里写着「mirrors `exec_probe.start_stop_watchdog`」，却只镜像了函数的**形状**而丢掉了 handle。
+所以这是一次**相对仓库既有模式的倒退**，不是没人踩过的坑——这也说明那句
+「mirrors `exec_probe`」当时并没有被验证过。
+
 **修复后的实测**（两次真实运行，证据在 `smoke-public/` 与 `smoke-paper/`）：
 
 | 运行 | 命令行 | 退出码 | 墙钟 | `stop_condition` | `stop_target` |
