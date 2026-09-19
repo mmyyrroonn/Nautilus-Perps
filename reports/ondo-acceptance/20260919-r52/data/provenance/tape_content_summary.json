@@ -1,0 +1,250 @@
+[
+  {
+    "tape": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260915T024236Z-p2\\l2\\l2_NVDA_ONDO-HL_20260915T024236Z.jsonl",
+    "line_count": 716,
+    "kinds": {
+      "run_start": 1,
+      "instrument": 2,
+      "book": 484,
+      "status": 1,
+      "quote": 199,
+      "funding": 28,
+      "run_end": 1
+    },
+    "venues": {
+      "None": 2,
+      "ONDO": 546,
+      "HL": 168
+    },
+    "sessions": {
+      "20260915T024236Z-c4921e79483d": 716
+    },
+    "nonnull_key_counts": {
+      "schema_version": 716,
+      "run_id": 716,
+      "session_id": 716,
+      "symbol": 716,
+      "event_kind": 716,
+      "recorded_mono_ns": 716,
+      "source": 716,
+      "valid": 716,
+      "session_started_utc": 2,
+      "tape": 1,
+      "legs": 1,
+      "queue_max": 1,
+      "flush_secs": 1,
+      "rotate_bytes": 1,
+      "arrival_seq": 714,
+      "venue": 714,
+      "instrument_id": 714,
+      "coverage_limit": 462,
+      "metadata": 2,
+      "ts_event_ns": 712,
+      "ts_init_ns": 712,
+      "bids": 484,
+      "asks": 484,
+      "action": 1,
+      "reason": 1,
+      "is_quoting": 1,
+      "bid": 199,
+      "ask": 199,
+      "bid_size": 199,
+      "ask_size": 199,
+      "rate": 28,
+      "interval_secs": 25,
+      "complete": 1,
+      "records": 1,
+      "dropped": 1,
+      "gaps": 1,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 1,
+      "segment_index": 1
+    },
+    "invalid_reasons": {},
+    "kind_first_arrival_seq": {
+      "run_start": null,
+      "instrument": 1,
+      "book": 3,
+      "status": 4,
+      "quote": 5,
+      "funding": 6,
+      "run_end": null
+    },
+    "kind_last_arrival_seq": {
+      "run_start": null,
+      "instrument": 2,
+      "book": 714,
+      "status": 4,
+      "quote": 713,
+      "funding": 705,
+      "run_end": null
+    },
+    "ts_init_ns_missing_records": 4,
+    "ts_event_ns_missing_records": 4,
+    "depth_records": 683,
+    "depth_with_real_size_increment": 0,
+    "status_records": [
+      {
+        "arrival_seq": 4,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789440159803978700,
+        "ts_init_ns": 1789440159803978700,
+        "metadata": null
+      }
+    ],
+    "instrument_records": [
+      {
+        "arrival_seq": 1,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null
+        }
+      },
+      {
+        "arrival_seq": 2,
+        "venue": "HL",
+        "metadata": {
+          "venue": "HYPERLIQUID",
+          "client_id": "HYPERLIQUID",
+          "taker_fee_bps": "0.90",
+          "fee_source": "registry",
+          "price_precision": 3,
+          "size_precision": 3,
+          "tick_size": null
+        }
+      }
+    ]
+  },
+  {
+    "tape": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260915T024236Z-p2\\l2\\l2_TSLA_ONDO-HL_20260915T024236Z.jsonl",
+    "line_count": 629,
+    "kinds": {
+      "run_start": 1,
+      "instrument": 2,
+      "book": 484,
+      "status": 1,
+      "quote": 112,
+      "funding": 28,
+      "run_end": 1
+    },
+    "venues": {
+      "None": 2,
+      "ONDO": 505,
+      "HL": 122
+    },
+    "sessions": {
+      "20260915T024236Z-f05648c6d17e": 629
+    },
+    "nonnull_key_counts": {
+      "schema_version": 629,
+      "run_id": 629,
+      "session_id": 629,
+      "symbol": 629,
+      "event_kind": 629,
+      "recorded_mono_ns": 629,
+      "source": 629,
+      "valid": 629,
+      "session_started_utc": 2,
+      "tape": 1,
+      "legs": 1,
+      "queue_max": 1,
+      "flush_secs": 1,
+      "rotate_bytes": 1,
+      "arrival_seq": 627,
+      "venue": 627,
+      "instrument_id": 627,
+      "coverage_limit": 462,
+      "metadata": 2,
+      "ts_event_ns": 625,
+      "ts_init_ns": 625,
+      "bids": 484,
+      "asks": 484,
+      "action": 1,
+      "reason": 1,
+      "is_quoting": 1,
+      "bid": 112,
+      "ask": 112,
+      "bid_size": 112,
+      "ask_size": 112,
+      "rate": 28,
+      "interval_secs": 25,
+      "complete": 1,
+      "records": 1,
+      "dropped": 1,
+      "gaps": 1,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 1,
+      "segment_index": 1
+    },
+    "invalid_reasons": {},
+    "kind_first_arrival_seq": {
+      "run_start": null,
+      "instrument": 1,
+      "book": 3,
+      "status": 4,
+      "quote": 5,
+      "funding": 6,
+      "run_end": null
+    },
+    "kind_last_arrival_seq": {
+      "run_start": null,
+      "instrument": 2,
+      "book": 627,
+      "status": 4,
+      "quote": 626,
+      "funding": 613,
+      "run_end": null
+    },
+    "ts_init_ns_missing_records": 4,
+    "ts_event_ns_missing_records": 4,
+    "depth_records": 596,
+    "depth_with_real_size_increment": 0,
+    "status_records": [
+      {
+        "arrival_seq": 4,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789440159808545100,
+        "ts_init_ns": 1789440159808545100,
+        "metadata": null
+      }
+    ],
+    "instrument_records": [
+      {
+        "arrival_seq": 1,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null
+        }
+      },
+      {
+        "arrival_seq": 2,
+        "venue": "HL",
+        "metadata": {
+          "venue": "HYPERLIQUID",
+          "client_id": "HYPERLIQUID",
+          "taker_fee_bps": "0.90",
+          "fee_source": "registry",
+          "price_precision": 3,
+          "size_precision": 3,
+          "tick_size": null
+        }
+      }
+    ]
+  }
+]

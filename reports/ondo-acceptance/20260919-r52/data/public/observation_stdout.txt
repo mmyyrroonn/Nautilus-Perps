@@ -1,0 +1,257 @@
+[stage1] watching NVDA[ONDO-HL]  TSLA[ONDO-HL]  record-l2[l2] until 2026-09-19T09:36:33+00:00 -> E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation
+[1m2026-09-19T09:31:33.641045000Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641081300Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  NAUTILUS TRADER - Automated Algorithmic Trading Platform[0m
+[1m2026-09-19T09:31:33.641081800Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  by Nautech Systems Pty Ltd.[0m
+[1m2026-09-19T09:31:33.641082000Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  Copyright (C) 2015-2026. All rights reserved.[0m
+[1m2026-09-19T09:31:33.641084700Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641084900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⡤⠤⠤⠤⠤⠤⠤⠤⢤⡀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641085300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠚⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⠁⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641085600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⢀⣠⠖⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠚⠁⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641085800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⢀⡴⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641086000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⣠⠏⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠤⠖⠒⠒⠒⠒⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641086100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⡇⠀⠀⠀⠀⠀⠀⠀⢀⡖⠋⣠⢴⢪⠞⣩⢟⡭⠵⢤⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641086200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⣦⡙⠦⣄⡀⠀⢀⣠⠴⠋⢠⡐⣇⢸⡘⢦⡇⣏⡴⣋⡭⠖⠮⢥⡀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641086400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⢸⡉⠓⠦⠭⠭⠭⠴⣺⠃⠸⣷⢬⣓⣛⠒⠩⣌⢡⡷⢒⣫⠭⣝⡛⠆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641086500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠙⠦⢤⣀⣠⠤⠞⣡⠞⡆⠺⣭⣭⡷⢇⣷⡻⠡⠾⣛⣒⠦⢤⡙⡆⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641086600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠈⠳⣖⠒⠒⠒⠋⠁⣠⠇⡼⢦⠀⣌⡉⢥⣄⣛⡻⢥⡈⠉⢳⡙⠇⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641088100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠈⠙⣒⣒⣒⣋⡥⠞⠁⣸⠃⡇⠙⢦⢹⠀⠙⡆⢳⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641088300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠈⠙⠒⠦⠤⠴⣚⣡⠞⠁⣠⠏⡼⢀⣠⠇⠞⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641088400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⠉⠉⠑⠚⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[0m
+[1m2026-09-19T09:31:33.641088500Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641088700Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  SYSTEM SPECIFICATION[0m
+[1m2026-09-19T09:31:33.641088900Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641089400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: CPU architecture: AMD Ryzen 9 9950X 16-Core Processor            [0m
+[1m2026-09-19T09:31:33.641092700Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: CPU(s): 32 @ 4300 MHz[0m
+[1m2026-09-19T09:31:33.641093200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: OS: kernel-26200 Windows 11 Pro[0m
+[1m2026-09-19T09:31:33.641303600Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641307700Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  MEMORY USAGE[0m
+[1m2026-09-19T09:31:33.641308100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641315000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Total: 93.65 GiB[0m
+[1m2026-09-19T09:31:33.641315900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Used: 28.53 GiB (30.46%)[0m
+[1m2026-09-19T09:31:33.641316500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: RAM-Avail: 65.12 GiB (69.54%)[0m
+[1m2026-09-19T09:31:33.641321800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Total: 6.00 GiB[0m
+[1m2026-09-19T09:31:33.641324500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Used: 0.00 GiB (0.00%)[0m
+[1m2026-09-19T09:31:33.641325400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: Swap-Avail: 6.00 GiB (100.00%)[0m
+[1m2026-09-19T09:31:33.641327700Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641328100Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  IDENTIFIERS[0m
+[1m2026-09-19T09:31:33.641328200Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641331100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: trader_id: STAGE1-001[0m
+[1m2026-09-19T09:31:33.641331500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: machine_id: 主力机器[0m
+[1m2026-09-19T09:31:33.641333000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: instance_id: faeb961d-dfea-4819-9508-e036af2a16ff[0m
+[1m2026-09-19T09:31:33.641333800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: PID: 16420[0m
+[1m2026-09-19T09:31:33.641334000Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641334300Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH:  VERSIONING[0m
+[1m2026-09-19T09:31:33.641334400Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:33.641367800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: nautilus_trader: 2.0.0rc4[0m
+[1m2026-09-19T09:31:33.641369900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: nautilus_core: 0.63.0[0m
+[1m2026-09-19T09:31:33.641380400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: python: 3.12.9[0m
+[1m2026-09-19T09:31:33.641392500Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: git_commit: 105773807078[0m
+[1m2026-09-19T09:31:33.641394400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rustc: 1.98.0 (88d9e12ae 2026-08-18)[0m
+[1m2026-09-19T09:31:33.641394800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: target: x86_64-pc-windows-msvc[0m
+[1m2026-09-19T09:31:33.641395100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: profile: release[0m
+[1m2026-09-19T09:31:33.641395200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: panic: abort[0m
+[1m2026-09-19T09:31:33.641395600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: precision: high (128-bit, 16 dp)[0m
+[1m2026-09-19T09:31:33.641395900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: allocator: mimalloc 0.1.52[0m
+[1m2026-09-19T09:31:33.641396000Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: cargo_lock: a8235d35[0m
+[1m2026-09-19T09:31:33.641396600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rust_decimal: 1.42.1[0m
+[1m2026-09-19T09:31:33.641397200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: rustls: 0.23.43[0m
+[1m2026-09-19T09:31:33.641397400Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: aws_lc_rs: 1.18.0[0m
+[1m2026-09-19T09:31:33.641397600Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: tokio: 1.53.1[0m
+[1m2026-09-19T09:31:33.641397800Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyo3: 0.29.2[0m
+[1m2026-09-19T09:31:33.641398100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyo3_async_runtimes: 0.29.0[0m
+[1m2026-09-19T09:31:33.738030300Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: numpy: 2.5.2[0m
+[1m2026-09-19T09:31:34.429680900Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pandas: 3.0.5[0m
+[1m2026-09-19T09:31:34.436758200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: msgspec: 0.21.1[0m
+[1m2026-09-19T09:31:34.436775200Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pyarrow: 25.0.1[0m
+[1m2026-09-19T09:31:34.436779100Z[0m [INFO] STAGE1-001.STAGE1-SPREAD-WATCH: pytz: 2026.3.post1[0m
+[1m2026-09-19T09:31:34.436935000Z[0m [36m[INFO] STAGE1-001.STAGE1-SPREAD-WATCH: =================================================================[0m
+[1m2026-09-19T09:31:34.436982700Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Building system kernel[0m
+[1m2026-09-19T09:31:34.437595700Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Registered DataClient-HYPERLIQUID[0m
+[1m2026-09-19T09:31:34.437629400Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Registered DataClient-ONDO[0m
+[1m2026-09-19T09:31:34.437638700Z[0m [INFO] STAGE1-001.nautilus_live::node::builder: Built successfully[0m
+[1m2026-09-19T09:31:34.437861000Z[0m [INFO] STAGE1-001.SPREAD-WATCH-NVDA: Ready[0m
+[1m2026-09-19T09:31:34.437898500Z[0m [INFO] STAGE1-001.nautilus_system::python::registration: Registered Python strategy SPREAD-WATCH-NVDA with trader STAGE1-001[0m
+[1m2026-09-19T09:31:34.437902900Z[0m [INFO] STAGE1-001.nautilus_live::python::node: Registered Python strategy SPREAD-WATCH-NVDA[0m
+[1m2026-09-19T09:31:34.437962500Z[0m [INFO] STAGE1-001.SPREAD-WATCH-TSLA: Ready[0m
+[1m2026-09-19T09:31:34.437973900Z[0m [INFO] STAGE1-001.nautilus_system::python::registration: Registered Python strategy SPREAD-WATCH-TSLA with trader STAGE1-001[0m
+[1m2026-09-19T09:31:34.437974400Z[0m [INFO] STAGE1-001.nautilus_live::python::node: Registered Python strategy SPREAD-WATCH-TSLA[0m
+[1m2026-09-19T09:31:34.439805500Z[0m [INFO] STAGE1-001.nautilus_live::node: Event loop starting[0m
+[1m2026-09-19T09:31:34.439825000Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Starting[0m
+[1m2026-09-19T09:31:34.439830500Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Starting Hyperliquid data client: client_id=HYPERLIQUID, environment=Mainnet, proxy_url=None[0m
+[1m2026-09-19T09:31:34.439844700Z[0m [INFO] STAGE1-001.nautilus_execution::engine: Started[0m
+[1m2026-09-19T09:31:34.439855200Z[0m [INFO] STAGE1-001.nautilus_risk::engine: Started[0m
+[1m2026-09-19T09:31:34.439857200Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Initializing trader[0m
+[1m2026-09-19T09:31:34.439858601Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Started[0m
+[1m2026-09-19T09:31:34.439866000Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Connecting data clients...[0m
+[1m2026-09-19T09:31:34.440205200Z[0m [INFO] STAGE1-001.nautilus_ondo::data: Connecting ONDO[0m
+[1m2026-09-19T09:31:34.979628600Z[0m [INFO] STAGE1-001.nautilus_ondo::data: Connected ONDO with 2 instruments[0m
+[1m2026-09-19T09:31:38.307025200Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Connected: client_id=HYPERLIQUID[0m
+[1m2026-09-19T09:31:38.312403400Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Connecting execution clients...[0m
+[1m2026-09-19T09:31:38.312418300Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting engine connections (60s timeout)...[0m
+[1m2026-09-19T09:31:38.312426200Z[0m [INFO] STAGE1-001.nautilus_live::node: All engine clients connected[0m
+[1m2026-09-19T09:31:38.312447100Z[0m [94m[INFO] STAGE1-001.nautilus_live::node: Starting execution state reconciliation...[0m
+[1m2026-09-19T09:31:38.312486300Z[0m [INFO] STAGE1-001.nautilus_portfolio::portfolio: Initialized 0 open orders[0m
+[1m2026-09-19T09:31:38.312512400Z[0m [INFO] STAGE1-001.nautilus_portfolio::portfolio: Initialized 0 open positions[0m
+[1m2026-09-19T09:31:38.312525700Z[0m [INFO] STAGE1-001.nautilus_portfolio::portfolio: Initialized 0 Wallet reservations[0m
+[1m2026-09-19T09:31:38.312532000Z[0m [94m[INFO] STAGE1-001.nautilus_live::node: Startup reconciliation completed in 0.00s[0m
+[1m2026-09-19T09:31:38.312542500Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Starting trader...[0m
+[1m2026-09-19T09:31:38.312557200Z[0m [INFO] STAGE1-001.nautilus_execution::order_emulator::emulator: Started[0m
+[1m2026-09-19T09:31:38.312564900Z[0m [INFO] STAGE1-001.nautilus_system::trader: Starting[0m
+[1m2026-09-19T09:31:38.312583400Z[0m [INFO] STAGE1-001.SPREAD-WATCH-NVDA: Starting[0m
+[1m2026-09-19T09:31:38.312589400Z[0m [INFO] STAGE1-001.nautilus_trading::strategy: Starting SPREAD-WATCH-NVDA[0m
+[1m2026-09-19T09:31:38.312692700Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] ONDO instruments loaded: 2[0m
+[1m2026-09-19T09:31:38.312735500Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] instrument OK: NVDA-USD-PERP.ONDO[0m
+[1m2026-09-19T09:31:38.312824400Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/HL] HYPERLIQUID instruments loaded: 1325[0m
+[1m2026-09-19T09:31:38.312831100Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/HL] instrument OK: xyz:NVDA-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-19T09:31:38.312945000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (NVDA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:31:38.312987600Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(InstrumentStatus(SubscribeInstrumentStatus { instrument_id: "NVDA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(78a64b81-614a-4ec5-b65e-233b68df7ad7), ts_init: UnixNanos(1789810298312987500), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.313072800Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Instrument(SubscribeInstrument { instrument_id: "NVDA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(af644b49-b7de-44d0-9fc7-6e12673fc093), ts_init: UnixNanos(1789810298313072400), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.313087700Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] subscribed instrument status (local feed disconnect vs real market halt) and instrument updates (metadata refresh) NVDA-USD-PERP.ONDO[0m
+[1m2026-09-19T09:31:38.316537400Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA] recording complete normalized L2 for 2 leg(s) -> E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\l2\l2_NVDA_ONDO-HL_20260919T093133Z.jsonl[0m
+[1m2026-09-19T09:31:38.316583900Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "NVDA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(2832fb1f-566b-4935-906a-e53ec7c7771d), ts_init: UnixNanos(1789810298316583800), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316621200Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "NVDA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(97afce8a-9926-45c4-9c9e-ccf81e1d1ecc), ts_init: UnixNanos(1789810298316620800), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316634500Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "NVDA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(503bb9a1-8414-430e-bf85-c1b121b663c0), ts_init: UnixNanos(1789810298316634400), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316659600Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "NVDA-USD-PERP.ONDO", book_type: L2_MBP, client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(51b40872-2fb4-4dc6-9acf-574741134e33), ts_init: UnixNanos(1789810298316658900), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316685900Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] subscribed quotes+funding+trades+deltas(managed) NVDA-USD-PERP.ONDO[0m
+[1m2026-09-19T09:31:38.316690101Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "xyz:NVDA-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(a0689404-9799-417b-958a-903d7ad92556), ts_init: UnixNanos(1789810298316690100), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316695100Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "xyz:NVDA-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(cf3ac0d4-55df-4798-9bf3-0a9df6c26353), ts_init: UnixNanos(1789810298316695000), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316700700Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "xyz:NVDA-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(72244bd1-b197-4bf1-bf18-030c2e569156), ts_init: UnixNanos(1789810298316700600), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316705101Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "xyz:NVDA-USD-PERP.HYPERLIQUID", book_type: L2_MBP, client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(b6ba9189-c6d1-4cd2-9548-97efba61f0f0), ts_init: UnixNanos(1789810298316705100), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316708900Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/HL] subscribed quotes+funding+trades+deltas(managed) xyz:NVDA-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-19T09:31:38.316841700Z[0m [INFO] STAGE1-001.SPREAD-WATCH-NVDA: Running[0m
+[1m2026-09-19T09:31:38.316846300Z[0m [INFO] STAGE1-001.SPREAD-WATCH-TSLA: Starting[0m
+[1m2026-09-19T09:31:38.316847100Z[0m [INFO] STAGE1-001.nautilus_trading::strategy: Starting SPREAD-WATCH-TSLA[0m
+[1m2026-09-19T09:31:38.316872100Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] ONDO instruments loaded: 2[0m
+[1m2026-09-19T09:31:38.316876500Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] instrument OK: TSLA-USD-PERP.ONDO[0m
+[1m2026-09-19T09:31:38.316920100Z[0m [94m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/HL] HYPERLIQUID instruments loaded: 1325[0m
+[1m2026-09-19T09:31:38.316922200Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/HL] instrument OK: xyz:TSLA-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-19T09:31:38.316963000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (TSLA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:31:38.316979400Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(InstrumentStatus(SubscribeInstrumentStatus { instrument_id: "TSLA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(fa6b5163-5fd7-4660-9348-ae96f6461133), ts_init: UnixNanos(1789810298316979200), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316990700Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Instrument(SubscribeInstrument { instrument_id: "TSLA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(bb0d9e53-f330-4f3d-ada6-131987aa2985), ts_init: UnixNanos(1789810298316990300), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.316994300Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] subscribed instrument status (local feed disconnect vs real market halt) and instrument updates (metadata refresh) TSLA-USD-PERP.ONDO[0m
+[1m2026-09-19T09:31:38.319295300Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA] recording complete normalized L2 for 2 leg(s) -> E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\l2\l2_TSLA_ONDO-HL_20260919T093133Z.jsonl[0m
+[1m2026-09-19T09:31:38.319315300Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "TSLA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(f1f77155-2423-4690-a290-7192220f1e67), ts_init: UnixNanos(1789810298319315200), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319336200Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "TSLA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(fa119243-b044-41ae-b5f1-20d72a18b6b7), ts_init: UnixNanos(1789810298319335800), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319343700Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "TSLA-USD-PERP.ONDO", client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(8e661f95-b307-4f5a-bbce-047a458753e5), ts_init: UnixNanos(1789810298319343600), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319356800Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "TSLA-USD-PERP.ONDO", book_type: L2_MBP, client_id: Some("ONDO"), venue: Some("ONDO"), command_id: UUID4(57f7ea73-a1f3-4e3b-b96b-764eb64d0628), ts_init: UnixNanos(1789810298319356100), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319363200Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] subscribed quotes+funding+trades+deltas(managed) TSLA-USD-PERP.ONDO[0m
+[1m2026-09-19T09:31:38.319368301Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Quotes(SubscribeQuotes { instrument_id: "xyz:TSLA-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(8d8e894a-ba50-4eba-80f7-cf090649cec5), ts_init: UnixNanos(1789810298319368300), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319374100Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(FundingRates(SubscribeFundingRates { instrument_id: "xyz:TSLA-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(fdc1e1dd-55c1-44ce-9fad-84d9de0f77d0), ts_init: UnixNanos(1789810298319374000), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319378400Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(Trades(SubscribeTrades { instrument_id: "xyz:TSLA-USD-PERP.HYPERLIQUID", client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(beb94789-6a7f-4242-95e4-6267c264e6f3), ts_init: UnixNanos(1789810298319378300), correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319382301Z[0m [INFO] STAGE1-001.nautilus_common::actor::data_actor: [CMD]--> Subscribe(BookDeltas(SubscribeBookDeltas { instrument_id: "xyz:TSLA-USD-PERP.HYPERLIQUID", book_type: L2_MBP, client_id: Some("HYPERLIQUID"), venue: Some("HYPERLIQUID"), command_id: UUID4(4752bd50-9e0a-4c6d-91a6-8ea7af5685ef), ts_init: UnixNanos(1789810298319382300), depth: None, managed: true, correlation_id: None, params: None }))[0m
+[1m2026-09-19T09:31:38.319385300Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/HL] subscribed quotes+funding+trades+deltas(managed) xyz:TSLA-USD-PERP.HYPERLIQUID[0m
+[1m2026-09-19T09:31:38.319476200Z[0m [INFO] STAGE1-001.SPREAD-WATCH-TSLA: Running[0m
+[1m2026-09-19T09:31:38.319479500Z[0m [INFO] STAGE1-001.nautilus_system::trader: Running[0m
+[1m2026-09-19T09:31:38.319480000Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Trader started[0m
+[1m2026-09-19T09:31:38.319628400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed NVDA-USD-PERP.ONDO instrument status[0m
+[1m2026-09-19T09:31:38.319880700Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed NVDA-USD-PERP.ONDO instrument[0m
+[1m2026-09-19T09:31:38.319966800Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed NVDA-USD-PERP.ONDO quotes[0m
+[1m2026-09-19T09:31:38.319974400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed NVDA-USD-PERP.ONDO funding rates[0m
+[1m2026-09-19T09:31:38.319978400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed NVDA-USD-PERP.ONDO trades[0m
+[1m2026-09-19T09:31:38.320014500Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed NVDA-USD-PERP.ONDO order book deltas[0m
+[1m2026-09-19T09:31:38.320019900Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:NVDA-USD-PERP.HYPERLIQUID quotes[0m
+[1m2026-09-19T09:31:38.320041700Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:NVDA-USD-PERP.HYPERLIQUID funding rates[0m
+[1m2026-09-19T09:31:38.320053600Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:NVDA-USD-PERP.HYPERLIQUID trades[0m
+[1m2026-09-19T09:31:38.320066200Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:NVDA-USD-PERP.HYPERLIQUID order book deltas[0m
+[1m2026-09-19T09:31:38.320092400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed TSLA-USD-PERP.ONDO instrument status[0m
+[1m2026-09-19T09:31:38.320095800Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed TSLA-USD-PERP.ONDO instrument[0m
+[1m2026-09-19T09:31:38.320109400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed TSLA-USD-PERP.ONDO quotes[0m
+[1m2026-09-19T09:31:38.320111400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed TSLA-USD-PERP.ONDO funding rates[0m
+[1m2026-09-19T09:31:38.320114400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed TSLA-USD-PERP.ONDO trades[0m
+[1m2026-09-19T09:31:38.320118700Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed TSLA-USD-PERP.ONDO order book deltas[0m
+[1m2026-09-19T09:31:38.320121400Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:TSLA-USD-PERP.HYPERLIQUID quotes[0m
+[1m2026-09-19T09:31:38.320124200Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:TSLA-USD-PERP.HYPERLIQUID funding rates[0m
+[1m2026-09-19T09:31:38.320127300Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:TSLA-USD-PERP.HYPERLIQUID trades[0m
+[1m2026-09-19T09:31:38.320133100Z[0m [94m[INFO] STAGE1-001.nautilus_data::client: Subscribed xyz:TSLA-USD-PERP.HYPERLIQUID order book deltas[0m
+[1m2026-09-19T09:31:38.412908000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] new snapshot ready (is_trading=None): feed and book usable again, market_ready=True (halted=False) (snapshots=1)[0m
+[1m2026-09-19T09:31:38.416086400Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] new snapshot ready (is_trading=None): feed and book usable again, market_ready=True (halted=False) (snapshots=1)[0m
+[1m2026-09-19T09:32:08.332982600Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=15(quotes/deltas-cache:117,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=9(quotes/deltas-cache:6,trades=31) | samples=8 stale=22 | last gross ONDO>HL=-5.85 HL>ONDO=4.05 bps | net+ rows=0 (dirs 0) | depth rows=58 | trade rows=32[0m
+[1m2026-09-19T09:32:08.333386400Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=10(quotes/deltas-cache:117,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=12(quotes/deltas-cache:6,trades=34) | samples=11 stale=20 | last gross ONDO>HL=-8.51 HL>ONDO=4.94 bps | net+ rows=0 (dirs 0) | depth rows=58 | trade rows=34[0m
+[1m2026-09-19T09:32:35.423283700Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (NVDA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:32:35.423371400Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] metadata ready again (is_quoting=True): re-read from NVDA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:32:35.423411300Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (TSLA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:32:35.423448900Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] metadata ready again (is_quoting=True): re-read from TSLA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:32:38.325186100Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=10(quotes/deltas-cache:234,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=19(quotes/deltas-cache:12,trades=38) | samples=11 stale=34 | last gross ONDO>HL=-8.51 HL>ONDO=4.94 bps | net+ rows=0 (dirs 0) | depth rows=120 | trade rows=38[0m
+[1m2026-09-19T09:32:38.325241700Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=27(quotes/deltas-cache:234,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=10(quotes/deltas-cache:12,trades=31) | samples=8 stale=48 | last gross ONDO>HL=-5.85 HL>ONDO=4.05 bps | net+ rows=0 (dirs 0) | depth rows=118 | trade rows=32[0m
+[1m2026-09-19T09:33:08.329573400Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=40(quotes/deltas-cache:351,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=12(quotes/deltas-cache:17,trades=31) | samples=13 stale=68 | last gross ONDO>HL=-5.85 HL>ONDO=4.05 bps | net+ rows=0 (dirs 0) | depth rows=178 | trade rows=32[0m
+[1m2026-09-19T09:33:08.329705000Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=12(quotes/deltas-cache:351,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=24(quotes/deltas-cache:17,trades=38) | samples=13 stale=44 | last gross ONDO>HL=-8.51 HL>ONDO=5.49 bps | net+ rows=0 (dirs 0) | depth rows=180 | trade rows=38[0m
+[1m2026-09-19T09:33:38.322053800Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=16(quotes/deltas-cache:468,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=31(quotes/deltas-cache:23,trades=44) | samples=20 stale=52 | last gross ONDO>HL=-9.60 HL>ONDO=6.04 bps | net+ rows=0 (dirs 0) | depth rows=240 | trade rows=44[0m
+[1m2026-09-19T09:33:38.322098200Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=66(quotes/deltas-cache:468,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=31(quotes/deltas-cache:23,trades=43) | samples=23 stale=138 | last gross ONDO>HL=-6.31 HL>ONDO=4.05 bps | net+ rows=0 (dirs 0) | depth rows=240 | trade rows=44[0m
+[1m2026-09-19T09:33:42.455359200Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (NVDA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:33:42.455446000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] metadata ready again (is_quoting=True): re-read from NVDA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:33:42.455485200Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (TSLA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:33:42.455524000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] metadata ready again (is_quoting=True): re-read from TSLA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:34:08.332393600Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=101(quotes/deltas-cache:585,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=59(quotes/deltas-cache:29,trades=46) | samples=70 stale=170 | last gross ONDO>HL=-6.31 HL>ONDO=4.05 bps | net+ rows=0 (dirs 0) | depth rows=298 | trade rows=47[0m
+[1m2026-09-19T09:34:08.332805200Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=30(quotes/deltas-cache:585,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=44(quotes/deltas-cache:29,trades=47) | samples=31 stale=84 | last gross ONDO>HL=-9.33 HL>ONDO=3.57 bps | net+ rows=0 (dirs 0) | depth rows=298 | trade rows=47[0m
+[1m2026-09-19T09:34:38.323046600Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=42(quotes/deltas-cache:702,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=54(quotes/deltas-cache:34,trades=50) | samples=45 stale=100 | last gross ONDO>HL=-8.23 HL>ONDO=4.94 bps | net+ rows=0 (dirs 0) | depth rows=360 | trade rows=50[0m
+[1m2026-09-19T09:34:38.323103300Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=115(quotes/deltas-cache:702,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=72(quotes/deltas-cache:34,trades=46) | samples=78 stale=208 | last gross ONDO>HL=-5.41 HL>ONDO=3.15 bps | net+ rows=0 (dirs 0) | depth rows=360 | trade rows=47[0m
+[1m2026-09-19T09:34:42.930309300Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (NVDA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:34:42.930397500Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] metadata ready again (is_quoting=True): re-read from NVDA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:34:42.930437700Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (TSLA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:34:42.930477500Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] metadata ready again (is_quoting=True): re-read from TSLA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:35:08.326332000Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=130(quotes/deltas-cache:819,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=79(quotes/deltas-cache:40,trades=47) | samples=91 stale=226 | last gross ONDO>HL=-5.41 HL>ONDO=3.60 bps | net+ rows=0 (dirs 0) | depth rows=418 | trade rows=48[0m
+[1m2026-09-19T09:35:08.326757700Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=42(quotes/deltas-cache:819,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=61(quotes/deltas-cache:40,trades=53) | samples=45 stale=114 | last gross ONDO>HL=-8.23 HL>ONDO=4.94 bps | net+ rows=0 (dirs 0) | depth rows=418 | trade rows=53[0m
+[1m2026-09-19T09:35:38.324722100Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=145(quotes/deltas-cache:936,trades=2,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=94(quotes/deltas-cache:45,trades=50) | samples=106 stale=256 | last gross ONDO>HL=-6.76 HL>ONDO=4.50 bps | net+ rows=0 (dirs 0) | depth rows=478 | trade rows=52[0m
+[1m2026-09-19T09:35:38.324968600Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=43(quotes/deltas-cache:936,trades=0,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=75(quotes/deltas-cache:45,trades=53) | samples=45 stale=144 | last gross ONDO>HL=-8.23 HL>ONDO=4.94 bps | net+ rows=0 (dirs 0) | depth rows=478 | trade rows=53[0m
+[1m2026-09-19T09:35:43.498422600Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (NVDA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:35:43.498509200Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA/ONDO] metadata ready again (is_quoting=True): re-read from NVDA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:35:43.498549700Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] taker fee from the runtime instrument metadata: 2.5000 bps (TSLA-USD-PERP.ONDO)[0m
+[1m2026-09-19T09:35:43.498590800Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA/ONDO] metadata ready again (is_quoting=True): re-read from TSLA-USD-PERP.ONDO, metadata_ready=True[0m
+[1m2026-09-19T09:36:08.324429500Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: STATUS [NVDA] ONDO=159(quotes/deltas-cache:1052,trades=4,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=106(quotes/deltas-cache:51,trades=54) | samples=113 stale=294 | last gross ONDO>HL=-5.86 HL>ONDO=4.05 bps | net+ rows=0 (dirs 0) | depth rows=538 | trade rows=58[0m
+[1m2026-09-19T09:36:08.324598400Z[0m [36m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: STATUS [TSLA] ONDO=44(quotes/deltas-cache:1052,trades=1,feed=up,market=up,book=ok,metadata=ok,disconnects=0) HL=95(quotes/deltas-cache:51,trades=53) | samples=49 stale=178 | last gross ONDO>HL=-7.41 HL>ONDO=3.57 bps | net+ rows=0 (dirs 0) | depth rows=540 | trade rows=54[0m
+[1m2026-09-19T09:36:34.520124300Z[0m [INFO] STAGE1-001.nautilus_live::node: Received stop signal from handle[0m
+[1m2026-09-19T09:36:34.520133500Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Stopping trader...[0m
+[1m2026-09-19T09:36:34.520137300Z[0m [INFO] STAGE1-001.nautilus_system::trader: Stopping[0m
+[1m2026-09-19T09:36:34.520144500Z[0m [INFO] STAGE1-001.SPREAD-WATCH-NVDA: Stopping[0m
+[1m2026-09-19T09:36:34.521570600Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-NVDA: [NVDA] L2 tape closed: records=1533 dropped=0 gaps=0 fragments=1 -> E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\l2\l2_NVDA_ONDO-HL_20260919T093133Z.jsonl[0m
+[1m2026-09-19T09:36:34.521584300Z[0m [INFO] STAGE1-001.SPREAD-WATCH-NVDA: Stopped[0m
+[1m2026-09-19T09:36:34.521588300Z[0m [INFO] STAGE1-001.SPREAD-WATCH-TSLA: Stopping[0m
+[1m2026-09-19T09:36:34.522333000Z[0m [92m[INFO] STAGE1-001.SPREAD-WATCH-TSLA: [TSLA] L2 tape closed: records=1378 dropped=0 gaps=0 fragments=1 -> E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\l2\l2_TSLA_ONDO-HL_20260919T093133Z.jsonl[0m
+[1m2026-09-19T09:36:34.522343200Z[0m [INFO] STAGE1-001.SPREAD-WATCH-TSLA: Stopped[0m
+[1m2026-09-19T09:36:34.522345600Z[0m [INFO] STAGE1-001.nautilus_system::trader: Stopped[0m
+[1m2026-09-19T09:36:34.522347100Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting residual events (2s)...[0m
+[1m2026-09-19T09:36:36.538218400Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Disconnecting clients...[0m
+[1m2026-09-19T09:36:36.538304800Z[0m [INFO] STAGE1-001.nautilus_ondo::data: Disconnecting ONDO[0m
+[1m2026-09-19T09:36:36.665440800Z[0m [INFO] STAGE1-001.nautilus_ondo::data: Disconnected ONDO[0m
+[1m2026-09-19T09:36:36.666115400Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Disconnected: client_id=HYPERLIQUID[0m
+[1m2026-09-19T09:36:36.666122400Z[0m [INFO] STAGE1-001.nautilus_live::node: Awaiting engine disconnections (10s timeout)...[0m
+[1m2026-09-19T09:36:36.666125400Z[0m [INFO] STAGE1-001.nautilus_live::node: All engine clients disconnected[0m
+[1m2026-09-19T09:36:36.666135100Z[0m [INFO] STAGE1-001.nautilus_hyperliquid::data: Stopping Hyperliquid data client HYPERLIQUID[0m
+[1m2026-09-19T09:36:36.666147100Z[0m [INFO] STAGE1-001.nautilus_execution::engine: Stopped[0m
+[1m2026-09-19T09:36:36.666150000Z[0m [INFO] STAGE1-001.nautilus_risk::engine: Stopped[0m
+[1m2026-09-19T09:36:36.666150900Z[0m [INFO] STAGE1-001.nautilus_execution::order_emulator::emulator: Stopped[0m
+[1m2026-09-19T09:36:36.666152500Z[0m [INFO] STAGE1-001.nautilus_system::kernel: Stopped[0m
+[1m2026-09-19T09:36:36.666170700Z[0m [INFO] STAGE1-001.nautilus_live::node: Drained 2 remaining events during shutdown[0m
+[1m2026-09-19T09:36:36.666173100Z[0m [INFO] STAGE1-001.nautilus_live::node: Event loop stopped[0m
+
+==============================================================================
+SUMMARY [NVDA]
+  leg ONDO       top-of-book updates=186 (quotes)  book updates=1154 (deltas-cache)  trades=4  funding_seen=True  taker_fee_bps=2.50 (instrument_metadata)  feed_ready=True market_ready=True book_valid=True disconnects=0 metadata_ready=True metadata_version=5 metadata_available_ns=1789810542936949600 NVDA-USD-PERP.ONDO
+  leg HL         top-of-book updates=119 (quotes)  book updates=56 (deltas-cache)  trades=54  funding_seen=True  taker_fee_bps=0.90 (registry)  xyz:NVDA-USD-PERP.HYPERLIQUID
+  evaluated samples=140  skipped-stale=320
+  net-positive rows written=0   all-sample rows=56   depth rows=592   trade rows=58
+  l2 tape: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\l2\l2_NVDA_ONDO-HL_20260919T093133Z.jsonl  records=1533 dropped=0 gaps=0 fragments=1
+  ONDO>HL: net-positive 0/140 (0.00%)  gross median=-6.76 max=-5.40 min=-9.91 bps  fee+reserve=8.40
+  HL>ONDO: net-positive 0/140 (0.00%)  gross median=3.15 max=5.86 min=1.35 bps  fee+reserve=8.40
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\spread_NVDA_ONDO-HL_20260919T093133Z.csv
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\spread_NVDA_ONDO-HL_20260919T093133Z_all.csv
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\depth_NVDA_ONDO-HL_20260919T093133Z.csv
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\trades_NVDA_ONDO-HL_20260919T093133Z.csv
+==============================================================================
+
+==============================================================================
+SUMMARY [TSLA]
+  leg ONDO       top-of-book updates=46 (quotes)  book updates=1154 (deltas-cache)  trades=1  funding_seen=True  taker_fee_bps=2.50 (instrument_metadata)  feed_ready=True market_ready=True book_valid=True disconnects=0 metadata_ready=True metadata_version=5 metadata_available_ns=1789810542936949600 TSLA-USD-PERP.ONDO
+  leg HL         top-of-book updates=104 (quotes)  book updates=56 (deltas-cache)  trades=54  funding_seen=True  taker_fee_bps=0.90 (registry)  xyz:TSLA-USD-PERP.HYPERLIQUID
+  evaluated samples=49  skipped-stale=200
+  net-positive rows written=0   all-sample rows=18   depth rows=592   trade rows=55
+  l2 tape: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\l2\l2_TSLA_ONDO-HL_20260919T093133Z.jsonl  records=1378 dropped=0 gaps=0 fragments=1
+  ONDO>HL: net-positive 0/49 (0.00%)  gross median=-9.06 max=-7.13 min=-10.70 bps  fee+reserve=8.40
+  HL>ONDO: net-positive 0/49 (0.00%)  gross median=4.94 max=6.04 min=2.47 bps  fee+reserve=8.40
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\spread_TSLA_ONDO-HL_20260919T093133Z.csv
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\spread_TSLA_ONDO-HL_20260919T093133Z_all.csv
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\depth_TSLA_ONDO-HL_20260919T093133Z.csv
+  csv: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\trades_TSLA_ONDO-HL_20260919T093133Z.csv
+==============================================================================
+[stage1] l2 tape manifest: E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\l2\manifest.json
+[stage1] raw_ondo recording (E:\Nautilus-Perps\reports\ondo-acceptance\20260919-r52\data\public\observation\raw_ondo): complete: segments=1 sessions=1 records=2624 dropped=0 gaps=0 run_ids=['20260919T093133Z']

@@ -1,0 +1,127 @@
+﻿[
+    {
+        "path":  "depth_NVDA_ONDO-HL_20260915T024236Z.csv",
+        "bytes":  32529,
+        "sha256":  "ec31f72c21c5ec48ed276bb8b1d443ae22668293fa80e97a8c6401c082348b01"
+    },
+    {
+        "path":  "depth_TSLA_ONDO-HL_20260915T024236Z.csv",
+        "bytes":  32443,
+        "sha256":  "6cbca45cc996f87be2de182592bb08f7e9ff6767f2f9adbcc428fceea1030400"
+    },
+    {
+        "path":  "depth-analysis\\ondo_depth.json",
+        "bytes":  31017,
+        "sha256":  "d3b69907037d0f2567815b74945d8329ca222e7cc75d59c6894fa07d46327431"
+    },
+    {
+        "path":  "depth-analysis\\ondo_depth.md",
+        "bytes":  9770,
+        "sha256":  "3c3b2c5cb76507dd966013e619d8d8843de65e57322604e0162ff599e290529e"
+    },
+    {
+        "path":  "depth-analysis\\ondo_depth_hits.csv",
+        "bytes":  505,
+        "sha256":  "539feca4ebbcbf72a96f1fcbc48d3ed268d2a39a501ec36efe5492714d7a70f3"
+    },
+    {
+        "path":  "depth-analysis\\ondo_depth_summary.csv",
+        "bytes":  3887,
+        "sha256":  "e737342052d2e19aaff74eb5794f266818f2c39ef1262c66171cf5c372aaf6c6"
+    },
+    {
+        "path":  "depth-analysis-ondo-hl\\ondo_depth.json",
+        "bytes":  400095,
+        "sha256":  "e6fa13785a4746fd6b7f1eb60c1b0b77407209b3c370c464025260cc67fd6cb4"
+    },
+    {
+        "path":  "depth-analysis-ondo-hl\\ondo_depth.md",
+        "bytes":  12653,
+        "sha256":  "25089d1736bdaab774b72ca488cd608bb3d545b3b4255a58cd1f4326c204fcd1"
+    },
+    {
+        "path":  "depth-analysis-ondo-hl\\ondo_depth_hits.csv",
+        "bytes":  104866,
+        "sha256":  "58da433763e5e45280b969e2284b99303095234e4501368c854137881471cdb7"
+    },
+    {
+        "path":  "depth-analysis-ondo-hl\\ondo_depth_summary.csv",
+        "bytes":  5017,
+        "sha256":  "88d78a53b9df28f51deb8264596e3426672ffa489aa432070d1626e013224878"
+    },
+    {
+        "path":  "l2\\l2_NVDA_ONDO-HL_20260915T024236Z.jsonl",
+        "bytes":  1106564,
+        "sha256":  "91d6ba7fe168c3ecd0b0af6109632c7b2f0c5c9fa8c0df87f2b8cfc1558e28d0"
+    },
+    {
+        "path":  "l2\\l2_NVDA_ONDO-HL_20260915T024236Z.manifest.json",
+        "bytes":  580,
+        "sha256":  "5e3eeeaa6761cfcceaa027a52f2064606283eb3de4eecf9df296b3fbb3ef6200"
+    },
+    {
+        "path":  "l2\\l2_TSLA_ONDO-HL_20260915T024236Z.jsonl",
+        "bytes":  1514961,
+        "sha256":  "4a11d820cd4747c53c0264edbd9c9cbe14190e23afae975627bc2b7ba63c0768"
+    },
+    {
+        "path":  "l2\\l2_TSLA_ONDO-HL_20260915T024236Z.manifest.json",
+        "bytes":  580,
+        "sha256":  "3a7e7442fb4a57ebf01098ca7306a7ee43ae876f1946dee7eec73c0da62b3497"
+    },
+    {
+        "path":  "l2\\manifest.json",
+        "bytes":  1736,
+        "sha256":  "232f1b1a832c3e14f613881cc1d0d4721901b9dca0bcc3ef4f3feb0ed2a86b43"
+    },
+    {
+        "path":  "p2_depth_analysis.txt",
+        "bytes":  20348,
+        "sha256":  "0cc875d3f06659ab33e1b79170badd61a0d3f586d4da8b0115e7c099504a8597"
+    },
+    {
+        "path":  "p2_depth_analysis_ondo_hl.txt",
+        "bytes":  26178,
+        "sha256":  "9393a991abfbea1fb5a694e1ffa02c749b05d9bd325025f92f42447626b43f17"
+    },
+    {
+        "path":  "p2_record_run.txt",
+        "bytes":  66924,
+        "sha256":  "ae2aac399225ed57d44048ddde149ff74b39f37c2fd7a0f39d50af0fa8b42179"
+    },
+    {
+        "path":  "raw_ondo\\raw_md.jsonl",
+        "bytes":  3734199,
+        "sha256":  "cbdef17d30c9a5447649200b73644264f763913073c93924d475e7bbc085de42"
+    },
+    {
+        "path":  "spread_NVDA_ONDO-HL_20260915T024236Z.csv",
+        "bytes":  156,
+        "sha256":  "9fb8b2b1e15ed223cf76d50d1720441ca6d9b0dad9ac69e3993769b183f06191"
+    },
+    {
+        "path":  "spread_NVDA_ONDO-HL_20260915T024236Z_all.csv",
+        "bytes":  7223,
+        "sha256":  "9c56257bb157c8999d2e67f1aa0ec08260f7fa8d3ba2bbcfb04c80bfcabfa2bb"
+    },
+    {
+        "path":  "spread_TSLA_ONDO-HL_20260915T024236Z.csv",
+        "bytes":  156,
+        "sha256":  "9fb8b2b1e15ed223cf76d50d1720441ca6d9b0dad9ac69e3993769b183f06191"
+    },
+    {
+        "path":  "spread_TSLA_ONDO-HL_20260915T024236Z_all.csv",
+        "bytes":  3553,
+        "sha256":  "db860c6f58c00f3c35733c47a0ad1c5ed897ae65868be578d6eee231c391c4be"
+    },
+    {
+        "path":  "trades_NVDA_ONDO-HL_20260915T024236Z.csv",
+        "bytes":  5496,
+        "sha256":  "2749d3b2e36a7d26b53171587623e88f9dd39d953f9833b81a3eeb8496aca7f6"
+    },
+    {
+        "path":  "trades_TSLA_ONDO-HL_20260915T024236Z.csv",
+        "bytes":  3326,
+        "sha256":  "04f6a3722ebb73efae0dd4e7a8ce91af46f016b69ed7ccb9ea3c145200f2e110"
+    }
+]

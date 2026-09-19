@@ -1,0 +1,26 @@
+Using Python 3.12.9 environment at: E:\Nautilus-Perps\.worktrees\ondo-r52-app\.venv
+cffi==2.1.1
+click==8.5.0
+colorama==0.4.6
+cryptography==50.0.1
+fsspec==2026.2.0
+iniconfig==2.3.0
+msgspec==0.21.1
+nautilus-trader @ file:///E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+numpy==2.5.2
+packaging==26.3
+pandas==3.0.5
+pluggy==1.6.0
+portion==2.6.2
+pyarrow==25.0.1
+pycparser==3.0
+pygments==2.21.0
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+pytz==2026.3.post1
+six==1.17.0
+sortedcontainers==2.4.0
+tqdm==4.70.0
+tzdata==2026.3
+websockets==17.1

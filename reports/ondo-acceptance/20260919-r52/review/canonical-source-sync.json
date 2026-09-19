@@ -1,0 +1,74 @@
+﻿[
+    {
+        "repo":  "fork",
+        "path":  "crates/adapters/ondo/src/execution.rs",
+        "source_sha256":  "4AA6A7234883004F64C8EE629E0168385E34BBFD541A2EE1F0FFF7A09C1C09B1",
+        "canonical_sha256":  "4AA6A7234883004F64C8EE629E0168385E34BBFD541A2EE1F0FFF7A09C1C09B1"
+    },
+    {
+        "repo":  "fork",
+        "path":  "crates/adapters/ondo/src/python/factories.rs",
+        "source_sha256":  "9D2DA4304B065460D659CC05CC668EE04C60CACCE3DE0DBAA05A3F72C515073D",
+        "canonical_sha256":  "9D2DA4304B065460D659CC05CC668EE04C60CACCE3DE0DBAA05A3F72C515073D"
+    },
+    {
+        "repo":  "fork",
+        "path":  "crates/adapters/ondo/src/reconciliation.rs",
+        "source_sha256":  "0AC8338632A5677D62E6531276A87D54DF946E7AC1CBBF2CB3F704E288488CD3",
+        "canonical_sha256":  "0AC8338632A5677D62E6531276A87D54DF946E7AC1CBBF2CB3F704E288488CD3"
+    },
+    {
+        "repo":  "fork",
+        "path":  "crates/adapters/ondo/src/websocket/private/stream.rs",
+        "source_sha256":  "055A0C511AC18BFBBE3373877D323DD5ECA9A1E6AC804AF1D3240A3699C8D9C8",
+        "canonical_sha256":  "055A0C511AC18BFBBE3373877D323DD5ECA9A1E6AC804AF1D3240A3699C8D9C8"
+    },
+    {
+        "repo":  "fork",
+        "path":  "crates/adapters/ondo/tests/private_runtime.rs",
+        "source_sha256":  "49C909163F18E47F51A215B404DA6A4EAB93B6C3BBA26B800F7E639D96B863A3",
+        "canonical_sha256":  "49C909163F18E47F51A215B404DA6A4EAB93B6C3BBA26B800F7E639D96B863A3"
+    },
+    {
+        "repo":  "fork",
+        "path":  "crates/adapters/ondo/tests/reconciliation.rs",
+        "source_sha256":  "7BC6E150FB9728E8A22C588A60D02CF814C37FA245E1703CDB873EA288309A03",
+        "canonical_sha256":  "7BC6E150FB9728E8A22C588A60D02CF814C37FA245E1703CDB873EA288309A03"
+    },
+    {
+        "repo":  "fork",
+        "path":  "python/nautilus_trader/adapters/ondo/__init__.pyi",
+        "source_sha256":  "AEFA6EFEED20BDBA711117B051C98E48A531B3F150246CA421BAD9007AAC76F8",
+        "canonical_sha256":  "AEFA6EFEED20BDBA711117B051C98E48A531B3F150246CA421BAD9007AAC76F8"
+    },
+    {
+        "repo":  "app",
+        "path":  "src/ondo_probe.py",
+        "source_sha256":  "DF59EAE61AF9B7D495EC81D963F544B54718F28DDFCFB70AF8C40AD01FBD726C",
+        "canonical_sha256":  "DF59EAE61AF9B7D495EC81D963F544B54718F28DDFCFB70AF8C40AD01FBD726C"
+    },
+    {
+        "repo":  "app",
+        "path":  "tests/test_ondo_probe.py",
+        "source_sha256":  "BFF9DA4EC9412CC38CF7DAAB68F10E807E6B5B0C45812B4780B44E422E069CBF",
+        "canonical_sha256":  "BFF9DA4EC9412CC38CF7DAAB68F10E807E6B5B0C45812B4780B44E422E069CBF"
+    },
+    {
+        "repo":  "app",
+        "path":  "docs/ondo.md",
+        "source_sha256":  "2F61F2F390C00513CD2FCA8C92E5E803234289395360A2295499A1D06E88B123",
+        "canonical_sha256":  "2F61F2F390C00513CD2FCA8C92E5E803234289395360A2295499A1D06E88B123"
+    },
+    {
+        "repo":  "app",
+        "path":  "docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md",
+        "source_sha256":  "A305F0E2809718B22F860CA6C9DCB2523C3ED7C3C1AB7B997F27C16684383DC1",
+        "canonical_sha256":  "A305F0E2809718B22F860CA6C9DCB2523C3ED7C3C1AB7B997F27C16684383DC1"
+    },
+    {
+        "repo":  "app",
+        "path":  "pyproject.toml",
+        "source_sha256":  "6ECA0DC97A0597F688FCD472B50257E5E685A2C592C501AA6E294A29D73FB208",
+        "canonical_sha256":  "6ECA0DC97A0597F688FCD472B50257E5E685A2C592C501AA6E294A29D73FB208"
+    }
+]

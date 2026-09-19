@@ -1,0 +1,14 @@
+{
+  "verified": true,
+  "python": "E:\\Nautilus-Perps\\.venv\\Scripts\\python.exe",
+  "package_file": "E:\\Nautilus-Perps\\.venv\\Lib\\site-packages\\nautilus_trader\\__init__.py",
+  "installed_from": "file:///E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+  "wheel_sha256": "4d19c5df5bec73391a760d4b8643e2f8eaa53ce183dca88ee917454e2b91d642",
+  "native_binary_sha256": "8a0b775a94f17234c117550d3fc3e9df0f63f3cca04b3afe940317598e49dc05",
+  "stub_sha256": "aefa6efeed20bdba711117b051c98e48a531b3f150246ca421bad9007aac76f8",
+  "supports_ordered_shutdown": true,
+  "property_read_only": true,
+  "protocol_verified": false,
+  "exit_code_zero_means_clean_account": false,
+  "offline_dry_run_no_client_no_requests": true
+}

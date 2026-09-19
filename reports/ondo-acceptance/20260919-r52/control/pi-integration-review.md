@@ -1,0 +1,8 @@
+# Astra review of application capability reporting
+
+The read-only native capability getter and old-wheel fail-closed detection are appropriate. Keep them. Before acceptance fix the following factual distinction in code, docs and tests:
+
+1. **Zero submitted orders does not imply no DMS release.** A real sandbox trading-mode session arms DMS on connect and can release it during a clean disconnect even with zero orders (the native factory lifecycle test explicitly exercises this). A journal may also contain prior owned orders. Current new strings in converging_stop_document/unverified_document claim zero orders means no cancel/confirmation/DMS release; this is false. The app has no per-run native StopReport telemetry, so the correct reason is **not observed by this probe**, not **did not occur**. Represent unobserved per-run actions as unknown/null or explicitly named observation flags; do not present a hardcoded False as proof the native action did not happen. Preserve no-side-effect guarantees for public/paper/account-readonly and the distinction between capability and observed outcome. Add one focused regression to prevent this conflation.
+2. PROTOCOL_VERIFIED_REASON still says no request has ever been sent to the real Ondo venue, contradicting the actual public preflights/recordings. Narrow it to no host-confirmed **private/sandbox protocol acceptance** in these reports; public connectivity is already observed. Do not promote protocol_verified.
+
+Please make these corrections after finishing the initial integration pass, preserve first-pass evidence, rerun relevant probe tests, and update integration/README.md with the change. No cargo/build yet; the native cleanup Pi owns that build target until its correction is complete.

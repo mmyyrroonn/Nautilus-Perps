@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-09-19T09:30:24+00:00",
+  "l2_dir": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260919-r52\\data\\historical\\synthetic\\metadata-fee-update\\run\\l2",
+  "fragments": [
+    {
+      "order": 1,
+      "tape": "l2_NVDA_ONDO-HL_20260914T000000Z.jsonl",
+      "manifest": "l2_NVDA_ONDO-HL_20260914T000000Z.manifest.json",
+      "run_id": "20260914T000000Z",
+      "session_id": "20260914T000000Z-e6b679fae296",
+      "segment_index": 1,
+      "path": "l2_NVDA_ONDO-HL_20260914T000000Z.jsonl",
+      "lines": 9,
+      "records": 7,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 7,
+      "dropped": 0,
+      "gaps": 0,
+      "closed": true
+    }
+  ],
+  "tapes": [
+    {
+      "tape": "l2_NVDA_ONDO-HL_20260914T000000Z.jsonl",
+      "run_id": "20260914T000000Z",
+      "manifest": "l2_NVDA_ONDO-HL_20260914T000000Z.manifest.json",
+      "segments": 1,
+      "dropped": 0,
+      "gaps": 0,
+      "complete": true
+    }
+  ]
+}

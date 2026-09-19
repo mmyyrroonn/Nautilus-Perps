@@ -1,0 +1,744 @@
+{
+  "old_summary": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260915T024236Z-p2\\depth-analysis-ondo-hl\\ondo_depth_summary.csv",
+  "new_summary": "historical\\replay\\ondo_depth_summary.csv",
+  "rows_compared": 12,
+  "rows_with_field_differences": 12,
+  "step_shift": [
+    {
+      "symbol": "NVDA",
+      "direction": "HL>ONDO",
+      "notional_usd": "100",
+      "old_pass": 63,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 63,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "NVDA",
+      "direction": "HL>ONDO",
+      "notional_usd": "500",
+      "old_pass": 63,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 63,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "NVDA",
+      "direction": "HL>ONDO",
+      "notional_usd": "1000",
+      "old_pass": 63,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 63,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "NVDA",
+      "direction": "ONDO>HL",
+      "notional_usd": "100",
+      "old_pass": 63,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 63,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "NVDA",
+      "direction": "ONDO>HL",
+      "notional_usd": "500",
+      "old_pass": 63,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 63,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "NVDA",
+      "direction": "ONDO>HL",
+      "notional_usd": "1000",
+      "old_pass": 63,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 63,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "HL>ONDO",
+      "notional_usd": "100",
+      "old_pass": 62,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 62,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "HL>ONDO",
+      "notional_usd": "500",
+      "old_pass": 62,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 62,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "HL>ONDO",
+      "notional_usd": "1000",
+      "old_pass": 62,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 62,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "ONDO>HL",
+      "notional_usd": "100",
+      "old_pass": 62,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 62,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "ONDO>HL",
+      "notional_usd": "500",
+      "old_pass": 62,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 62,
+      "shift_is_exact": true
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "ONDO>HL",
+      "notional_usd": "1000",
+      "old_pass": 62,
+      "new_pass": 0,
+      "new_quantity_step_unknown": 62,
+      "shift_is_exact": true
+    }
+  ],
+  "step_shift_exact_rows": 12,
+  "non_step_reject_mismatches": [],
+  "rows": [
+    {
+      "symbol": "NVDA",
+      "sell_venue": "HL",
+      "buy_venue": "ONDO",
+      "notional_usd": "100",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "63",
+          "new": "0"
+        },
+        "reject": {
+          "old": "620",
+          "new": "683"
+        },
+        "hits": {
+          "old": "63",
+          "new": "0"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "5.645332016089196245854209301",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "2.245332016089196245854209301",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "5829.542007",
+          "new": "6732.579536"
+        },
+        "event_age_buy_ms_max": {
+          "old": "240.000734",
+          "new": "1158.686141"
+        },
+        "reject_reasons": {
+          "old": "stale_book=411;event_skew=207;no_book=2",
+          "new": "stale_book=411;event_skew=207;quantity_step_unknown=63;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 63
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "NVDA",
+      "sell_venue": "HL",
+      "buy_venue": "ONDO",
+      "notional_usd": "500",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "63",
+          "new": "0"
+        },
+        "reject": {
+          "old": "620",
+          "new": "683"
+        },
+        "hits": {
+          "old": "63",
+          "new": "0"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "5.645332016089196245854209301",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "2.245332016089196245854209301",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "5829.542007",
+          "new": "6732.579536"
+        },
+        "event_age_buy_ms_max": {
+          "old": "240.000734",
+          "new": "1158.686141"
+        },
+        "reject_reasons": {
+          "old": "stale_book=411;event_skew=207;no_book=2",
+          "new": "stale_book=411;event_skew=207;quantity_step_unknown=63;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 63
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "NVDA",
+      "sell_venue": "HL",
+      "buy_venue": "ONDO",
+      "notional_usd": "1000",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "63",
+          "new": "0"
+        },
+        "reject": {
+          "old": "620",
+          "new": "683"
+        },
+        "hits": {
+          "old": "63",
+          "new": "0"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "5.645332016089196245854209301",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "2.245332016089196245854209301",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "5829.542007",
+          "new": "6732.579536"
+        },
+        "event_age_buy_ms_max": {
+          "old": "240.000734",
+          "new": "1158.686141"
+        },
+        "reject_reasons": {
+          "old": "stale_book=411;event_skew=207;no_book=2",
+          "new": "stale_book=411;event_skew=207;quantity_step_unknown=63;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 63
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "NVDA",
+      "sell_venue": "ONDO",
+      "buy_venue": "HL",
+      "notional_usd": "100",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "63",
+          "new": "0"
+        },
+        "reject": {
+          "old": "620",
+          "new": "683"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "-7.527109354785594994472279068",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "-10.92710935478559499447227907",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "240.000734",
+          "new": "1158.686141"
+        },
+        "event_age_buy_ms_max": {
+          "old": "5829.542007",
+          "new": "6732.579536"
+        },
+        "reject_reasons": {
+          "old": "stale_book=411;event_skew=207;no_book=2",
+          "new": "stale_book=411;event_skew=207;quantity_step_unknown=63;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 63
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "NVDA",
+      "sell_venue": "ONDO",
+      "buy_venue": "HL",
+      "notional_usd": "500",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "63",
+          "new": "0"
+        },
+        "reject": {
+          "old": "620",
+          "new": "683"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "-7.527109354785594994472279068",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "-10.92710935478559499447227907",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "240.000734",
+          "new": "1158.686141"
+        },
+        "event_age_buy_ms_max": {
+          "old": "5829.542007",
+          "new": "6732.579536"
+        },
+        "reject_reasons": {
+          "old": "stale_book=411;event_skew=207;no_book=2",
+          "new": "stale_book=411;event_skew=207;quantity_step_unknown=63;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 63
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "NVDA",
+      "sell_venue": "ONDO",
+      "buy_venue": "HL",
+      "notional_usd": "1000",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "63",
+          "new": "0"
+        },
+        "reject": {
+          "old": "620",
+          "new": "683"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "-7.527109354785594994472279068",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "-10.92710935478559499447227907",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "240.000734",
+          "new": "1158.686141"
+        },
+        "event_age_buy_ms_max": {
+          "old": "5829.542007",
+          "new": "6732.579536"
+        },
+        "reject_reasons": {
+          "old": "stale_book=411;event_skew=207;no_book=2",
+          "new": "stale_book=411;event_skew=207;quantity_step_unknown=63;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 63
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "TSLA",
+      "sell_venue": "HL",
+      "buy_venue": "ONDO",
+      "notional_usd": "100",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "62",
+          "new": "0"
+        },
+        "reject": {
+          "old": "534",
+          "new": "596"
+        },
+        "hits": {
+          "old": "62",
+          "new": "0"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "5.83576490204251771571488120",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "2.435764902042517715714881201",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "5829.542007",
+          "new": "6716.345136"
+        },
+        "event_age_buy_ms_max": {
+          "old": "264.000723",
+          "new": "1139.089813"
+        },
+        "reject_reasons": {
+          "old": "stale_book=336;event_skew=196;no_book=2",
+          "new": "stale_book=336;event_skew=196;quantity_step_unknown=62;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 62
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "TSLA",
+      "sell_venue": "HL",
+      "buy_venue": "ONDO",
+      "notional_usd": "500",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "62",
+          "new": "0"
+        },
+        "reject": {
+          "old": "534",
+          "new": "596"
+        },
+        "hits": {
+          "old": "62",
+          "new": "0"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "5.83576490204251771571488120",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "2.435764902042517715714881201",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "5829.542007",
+          "new": "6716.345136"
+        },
+        "event_age_buy_ms_max": {
+          "old": "264.000723",
+          "new": "1139.089813"
+        },
+        "reject_reasons": {
+          "old": "stale_book=336;event_skew=196;no_book=2",
+          "new": "stale_book=336;event_skew=196;quantity_step_unknown=62;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 62
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "TSLA",
+      "sell_venue": "HL",
+      "buy_venue": "ONDO",
+      "notional_usd": "1000",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "62",
+          "new": "0"
+        },
+        "reject": {
+          "old": "534",
+          "new": "596"
+        },
+        "hits": {
+          "old": "62",
+          "new": "0"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "5.83576490204251771571488120",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "2.435764902042517715714881201",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "5829.542007",
+          "new": "6716.345136"
+        },
+        "event_age_buy_ms_max": {
+          "old": "264.000723",
+          "new": "1139.089813"
+        },
+        "reject_reasons": {
+          "old": "stale_book=336;event_skew=196;no_book=2",
+          "new": "stale_book=336;event_skew=196;quantity_step_unknown=62;no_book=2"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 62
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "TSLA",
+      "sell_venue": "ONDO",
+      "buy_venue": "HL",
+      "notional_usd": "100",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "62",
+          "new": "0"
+        },
+        "reject": {
+          "old": "534",
+          "new": "596"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "-9.551437527371610101674434825",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "-12.95143752737161010167443483",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "264.000723",
+          "new": "1139.089813"
+        },
+        "event_age_buy_ms_max": {
+          "old": "5829.542007",
+          "new": "6716.345136"
+        },
+        "reject_reasons": {
+          "old": "stale_book=336;event_skew=196;future_event_time=1;no_book=1",
+          "new": "stale_book=336;event_skew=196;quantity_step_unknown=62;future_event_time=1;no_book=1"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 62
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "TSLA",
+      "sell_venue": "ONDO",
+      "buy_venue": "HL",
+      "notional_usd": "500",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "62",
+          "new": "0"
+        },
+        "reject": {
+          "old": "534",
+          "new": "596"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "-9.77590535125267282356679246",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "-13.17590535125267282356679246",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "264.000723",
+          "new": "1139.089813"
+        },
+        "event_age_buy_ms_max": {
+          "old": "5829.542007",
+          "new": "6716.345136"
+        },
+        "reject_reasons": {
+          "old": "stale_book=336;event_skew=196;future_event_time=1;no_book=1",
+          "new": "stale_book=336;event_skew=196;quantity_step_unknown=62;future_event_time=1;no_book=1"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 62
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    },
+    {
+      "symbol": "TSLA",
+      "sell_venue": "ONDO",
+      "buy_venue": "HL",
+      "notional_usd": "1000",
+      "old_present": true,
+      "new_present": true,
+      "differences": {
+        "pass": {
+          "old": "62",
+          "new": "0"
+        },
+        "reject": {
+          "old": "534",
+          "new": "596"
+        },
+        "common_step": {
+          "old": "0.010",
+          "new": "unknown"
+        },
+        "gross_entry_bps_median": {
+          "old": "-9.885313924766814310119224675",
+          "new": "unknown"
+        },
+        "entry_after_fees_bps_median": {
+          "old": "-13.28531392476681431011922468",
+          "new": "unknown"
+        },
+        "event_age_sell_ms_max": {
+          "old": "264.000723",
+          "new": "1139.089813"
+        },
+        "event_age_buy_ms_max": {
+          "old": "5829.542007",
+          "new": "6716.345136"
+        },
+        "reject_reasons": {
+          "old": "stale_book=336;event_skew=196;future_event_time=1;no_book=1",
+          "new": "stale_book=336;event_skew=196;quantity_step_unknown=62;future_event_time=1;no_book=1"
+        }
+      },
+      "reason_delta": {
+        "quantity_step_unknown": {
+          "old": 0,
+          "new": 62
+        }
+      },
+      "new_step_origin": "quantity_step_unknown",
+      "new_common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step"
+    }
+  ]
+}

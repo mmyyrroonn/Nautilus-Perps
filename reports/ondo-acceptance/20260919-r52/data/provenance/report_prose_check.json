@@ -1,0 +1,137 @@
+{
+  "readme_buckets_checked": [
+    "NVDA HL>ONDO",
+    "NVDA ONDO>HL",
+    "TSLA HL>ONDO",
+    "TSLA ONDO>HL"
+  ],
+  "csv_buckets": [
+    {
+      "symbol": "NVDA",
+      "direction": "HL>ONDO",
+      "samples": 683,
+      "quality_pass": 63,
+      "reasons": {
+        "stale_book": 411,
+        "event_skew": 207,
+        "quantity_step_unknown": 63,
+        "no_book": 2
+      }
+    },
+    {
+      "symbol": "NVDA",
+      "direction": "ONDO>HL",
+      "samples": 683,
+      "quality_pass": 63,
+      "reasons": {
+        "stale_book": 411,
+        "event_skew": 207,
+        "quantity_step_unknown": 63,
+        "no_book": 2
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "HL>ONDO",
+      "samples": 596,
+      "quality_pass": 62,
+      "reasons": {
+        "stale_book": 336,
+        "event_skew": 196,
+        "quantity_step_unknown": 62,
+        "no_book": 2
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "direction": "ONDO>HL",
+      "samples": 596,
+      "quality_pass": 62,
+      "reasons": {
+        "stale_book": 336,
+        "event_skew": 196,
+        "quantity_step_unknown": 62,
+        "future_event_time": 1,
+        "no_book": 1
+      }
+    }
+  ],
+  "checks": [
+    {
+      "check": "readme.has_all_four_direction_rows",
+      "passed": true,
+      "detail": "rows=[('NVDA', 'HL>ONDO'), ('NVDA', 'ONDO>HL'), ('TSLA', 'HL>ONDO'), ('TSLA', 'ONDO>HL')]"
+    },
+    {
+      "check": "readme_matches_csv.NVDA.ONDO>HL",
+      "passed": true,
+      "detail": "prose={'samples': 683, 'quality_pass': 63, 'stale_book': 411, 'event_skew': 207, 'quantity_step_unknown': 63, 'future_event_time': 0, 'no_book': 2} csv={'samples': 683, 'quality_pass': 63, 'stale_book': 411, 'event_skew': 207, 'quantity_step_unknown': 63, 'future_event_time': 0, 'no_book': 2}"
+    },
+    {
+      "check": "reject_sum_equals_samples.NVDA.ONDO>HL",
+      "passed": true,
+      "detail": "sum=683 samples=683"
+    },
+    {
+      "check": "readme_matches_csv.NVDA.HL>ONDO",
+      "passed": true,
+      "detail": "prose={'samples': 683, 'quality_pass': 63, 'stale_book': 411, 'event_skew': 207, 'quantity_step_unknown': 63, 'future_event_time': 0, 'no_book': 2} csv={'samples': 683, 'quality_pass': 63, 'stale_book': 411, 'event_skew': 207, 'quantity_step_unknown': 63, 'future_event_time': 0, 'no_book': 2}"
+    },
+    {
+      "check": "reject_sum_equals_samples.NVDA.HL>ONDO",
+      "passed": true,
+      "detail": "sum=683 samples=683"
+    },
+    {
+      "check": "readme_matches_csv.TSLA.ONDO>HL",
+      "passed": true,
+      "detail": "prose={'samples': 596, 'quality_pass': 62, 'stale_book': 336, 'event_skew': 196, 'quantity_step_unknown': 62, 'future_event_time': 1, 'no_book': 1} csv={'samples': 596, 'quality_pass': 62, 'stale_book': 336, 'event_skew': 196, 'quantity_step_unknown': 62, 'future_event_time': 1, 'no_book': 1}"
+    },
+    {
+      "check": "reject_sum_equals_samples.TSLA.ONDO>HL",
+      "passed": true,
+      "detail": "sum=596 samples=596"
+    },
+    {
+      "check": "readme_matches_csv.TSLA.HL>ONDO",
+      "passed": true,
+      "detail": "prose={'samples': 596, 'quality_pass': 62, 'stale_book': 336, 'event_skew': 196, 'quantity_step_unknown': 62, 'future_event_time': 0, 'no_book': 2} csv={'samples': 596, 'quality_pass': 62, 'stale_book': 336, 'event_skew': 196, 'quantity_step_unknown': 62, 'future_event_time': 0, 'no_book': 2}"
+    },
+    {
+      "check": "reject_sum_equals_samples.TSLA.HL>ONDO",
+      "passed": true,
+      "detail": "sum=596 samples=596"
+    },
+    {
+      "check": "summary.has_per_bucket",
+      "passed": true,
+      "detail": "count=12"
+    },
+    {
+      "check": "summary.economic_unassessable",
+      "passed": true,
+      "detail": "=False"
+    },
+    {
+      "check": "summary.zero_opportunity_not_verified",
+      "passed": true,
+      "detail": "=False"
+    },
+    {
+      "check": "summary.renderer_boilerplate_noted",
+      "passed": true,
+      "detail": "two inapplicable renderer statements recorded"
+    },
+    {
+      "check": "summary.sandbox_false",
+      "passed": true,
+      "detail": "both sandbox flags false"
+    },
+    {
+      "check": "summary.per_bucket_sums",
+      "passed": true,
+      "detail": "every bucket's reject counters sum to samples"
+    }
+  ],
+  "all_passed": true
+}

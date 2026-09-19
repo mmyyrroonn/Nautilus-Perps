@@ -1,0 +1,14 @@
+{
+  "note": "Exact app data-test command and result for the R5.2 DATA acceptance. Run from the app worktree root with PYTHON_DOTENV_DISABLED=1 and PYTHONPATH=<worktree>/src so no .env is loaded and the worktree source is imported.",
+  "cwd": "E:/Nautilus-Perps/.worktrees/ondo-r52-app",
+  "interpreter": "E:/Nautilus-Perps/.venv/Scripts/python.exe",
+  "command": "python -m pytest tests/test_market_tape.py tests/test_ondo_depth.py tests/test_ondo_preflight.py tests/test_spread_watch.py tests/test_opportunities.py -q -p no:cacheprovider",
+  "environment": {
+    "PYTHON_DOTENV_DISABLED": "1",
+    "PYTHONPATH": "E:/Nautilus-Perps/.worktrees/ondo-r52-app/src"
+  },
+  "exit_code": 0,
+  "result": "244 passed in 2.32s",
+  "warnings": "none printed",
+  "output_file": "tests/app_data_tests_output.txt"
+}

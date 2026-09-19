@@ -12,16 +12,22 @@ R2 行情/录制/回放（[`20260915T153817Z-r2`](../reports/ondo-acceptance/202
 
 **开篇两条必须先看，因为它们决定这份文档里哪些话不能说。**
 
-1. **没有任何 sandbox 协议验证。** 到今天为止，**没有任何请求被发到真实的 Ondo venue**：R3 的验收标准本身
-   就写着「达到『离线生命周期已完成』，尚不等于 sandbox 协议通过」（R3 报告 §7 第 3 条）。REST 鉴权头的
-   名字、WS 登录签名的拼接顺序、真实 private 帧的形状、DMS 的续期语义，全部仍是**文档规定的**而不是
-   **被 host 证实的**（见第 7 节）。任何把其中一项写成「已验证」的说法都是假的。
-2. **收敛停止从 Python 不可达。** 适配器里存在一个有序、有界、会 await 的停止执行器
-   （`OndoAccountRuntime::stop_and_wait`，按 `CancelOwnOrders → ConfirmOwnOrders → ReleaseDeadMansSwitch
-   → ClosePrivateStream` 的顺序执行），它在 Rust 侧有测试、也有注入反证；但**客户端生命周期目前不调用它**
-   —— 它的调用点只在 `crates/adapters/ondo/tests/private_runtime.rs` 里，框架的同步 `stop()` 与
-   `async disconnect()` 两个停止钩子都没接上。**因此真实关机时这个 client 仍然是「丢掉传输、留下订单」**：
-   不撤本次运行的订单、不确认撤单、也不解除死手开关。这是 R3 验收 §7 第 1 条，也是 R5 sandbox 的前置项。
+1. **没有任何私有 / sandbox 协议验收。** 公开面已经被真实读取与录制，但**没有任何经过鉴权的私有请求被 host
+   证实**：R3 的验收标准本身就写着「达到『离线生命周期已完成』，尚不等于 sandbox 协议通过」（R3 报告 §7 第 3
+   条）。REST 鉴权头的名字、WS 登录签名的拼接顺序、真实 private 帧的形状、DMS 的续期语义，全部仍是
+   **文档规定的**而不是**被 host 证实的**（见第 7 节）。任何把其中一项写成「已验证」的说法都是假的。
+2. **收敛停止是否可达取决于「当前安装的 wheel」，必须如实报告、不能猜。** 适配器里存在一个有序、有界、
+   会 await 的停止执行器（`OndoAccountRuntime::stop_and_wait`，按 `CancelOwnOrders → ConfirmOwnOrders
+   → ReleaseDeadMansSwitch → ClosePrivateStream` 的顺序执行），它在 Rust 侧有测试。旧的 R5.1 wheel（本
+   R5.2 交付之前安装的那个）**没有**把生命周期接上：其调用点只在
+   `crates/adapters/ondo/tests/private_runtime.rs` 里，框架的同步 `stop()` 与 `async disconnect()` 两个停止
+   钩子都没接上，**真实关机时 client 仍然是「丢掉传输、留下订单」**：不撤本次运行的订单、不确认撤单、也不
+   解除死手开关（R3 验收 §7 第 1 条）。本轮交付的 R5.2 原生修正把生命周期接上，并暴露一个只读属性
+   `OndoExecutionClientFactory.supports_ordered_shutdown`；**只有安装了暴露该属性的 wheel，
+   `converging_stop_available` 才会是 `true`**。probe 只按这个属性判断，绝不从版本号、
+   wheel 文件名、worktree 路径或 Git commit 推测。**该能力成立也不等于协议通过或账户已清理**：probe 不下单，
+   也没有原生 StopReport 遥测去观察本轮的取消/确认/释放（报告为未观察，而不是未发生）；REST/WS 鉴权、私有帧与
+   DMS 语义仍未被 host 证实，详见第 7 节。
 
 ## 1. 四个模式与它们各自不声称什么
 
@@ -249,7 +255,8 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的�
 | pending ids | 撤单 ACK 成功但后续查询失败仍算不确定；未决 id 必须留在报告里，不能在退出时清空 |
 | 账户是否对账 | 账户读数是否来自归并后的状态、覆盖范围是否被证明 |
 | 结果是否 synthetic | `paper` 的每一笔都是模拟的，必须能从报告里看出来 |
-| 协议验证状态 | 第 7 节那些项仍然是「文档规定、未经 sandbox 证实」 |
+| **协议验证状态** | 第 7 节那些项仍然是「文档规定、未经 sandbox 证实」 |
+| 适配器关机能力 vs 本轮观察 | `supports_ordered_shutdown` / `converging_stop_available` 描述**已安装适配器实现了什么**（离线读取，缺失/false/类型不对/读取失败一律不可用）；`cancels_own_orders` / `confirms_cancels` / `releases_dead_mans_switch` 描述**本轮实际观察到了什么**，无原生 StopReport 遥测时为 `null`（未观察，而不是「未发生」）；`observed_this_run` 明确标注是否观察过。二者不可互相替代，零下单也不代表 DMS 没被解除 |
 
 **这些是必须能分辨的组，不是 JSON 键名清单**——确切的键名以 probe 写出的 `meta.json` 为准，读之前先开
 那个文件。
@@ -261,9 +268,11 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的�
 `complete: true`——**不要**看到公开采集按点结束就以为出了问题。
 其中一条必须单独说：
 
-> **退出码 `0` 不代表账户被清理过。** 由于开篇第 2 条（收敛停止从 Python 不可达），probe 在结束时
-> **报告 outstanding orders，而不是宣称已清理**。看到 `0` 只说明这一次 probe 按它自己的定义完成了；
-> 账户里还剩什么，去报告里的未决/残留条目看，不要从退出码推断。
+> **退出码 `0` 不代表账户被清理过。** 无论安装的 wheel 是否暴露 `supports_ordered_shutdown`，probe 在结束
+> 时都**报告 outstanding orders，而不是宣称已清理**：能力属性只说明「适配器实现了有序停止」，probe 本身不下
+> 单，也没有原生 StopReport 遥测去观察取消/确认/释放（这些字段是 `null` = 未观察，不是 `false` = 未发生）。
+> 看到 `0` 只说明这一次 probe 按它自己的定义完成了；账户里还剩什么，去报告里的未决/残留条目看，不要从退出码
+> 推断。
 
 ## 5. 未知字段与费用口径
 
@@ -309,11 +318,40 @@ maker 费率缺失只记录、不致命（venue 有权不发布它）。
 | 事实 | 细节 |
 |---|---|
 | **共享 REST 预算** | 预算是**按环境**共享的，不是按 factory：`ENVIRONMENT_BUDGETS` 以 `OndoEnvironment` 为键，`shared_rest_budget(env)` 返回同一个桶。Python 侧 `OndoDataClientFactory()` 与 `OndoExecutionClientFactory()` 构造时**不接参数**，各自按**自己配置里写的环境**去注册表解析——所以同一环境的一次 metadata 刷新与一次撤单不会各拿一半限流 |
-| **死手开关（DMS）** | 账户级。**订阅这个频道不是只读操作，但「武装」本身也不撤单**——武装的是**venue 侧的一个计时器**，撤掉账户上全部挂单发生在**续期没有按时到达**的时候（`websocket/private/messages.rs` 的原文：*"arms a venue-side timer that cancels every resting order on the account when no renewal arrives in time"*）。**失效才撤，武装不撤**，这个区分正是下面那条隐患的由来。`dms_timeout_secs` 默认 30，私有 transport 在**一半**的间隔上续期。续期只有**发送失败**计数（没有 ACK 可等），连续失败到 `dms_max_failed_renewals`（默认 3）后客户端**不再信任开关并拒绝新订单**。该值有**上限**：配置只能把它调紧，**不能调松**。**只读模式从不订阅它，因此不武装任何计时器。** **一个带凭据的 `sandbox` 会话会武装它，而且不会解除**：`account_read_only=False` 让 `stream_mode()` 返回 `Trading`，TRADING 频道表含 `cancelAllOrdersAfterPerps`，`connect()` 无条件启动私有 transport，而 `disconnect()` **刻意不解除**它（原文：*"deliberately **not** done here is releasing the dead man's switch"*）。那样的会话退出时会留下一个**没人解除的计时器**，约 `dms_timeout_secs` 后由 venue 撤掉账户上所有挂单。见第 8 节 |
+| **死手开关（DMS）** | 账户级。**订阅这个频道不是只读操作，但「武装」本身也不撤单**——武装的是**venue 侧的一个计时器**，撤掉账户上全部挂单发生在**续期没有按时到达**的时候（`websocket/private/messages.rs` 的原文：*"arms a venue-side timer that cancels every resting order on the account when no renewal arrives in time"*）。**失效才撤，武装不撤**，这个区分正是下面那条隐患的由来。`dms_timeout_secs` 默认 30，私有 transport 在**一半**的间隔上续期。续期只有**发送失败**计数（没有 ACK 可等），连续失败到 `dms_max_failed_renewals`（默认 3）后客户端**不再信任开关并拒绝新订单**。该值有**上限**：配置只能把它调紧，**不能调松**。**只读模式从不订阅它，因此不武装任何计时器。** **一个带凭据的 `sandbox` 会话会武装它。** `account_read_only=False` 让 `stream_mode()` 返回 `Trading`，TRADING 频道表含 `cancelAllOrdersAfterPerps`，`connect()` 无条件启动私有 transport。**是否解除取决于安装的 wheel**：旧的 R5.1 wheel 的 `disconnect()` 刻意不解除它（原文：*"deliberately **not** done here is releasing the dead man's switch"*），那样的会话退出时会留下一个**没人解除的计时器**，约 `dms_timeout_secs` 后由 venue 撤掉账户上所有挂单；本轮交付的 R5.2 wheel 的 `disconnect()` 只有在有序停止确认没有未决项时才解除它。见第 6.1 与第 8 节 |
 | **断线/恢复** | run state 至少区分 `Disconnected` / `Authenticating` / `Recovering` / `ReadOnlySynced` / `TradingReady` / `Uncertain` / `Stopping`；**socket connected 不等于账户 Ready**。空闲超时 180 s、登录应答超时 10 s、登录尝试有界（3 次）；`signature`/`api key`/`unauthorized`/`forbidden`/`ip_not_permitted`/`timestamp` 这类错误是**终止性**的，不会无限重连。重连走指数退避；解码丢失或恢复缓冲溢出会把账户推成 `Uncertain`（**保持 socket**），新风险在恢复收敛前一律被拒 |
 | **journal 在哪里** | `journal_path` **默认 `None`**：这是**受支持的模式**，不是静默失败——**只在内存里，一个文件都不写**，账本、订单索引与未决写入只活在本次进程里，运行会说明这一点（`JournalStatus::NotConfigured`）。给了路径时它是原子写（写同目录临时文件 + rename），重启先读回未决信息再接受新风险；读不出来就拒绝新风险。已配置的路径**中途写不进去**是 `Degraded`：它**声明**这次失效（并给出最后一次成功写入的时刻）但**不拒绝订单**——丢持久化不等于丢内存。要一份跨重启的账本，必须显式给 `journal_path` |
-| **收敛停止不可达** | 见开篇第 2 条。**关机时不会撤本次运行的订单、不会确认撤单、不会解除死手开关**；框架侧同步的 `stop()` 只中止 task group 并丢掉 private stream 句柄。未决信息靠 journal 跨重启继承（前提是配了 `journal_path`） |
+| **收敛停止可达性取决于安装的 wheel** | 见开篇第 2 条。旧的 R5.1 wheel 的客户端生命周期没有接上有序停止：**关机时不会撤本次运行的订单、不会确认撤单、不会解除死手开关**，框架侧同步的 `stop()` 只中止 task group 并丢掉 private stream 句柄。本轮交付的 R5.2 wheel 暴露只读属性 `supports_ordered_shutdown`，其 `disconnect()` 才执行有序停止；probe 读该属性并在 `probe.json` 里区分「适配器能力」与「本轮实际观察到的取消/确认/释放」。未决信息靠 journal 跨重启继承（前提是配了 `journal_path`） |
 | **公开面不读凭据** | data client 不读 key、不载 `.env`；私有面是**第二条 socket**，由 `websocket::private` 单独持有凭据与登录握手，公开录制器看不到 API key、登录签名或账户订单 payload |
+
+### 6.1 安装 wheel 的关机能力：旧 wheel 回退 vs 交付生命周期
+
+probe 在启动时只读地 introspect 当前安装的 `OndoExecutionClientFactory`，把结果写进报告的
+`supports_ordered_shutdown`、`converging_stop_available`、`converging_stop` 与 `unverified`，退出码 `0` 时
+也会在日志里说明。它有两条路径：
+
+- **旧 wheel（R5.2 交付之前安装的 R5.1）**：工厂没有 `supports_ordered_shutdown` 属性，probe 报告
+  `converging_stop_available: false`、`capability_source: "attribute-absent"`，理由点名缺失的属性。关机仍是
+  「丢掉传输、留下订单」。
+- **本轮交付的 R5.2 wheel（原生复审 accepted，运行时能力已在干净候选 venv 独立验证）**：工厂的只读 getter
+  返回 `true`，probe 报告 `converging_stop_available: true`、`capability_source: "native-factory"`。这表示原生
+  `disconnect()` 实现了有序停止（撤本轮自己的订单 → 确认终态 → 未决为空才解除 DMS → 关闭私有传输），并有
+  一个同步的、fail-closed 的回退。**但这是适配器能力，不是「本轮已清理」**：probe 不下单，也没有原生
+  StopReport 遥测，`cancels_own_orders` / `confirms_cancels` / `releases_dead_mans_switch` 为 `null`（未观察，
+  而不是「未发生」），`observed_this_run` 为 `false`。零下单**不**代表 DMS 没有被解除：trading 模式会话在
+  connect 时武装它，干净的 disconnect 可以在零订单下解除它，恢复的 journal 也可能带着之前自己的订单。
+
+能力检测本身只可能构造那个**不持凭据的 factory 对象**（旧 wheel 连构造都不需要），**不读 `.env`、不构造
+执行 config 或 client、不联网**；属性缺失、值为 `false`、类型不是布尔、读取抛错或工厂无法构造时一律 fail
+closed 报告为不可用。有序停止本身是**有界且可能不完整**的：交付实现把一个 adapter 自有的有界预算（本轮
+cleanup 记录约为 5 秒，以 accepted 的原生复审为准）用在外层超时之内，被外层超时打断时保留 journal 并让 DMS
+保持武装；所以「能力为真」**不**等于每次退出都干净，未决/残留仍以报告条目为准。只读模式行为不变：
+`account-readonly` 不订阅 DMS、不发 DELETE，交付的 R5.2 wheel 也一样。
+
+**原生复审已通过，交付 wheel 的运行时能力已独立验证。** 最终独立复审
+（`reports/ondo-acceptance/20260919-r52/review/final-native-review.md`）结论为 accepted；本构建任务在干净候选
+venv 中独立验证了 `supports_ordered_shutdown` 为精确布尔 `True`、生成的存根声明该只读属性，并跑通全套 app
+测试与一次有限 public probe。真实 sandbox 的鉴权、下单、撤单与 DMS 语义仍属第 7 节未验证项。
 
 ## 7. 协议待验证项（R5 用真实 sandbox 逐项确认）
 
@@ -341,10 +379,12 @@ maker 费率缺失只记录、不致命（venue 有权不发布它）。
   不订阅死手开关、永不进入 trading-ready。不该为了"把账户弄干净"而自动撤单或下单。
 - **`sandbox` 通过不等于任何生产资格。** sandbox 不足以证明生产资格、容量、提现或收益；合约映射未验证
   期间 `executable=false` 继续成立。
-- **一个带凭据的 `sandbox` 会话会武装一个它不解除的死手开关计时器**（细节见第 6 节）。所以在收敛停止接通
-  之前（开篇第 2 条），真实 sandbox 会话退出后约 `dms_timeout_secs`（默认 30 s），venue 会撤掉**那个账户上的
-  所有挂单**——不只是这一次运行留下的。**R4 从未建立过带凭据的会话，所以这件事没有发生过**；写下它是因为
-  **R5.2 第一次真跑 sandbox 之前必须先处理它**。不要靠这个 probe 得到一个「跑完就干净」的账户。
+- **死手开关的解除取决于安装的 wheel。** 旧的 R5.1 wheel 的带凭据 `sandbox` 会话会武装一个它不解除
+  的死手开关计时器（细节见第 6 节），会话退出后约 `dms_timeout_secs`（默认 30 s）venue 会撤掉**那个账户上的
+  所有挂单**——不只是这一次运行留下的。本轮交付的 R5.2 wheel 只有在 `disconnect()` 的有序停止确认
+  「没有未决项」时才解除它；**能力属性为 `true` 也不代表这次运行真的解除成功**，真实 sandbox 的取消/确认/释放语义仍属第 7 节的
+  未验证项。**R4 从未建立过带凭据的会话，所以这件事没有发生过**；不要靠这个 probe 得到一个「跑完就干净」的
+  账户。
 - 应用侧**不复制** REST 签名或重试 POST：这条路径复用原生执行 factory 与 R3 的生命周期，不另建一套下单
   实现。`ondo_depth.py` 与 `spread_watch.py` 的只读分析也不修改 Rust 侧行为。
 - `src/exec_probe.py` 是 **Aster** 的 testnet probe，与这条路径**相互独立**（原方案 §3.2 的文件表写明

@@ -1,0 +1,19 @@
+=== Accepted native source/test SHA256 (must equal review/final-native-review.md) ===
+4aa6a7234883004f64c8ee629e0168385e34bbfd541a2ee1f0fff7a09c1c09b1 *crates/adapters/ondo/src/execution.rs
+0ac8338632a5677d62e6531276a87d54df946e7ac1cbbf2cb3f704e288488cd3 *crates/adapters/ondo/src/reconciliation.rs
+055a0c511ac18bfbbe3373877d323dd5eca9a1e6ac804af1d3240a3699c8d9c8 *crates/adapters/ondo/src/websocket/private/stream.rs
+9d2da4304b065460d659cc05cc668ee04c60cacce3de0dbaa05a3f72c515073d *crates/adapters/ondo/src/python/factories.rs
+49c909163f18e47f51a215b404da6a4eab93b6c3bba26b800f7e639d96b863a3 *crates/adapters/ondo/tests/private_runtime.rs
+7bc6e150fb9728e8a22c588a60d02cf814c37fa245e1703cdb873ea288309a03 *crates/adapters/ondo/tests/reconciliation.rs
+
+=== Whole tracked diff SHA256 (git diff, no working-tree newlines translation) ===
+278a6eb4923385fe111171f98326e75966ce94f68be69bd0cc6948948cccced7 *-
+
+=== git diff --stat ===
+ crates/adapters/ondo/src/execution.rs              |  650 ++++++++--
+ crates/adapters/ondo/src/python/factories.rs       |   22 +
+ crates/adapters/ondo/src/reconciliation.rs         |   50 +-
+ .../adapters/ondo/src/websocket/private/stream.rs  |  102 +-
+ crates/adapters/ondo/tests/private_runtime.rs      | 1249 +++++++++++++++++++-
+ crates/adapters/ondo/tests/reconciliation.rs       |   55 +-
+ 6 files changed, 1979 insertions(+), 149 deletions(-)

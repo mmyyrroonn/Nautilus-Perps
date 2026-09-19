@@ -1,0 +1,37 @@
+=== R5.2 build environment ===
+date_utc=Sat Sep 19 10:27:03 UTC 2026
+host_os=MINGW64_NT-10.0-26200 Ö÷Á¦»úÆ÷ 3.6.7-fb42d713.x86_64 2026-03-29 11:44 UTC x86_64 Msys
+fork_worktree=E:/nautilus_trader/.worktrees/ondo-r52-cleanup
+app_worktree=E:/Nautilus-Perps/.worktrees/ondo-r52-app
+base_head=ff57243f74d730b1ababca7ee8e7b37e7c840287
+base_branch=task/ondo-r52-cleanup
+
+--- toolchain ---
+rustc: rustc 1.98.0 (88d9e12ae 2026-08-18)
+cargo: cargo 1.98.0 (797e8a9bc 2026-08-05)
+clang: clang version 20.1.3
+uv: uv 0.12.6 (7938ca5d5 2026-08-25 x86_64-pc-windows-msvc)
+python(uv managed target): absent
+
+--- CARGO_TARGET_DIR ---
+target=E:/nautilus_trader/.worktrees/task-ondo-r5/target
+
+--- git status porcelain (fork) ---
+ M crates/adapters/ondo/src/execution.rs
+ M crates/adapters/ondo/src/python/factories.rs
+ M crates/adapters/ondo/src/reconciliation.rs
+ M crates/adapters/ondo/src/websocket/private/stream.rs
+ M crates/adapters/ondo/tests/private_runtime.rs
+ M crates/adapters/ondo/tests/reconciliation.rs
+
+--- tracked modified paths (fork) ---
+crates/adapters/ondo/src/execution.rs
+crates/adapters/ondo/src/python/factories.rs
+crates/adapters/ondo/src/reconciliation.rs
+crates/adapters/ondo/src/websocket/private/stream.rs
+crates/adapters/ondo/tests/private_runtime.rs
+crates/adapters/ondo/tests/reconciliation.rs
+
+--- untracked (fork) ---
+(none)
+STEP0_EXIT=0

@@ -1,0 +1,17 @@
+usage: ondo_preflight.py [-h] [--symbols SYMBOLS] [--out OUT]
+                         [--environment {production,sandbox}]
+                         [--timeout-secs TIMEOUT_SECS] [--dry-run]
+
+Ondo Perps public status/markets/contracts preflight (read-only, no keys)
+
+options:
+  -h, --help            show this help message and exit
+  --symbols SYMBOLS     comma list of CLI symbols; known: ['NVDA', 'TSLA']
+  --out OUT             output directory for the evidence files
+  --environment {production,sandbox}
+                        which Ondo environment to read (public data only)
+  --timeout-secs TIMEOUT_SECS
+                        HTTP timeout per call
+  --dry-run             print the resolved targets as JSON and exit: no
+                        network, no open positions, no client construction, no
+                        .env

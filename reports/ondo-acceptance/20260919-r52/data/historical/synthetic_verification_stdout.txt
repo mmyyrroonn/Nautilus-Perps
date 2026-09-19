@@ -1,0 +1,88 @@
+{
+  "root": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260919-r52\\data\\historical\\synthetic",
+  "fixtures_verified": [
+    "halt-survives-disconnect",
+    "first-frame-recovery",
+    "metadata-fee-update",
+    "legacy-no-size-increment",
+    "gap-incomplete"
+  ],
+  "checks": [
+    {
+      "check": "halt.pass_before_halt",
+      "passed": true,
+      "detail": "pass=1"
+    },
+    {
+      "check": "halt.disconnected_axis",
+      "passed": true,
+      "detail": "reasons={'disconnected': 2, 'market_halted': 1, 'no_book': 1}"
+    },
+    {
+      "check": "halt.market_axis",
+      "passed": true,
+      "detail": "snapshot_ready never lifted the halt"
+    },
+    {
+      "check": "halt.no_metadata_stale",
+      "passed": true,
+      "detail": "no stale metadata in this tape"
+    },
+    {
+      "check": "recovery.two_rows",
+      "passed": true,
+      "detail": "rows=2"
+    },
+    {
+      "check": "recovery.first_frame_own_times",
+      "passed": true,
+      "detail": "first={'symbol': 'NVDA', 'direction': 'ONDO>HL', 'sell_venue': 'ONDO', 'buy_venue': 'HL', 'notional_usd': '100', 'quantity': '0.909', 'common_step': '0.001', 'step_origin': 'instrument_metadata', 'arrival_seq': 4, 'session_id': '20260914T000000Z-7df218f260cd', 'ts_utc': '1970-01-01T00:00:01.000Z', 'sell_vwap': '110.00', 'buy_vwap': '100.10', 'reference_price': '105.05', 'fill_usd_est': '99.99000', 'gross_entry_bps': '942.4083769633507853403141361', 'entry_fees_bps': '3.4', 'entry_after_fees_bps': '939.0083769633507853403141361', 'entry_after_fees_and_reserve_bps': '934.0083769633507853403141361', 'exit_fee_assumption_bps': '3.4', 'reserve_bps': '5.0', 'funding_estimate_bps': 'unknown', 'funding_status': 'missing:ONDO,HL', 'quality_ok': True, 'cost_qualified': True, 'mapping_verified': False, 'mapping_status': 'mapping_unverified', 'reject_reason': '', 'executable': False, 'receive_age_sell_ms': '0', 'receive_age_buy_ms': '0', 'event_skew_ms': '0', 'event_age_sell_ms': '0', 'event_age_buy_ms': '0', 'event_age_status': 'not_checked', 'clock_offset_unknown': True, 'exit_status': 'unclosed', 'note': 'the multiplier / settlement-asset / underlying equivalence of this pair is not verified anywhere in this repository (plan 5.2), so the row is a nominal comparison and never an executable conclusion'}"
+    },
+    {
+      "check": "recovery.quote_does_not_refresh",
+      "passed": true,
+      "detail": "second={'symbol': 'NVDA', 'direction': 'ONDO>HL', 'sell_venue': 'ONDO', 'buy_venue': 'HL', 'notional_usd': '100', 'quantity': '0.909', 'common_step': '0.001', 'step_origin': 'instrument_metadata', 'arrival_seq': 9, 'session_id': '20260914T000000Z-7df218f260cd', 'ts_utc': '1970-01-01T00:00:04.000Z', 'sell_vwap': '110.00', 'buy_vwap': '100.10', 'reference_price': '105.05', 'fill_usd_est': '99.99000', 'gross_entry_bps': '942.4083769633507853403141361', 'entry_fees_bps': '3.4', 'entry_after_fees_bps': '939.0083769633507853403141361', 'entry_after_fees_and_reserve_bps': '934.0083769633507853403141361', 'exit_fee_assumption_bps': '3.4', 'reserve_bps': '5.0', 'funding_estimate_bps': 'unknown', 'funding_status': 'missing:ONDO,HL', 'quality_ok': True, 'cost_qualified': True, 'mapping_verified': False, 'mapping_status': 'mapping_unverified', 'reject_reason': '', 'executable': False, 'receive_age_sell_ms': '1000', 'receive_age_buy_ms': '1000', 'event_skew_ms': '0', 'event_age_sell_ms': '1000', 'event_age_buy_ms': '1000', 'event_age_status': 'not_checked', 'clock_offset_unknown': True, 'exit_status': 'unclosed', 'note': 'the multiplier / settlement-asset / underlying equivalence of this pair is not verified anywhere in this repository (plan 5.2), so the row is a nominal comparison and never an executable conclusion'}"
+    },
+    {
+      "check": "metadata.per_arrival_pricing",
+      "passed": true,
+      "detail": "fees=[(4, '3.4'), (6, '100.9'), (7, '100.9')]"
+    },
+    {
+      "check": "metadata.snapshot_lists_both",
+      "passed": true,
+      "detail": "taker_fee_bps_values=['2.5', '100']"
+    },
+    {
+      "check": "legacy.no_pass",
+      "passed": true,
+      "detail": "pass=0"
+    },
+    {
+      "check": "legacy.quantity_step_unknown",
+      "passed": true,
+      "detail": "reasons={'no_book': 1, 'quantity_step_unknown': 1}"
+    },
+    {
+      "check": "legacy.step_origin",
+      "passed": true,
+      "detail": "step_origin stays quantity_step_unknown"
+    },
+    {
+      "check": "gap.recording_gap_named",
+      "passed": true,
+      "detail": "reasons={'no_book': 2, 'recording_gap': 1}"
+    },
+    {
+      "check": "gap.no_book_after_hole",
+      "passed": true,
+      "detail": "reasons={'no_book': 2, 'recording_gap': 1}"
+    },
+    {
+      "check": "gap.tape_incomplete",
+      "passed": true,
+      "detail": "complete=False gaps=1 dropped=3"
+    }
+  ],
+  "all_passed": true
+}

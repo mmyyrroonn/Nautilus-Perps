@@ -1,0 +1,32 @@
+{
+  "generated_utc": "2026-09-19T09:28:26.054892+00:00",
+  "app_worktree": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app",
+  "python": {
+    "version": "3.12.9 (main, Mar 17 2025, 21:06:20) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "E:\\Nautilus-Perps\\.venv\\Scripts\\python.exe",
+    "prefix": "E:\\Nautilus-Perps\\.venv"
+  },
+  "nautilus_trader": {
+    "version": "2.0.0rc4",
+    "file": "E:\\Nautilus-Perps\\.venv\\Lib\\site-packages\\nautilus_trader\\__init__.py",
+    "dist_info": "E:\\Nautilus-Perps\\.venv\\Lib\\site-packages\\nautilus_trader-2.0.0rc4.dist-info",
+    "direct_url": "{\"url\":\"file:///E:/nautilus_trader/dist-r5/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl\",\"archive_info\":{}}"
+  },
+  "wheel": {
+    "path": "E:\\nautilus_trader\\dist-r5\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "size": 63605318,
+    "sha256": "82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9"
+  },
+  "python_dotenv": {
+    "version": "1.2.3",
+    "main_file": "E:\\Nautilus-Perps\\.venv\\Lib\\site-packages\\dotenv\\main.py",
+    "main_sha256": "697eb33eee75d78b73db61eaf96bf9a6547548c1811c93501b67e056e5470dea",
+    "python_dotenv_disabled_supported": true
+  },
+  "git": {
+    "head": "aef07e4e7d7e32fedf9acd8a6cba63700d092b6e",
+    "branch": "task/ondo-r52-app",
+    "status_porcelain": "?? AGENTS.md",
+    "worktree_list": "E:/Nautilus-Perps                         aef07e4 [main]\nE:/Nautilus-Perps/.worktrees/ondo-r52-app aef07e4 [task/ondo-r52-app]\nE:/Nautilus-Perps/.worktrees/task-ondo-r5 aef07e4 [task/ondo-r5]"
+  }
+}

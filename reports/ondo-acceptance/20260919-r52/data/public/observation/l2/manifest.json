@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-09-19T09:36:36+00:00",
+  "l2_dir": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260919-r52\\data\\public\\observation\\l2",
+  "fragments": [
+    {
+      "order": 1,
+      "tape": "l2_NVDA_ONDO-HL_20260919T093133Z.jsonl",
+      "manifest": "l2_NVDA_ONDO-HL_20260919T093133Z.manifest.json",
+      "run_id": "20260919T093133Z",
+      "session_id": "20260919T093133Z-1980d7eb74f6",
+      "segment_index": 1,
+      "path": "l2_NVDA_ONDO-HL_20260919T093133Z.jsonl",
+      "lines": 1535,
+      "records": 1533,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 1533,
+      "dropped": 0,
+      "gaps": 0,
+      "closed": true
+    },
+    {
+      "order": 2,
+      "tape": "l2_TSLA_ONDO-HL_20260919T093133Z.jsonl",
+      "manifest": "l2_TSLA_ONDO-HL_20260919T093133Z.manifest.json",
+      "run_id": "20260919T093133Z",
+      "session_id": "20260919T093133Z-69461dd6b681",
+      "segment_index": 1,
+      "path": "l2_TSLA_ONDO-HL_20260919T093133Z.jsonl",
+      "lines": 1380,
+      "records": 1378,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 1378,
+      "dropped": 0,
+      "gaps": 0,
+      "closed": true
+    }
+  ],
+  "tapes": [
+    {
+      "tape": "l2_NVDA_ONDO-HL_20260919T093133Z.jsonl",
+      "run_id": "20260919T093133Z",
+      "manifest": "l2_NVDA_ONDO-HL_20260919T093133Z.manifest.json",
+      "segments": 1,
+      "dropped": 0,
+      "gaps": 0,
+      "complete": true
+    },
+    {
+      "tape": "l2_TSLA_ONDO-HL_20260919T093133Z.jsonl",
+      "run_id": "20260919T093133Z",
+      "manifest": "l2_TSLA_ONDO-HL_20260919T093133Z.manifest.json",
+      "segments": 1,
+      "dropped": 0,
+      "gaps": 0,
+      "complete": true
+    }
+  ]
+}

@@ -1,0 +1,1067 @@
+diff --git a/docs/ondo.md b/docs/ondo.md
+index 8d2872c..81e95bc 100644
+--- a/docs/ondo.md
++++ b/docs/ondo.md
+@@ -12,16 +12,22 @@ R2 行情/录制/回放（[`20260915T153817Z-r2`](../reports/ondo-acceptance/202
+ 
+ **开篇两条必须先看，因为它们决定这份文档里哪些话不能说。**
+ 
+-1. **没有任何 sandbox 协议验证。** 到今天为止，**没有任何请求被发到真实的 Ondo venue**：R3 的验收标准本身
+-   就写着「达到『离线生命周期已完成』，尚不等于 sandbox 协议通过」（R3 报告 §7 第 3 条）。REST 鉴权头的
+-   名字、WS 登录签名的拼接顺序、真实 private 帧的形状、DMS 的续期语义，全部仍是**文档规定的**而不是
+-   **被 host 证实的**（见第 7 节）。任何把其中一项写成「已验证」的说法都是假的。
+-2. **收敛停止从 Python 不可达。** 适配器里存在一个有序、有界、会 await 的停止执行器
+-   （`OndoAccountRuntime::stop_and_wait`，按 `CancelOwnOrders → ConfirmOwnOrders → ReleaseDeadMansSwitch
+-   → ClosePrivateStream` 的顺序执行），它在 Rust 侧有测试、也有注入反证；但**客户端生命周期目前不调用它**
+-   —— 它的调用点只在 `crates/adapters/ondo/tests/private_runtime.rs` 里，框架的同步 `stop()` 与
+-   `async disconnect()` 两个停止钩子都没接上。**因此真实关机时这个 client 仍然是「丢掉传输、留下订单」**：
+-   不撤本次运行的订单、不确认撤单、也不解除死手开关。这是 R3 验收 §7 第 1 条，也是 R5 sandbox 的前置项。
++1. **没有任何私有 / sandbox 协议验收。** 公开面已经被真实读取与录制，但**没有任何经过鉴权的私有请求被 host
++   证实**：R3 的验收标准本身就写着「达到『离线生命周期已完成』，尚不等于 sandbox 协议通过」（R3 报告 §7 第 3
++   条）。REST 鉴权头的名字、WS 登录签名的拼接顺序、真实 private 帧的形状、DMS 的续期语义，全部仍是
++   **文档规定的**而不是**被 host 证实的**（见第 7 节）。任何把其中一项写成「已验证」的说法都是假的。
++2. **收敛停止是否可达取决于「当前安装的 wheel」，必须如实报告、不能猜。** 适配器里存在一个有序、有界、
++   会 await 的停止执行器（`OndoAccountRuntime::stop_and_wait`，按 `CancelOwnOrders → ConfirmOwnOrders
++   → ReleaseDeadMansSwitch → ClosePrivateStream` 的顺序执行），它在 Rust 侧有测试。旧的 R5.1 wheel（本
++   R5.2 交付之前安装的那个）**没有**把生命周期接上：其调用点只在
++   `crates/adapters/ondo/tests/private_runtime.rs` 里，框架的同步 `stop()` 与 `async disconnect()` 两个停止
++   钩子都没接上，**真实关机时 client 仍然是「丢掉传输、留下订单」**：不撤本次运行的订单、不确认撤单、也不
++   解除死手开关（R3 验收 §7 第 1 条）。本轮交付的 R5.2 原生修正把生命周期接上，并暴露一个只读属性
++   `OndoExecutionClientFactory.supports_ordered_shutdown`；**只有安装了暴露该属性的 wheel，
++   `converging_stop_available` 才会是 `true`**。probe 只按这个属性判断，绝不从版本号、
++   wheel 文件名、worktree 路径或 Git commit 推测。**该能力成立也不等于协议通过或账户已清理**：probe 不下单，
++   也没有原生 StopReport 遥测去观察本轮的取消/确认/释放（报告为未观察，而不是未发生）；REST/WS 鉴权、私有帧与
++   DMS 语义仍未被 host 证实，详见第 7 节。
+ 
+ ## 1. 四个模式与它们各自不声称什么
+ 
+@@ -249,7 +255,8 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的
+ | pending ids | 撤单 ACK 成功但后续查询失败仍算不确定；未决 id 必须留在报告里，不能在退出时清空 |
+ | 账户是否对账 | 账户读数是否来自归并后的状态、覆盖范围是否被证明 |
+ | 结果是否 synthetic | `paper` 的每一笔都是模拟的，必须能从报告里看出来 |
+-| 协议验证状态 | 第 7 节那些项仍然是「文档规定、未经 sandbox 证实」 |
++| **协议验证状态** | 第 7 节那些项仍然是「文档规定、未经 sandbox 证实」 |
++| 适配器关机能力 vs 本轮观察 | `supports_ordered_shutdown` / `converging_stop_available` 描述**已安装适配器实现了什么**（离线读取，缺失/false/类型不对/读取失败一律不可用）；`cancels_own_orders` / `confirms_cancels` / `releases_dead_mans_switch` 描述**本轮实际观察到了什么**，无原生 StopReport 遥测时为 `null`（未观察，而不是「未发生」）；`observed_this_run` 明确标注是否观察过。二者不可互相替代，零下单也不代表 DMS 没被解除 |
+ 
+ **这些是必须能分辨的组，不是 JSON 键名清单**——确切的键名以 probe 写出的 `meta.json` 为准，读之前先开
+ 那个文件。
+@@ -261,9 +268,11 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的
+ `complete: true`——**不要**看到公开采集按点结束就以为出了问题。
+ 其中一条必须单独说：
+ 
+-> **退出码 `0` 不代表账户被清理过。** 由于开篇第 2 条（收敛停止从 Python 不可达），probe 在结束时
+-> **报告 outstanding orders，而不是宣称已清理**。看到 `0` 只说明这一次 probe 按它自己的定义完成了；
+-> 账户里还剩什么，去报告里的未决/残留条目看，不要从退出码推断。
++> **退出码 `0` 不代表账户被清理过。** 无论安装的 wheel 是否暴露 `supports_ordered_shutdown`，probe 在结束
++> 时都**报告 outstanding orders，而不是宣称已清理**：能力属性只说明「适配器实现了有序停止」，probe 本身不下
++> 单，也没有原生 StopReport 遥测去观察取消/确认/释放（这些字段是 `null` = 未观察，不是 `false` = 未发生）。
++> 看到 `0` 只说明这一次 probe 按它自己的定义完成了；账户里还剩什么，去报告里的未决/残留条目看，不要从退出码
++> 推断。
+ 
+ ## 5. 未知字段与费用口径
+ 
+@@ -309,12 +318,41 @@ maker 费率缺失只记录、不致命（venue 有权不发布它）。
+ | 事实 | 细节 |
+ |---|---|
+ | **共享 REST 预算** | 预算是**按环境**共享的，不是按 factory：`ENVIRONMENT_BUDGETS` 以 `OndoEnvironment` 为键，`shared_rest_budget(env)` 返回同一个桶。Python 侧 `OndoDataClientFactory()` 与 `OndoExecutionClientFactory()` 构造时**不接参数**，各自按**自己配置里写的环境**去注册表解析——所以同一环境的一次 metadata 刷新与一次撤单不会各拿一半限流 |
+-| **死手开关（DMS）** | 账户级。**订阅这个频道不是只读操作，但「武装」本身也不撤单**——武装的是**venue 侧的一个计时器**，撤掉账户上全部挂单发生在**续期没有按时到达**的时候（`websocket/private/messages.rs` 的原文：*"arms a venue-side timer that cancels every resting order on the account when no renewal arrives in time"*）。**失效才撤，武装不撤**，这个区分正是下面那条隐患的由来。`dms_timeout_secs` 默认 30，私有 transport 在**一半**的间隔上续期。续期只有**发送失败**计数（没有 ACK 可等），连续失败到 `dms_max_failed_renewals`（默认 3）后客户端**不再信任开关并拒绝新订单**。该值有**上限**：配置只能把它调紧，**不能调松**。**只读模式从不订阅它，因此不武装任何计时器。** **一个带凭据的 `sandbox` 会话会武装它，而且不会解除**：`account_read_only=False` 让 `stream_mode()` 返回 `Trading`，TRADING 频道表含 `cancelAllOrdersAfterPerps`，`connect()` 无条件启动私有 transport，而 `disconnect()` **刻意不解除**它（原文：*"deliberately **not** done here is releasing the dead man's switch"*）。那样的会话退出时会留下一个**没人解除的计时器**，约 `dms_timeout_secs` 后由 venue 撤掉账户上所有挂单。见第 8 节 |
++| **死手开关（DMS）** | 账户级。**订阅这个频道不是只读操作，但「武装」本身也不撤单**——武装的是**venue 侧的一个计时器**，撤掉账户上全部挂单发生在**续期没有按时到达**的时候（`websocket/private/messages.rs` 的原文：*"arms a venue-side timer that cancels every resting order on the account when no renewal arrives in time"*）。**失效才撤，武装不撤**，这个区分正是下面那条隐患的由来。`dms_timeout_secs` 默认 30，私有 transport 在**一半**的间隔上续期。续期只有**发送失败**计数（没有 ACK 可等），连续失败到 `dms_max_failed_renewals`（默认 3）后客户端**不再信任开关并拒绝新订单**。该值有**上限**：配置只能把它调紧，**不能调松**。**只读模式从不订阅它，因此不武装任何计时器。** **一个带凭据的 `sandbox` 会话会武装它。** `account_read_only=False` 让 `stream_mode()` 返回 `Trading`，TRADING 频道表含 `cancelAllOrdersAfterPerps`，`connect()` 无条件启动私有 transport。**是否解除取决于安装的 wheel**：旧的 R5.1 wheel 的 `disconnect()` 刻意不解除它（原文：*"deliberately **not** done here is releasing the dead man's switch"*），那样的会话退出时会留下一个**没人解除的计时器**，约 `dms_timeout_secs` 后由 venue 撤掉账户上所有挂单；本轮交付的 R5.2 wheel 的 `disconnect()` 只有在有序停止确认没有未决项时才解除它。见第 6.1 与第 8 节 |
+ | **断线/恢复** | run state 至少区分 `Disconnected` / `Authenticating` / `Recovering` / `ReadOnlySynced` / `TradingReady` / `Uncertain` / `Stopping`；**socket connected 不等于账户 Ready**。空闲超时 180 s、登录应答超时 10 s、登录尝试有界（3 次）；`signature`/`api key`/`unauthorized`/`forbidden`/`ip_not_permitted`/`timestamp` 这类错误是**终止性**的，不会无限重连。重连走指数退避；解码丢失或恢复缓冲溢出会把账户推成 `Uncertain`（**保持 socket**），新风险在恢复收敛前一律被拒 |
+ | **journal 在哪里** | `journal_path` **默认 `None`**：这是**受支持的模式**，不是静默失败——**只在内存里，一个文件都不写**，账本、订单索引与未决写入只活在本次进程里，运行会说明这一点（`JournalStatus::NotConfigured`）。给了路径时它是原子写（写同目录临时文件 + rename），重启先读回未决信息再接受新风险；读不出来就拒绝新风险。已配置的路径**中途写不进去**是 `Degraded`：它**声明**这次失效（并给出最后一次成功写入的时刻）但**不拒绝订单**——丢持久化不等于丢内存。要一份跨重启的账本，必须显式给 `journal_path` |
+-| **收敛停止不可达** | 见开篇第 2 条。**关机时不会撤本次运行的订单、不会确认撤单、不会解除死手开关**；框架侧同步的 `stop()` 只中止 task group 并丢掉 private stream 句柄。未决信息靠 journal 跨重启继承（前提是配了 `journal_path`） |
++| **收敛停止可达性取决于安装的 wheel** | 见开篇第 2 条。旧的 R5.1 wheel 的客户端生命周期没有接上有序停止：**关机时不会撤本次运行的订单、不会确认撤单、不会解除死手开关**，框架侧同步的 `stop()` 只中止 task group 并丢掉 private stream 句柄。本轮交付的 R5.2 wheel 暴露只读属性 `supports_ordered_shutdown`，其 `disconnect()` 才执行有序停止；probe 读该属性并在 `probe.json` 里区分「适配器能力」与「本轮实际观察到的取消/确认/释放」。未决信息靠 journal 跨重启继承（前提是配了 `journal_path`） |
+ | **公开面不读凭据** | data client 不读 key、不载 `.env`；私有面是**第二条 socket**，由 `websocket::private` 单独持有凭据与登录握手，公开录制器看不到 API key、登录签名或账户订单 payload |
+ 
++### 6.1 安装 wheel 的关机能力：旧 wheel 回退 vs 交付生命周期
++
++probe 在启动时只读地 introspect 当前安装的 `OndoExecutionClientFactory`，把结果写进报告的
++`supports_ordered_shutdown`、`converging_stop_available`、`converging_stop` 与 `unverified`，退出码 `0` 时
++也会在日志里说明。它有两条路径：
++
++- **旧 wheel（R5.2 交付之前安装的 R5.1）**：工厂没有 `supports_ordered_shutdown` 属性，probe 报告
++  `converging_stop_available: false`、`capability_source: "attribute-absent"`，理由点名缺失的属性。关机仍是
++  「丢掉传输、留下订单」。
++- **本轮交付的 R5.2 wheel（原生复审 accepted，运行时能力已在干净候选 venv 独立验证）**：工厂的只读 getter
++  返回 `true`，probe 报告 `converging_stop_available: true`、`capability_source: "native-factory"`。这表示原生
++  `disconnect()` 实现了有序停止（撤本轮自己的订单 → 确认终态 → 未决为空才解除 DMS → 关闭私有传输），并有
++  一个同步的、fail-closed 的回退。**但这是适配器能力，不是「本轮已清理」**：probe 不下单，也没有原生
++  StopReport 遥测，`cancels_own_orders` / `confirms_cancels` / `releases_dead_mans_switch` 为 `null`（未观察，
++  而不是「未发生」），`observed_this_run` 为 `false`。零下单**不**代表 DMS 没有被解除：trading 模式会话在
++  connect 时武装它，干净的 disconnect 可以在零订单下解除它，恢复的 journal 也可能带着之前自己的订单。
++
++能力检测本身只可能构造那个**不持凭据的 factory 对象**（旧 wheel 连构造都不需要），**不读 `.env`、不构造
++执行 config 或 client、不联网**；属性缺失、值为 `false`、类型不是布尔、读取抛错或工厂无法构造时一律 fail
++closed 报告为不可用。有序停止本身是**有界且可能不完整**的：交付实现把一个 adapter 自有的有界预算（本轮
++cleanup 记录约为 5 秒，以 accepted 的原生复审为准）用在外层超时之内，被外层超时打断时保留 journal 并让 DMS
++保持武装；所以「能力为真」**不**等于每次退出都干净，未决/残留仍以报告条目为准。只读模式行为不变：
++`account-readonly` 不订阅 DMS、不发 DELETE，交付的 R5.2 wheel 也一样。
++
++**原生复审已通过，交付 wheel 的运行时能力已独立验证。** 最终独立复审
++（`reports/ondo-acceptance/20260919-r52/review/final-native-review.md`）结论为 accepted；本构建任务在干净候选
++venv 中独立验证了 `supports_ordered_shutdown` 为精确布尔 `True`、生成的存根声明该只读属性，并跑通全套 app
++测试与一次有限 public probe。真实 sandbox 的鉴权、下单、撤单与 DMS 语义仍属第 7 节未验证项。
++
+ ## 7. 协议待验证项（R5 用真实 sandbox 逐项确认）
+ 
+ 下面每一项都是**已实现、有离线测试、但从未被 host 证实**的。它们不是"大概是这样"，而是**文档规定的
+@@ -341,10 +379,12 @@ maker 费率缺失只记录、不致命（venue 有权不发布它）。
+   不订阅死手开关、永不进入 trading-ready。不该为了"把账户弄干净"而自动撤单或下单。
+ - **`sandbox` 通过不等于任何生产资格。** sandbox 不足以证明生产资格、容量、提现或收益；合约映射未验证
+   期间 `executable=false` 继续成立。
+-- **一个带凭据的 `sandbox` 会话会武装一个它不解除的死手开关计时器**（细节见第 6 节）。所以在收敛停止接通
+-  之前（开篇第 2 条），真实 sandbox 会话退出后约 `dms_timeout_secs`（默认 30 s），venue 会撤掉**那个账户上的
+-  所有挂单**——不只是这一次运行留下的。**R4 从未建立过带凭据的会话，所以这件事没有发生过**；写下它是因为
+-  **R5.2 第一次真跑 sandbox 之前必须先处理它**。不要靠这个 probe 得到一个「跑完就干净」的账户。
++- **死手开关的解除取决于安装的 wheel。** 旧的 R5.1 wheel 的带凭据 `sandbox` 会话会武装一个它不解除
++  的死手开关计时器（细节见第 6 节），会话退出后约 `dms_timeout_secs`（默认 30 s）venue 会撤掉**那个账户上的
++  所有挂单**——不只是这一次运行留下的。本轮交付的 R5.2 wheel 只有在 `disconnect()` 的有序停止确认
++  「没有未决项」时才解除它；**能力属性为 `true` 也不代表这次运行真的解除成功**，真实 sandbox 的取消/确认/释放语义仍属第 7 节的
++  未验证项。**R4 从未建立过带凭据的会话，所以这件事没有发生过**；不要靠这个 probe 得到一个「跑完就干净」的
++  账户。
+ - 应用侧**不复制** REST 签名或重试 POST：这条路径复用原生执行 factory 与 R3 的生命周期，不另建一套下单
+   实现。`ondo_depth.py` 与 `spread_watch.py` 的只读分析也不修改 Rust 侧行为。
+ - `src/exec_probe.py` 是 **Aster** 的 testnet probe，与这条路径**相互独立**（原方案 §3.2 的文件表写明
+diff --git a/docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md b/docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md
+index cbec4f3..0e6aa34 100644
+--- a/docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md
++++ b/docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md
+@@ -285,6 +285,7 @@ FORK 跑 `cargo +1.98.0 test -p nautilus-ondo --locked --test market_data` 和
+ - [ ] 刷新官方鉴权材料并保存 hash；sandbox 分三步记录：A 鉴权/账户只读；B 私有订阅/恢复；C 明确许可下的受限下单/成交/撤单/DMS。A通过不能替代B/C。
+ - [ ] 用真实 sandbox 验证 REST header 名称、WS签名串顺序/时间单位、实际private帧、DMS确认/续期/到期/释放；逐项更新 conflicts 和 observed fixtures。鉴权失败有有界诊断，不能轮流猜签名无限尝试。
+ - [ ] 没有可用 sandbox 权限/凭据时，交付全部已完成离线能力，将对应在线项记 `blocked: sandbox credentials/permission unavailable`。不触碰生产写接口填补测试空白。
++- [ ] 应用侧以只读属性 `OndoExecutionClientFactory.supports_ordered_shutdown` 判断已安装适配器是否实现有序关机；旧 wheel（无该属性）回退为 `converging_stop_available: false`。属性为真只代表适配器能力，不代表协议通过或账户已清理；重建 wheel 后必须在生成的 `.pyi` 存根中确认该属性出现，并跑候选运行时检查（属性读取、报告字段、零下单）。
+ 
+ ## 2. 最终完成标准
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 7124b08..10e180c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -5,11 +5,12 @@ description = "Hyperliquid (HIP-3 xyz dex) x Lighter x Aster cross-exchange spre
+ requires-python = ">=3.12,<3.13"
+ dependencies = [
+     # Local fork wheel (E:/nautilus_trader, branch onde-perps): v2.0.0rc4 + Aster + Ondo adapters,
+-    # release profile, strict build (0 warnings). Built R5.1 2026-09-19; sha256:
+-    #   82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9
+-    # Rollback target: dist-r4 wheel sha256 2e7b0b6e0511b08fe19628b81b17a25497d939de1aa72bb44c776fd4740498f0
++    # Release profile with a per-command Windows linker-warning exception; strict attempt failed.
++    # Built R5.2 2026-09-19; sha256:
++    #   4d19c5df5bec73391a760d4b8643e2f8eaa53ce183dca88ee917454e2b91d642
++    # Rollback target: dist-r5 wheel sha256 82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9
+     # Build procedure: E:/nautilus_trader/BUILD_WINDOWS.md (maturin build --release from python/).
+-    "nautilus_trader @ file:///E:/nautilus_trader/dist-r5/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
++    "nautilus_trader @ file:///E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+     "python-dotenv",
+     # Reference-price leg (src/ref_feed.py): the FUTUNN OPEN API quote WebSocket
+     # (wss://webapi-quote.futunn.com/ws) and its Ed25519 / RSA-SHA256 auth signature.
+diff --git a/src/ondo_probe.py b/src/ondo_probe.py
+index c93c02c..b132923 100644
+--- a/src/ondo_probe.py
++++ b/src/ondo_probe.py
+@@ -33,22 +33,29 @@ than collapsing them into one verdict:
+ 
+ Three things this probe refuses to claim, and they are the reason it exists in this shape:
+ 
+-1. **No protocol verification has ever happened.**  Not one request has reached the real
+-   Ondo venue. The REST auth header names, the WS login signature concatenation order,
+-   the real private frame shapes and the dead-man-switch renewal semantics are all
+-   *documented, not host-confirmed*. ``protocol_verified`` is therefore ``False`` in
+-   every report this file can produce, and no field of it may be read as a host fact.
+-2. **Exit code 0 does not mean the account was cleaned.**  The adapter has an ordered
+-   bounded stop executor (``OndoAccountRuntime::stop_and_wait``:
++1. **No private/sandbox protocol acceptance has ever happened.**  The public surface has
++   been read and recorded, but no authenticated private request has been host-confirmed.
++   The REST auth header names, the WS login signature concatenation order, the real
++   private frame shapes and the dead-man-switch renewal semantics are all *documented, not
++   host-confirmed*. ``protocol_verified`` is therefore ``False`` in every report this file
++   can produce, and no field of it may be read as a private host fact.
++2. **Exit code 0 does not mean the account was cleaned, and capability is not a verdict.**
++   The ordered bounded stop executor (``OndoAccountRuntime::stop_and_wait``:
+    ``CancelOwnOrders -> ConfirmOwnOrders -> ReleaseDeadMansSwitch -> ClosePrivateStream``)
+-   and it is tested in Rust - but the client lifecycle never calls it: its only call site
+-   is ``crates/adapters/ondo/tests/private_runtime.rs``.  Framework ``stop()`` and
+-   ``disconnect()`` do not cancel this run's orders, do not confirm the cancels and do not
+-   release the dead-man switch, so on shutdown this client drops the transport and leaves
+-   orders behind.  That is R3 acceptance section 7 item 1, it is the prerequisite for the
+-   R5 sandbox submission, and it is why
+-   ``exit_code_zero_means_clean_account`` is ``False`` and ``converging_stop_available``
+-   is ``False`` with that reason attached.
++   is tested in Rust.  Whether the client lifecycle reaches it is a property of the
++   *installed wheel*, and this file must not guess it from a version, a filename, a
++   worktree path or a commit: the candidate native build exposes the read-only
++   ``OndoExecutionClientFactory.supports_ordered_shutdown``, while the still-installed R5
++   wheel exposes no such attribute and its ``stop()``/``disconnect()`` never cancel this
++   run's orders, confirm the cancels or release the dead-man switch (R3 acceptance
++   section 7 item 1).  The probe reports that capability as ``converging_stop_available``,
++   read offline by introspecting the factory type/object and nothing else.  Even ``True``
++   says only that the installed adapter implements the lifecycle: it does not verify the
++   venue protocol, it does not prove a particular account was cleaned, and this probe has
++   no native ``StopReport`` telemetry - so ``exit_code_zero_means_clean_account`` is
++   ``False`` for every report this file can produce, and the per-run cancel/confirm/release
++   flags are ``None`` (unobserved) unless this run actually observed them. Zero submitted
++   orders does not imply the dead-man switch was not released.
+ 3. **A refusal is not an outcome.**  A refused invocation is a startup rejection: the
+    reason goes to stderr, the exit code is 2, no client is constructed, no request is
+    sent, and nothing at all is written to disk - the tool never started, so there is no
+@@ -200,23 +207,33 @@ STOP_KEYBOARD_INTERRUPT = "keyboard-interrupt"
+ STOP_EXCEPTION = "exception"
+ STOP_NOT_STARTED = "not-started"
+ 
+-# The converging stop exists in Rust and is tested there; the client lifecycle never
+-# calls it. This string is the citation both booleans below point at.
+-CONVERGING_STOP_REASON = (
+-    "the adapter's ordered bounded stop executor (OndoAccountRuntime::stop_and_wait: "
+-    "CancelOwnOrders -> ConfirmOwnOrders -> ReleaseDeadMansSwitch -> ClosePrivateStream) "
+-    "is tested in Rust but has no call site outside "
+-    "crates/adapters/ondo/tests/private_runtime.rs: the client lifecycle never reaches "
+-    "it, so the framework stop()/disconnect() this probe can call does not cancel this "
+-    "run's orders, does not confirm the cancels and does not release the dead-man "
+-    "switch. The client drops the transport and leaves orders behind (R3 acceptance "
+-    "section 7 item 1); this is the prerequisite the R5 sandbox submission is blocked on"
++# The converging stop exists in Rust and is tested there. Whether the installed client
++# lifecycle reaches it is a property of the *installed wheel*: the candidate build exposes
++# ``OndoExecutionClientFactory.supports_ordered_shutdown`` and the R5 wheel exposes no such
++# attribute. These strings are the citations the capability document and the two booleans
++# point at; the unavailable one is also the fallback for a wheel that cannot be read.
++CAPABILITY_SUPPORTED_REASON = (
++    "the installed OndoExecutionClientFactory exposes supports_ordered_shutdown = True: "
++    "the native client lifecycle implements the ordered bounded stop (cancel this run's "
++    "own orders -> confirm the cancels -> release the dead-man switch -> close the private "
++    "stream) with a fail-closed synchronous fallback. This is a capability of the "
++    "installed wheel and nothing more: it does not verify the venue protocol, and it does "
++    "not prove that any particular run left the account clean"
++)
++CAPABILITY_UNAVAILABLE_REASON = (
++    "the installed OndoExecutionClientFactory exposes no supports_ordered_shutdown "
++    "attribute, so this wheel has no proven ordered-shutdown lifecycle: the framework "
++    "stop()/disconnect() this probe can call cannot be relied on to cancel this run's "
++    "orders, confirm the cancels and release the dead-man switch (R3 acceptance section 7 "
++    "item 1). Capability is read from the factory object and is never guessed from a "
++    "version, a filename, a worktree path or a commit"
+ )
+ PROTOCOL_VERIFIED_REASON = (
+-    "no request has ever been sent to the real Ondo venue: REST auth header names, the WS "
++    "no authenticated private/sandbox protocol acceptance has happened in these reports: "
++    "the public surface has been read and recorded, but the REST auth header names, the WS "
+     "login signature concatenation order, the real private frame shapes and the dead-man-"
+     "switch renewal semantics are documented, not host-confirmed. Nothing in this report "
+-    "may be read as a host fact"
++    "may be read as a private host fact"
+ )
+ 
+ # The accounting buckets, named once so the report keys and the classifiers cannot drift.
+@@ -299,6 +316,152 @@ def load_adapter() -> OndoAdapter:
+     )
+ 
+ 
++# ----------------------------------------------- shutdown capability (read-only)
++
++# The single native attribute that distinguishes the candidate wheel from the installed R5
++# wheel. It is a read-only boolean getter on ``OndoExecutionClientFactory`` if and only if
++# the built adapter carries the ordered lifecycle; support is never inferred from a version
++# string, a wheel filename, a worktree path or a Git commit.
++NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE = "supports_ordered_shutdown"
++
++CAPABILITY_SOURCE_NATIVE = "native-factory"
++CAPABILITY_SOURCE_ABSENT = "attribute-absent"
++CAPABILITY_SOURCE_FALSE = "reported-false"
++CAPABILITY_SOURCE_WRONG_TYPE = "unexpected-type"
++CAPABILITY_SOURCE_LOOKUP_FAILED = "lookup-failed"
++CAPABILITY_SOURCE_FACTORY_FAILED = "factory-construction-failed"
++CAPABILITY_SOURCE_ADAPTER_ABSENT = "adapter-unavailable"
++
++_CAPABILITY_MISSING = object()
++
++
++@dataclass(frozen=True)
++class ShutdownCapability:
++    """Whether the installed adapter implements the ordered shutdown lifecycle.
++
++    ``source`` is the machine-readable route to ``supported``: :data:`CAPABILITY_SOURCE_NATIVE`
++    when the getter returned the exact boolean ``True``, and one of the fail-closed sources
++    otherwise. ``reason`` says why, in words, and never quotes a credential.
++    """
++
++    supported: bool
++    source: str
++    reason: str
++
++    def as_dict(self) -> dict[str, object]:
++        return {"supported": self.supported, "source": self.source, "reason": self.reason}
++
++
++def detect_ordered_shutdown_capability(adapter: OndoAdapter | None) -> ShutdownCapability:
++    """Read the installed adapter's ordered-shutdown capability, offline and fail-closed.
++
++    This is introspection, not a session: at most it constructs the *factory* - a
++    credential-free object that builds clients - and never an execution config, an execution
++    client or a credential read, and it opens no socket. The class attribute is probed
++    first, so the installed R5 wheel (which has no such attribute) is judged unavailable
++    without even constructing the factory. Anything other than the exact boolean ``True`` is
++    unavailable, and a raising lookup, a raising getter or a factory that cannot be
++    constructed all fail closed with a reason.
++    """
++    if adapter is None:
++        return ShutdownCapability(
++            False,
++            CAPABILITY_SOURCE_ADAPTER_ABSENT,
++            "no Ondo adapter was resolved, so the installed supports_ordered_shutdown "
++            "capability could not be read: the probe reports it as unavailable rather than "
++            "assume a wheel",
++        )
++    try:
++        factory_cls = getattr(adapter, "OndoExecutionClientFactory")
++    except Exception as exc:
++        return ShutdownCapability(
++            False,
++            CAPABILITY_SOURCE_ADAPTER_ABSENT,
++            f"the adapter exposed no OndoExecutionClientFactory to read "
++            f"{NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE} from ({type(exc).__name__}); the "
++            f"capability is unavailable rather than assumed",
++        )
++    try:
++        marker = getattr(factory_cls, NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE, _CAPABILITY_MISSING)
++    except Exception as exc:
++        return ShutdownCapability(
++            False,
++            CAPABILITY_SOURCE_LOOKUP_FAILED,
++            f"reading {NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE} from the installed "
++            f"OndoExecutionClientFactory raised {type(exc).__name__}: capability fails "
++            f"closed",
++        )
++    if marker is _CAPABILITY_MISSING:
++        return ShutdownCapability(False, CAPABILITY_SOURCE_ABSENT, CAPABILITY_UNAVAILABLE_REASON)
++    if isinstance(marker, bool):
++        value: object = marker
++    else:
++        # A PyO3 ``#[getter]`` is a getset descriptor, not a bool at class level: the value
++        # can only be read off an instance. Constructing the *factory* is permitted; it is
++        # not an execution client and reads no credential.
++        try:
++            factory = factory_cls()
++        except Exception as exc:
++            return ShutdownCapability(
++                False,
++                CAPABILITY_SOURCE_FACTORY_FAILED,
++                f"the installed OndoExecutionClientFactory could not be constructed to "
++                f"read {NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE} "
++                f"({type(exc).__name__}): capability fails closed",
++            )
++        try:
++            value = getattr(factory, NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE, _CAPABILITY_MISSING)
++        except Exception as exc:
++            return ShutdownCapability(
++                False,
++                CAPABILITY_SOURCE_LOOKUP_FAILED,
++                f"reading {NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE} from the installed "
++                f"OndoExecutionClientFactory raised {type(exc).__name__}: capability "
++                f"fails closed",
++            )
++    if value is True:
++        return ShutdownCapability(True, CAPABILITY_SOURCE_NATIVE, CAPABILITY_SUPPORTED_REASON)
++    if value is False:
++        return ShutdownCapability(
++            False,
++            CAPABILITY_SOURCE_FALSE,
++            f"the installed OndoExecutionClientFactory reports "
++            f"{NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE} = False: the wheel declares the "
++            f"ordered-shutdown lifecycle unimplemented",
++        )
++    if value is _CAPABILITY_MISSING:
++        return ShutdownCapability(False, CAPABILITY_SOURCE_ABSENT, CAPABILITY_UNAVAILABLE_REASON)
++    return ShutdownCapability(
++        False,
++        CAPABILITY_SOURCE_WRONG_TYPE,
++        f"the installed OndoExecutionClientFactory reports "
++        f"{NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE} as {type(value).__name__}, not a bool: "
++        f"only the exact boolean True is treated as implemented capability",
++    )
++
++
++def _dry_run_capability(adapter: OndoAdapter | None) -> ShutdownCapability:
++    """Best-effort capability for ``--dry-run``: read it if possible, never fail the run.
++
++    With an injected adapter the answer is that adapter's. On the real command line the
++    adapter has not been loaded yet; importing it is offline and constructs at most a
++    factory, and if the wheel is absent or unreadable the plan says unavailable rather than
++    failing a document that has no session behind it.
++    """
++    if adapter is not None:
++        return detect_ordered_shutdown_capability(adapter)
++    try:
++        return detect_ordered_shutdown_capability(load_adapter())
++    except Exception as exc:
++        return ShutdownCapability(
++            False,
++            CAPABILITY_SOURCE_ADAPTER_ABSENT,
++            f"the installed Ondo adapter could not be loaded to read "
++            f"{NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE} ({type(exc).__name__}): capability "
++            f"is unavailable rather than assumed",
++        )
++
++
+ # ------------------------------------------------------------ endpoint allowlist
+ 
+ 
+@@ -1099,9 +1262,11 @@ def bounded_stop(target: object | None, *, label: str, via: str = "node",
+ 
+     Bounded by *iteration count*, not by a clock read: a wall clock is the injected
+     ``now`` and is not consulted here, and no clock this file holds can extend the wait.
+-    What this cannot do is the point of the report - the framework stop does not cancel
+-    this run's orders, confirm the cancels or release the dead-man switch, so a clean
+-    stop here says nothing about what the venue still holds.
++    What this cannot do is the point of the report - it has no native ``StopReport``
++    telemetry, so whether the ordered stop cancelled this run's orders, confirmed the
++    cancels or released the dead-man switch is *unobserved*, reported as ``None`` rather
++    than ``False``. A clean stop here says nothing about what the venue still holds, and
++    zero submitted orders does not imply the switch was not released.
+     """
+     outcome: dict[str, object] = {
+         "label": label,
+@@ -1111,9 +1276,9 @@ def bounded_stop(target: object | None, *, label: str, via: str = "node",
+         "error": None,
+         "iterations": 0,
+         "stop_target": via,
+-        "cancels_own_orders": False,
+-        "confirms_cancels": False,
+-        "releases_dead_mans_switch": False,
++        "cancels_own_orders": None,
++        "confirms_cancels": None,
++        "releases_dead_mans_switch": None,
+     }
+     if target is None:
+         return outcome
+@@ -1746,11 +1911,12 @@ def caps_lines(plan: Plan) -> list[str]:
+     return [row.line() for row in plan.caps]
+ 
+ 
+-def plan_document(plan: Plan) -> dict[str, object]:
++def plan_document(plan: Plan, capability: ShutdownCapability) -> dict[str, object]:
+     """The ``--dry-run`` document: what this invocation resolved to, and what it refuses.
+ 
+     Everything the run would announce, and the three facts the run would carry, with the
+-    counts that make "no client, no request, no read" checkable rather than asserted.
++    counts that make "no client, no request, no read" checkable rather than asserted. The
++    capability is read from the installed factory alone; no execution client exists here.
+     """
+     document: dict[str, object] = {
+         "tool": "ondo_probe",
+@@ -1771,27 +1937,60 @@ def plan_document(plan: Plan) -> dict[str, object]:
+         "protocol_verified": False,
+         "protocol_verified_reason": PROTOCOL_VERIFIED_REASON,
+         "exit_code_zero_means_clean_account": False,
+-        "converging_stop_available": False,
+-        "converging_stop_reason": CONVERGING_STOP_REASON,
+-        "unverified": unverified_document(),
+-        "converging_stop": converging_stop_document(),
++        "supports_ordered_shutdown": capability.supported,
++        "supports_ordered_shutdown_source": capability.source,
++        "converging_stop_available": capability.supported,
++        "converging_stop_reason": capability.reason,
++        "unverified": unverified_document(capability),
++        "converging_stop": converging_stop_document(capability),
+     }
+     document.update(banner_document(plan))
+     return document
+ 
+ 
+-def converging_stop_document() -> dict[str, object]:
++def converging_stop_document(capability: ShutdownCapability) -> dict[str, object]:
++    """The adapter's ordered-shutdown capability, separated from what this run observed.
++
++    ``available`` is the installed wheel's capability, read offline. The three per-run flags
++    are what *this* session's stop did; the probe has no native ``StopReport`` telemetry, so
++    they are ``None`` (unobserved) rather than ``False`` (did not occur). A capable adapter
++    must never be read as those three having happened, and zero submitted orders must never
++    be read as the dead-man switch not having been released.
++    """
++    if capability.supported:
++        blocks: str | None = (
++            "nothing in the adapter lifecycle: the installed wheel exposes the ordered "
++            "shutdown capability. The R5.2 real-account verification - that a real sandbox "
++            "session left the account clean - is still outstanding"
++        )
++    else:
++        blocks = "R5 sandbox submission (R3 acceptance section 7 item 1)"
+     return {
+-        "available": False,
+-        "reason": CONVERGING_STOP_REASON,
+-        "cancels_own_orders": False,
+-        "confirms_cancels": False,
+-        "releases_dead_mans_switch": False,
+-        "blocks": "R5 sandbox submission (R3 acceptance section 7 item 1)",
++        "available": capability.supported,
++        "capability_source": capability.source,
++        "reason": capability.reason,
++        # The probe has no native StopReport telemetry, so it cannot observe whether the
++        # ordered stop cancelled this run's orders, confirmed the cancels or released the
++        # dead-man switch. Unobserved is ``None``, never ``False``: a trading-mode session
++        # arms the switch on connect and can release it on a clean disconnect with zero
++        # submitted orders, and a restored journal may carry prior owned orders.
++        "cancels_own_orders": None,
++        "confirms_cancels": None,
++        "releases_dead_mans_switch": None,
++        "observed_this_run": False,
++        "observed_reason": (
++            "this probe has no per-run native StopReport telemetry, so the ordered stop's "
++            "cancel, confirmation and dead-man-switch release are unobserved (null), not "
++            "absent: zero submitted orders does not imply the switch was not released - a "
++            "trading-mode session arms it on connect and can release it on a clean "
++            "disconnect, and a restored journal may carry prior owned orders. Capability "
++            "describes what the installed adapter implements, not what this run did"
++        ),
++        "blocks": blocks,
+     }
+ 
+ 
+-def unverified_document() -> list[dict[str, object]]:
++def unverified_document(capability: ShutdownCapability) -> list[dict[str, object]]:
+     """The two facts this probe will not let a reader infer as verified."""
+     return [
+         {
+@@ -1808,10 +2007,15 @@ def unverified_document() -> list[dict[str, object]]:
+         {
+             "item": "converging_stop",
+             "verified": False,
+-            "reason": CONVERGING_STOP_REASON,
++            "adapter_capability": capability.supported,
++            "capability_source": capability.source,
++            "reason": capability.reason,
++            "per_run_actions_observed": False,
+             "consequence": (
+-                "a zero exit code must not be read as a cleaned account: outstanding "
+-                "orders and pending ids are reported instead"
++                "capability says what the installed adapter implements, not what this run "
++                "did. The probe has no native StopReport telemetry, so a cancel, a "
++                "confirmation or a dead-man-switch release is unobserved (null) rather "
++                "than absent; a zero exit code must not be read as a cleaned account"
+             ),
+         },
+     ]
+@@ -1821,7 +2025,8 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
+                     exit_code: int, stop_condition: str, failure: str | None,
+                     node: dict[str, object] | None, ledger: Ledger,
+                     observation: dict[str, object], stops: Sequence[dict[str, object]],
+-                    watchdog: dict[str, bool] | None) -> dict[str, object]:
++                    watchdog: dict[str, bool] | None,
++                    capability: ShutdownCapability) -> dict[str, object]:
+     """The published report: the axes, the banner, and the two honest denials."""
+     document: dict[str, object] = {
+         "tool": "ondo_probe",
+@@ -1851,10 +2056,12 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
+         "protocol_verified": False,
+         "protocol_verified_reason": PROTOCOL_VERIFIED_REASON,
+         "exit_code_zero_means_clean_account": False,
+-        "converging_stop_available": False,
+-        "converging_stop_reason": CONVERGING_STOP_REASON,
+-        "converging_stop": converging_stop_document(),
+-        "unverified": unverified_document(),
++        "supports_ordered_shutdown": capability.supported,
++        "supports_ordered_shutdown_source": capability.source,
++        "converging_stop_available": capability.supported,
++        "converging_stop_reason": capability.reason,
++        "converging_stop": converging_stop_document(capability),
++        "unverified": unverified_document(capability),
+         "orders_submitted_by_probe": 0,
+     }
+     document.update(banner_document(plan, run_id=run_id))
+@@ -1867,7 +2074,8 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
+ 
+ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., object] | None,
+             environ: dict[str, str], now: Callable[[], datetime],
+-            out_dir: Path, log: Callable[[str], None]) -> int:
++            out_dir: Path, log: Callable[[str], None],
++            capability: ShutdownCapability) -> int:
+     """Run one bounded session and publish it. Every exit path stops and publishes.
+ 
+     The report is written from a ``finally`` block, so a ``KeyboardInterrupt``, a deadline,
+@@ -1985,6 +2193,7 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
+             plan, run_id=run_id, started=started, finished=finished, exit_code=exit_code,
+             stop_condition=stop_condition, failure=failure, node=session, ledger=ledger,
+             observation=observation, stops=stops, watchdog=watchdog_state,
++            capability=capability,
+         )
+         meta = {
+             "tool": "ondo_probe",
+@@ -2001,7 +2210,9 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
+             "pending_ids": len(document.get("pending_ids") or {}),
+             "account_reconciled": document.get("account_reconciled"),
+             "protocol_verified": False,
+-            "converging_stop_available": False,
++            "supports_ordered_shutdown": capability.supported,
++            "supports_ordered_shutdown_source": capability.source,
++            "converging_stop_available": capability.supported,
+         }
+         try:
+             manifest = write_report(
+@@ -2018,8 +2229,15 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
+                 exit_code = EXIT_FAILURE
+         if exit_code == EXIT_OK and failure is None:
+             # Said out loud, because a zero exit code is read as "clean" by everything
+-            # downstream and this one is not: the converging stop is unreachable.
+-            log(f"ondo_probe: exit 0 does not mean the account is clean - {CONVERGING_STOP_REASON}")
++            # downstream and this one is not. A capable wheel changes what the adapter
++            # implements, not what this run observed or what the venue has verified.
++            detail = (
++                "the installed adapter reports the ordered-shutdown capability, but this "
++                "probe does not observe the native stop outcome and the private protocol "
++                "is unverified, so capability is not a cleaned account"
++                if capability.supported else capability.reason
++            )
++            log(f"ondo_probe: exit 0 does not mean the account is clean - {detail}")
+     return exit_code
+ 
+ 
+@@ -2048,8 +2266,10 @@ def main(argv: Sequence[str] | None = None, *, adapter=None, node_factory=None,
+         return EXIT_FAILURE
+ 
+     if plan.dry_run:
+-        json.dump(plan_document(plan), sys.stdout, indent=2, sort_keys=True,
+-                  ensure_ascii=False, default=_json_default)
++        # Read-only and best-effort: a plan document has no session behind it, so a wheel
++        # that cannot be imported or does not expose the marker still prints its plan.
++        json.dump(plan_document(plan, _dry_run_capability(adapter)), sys.stdout, indent=2,
++                  sort_keys=True, ensure_ascii=False, default=_json_default)
+         sys.stdout.write("\n")
+         return EXIT_OK
+ 
+@@ -2060,6 +2280,9 @@ def main(argv: Sequence[str] | None = None, *, adapter=None, node_factory=None,
+             if plan.credentials_required else {}
+         check_credentials(plan.mode, resolved)
+         active_adapter = adapter if adapter is not None else load_adapter()
++        # Read after every startup gate, so a refused invocation still constructs nothing:
++        # this is offline introspection of the factory object and constructs no client.
++        capability = detect_ordered_shutdown_capability(active_adapter)
+     except OndoProbeRefused as exc:
+         print(f"ondo_probe: refused: {exc}", file=sys.stderr)
+         print("ondo_probe: nothing was constructed, nothing was sent, nothing was written",
+@@ -2074,7 +2297,8 @@ def main(argv: Sequence[str] | None = None, *, adapter=None, node_factory=None,
+ 
+     try:
+         return execute(plan, adapter=active_adapter, node_factory=node_factory,
+-                       environ=resolved, now=clock, out_dir=plan.out_dir, log=log)
++                       environ=resolved, now=clock, out_dir=plan.out_dir, log=log,
++                       capability=capability)
+     except KeyboardInterrupt:
+         # execute() publishes from its own finally block; this catches only an interrupt
+         # that arrived outside it, and it must still be an exit code rather than a trace.
+diff --git a/tests/test_ondo_probe.py b/tests/test_ondo_probe.py
+index 1c355b4..a735795 100644
+--- a/tests/test_ondo_probe.py
++++ b/tests/test_ondo_probe.py
+@@ -19,9 +19,10 @@ this file:
+   ``EXIT_REFUSED`` before a client exists, and it must never be written up as "the probe
+   ran but returned no data";
+ * ``protocol_verified`` and ``exit_code_zero_means_clean_account`` are **false by
+-  construction** in R4 - no request has ever reached the real venue, and the adapter's
+-  converging stop is unreachable from Python (``OndoAccountRuntime::stop_and_wait`` is
+-  called only from ``crates/adapters/ondo/tests/private_runtime.rs``).
++  construction** in R4 - no authenticated private/sandbox request has been host-confirmed
++  (public reads are observed but are not protocol acceptance), and the adapter's
++  converging stop is unobserved from Python (no native ``StopReport`` telemetry; the
++  ordered stop is unreachable on the installed R5 wheel).
+ 
+ The last section persists its stability evidence as JSON rather than printing it (R3
+ acceptance report, section 7). It lands in ``tmp_path`` by default; point
+@@ -1340,13 +1341,13 @@ def test_the_two_frozen_verdicts_are_false_and_say_why(tmp_path):
+     payload = probe_report(out_dir)
+ 
+     assert payload["protocol_verified"] is False, (
+-        "no request has ever reached the real Ondo venue: REST auth header names, WS login "
+-        "signature order, private frame shapes and DMS renewal semantics are documented, "
+-        "not host-confirmed"
++        "no authenticated private/sandbox request has been host-confirmed: REST auth header "
++        "names, WS login signature order, private frame shapes and DMS renewal semantics "
++        "are documented, not host-confirmed (public reads are observed but are not this)"
+     )
+     assert payload["exit_code_zero_means_clean_account"] is False, (
+-        "OndoAccountRuntime::stop_and_wait is unreachable from Python - the client "
+-        "lifecycle never calls it, so shutdown drops the transport and leaves orders behind"
++        "capability is not a cleaned account: the probe has no native StopReport telemetry "
++        "and cannot observe a per-run cancel/confirm/release"
+     )
+     assert payload["converging_stop_available"] is False
+ 
+@@ -1603,8 +1604,9 @@ def test_a_stop_outcome_names_the_target_it_used():
+     assert outcome["attempted"] is False, "nothing was there to stop, and the report says so"
+     assert outcome["requested"] is False
+     assert outcome["stopped"] is False
+-    assert outcome["cancels_own_orders"] is False, (
+-        "a framework stop does not cancel this run's orders: the report must never imply it did"
++    assert outcome["cancels_own_orders"] is None, (
++        "the probe has no native StopReport telemetry, so a cancel it did not observe is "
++        "reported as null, never as a hardcoded False that claims it did not happen"
+     )
+ 
+ 
+@@ -1978,7 +1980,369 @@ def test_the_read_only_mode_is_a_real_setting_not_a_label():
+     assert "account_read_only" in _code()
+ 
+ 
+-# ======================================================================= 8. stability
++# ============================================================ 8. the shutdown capability
++#
++# The native candidate wheel exposes one read-only property,
++# ``OndoExecutionClientFactory.supports_ordered_shutdown``. The installed R5 wheel exposes no
++# such attribute, so the two must be distinguished by introspection alone - never by a
++# version string, a wheel filename, a worktree path or a Git commit. Everything here is
++# offline: the property is read off a (credential-free) factory object, and the detector
++# must fail closed on absence, a false or wrongly typed value, a raising lookup, or a factory
++# that cannot be constructed.
++#
++# Capability is *not* a verdict: it says the installed native lifecycle implements the
++# ordered stop. It does not verify the venue protocol, it does not prove that a particular
++# account was cleaned, and this probe still submits zero orders (which does not by itself
++# imply the dead-man switch was not released).
++
++
++def capability_adapter(registry: Registry, factory_cls):
++    """A ``FakeAdapter`` whose execution factory is ``factory_cls``.
++
++    The adapter's own generated class records a construction; this one is injected so a test
++    can model the candidate's PyO3 getter shape (a descriptor that is not a bool at class
++    level) without the adapter fabricating a value the candidate does not have.
++    """
++    adapter = FakeAdapter(registry)
++    adapter._cache["OndoExecutionClientFactory"] = factory_cls
++    return adapter
++
++
++def capable_factory(*, value=True, present=True, raises=False, construct_raises=False):
++    """A stand-in for the candidate native factory.
++
++    ``supports_ordered_shutdown`` is a ``property`` - never a plain class bool - because the
++    real candidate exposes a PyO3 ``getset_descriptor``: a detector that read only
++    ``getattr(TheClass, name)`` without an instance would fail closed on the real wheel.
++    ``present=False`` models the installed R5 wheel, which has no attribute at all.
++    """
++
++    class Factory:
++        def __init__(self):
++            if construct_raises:
++                raise RuntimeError("the factory refused construction")
++
++        def name(self):
++            return "ONDO"
++
++        def __repr__(self):
++            return "<OndoExecutionClientFactory (capability fake)>"
++
++    if present:
++        def _getter(self):
++            if raises:
++                raise RuntimeError("the capability getter raised")
++            return value
++
++        Factory.supports_ordered_shutdown = property(_getter)
++    Factory.__name__ = "OndoExecutionClientFactory"
++    Factory.__qualname__ = "OndoExecutionClientFactory"
++    return Factory
++
++
++def metaclass_raising_factory():
++    """A factory class whose class-level attribute lookup itself raises."""
++
++    class RaisingMeta(type):
++        def __getattr__(cls, name):
++            raise RuntimeError(f"class attribute lookup for {name!r} raised")
++
++    class Factory(metaclass=RaisingMeta):
++        pass
++
++    Factory.__name__ = "OndoExecutionClientFactory"
++    Factory.__qualname__ = "OndoExecutionClientFactory"
++    return Factory
++
++
++def run_probe_with_capability(argv, factory_cls, *, adapter=None, **fake):
++    """Run through the capability adapter, handing back the result and its registry."""
++    registry = Registry()
++    adapter = adapter or capability_adapter(registry, factory_cls)
++    result = run_probe(argv, registry=registry, adapter=adapter, **fake)
++    return result, registry
++
++
++def test_the_installed_wheel_without_the_attribute_is_unavailable(tmp_path):
++    """The old wheel has no attribute at all: report unimplemented, with the name it lacks.
++
++    This is the installed R5 wheel's own shape, and the reason the probe may not infer
++    support from a version, a filename or a commit.
++    """
++    out_dir = tmp_path / "out"
++    result = run_probe(["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5",
++                        "--out", str(out_dir)])
++    assert result.code == EXIT_OK, result.streams
++    payload = probe_report(out_dir)
++    assert payload["converging_stop_available"] is False
++    assert ondo_probe.NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE in payload["converging_stop_reason"], (
++        "an unavailable capability names the attribute the installed factory lacks"
++    )
++    stop = payload["converging_stop"]
++    assert stop["available"] is False
++    assert stop["cancels_own_orders"] is None
++    assert stop["confirms_cancels"] is None
++    assert stop["releases_dead_mans_switch"] is None
++    assert result.writes == []
++
++
++def test_a_capable_adapter_reports_the_implemented_ordered_shutdown(tmp_path):
++    """A wheel exposing the getter reports the capability as implemented, and no more."""
++    out_dir = tmp_path / "out"
++    result, registry = run_probe_with_capability(
++        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
++        capable_factory(value=True),
++    )
++    assert result.code == EXIT_OK, result.streams
++    payload = probe_report(out_dir)
++    assert payload["converging_stop_available"] is True
++    assert payload["converging_stop"]["available"] is True
++    assert payload["converging_stop"]["capability_source"] == ondo_probe.CAPABILITY_SOURCE_NATIVE
++    reason = payload["converging_stop_reason"].lower()
++    assert "ordered" in reason and "capability" in reason, payload["converging_stop_reason"]
++    # The probe observed no cleanup of its own, but it also cannot claim none happened:
++    # without native StopReport telemetry the per-run actions are unobserved (null).
++    stop = payload["converging_stop"]
++    assert stop["cancels_own_orders"] is None
++    assert stop["confirms_cancels"] is None
++    assert stop["releases_dead_mans_switch"] is None
++    assert stop["observed_this_run"] is False
++    assert result.writes == []
++    assert [b for b in registry.built if "ExecutionClientConfig" in b.name] == [], (
++        "capability detection constructs no authenticated execution config"
++    )
++
++
++@pytest.mark.parametrize("value", [False, "true", 1, 0, None])
++def test_a_marker_that_is_not_the_boolean_true_fails_closed(tmp_path, value):
++    """Anything but the exact boolean ``True`` is unavailable - never coerce a marker."""
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
++        capable_factory(value=value),
++    )
++    assert result.code == EXIT_OK, result.streams
++    payload = probe_report(out_dir)
++    assert payload["converging_stop_available"] is False, (
++        f"the marker {value!r} was treated as implemented capability"
++    )
++    assert result.writes == []
++
++
++def test_a_capability_getter_that_raises_fails_closed(tmp_path):
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
++        capable_factory(raises=True),
++    )
++    assert result.code == EXIT_OK, result.streams
++    payload = probe_report(out_dir)
++    assert payload["converging_stop_available"] is False
++    assert "raised" in payload["converging_stop_reason"].lower(), payload["converging_stop_reason"]
++
++
++def test_a_factory_that_cannot_be_constructed_fails_closed(tmp_path):
++    """A factory whose constructor raises is reported unavailable, not a crashed probe."""
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
++        capable_factory(construct_raises=True),
++    )
++    assert result.code == EXIT_OK, result.streams
++    payload = probe_report(out_dir)
++    assert payload["converging_stop_available"] is False
++    assert "constructed" in payload["converging_stop_reason"].lower(), (
++        payload["converging_stop_reason"]
++    )
++
++
++def test_a_class_level_lookup_that_raises_fails_closed(tmp_path):
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
++        metaclass_raising_factory(),
++    )
++    assert result.code == EXIT_OK, result.streams
++    assert probe_report(out_dir)["converging_stop_available"] is False
++
++
++def test_detection_reads_only_the_factory_and_needs_no_credentials():
++    """Detection is offline and read-only: no adapter import, config, client or env read."""
++    registry = Registry()
++    adapter = capability_adapter(registry, capable_factory(value=True))
++    with patch.object(ondo_probe, "load_adapter",
++                      side_effect=AssertionError("detection must not import the adapter")):
++        capability = ondo_probe.detect_ordered_shutdown_capability(adapter)
++    assert capability.supported is True
++    assert capability.source == ondo_probe.CAPABILITY_SOURCE_NATIVE
++    assert registry.built == [], "detection constructed a config or a client"
++
++
++def test_an_absent_attribute_is_detected_without_constructing_the_factory():
++    """The installed wheel needs no object built to be judged unavailable."""
++    registry = Registry()
++    capability = ondo_probe.detect_ordered_shutdown_capability(FakeAdapter(registry))
++    assert capability.supported is False
++    assert capability.source == ondo_probe.CAPABILITY_SOURCE_ABSENT
++    assert registry.built == [], "the old wheel's absence was decided without a construction"
++
++
++def test_no_adapter_resolved_is_unavailable_not_an_error(tmp_path):
++    capability = ondo_probe.detect_ordered_shutdown_capability(None)
++    assert capability.supported is False
++    assert capability.reason.strip()
++    out_dir = tmp_path / "out"
++    result = run_probe(["--mode", "public", "--symbols", "NVDA", "--out", str(out_dir),
++                        "--dry-run"], adapter=FakeAdapter(Registry()))
++    assert result.code == EXIT_OK, result.streams
++
++
++def test_a_dry_run_survives_an_unloadable_adapter(tmp_path):
++    """The real dry-run path reads capability best-effort and still prints its plan."""
++    out_dir = tmp_path / "out"
++    captured = io.StringIO()
++    with patch.object(ondo_probe, "load_adapter",
++                      side_effect=ondo_probe.OndoProbeError("the wheel is not installed")):
++        with contextlib.redirect_stdout(captured):
++            code = ondo_probe.main(
++                ["--mode", "public", "--symbols", "NVDA", "--out", str(out_dir), "--dry-run"],
++                adapter=None,
++                node_factory=None,
++                environ=clean_environ(),
++                now=Clock(),
++            )
++    assert code == EXIT_OK
++    document = json.loads(captured.getvalue())
++    assert document["converging_stop_available"] is False
++    assert document["supports_ordered_shutdown_source"] == ondo_probe.CAPABILITY_SOURCE_ADAPTER_ABSENT
++    assert document["protocol_verified"] is False
++    assert not out_dir.exists(), "an unloadable adapter does not make a dry run write anything"
++
++
++def test_a_dry_run_reports_the_installed_capability_without_a_session(tmp_path):
++    """The plan document carries capability even though no client or node exists."""
++    out_dir = tmp_path / "out"
++    registry = Registry()
++    adapter = capability_adapter(registry, capable_factory(value=True))
++    captured = io.StringIO()
++    with contextlib.redirect_stdout(captured):
++        with patch.object(ondo_probe, "LiveNode", fake_live_node(registry)):
++            code = ondo_probe.main(
++                ["--mode", "public", "--symbols", "NVDA", "--out", str(out_dir), "--dry-run"],
++                adapter=adapter,
++                node_factory=NodeFactory(registry),
++                environ=clean_environ(),
++                now=Clock(),
++            )
++    assert code == EXIT_OK
++    document = json.loads(captured.getvalue())
++    assert document["dry_run"] is True
++    assert document["converging_stop_available"] is True
++    assert document["converging_stop"]["available"] is True
++    assert document["client_constructed"] is False
++    assert not out_dir.exists(), "a dry run still publishes nothing"
++
++
++def test_native_capability_does_not_promote_protocol_or_clean_account_verdicts(tmp_path):
++    """A capable wheel says nothing about the venue protocol or a cleaned account."""
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        sandbox_argv(out_dir), capable_factory(value=True),
++        environ=clean_environ(**credentials()),
++    )
++    assert result.code == EXIT_OK, result.streams
++    assert result.writes == [], "a capable wheel does not make the probe send an order"
++    payload = probe_report(out_dir)
++    assert payload["converging_stop_available"] is True
++    assert payload["protocol_verified"] is False
++    assert payload["exit_code_zero_means_clean_account"] is False
++    assert payload["orders_submitted_by_probe"] == 0
++    assert payload["submitted"] == []
++    stop = payload["converging_stop"]
++    assert stop["cancels_own_orders"] is None
++    assert stop["confirms_cancels"] is None
++    assert stop["releases_dead_mans_switch"] is None
++    assert stop["observed_this_run"] is False
++    assert payload["write_capable"] is True, "the writing mode label is unchanged"
++    unverified = payload["unverified"]
++    assert any(item.get("item") == "converging_stop" for item in unverified)
++
++
++def test_zero_orders_does_not_prove_no_dms_release(tmp_path):
++    """Zero submitted orders must not be reported as "no cancel/confirm/DMS release".
++
++    A real sandbox trading-mode session arms the dead-man switch on connect and can release
++    it during a clean disconnect with zero orders, and a restored journal may carry prior
++    owned orders. Without native StopReport telemetry the per-run actions are unobserved
++    (null), never a hardcoded False.
++    """
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        sandbox_argv(out_dir), capable_factory(value=True),
++        environ=clean_environ(**credentials()),
++    )
++    assert result.code == EXIT_OK, result.streams
++    payload = probe_report(out_dir)
++    assert payload["orders_submitted_by_probe"] == 0
++    stop = payload["converging_stop"]
++    assert stop["cancels_own_orders"] is None
++    assert stop["confirms_cancels"] is None
++    assert stop["releases_dead_mans_switch"] is None
++    assert stop["observed_this_run"] is False
++    reason = stop["observed_reason"].lower()
++    assert "unobserved" in reason, stop["observed_reason"]
++    assert "dead-man" in reason or "dead man" in reason, stop["observed_reason"]
++    assert "zero submitted orders does not imply" in reason, stop["observed_reason"]
++    for entry in payload["stops"]:
++        assert entry["cancels_own_orders"] is None, entry
++        assert entry["confirms_cancels"] is None, entry
++        assert entry["releases_dead_mans_switch"] is None, entry
++    unverified = [item for item in payload["unverified"]
++                  if item.get("item") == "converging_stop"]
++    assert unverified and unverified[0]["per_run_actions_observed"] is False, unverified
++    assert payload["write_capable"] is True, "the writing mode label is unchanged"
++
++
++def test_protocol_reason_does_not_deny_the_observed_public_reads(tmp_path):
++    """The denial is private/sandbox protocol acceptance, not "no request ever sent"."""
++    out_dir = tmp_path / "out"
++    result = run_probe(["--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)])
++    assert result.code == EXIT_OK, result.streams
++    reason = probe_report(out_dir)["protocol_verified_reason"].lower()
++    assert "private" in reason or "sandbox" in reason, reason
++    assert "public surface has been read" in reason, reason
++    assert "no request has ever been sent" not in reason, reason
++
++
++def test_native_capability_leaves_paper_synthetic(tmp_path):
++    """A capable adapter never turns a synthetic paper account into a real one."""
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        ["--mode", "paper", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
++        capable_factory(value=True),
++    )
++    assert result.code == EXIT_OK, result.streams
++    payload = probe_report(out_dir)
++    assert payload["synthetic"] is True
++    assert payload["converging_stop_available"] is True
++    assert payload["account_coverage_proven"] is False
++    assert result.writes == []
++
++
++def test_the_manifest_carries_the_capability_too(tmp_path):
++    out_dir = tmp_path / "out"
++    result, _ = run_probe_with_capability(
++        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
++        capable_factory(value=True),
++    )
++    assert result.code == EXIT_OK, result.streams
++    meta = manifest(out_dir)
++    assert meta["converging_stop_available"] is True
++    assert meta["supports_ordered_shutdown"] is True
++    assert meta["protocol_verified"] is False
++
++
++# ======================================================================= 9. stability
+ #
+ # Written to disk, not printed (R3 acceptance report, section 7). Point
+ # ONDO_PROBE_STABILITY_OUT at a run directory to keep the evidence with a real run.

@@ -1,0 +1,11 @@
+🍹 Building a mixed python/rust project
+🐍 Found CPython 3.12 at E:\nautilus_trader\.worktrees\ondo-r52-cleanup\.venv\Scripts\python.exe
+🔗 Found pyo3 bindings
+📡 Using build options features from pyproject.toml
+    Finished `release` profile [optimized] target(s) in 0.67s
+🔗 External shared libraries to be copied into the wheel:
+  E:\nautilus_trader\.worktrees\task-ondo-r5\target\maturin\nautilus_pyo3.dll requires:
+    zlib.dll => \\?\C:\ProgramData\miniconda3\zlib.dll
+⚠️  Warning: Your library requires copying the above external libraries. Re-run with `--auditwheel=repair` to copy them into the wheel.
+📦 Including files matching "**/*.pyi"
+📦 Built wheel for CPython 3.12 to E:/nautilus_trader/dist-r52\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl

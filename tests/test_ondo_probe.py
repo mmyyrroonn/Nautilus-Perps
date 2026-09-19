@@ -19,9 +19,10 @@ this file:
   ``EXIT_REFUSED`` before a client exists, and it must never be written up as "the probe
   ran but returned no data";
 * ``protocol_verified`` and ``exit_code_zero_means_clean_account`` are **false by
-  construction** in R4 - no request has ever reached the real venue, and the adapter's
-  converging stop is unreachable from Python (``OndoAccountRuntime::stop_and_wait`` is
-  called only from ``crates/adapters/ondo/tests/private_runtime.rs``).
+  construction** in R4 - no authenticated private/sandbox request has been host-confirmed
+  (public reads are observed but are not protocol acceptance), and the adapter's
+  converging stop is unobserved from Python (no native ``StopReport`` telemetry; the
+  ordered stop is unreachable on the installed R5 wheel).
 
 The last section persists its stability evidence as JSON rather than printing it (R3
 acceptance report, section 7). It lands in ``tmp_path`` by default; point
@@ -1340,13 +1341,13 @@ def test_the_two_frozen_verdicts_are_false_and_say_why(tmp_path):
     payload = probe_report(out_dir)
 
     assert payload["protocol_verified"] is False, (
-        "no request has ever reached the real Ondo venue: REST auth header names, WS login "
-        "signature order, private frame shapes and DMS renewal semantics are documented, "
-        "not host-confirmed"
+        "no authenticated private/sandbox request has been host-confirmed: REST auth header "
+        "names, WS login signature order, private frame shapes and DMS renewal semantics "
+        "are documented, not host-confirmed (public reads are observed but are not this)"
     )
     assert payload["exit_code_zero_means_clean_account"] is False, (
-        "OndoAccountRuntime::stop_and_wait is unreachable from Python - the client "
-        "lifecycle never calls it, so shutdown drops the transport and leaves orders behind"
+        "capability is not a cleaned account: the probe has no native StopReport telemetry "
+        "and cannot observe a per-run cancel/confirm/release"
     )
     assert payload["converging_stop_available"] is False
 
@@ -1603,8 +1604,9 @@ def test_a_stop_outcome_names_the_target_it_used():
     assert outcome["attempted"] is False, "nothing was there to stop, and the report says so"
     assert outcome["requested"] is False
     assert outcome["stopped"] is False
-    assert outcome["cancels_own_orders"] is False, (
-        "a framework stop does not cancel this run's orders: the report must never imply it did"
+    assert outcome["cancels_own_orders"] is None, (
+        "the probe has no native StopReport telemetry, so a cancel it did not observe is "
+        "reported as null, never as a hardcoded False that claims it did not happen"
     )
 
 
@@ -1978,7 +1980,369 @@ def test_the_read_only_mode_is_a_real_setting_not_a_label():
     assert "account_read_only" in _code()
 
 
-# ======================================================================= 8. stability
+# ============================================================ 8. the shutdown capability
+#
+# The native candidate wheel exposes one read-only property,
+# ``OndoExecutionClientFactory.supports_ordered_shutdown``. The installed R5 wheel exposes no
+# such attribute, so the two must be distinguished by introspection alone - never by a
+# version string, a wheel filename, a worktree path or a Git commit. Everything here is
+# offline: the property is read off a (credential-free) factory object, and the detector
+# must fail closed on absence, a false or wrongly typed value, a raising lookup, or a factory
+# that cannot be constructed.
+#
+# Capability is *not* a verdict: it says the installed native lifecycle implements the
+# ordered stop. It does not verify the venue protocol, it does not prove that a particular
+# account was cleaned, and this probe still submits zero orders (which does not by itself
+# imply the dead-man switch was not released).
+
+
+def capability_adapter(registry: Registry, factory_cls):
+    """A ``FakeAdapter`` whose execution factory is ``factory_cls``.
+
+    The adapter's own generated class records a construction; this one is injected so a test
+    can model the candidate's PyO3 getter shape (a descriptor that is not a bool at class
+    level) without the adapter fabricating a value the candidate does not have.
+    """
+    adapter = FakeAdapter(registry)
+    adapter._cache["OndoExecutionClientFactory"] = factory_cls
+    return adapter
+
+
+def capable_factory(*, value=True, present=True, raises=False, construct_raises=False):
+    """A stand-in for the candidate native factory.
+
+    ``supports_ordered_shutdown`` is a ``property`` - never a plain class bool - because the
+    real candidate exposes a PyO3 ``getset_descriptor``: a detector that read only
+    ``getattr(TheClass, name)`` without an instance would fail closed on the real wheel.
+    ``present=False`` models the installed R5 wheel, which has no attribute at all.
+    """
+
+    class Factory:
+        def __init__(self):
+            if construct_raises:
+                raise RuntimeError("the factory refused construction")
+
+        def name(self):
+            return "ONDO"
+
+        def __repr__(self):
+            return "<OndoExecutionClientFactory (capability fake)>"
+
+    if present:
+        def _getter(self):
+            if raises:
+                raise RuntimeError("the capability getter raised")
+            return value
+
+        Factory.supports_ordered_shutdown = property(_getter)
+    Factory.__name__ = "OndoExecutionClientFactory"
+    Factory.__qualname__ = "OndoExecutionClientFactory"
+    return Factory
+
+
+def metaclass_raising_factory():
+    """A factory class whose class-level attribute lookup itself raises."""
+
+    class RaisingMeta(type):
+        def __getattr__(cls, name):
+            raise RuntimeError(f"class attribute lookup for {name!r} raised")
+
+    class Factory(metaclass=RaisingMeta):
+        pass
+
+    Factory.__name__ = "OndoExecutionClientFactory"
+    Factory.__qualname__ = "OndoExecutionClientFactory"
+    return Factory
+
+
+def run_probe_with_capability(argv, factory_cls, *, adapter=None, **fake):
+    """Run through the capability adapter, handing back the result and its registry."""
+    registry = Registry()
+    adapter = adapter or capability_adapter(registry, factory_cls)
+    result = run_probe(argv, registry=registry, adapter=adapter, **fake)
+    return result, registry
+
+
+def test_the_installed_wheel_without_the_attribute_is_unavailable(tmp_path):
+    """The old wheel has no attribute at all: report unimplemented, with the name it lacks.
+
+    This is the installed R5 wheel's own shape, and the reason the probe may not infer
+    support from a version, a filename or a commit.
+    """
+    out_dir = tmp_path / "out"
+    result = run_probe(["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5",
+                        "--out", str(out_dir)])
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["converging_stop_available"] is False
+    assert ondo_probe.NATIVE_SHUTDOWN_CAPABILITY_ATTRIBUTE in payload["converging_stop_reason"], (
+        "an unavailable capability names the attribute the installed factory lacks"
+    )
+    stop = payload["converging_stop"]
+    assert stop["available"] is False
+    assert stop["cancels_own_orders"] is None
+    assert stop["confirms_cancels"] is None
+    assert stop["releases_dead_mans_switch"] is None
+    assert result.writes == []
+
+
+def test_a_capable_adapter_reports_the_implemented_ordered_shutdown(tmp_path):
+    """A wheel exposing the getter reports the capability as implemented, and no more."""
+    out_dir = tmp_path / "out"
+    result, registry = run_probe_with_capability(
+        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
+        capable_factory(value=True),
+    )
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["converging_stop_available"] is True
+    assert payload["converging_stop"]["available"] is True
+    assert payload["converging_stop"]["capability_source"] == ondo_probe.CAPABILITY_SOURCE_NATIVE
+    reason = payload["converging_stop_reason"].lower()
+    assert "ordered" in reason and "capability" in reason, payload["converging_stop_reason"]
+    # The probe observed no cleanup of its own, but it also cannot claim none happened:
+    # without native StopReport telemetry the per-run actions are unobserved (null).
+    stop = payload["converging_stop"]
+    assert stop["cancels_own_orders"] is None
+    assert stop["confirms_cancels"] is None
+    assert stop["releases_dead_mans_switch"] is None
+    assert stop["observed_this_run"] is False
+    assert result.writes == []
+    assert [b for b in registry.built if "ExecutionClientConfig" in b.name] == [], (
+        "capability detection constructs no authenticated execution config"
+    )
+
+
+@pytest.mark.parametrize("value", [False, "true", 1, 0, None])
+def test_a_marker_that_is_not_the_boolean_true_fails_closed(tmp_path, value):
+    """Anything but the exact boolean ``True`` is unavailable - never coerce a marker."""
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
+        capable_factory(value=value),
+    )
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["converging_stop_available"] is False, (
+        f"the marker {value!r} was treated as implemented capability"
+    )
+    assert result.writes == []
+
+
+def test_a_capability_getter_that_raises_fails_closed(tmp_path):
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
+        capable_factory(raises=True),
+    )
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["converging_stop_available"] is False
+    assert "raised" in payload["converging_stop_reason"].lower(), payload["converging_stop_reason"]
+
+
+def test_a_factory_that_cannot_be_constructed_fails_closed(tmp_path):
+    """A factory whose constructor raises is reported unavailable, not a crashed probe."""
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
+        capable_factory(construct_raises=True),
+    )
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["converging_stop_available"] is False
+    assert "constructed" in payload["converging_stop_reason"].lower(), (
+        payload["converging_stop_reason"]
+    )
+
+
+def test_a_class_level_lookup_that_raises_fails_closed(tmp_path):
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
+        metaclass_raising_factory(),
+    )
+    assert result.code == EXIT_OK, result.streams
+    assert probe_report(out_dir)["converging_stop_available"] is False
+
+
+def test_detection_reads_only_the_factory_and_needs_no_credentials():
+    """Detection is offline and read-only: no adapter import, config, client or env read."""
+    registry = Registry()
+    adapter = capability_adapter(registry, capable_factory(value=True))
+    with patch.object(ondo_probe, "load_adapter",
+                      side_effect=AssertionError("detection must not import the adapter")):
+        capability = ondo_probe.detect_ordered_shutdown_capability(adapter)
+    assert capability.supported is True
+    assert capability.source == ondo_probe.CAPABILITY_SOURCE_NATIVE
+    assert registry.built == [], "detection constructed a config or a client"
+
+
+def test_an_absent_attribute_is_detected_without_constructing_the_factory():
+    """The installed wheel needs no object built to be judged unavailable."""
+    registry = Registry()
+    capability = ondo_probe.detect_ordered_shutdown_capability(FakeAdapter(registry))
+    assert capability.supported is False
+    assert capability.source == ondo_probe.CAPABILITY_SOURCE_ABSENT
+    assert registry.built == [], "the old wheel's absence was decided without a construction"
+
+
+def test_no_adapter_resolved_is_unavailable_not_an_error(tmp_path):
+    capability = ondo_probe.detect_ordered_shutdown_capability(None)
+    assert capability.supported is False
+    assert capability.reason.strip()
+    out_dir = tmp_path / "out"
+    result = run_probe(["--mode", "public", "--symbols", "NVDA", "--out", str(out_dir),
+                        "--dry-run"], adapter=FakeAdapter(Registry()))
+    assert result.code == EXIT_OK, result.streams
+
+
+def test_a_dry_run_survives_an_unloadable_adapter(tmp_path):
+    """The real dry-run path reads capability best-effort and still prints its plan."""
+    out_dir = tmp_path / "out"
+    captured = io.StringIO()
+    with patch.object(ondo_probe, "load_adapter",
+                      side_effect=ondo_probe.OndoProbeError("the wheel is not installed")):
+        with contextlib.redirect_stdout(captured):
+            code = ondo_probe.main(
+                ["--mode", "public", "--symbols", "NVDA", "--out", str(out_dir), "--dry-run"],
+                adapter=None,
+                node_factory=None,
+                environ=clean_environ(),
+                now=Clock(),
+            )
+    assert code == EXIT_OK
+    document = json.loads(captured.getvalue())
+    assert document["converging_stop_available"] is False
+    assert document["supports_ordered_shutdown_source"] == ondo_probe.CAPABILITY_SOURCE_ADAPTER_ABSENT
+    assert document["protocol_verified"] is False
+    assert not out_dir.exists(), "an unloadable adapter does not make a dry run write anything"
+
+
+def test_a_dry_run_reports_the_installed_capability_without_a_session(tmp_path):
+    """The plan document carries capability even though no client or node exists."""
+    out_dir = tmp_path / "out"
+    registry = Registry()
+    adapter = capability_adapter(registry, capable_factory(value=True))
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        with patch.object(ondo_probe, "LiveNode", fake_live_node(registry)):
+            code = ondo_probe.main(
+                ["--mode", "public", "--symbols", "NVDA", "--out", str(out_dir), "--dry-run"],
+                adapter=adapter,
+                node_factory=NodeFactory(registry),
+                environ=clean_environ(),
+                now=Clock(),
+            )
+    assert code == EXIT_OK
+    document = json.loads(captured.getvalue())
+    assert document["dry_run"] is True
+    assert document["converging_stop_available"] is True
+    assert document["converging_stop"]["available"] is True
+    assert document["client_constructed"] is False
+    assert not out_dir.exists(), "a dry run still publishes nothing"
+
+
+def test_native_capability_does_not_promote_protocol_or_clean_account_verdicts(tmp_path):
+    """A capable wheel says nothing about the venue protocol or a cleaned account."""
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        sandbox_argv(out_dir), capable_factory(value=True),
+        environ=clean_environ(**credentials()),
+    )
+    assert result.code == EXIT_OK, result.streams
+    assert result.writes == [], "a capable wheel does not make the probe send an order"
+    payload = probe_report(out_dir)
+    assert payload["converging_stop_available"] is True
+    assert payload["protocol_verified"] is False
+    assert payload["exit_code_zero_means_clean_account"] is False
+    assert payload["orders_submitted_by_probe"] == 0
+    assert payload["submitted"] == []
+    stop = payload["converging_stop"]
+    assert stop["cancels_own_orders"] is None
+    assert stop["confirms_cancels"] is None
+    assert stop["releases_dead_mans_switch"] is None
+    assert stop["observed_this_run"] is False
+    assert payload["write_capable"] is True, "the writing mode label is unchanged"
+    unverified = payload["unverified"]
+    assert any(item.get("item") == "converging_stop" for item in unverified)
+
+
+def test_zero_orders_does_not_prove_no_dms_release(tmp_path):
+    """Zero submitted orders must not be reported as "no cancel/confirm/DMS release".
+
+    A real sandbox trading-mode session arms the dead-man switch on connect and can release
+    it during a clean disconnect with zero orders, and a restored journal may carry prior
+    owned orders. Without native StopReport telemetry the per-run actions are unobserved
+    (null), never a hardcoded False.
+    """
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        sandbox_argv(out_dir), capable_factory(value=True),
+        environ=clean_environ(**credentials()),
+    )
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["orders_submitted_by_probe"] == 0
+    stop = payload["converging_stop"]
+    assert stop["cancels_own_orders"] is None
+    assert stop["confirms_cancels"] is None
+    assert stop["releases_dead_mans_switch"] is None
+    assert stop["observed_this_run"] is False
+    reason = stop["observed_reason"].lower()
+    assert "unobserved" in reason, stop["observed_reason"]
+    assert "dead-man" in reason or "dead man" in reason, stop["observed_reason"]
+    assert "zero submitted orders does not imply" in reason, stop["observed_reason"]
+    for entry in payload["stops"]:
+        assert entry["cancels_own_orders"] is None, entry
+        assert entry["confirms_cancels"] is None, entry
+        assert entry["releases_dead_mans_switch"] is None, entry
+    unverified = [item for item in payload["unverified"]
+                  if item.get("item") == "converging_stop"]
+    assert unverified and unverified[0]["per_run_actions_observed"] is False, unverified
+    assert payload["write_capable"] is True, "the writing mode label is unchanged"
+
+
+def test_protocol_reason_does_not_deny_the_observed_public_reads(tmp_path):
+    """The denial is private/sandbox protocol acceptance, not "no request ever sent"."""
+    out_dir = tmp_path / "out"
+    result = run_probe(["--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)])
+    assert result.code == EXIT_OK, result.streams
+    reason = probe_report(out_dir)["protocol_verified_reason"].lower()
+    assert "private" in reason or "sandbox" in reason, reason
+    assert "public surface has been read" in reason, reason
+    assert "no request has ever been sent" not in reason, reason
+
+
+def test_native_capability_leaves_paper_synthetic(tmp_path):
+    """A capable adapter never turns a synthetic paper account into a real one."""
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        ["--mode", "paper", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
+        capable_factory(value=True),
+    )
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["synthetic"] is True
+    assert payload["converging_stop_available"] is True
+    assert payload["account_coverage_proven"] is False
+    assert result.writes == []
+
+
+def test_the_manifest_carries_the_capability_too(tmp_path):
+    out_dir = tmp_path / "out"
+    result, _ = run_probe_with_capability(
+        ["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5", "--out", str(out_dir)],
+        capable_factory(value=True),
+    )
+    assert result.code == EXIT_OK, result.streams
+    meta = manifest(out_dir)
+    assert meta["converging_stop_available"] is True
+    assert meta["supports_ordered_shutdown"] is True
+    assert meta["protocol_verified"] is False
+
+
+# ======================================================================= 9. stability
 #
 # Written to disk, not printed (R3 acceptance report, section 7). Point
 # ONDO_PROBE_STABILITY_OUT at a run directory to keep the evidence with a real run.

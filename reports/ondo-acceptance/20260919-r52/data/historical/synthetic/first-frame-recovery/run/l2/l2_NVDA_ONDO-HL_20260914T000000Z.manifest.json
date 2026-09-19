@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "run_id": "20260914T000000Z",
+  "tape": "l2_NVDA_ONDO-HL_20260914T000000Z.jsonl",
+  "session_id": "20260914T000000Z-7df218f260cd",
+  "updated_utc": "2026-09-19T09:30:24+00:00",
+  "segments": [
+    {
+      "segment_index": 1,
+      "path": "l2_NVDA_ONDO-HL_20260914T000000Z.jsonl",
+      "session_id": "20260914T000000Z-7df218f260cd",
+      "lines": 11,
+      "records": 9,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 9,
+      "dropped": 0,
+      "gaps": 0,
+      "bytes": 5244,
+      "closed": true
+    }
+  ]
+}

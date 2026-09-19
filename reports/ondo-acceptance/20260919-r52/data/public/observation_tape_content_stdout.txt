@@ -1,0 +1,475 @@
+[inspect] wrote public\observation_tape_content.json
+[
+  {
+    "tape": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260919-r52\\data\\public\\observation\\l2\\l2_NVDA_ONDO-HL_20260919T093133Z.jsonl",
+    "line_count": 1535,
+    "kinds": {
+      "run_start": 1,
+      "instrument": 6,
+      "book": 1210,
+      "status": 5,
+      "quote": 305,
+      "funding": 7,
+      "run_end": 1
+    },
+    "venues": {
+      "None": 2,
+      "ONDO": 1356,
+      "HL": 177
+    },
+    "sessions": {
+      "20260919T093133Z-1980d7eb74f6": 1535
+    },
+    "nonnull_key_counts": {
+      "schema_version": 1535,
+      "run_id": 1535,
+      "session_id": 1535,
+      "symbol": 1535,
+      "event_kind": 1535,
+      "recorded_mono_ns": 1535,
+      "source": 1535,
+      "valid": 1535,
+      "session_started_utc": 2,
+      "tape": 1,
+      "legs": 1,
+      "queue_max": 1,
+      "flush_secs": 1,
+      "rotate_bytes": 1,
+      "arrival_seq": 1533,
+      "venue": 1533,
+      "instrument_id": 1533,
+      "coverage_limit": 1159,
+      "metadata": 6,
+      "ts_event_ns": 1527,
+      "ts_init_ns": 1527,
+      "bids": 1210,
+      "asks": 1210,
+      "action": 5,
+      "reason": 5,
+      "is_quoting": 5,
+      "bid": 305,
+      "ask": 305,
+      "bid_size": 305,
+      "ask_size": 305,
+      "rate": 7,
+      "interval_secs": 1,
+      "complete": 1,
+      "records": 1,
+      "dropped": 1,
+      "gaps": 1,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 1,
+      "segment_index": 1
+    },
+    "invalid_reasons": {},
+    "kind_first_arrival_seq": {
+      "run_start": null,
+      "instrument": 1,
+      "book": 3,
+      "status": 4,
+      "quote": 5,
+      "funding": 6,
+      "run_end": null
+    },
+    "kind_last_arrival_seq": {
+      "run_start": null,
+      "instrument": 1263,
+      "book": 1533,
+      "status": 1262,
+      "quote": 1512,
+      "funding": 1352,
+      "run_end": null
+    },
+    "ts_init_ns_missing_records": 8,
+    "ts_event_ns_missing_records": 8,
+    "depth_records": 1515,
+    "depth_with_real_size_increment": 0,
+    "status_records": [
+      {
+        "arrival_seq": 4,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810298410877800,
+        "ts_init_ns": 1789810298410877800,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 278,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810354986631400,
+        "ts_init_ns": 1789810354986631400,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 635,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810415429093000,
+        "ts_init_ns": 1789810415429093000,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 961,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810482464533400,
+        "ts_init_ns": 1789810482464533400,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 1262,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810542936949600,
+        "ts_init_ns": 1789810542936949600,
+        "metadata": null
+      }
+    ],
+    "instrument_records": [
+      {
+        "arrival_seq": 1,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "1",
+          "metadata_available_ns": 1789810294440800500
+        }
+      },
+      {
+        "arrival_seq": 2,
+        "venue": "HL",
+        "metadata": {
+          "venue": "HYPERLIQUID",
+          "client_id": "HYPERLIQUID",
+          "taker_fee_bps": "0.90",
+          "fee_source": "registry",
+          "price_precision": 3,
+          "size_precision": 3,
+          "tick_size": null,
+          "size_increment": "0.001",
+          "price_increment": "0.001",
+          "metadata_version": null,
+          "metadata_available_ns": 1789810295115049400
+        }
+      },
+      {
+        "arrival_seq": 279,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "2",
+          "metadata_available_ns": 1789810354986631400
+        }
+      },
+      {
+        "arrival_seq": 636,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "3",
+          "metadata_available_ns": 1789810415429093000
+        }
+      },
+      {
+        "arrival_seq": 962,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "4",
+          "metadata_available_ns": 1789810482464533400
+        }
+      },
+      {
+        "arrival_seq": 1263,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "5",
+          "metadata_available_ns": 1789810542936949600
+        }
+      }
+    ]
+  },
+  {
+    "tape": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260919-r52\\data\\public\\observation\\l2\\l2_TSLA_ONDO-HL_20260919T093133Z.jsonl",
+    "line_count": 1380,
+    "kinds": {
+      "run_start": 1,
+      "instrument": 6,
+      "book": 1210,
+      "status": 5,
+      "quote": 150,
+      "funding": 7,
+      "run_end": 1
+    },
+    "venues": {
+      "None": 2,
+      "ONDO": 1216,
+      "HL": 162
+    },
+    "sessions": {
+      "20260919T093133Z-69461dd6b681": 1380
+    },
+    "nonnull_key_counts": {
+      "schema_version": 1380,
+      "run_id": 1380,
+      "session_id": 1380,
+      "symbol": 1380,
+      "event_kind": 1380,
+      "recorded_mono_ns": 1380,
+      "source": 1380,
+      "valid": 1380,
+      "session_started_utc": 2,
+      "tape": 1,
+      "legs": 1,
+      "queue_max": 1,
+      "flush_secs": 1,
+      "rotate_bytes": 1,
+      "arrival_seq": 1378,
+      "venue": 1378,
+      "instrument_id": 1378,
+      "coverage_limit": 1159,
+      "metadata": 6,
+      "ts_event_ns": 1372,
+      "ts_init_ns": 1372,
+      "bids": 1210,
+      "asks": 1210,
+      "action": 5,
+      "reason": 5,
+      "is_quoting": 5,
+      "bid": 150,
+      "ask": 150,
+      "bid_size": 150,
+      "ask_size": 150,
+      "rate": 7,
+      "interval_secs": 1,
+      "complete": 1,
+      "records": 1,
+      "dropped": 1,
+      "gaps": 1,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 1,
+      "segment_index": 1
+    },
+    "invalid_reasons": {},
+    "kind_first_arrival_seq": {
+      "run_start": null,
+      "instrument": 1,
+      "book": 3,
+      "status": 4,
+      "quote": 5,
+      "funding": 6,
+      "run_end": null
+    },
+    "kind_last_arrival_seq": {
+      "run_start": null,
+      "instrument": 1147,
+      "book": 1378,
+      "status": 1146,
+      "quote": 1361,
+      "funding": 1231,
+      "run_end": null
+    },
+    "ts_init_ns_missing_records": 8,
+    "ts_event_ns_missing_records": 8,
+    "depth_records": 1360,
+    "depth_with_real_size_increment": 0,
+    "status_records": [
+      {
+        "arrival_seq": 4,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810298414203200,
+        "ts_init_ns": 1789810298414203200,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 270,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810354986631400,
+        "ts_init_ns": 1789810354986631400,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 584,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810415429093000,
+        "ts_init_ns": 1789810415429093000,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 864,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810482464533400,
+        "ts_init_ns": 1789810482464533400,
+        "metadata": null
+      },
+      {
+        "arrival_seq": 1146,
+        "venue": "ONDO",
+        "valid": true,
+        "invalid_reason": null,
+        "ts_event_ns": 1789810542936949600,
+        "ts_init_ns": 1789810542936949600,
+        "metadata": null
+      }
+    ],
+    "instrument_records": [
+      {
+        "arrival_seq": 1,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "1",
+          "metadata_available_ns": 1789810294440800500
+        }
+      },
+      {
+        "arrival_seq": 2,
+        "venue": "HL",
+        "metadata": {
+          "venue": "HYPERLIQUID",
+          "client_id": "HYPERLIQUID",
+          "taker_fee_bps": "0.90",
+          "fee_source": "registry",
+          "price_precision": 3,
+          "size_precision": 3,
+          "tick_size": null,
+          "size_increment": "0.001",
+          "price_increment": "0.001",
+          "metadata_version": null,
+          "metadata_available_ns": 1789810295115049400
+        }
+      },
+      {
+        "arrival_seq": 271,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "2",
+          "metadata_available_ns": 1789810354986631400
+        }
+      },
+      {
+        "arrival_seq": 585,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "3",
+          "metadata_available_ns": 1789810415429093000
+        }
+      },
+      {
+        "arrival_seq": 865,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "4",
+          "metadata_available_ns": 1789810482464533400
+        }
+      },
+      {
+        "arrival_seq": 1147,
+        "venue": "ONDO",
+        "metadata": {
+          "venue": "ONDO",
+          "client_id": "ONDO",
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "price_precision": 2,
+          "size_precision": 2,
+          "tick_size": null,
+          "size_increment": "0.01",
+          "price_increment": "0.01",
+          "metadata_version": "5",
+          "metadata_available_ns": 1789810542936949600
+        }
+      }
+    ]
+  }
+]

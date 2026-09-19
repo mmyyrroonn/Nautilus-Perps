@@ -1,0 +1,4 @@
+intermediate_wheel=E:\nautilus_trader\dist-r52\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+intermediate_bytes=63621290
+intermediate_sha256=4c0cac31b01414a57436617868e38cc054e8853b754f3393bd3802562ae7d70a
+note=superseded by step-5 final wheel bundling normalized stubs

@@ -1,0 +1,936 @@
+{
+  "report": "ondo_depth",
+  "schema_version": 2,
+  "generated_utc": "2026-09-19T09:28:30+00:00",
+  "mode": "read-only",
+  "executable": false,
+  "clock_offset_unknown": true,
+  "clock_offset_unknown_note": "a fresh local receipt never proves a fresh venue event: the local clock offset to either venue is NOT measured (clock_offset_unknown), so receive_age_sell_ms / receive_age_buy_ms are local RECEIVE ages and are never network latency; read them beside event_age_sell_ms / event_age_buy_ms, which can be minutes while the receive age is one millisecond, and remember that the event age itself carries the unmeasured offset between the local clock and the venue's",
+  "run_dir": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260915T024236Z-p2",
+  "l2_dir": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260915T024236Z-p2\\l2",
+  "research_parameters": {
+    "symbols": [
+      "NVDA",
+      "TSLA"
+    ],
+    "venues": [
+      "ONDO",
+      "HL"
+    ],
+    "directions": [
+      "ONDO>HL",
+      "HL>ONDO"
+    ],
+    "notionals_usd": [
+      "100",
+      "500",
+      "1000"
+    ],
+    "max_age_ms": 2000,
+    "max_skew_ms": 500,
+    "future_tolerance_ms": 1000,
+    "max_event_age_ms": null,
+    "max_event_age_note": "null means the event age is measured and published on every row but never enforced: the age is measured on the local clock, so it carries the unmeasured local offset to the venue's clock, and a threshold is a decision the caller has to make explicitly (--max-event-age-ms)",
+    "reserve_bps": "5.0",
+    "funding_basis": "bps_per_hour",
+    "exit_status": "unclosed",
+    "clock_offset_unknown": true,
+    "clock_offset_unknown_note": "a fresh local receipt never proves a fresh venue event: the local clock offset to either venue is NOT measured (clock_offset_unknown), so receive_age_sell_ms / receive_age_buy_ms are local RECEIVE ages and are never network latency; read them beside event_age_sell_ms / event_age_buy_ms, which can be minutes while the receive age is one millisecond, and remember that the event age itself carries the unmeasured offset between the local clock and the venue's",
+    "event_age_ms_rule": "the local epoch receipt time of the record being evaluated (ts_init_ns) minus the leg's own book venue event time (ts_event_ns), in exact integer-nanosecond milliseconds: it is the age measured on the local clock, so two legs delayed together by the same feed never cancel out to 0, and a missing/unusable stamp is 'unknown' (never 0). A negative value is kept: it is clock evidence (the venue's stamp is ahead of the local receipt), never floored to 0 and never made absolute",
+    "quantity_reference": "sell_leg_best_bid",
+    "common_step_rule": "integer_scaled_lcm_of_real_size_increments",
+    "tape_schema_versions": [
+      1,
+      2
+    ],
+    "metadata_rule": "instrument metadata is applied in receive order: a row uses the fee, step and availability of the arrivals at or before its own, so a later update or a later session never re-prices it; a session that published no instrument record is metadata_unknown for its whole span",
+    "axes_rule": "feed (adapter:disconnected / adapter:snapshot_ready), market (is_trading / non-trading actions, lifted only by an explicit resume) and metadata (known / stale) are three separate states, and each refusal names the axis that caused it",
+    "median_sample": "first 20000 passing rows per bucket",
+    "mapping_verified_pairs": [],
+    "note": "these thresholds are research parameters (plan 5.2 defaults), printed here so a report can never be read without them"
+  },
+  "field_notes": {
+    "gross_entry_bps": "the entry spread at the VWAP of both legs: (sell_vwap - buy_vwap) / reference_price * 10000, so it is exactly the watcher's gross_bps but with each leg walked for the same base quantity",
+    "entry_fees_bps": "the two entry taker fees (one per leg) from THIS run's tape; 'unknown' when the run published no fee for a leg, in which case the cost-qualified judgement is withheld rather than falling back to a dated documentation assumption (a number that is only ever valid for a dry run or for a CSV that labels itself an assumption, and that this report therefore never repeats)",
+    "entry_after_fees_bps": "gross_entry_bps - entry_fees_bps (entry only)",
+    "exit_fee_assumption_bps": "the same two taker fees charged again for the exit, at the same nominal: an ASSUMPTION because P2 has no exit evidence",
+    "reserve_bps": "the one-leg failure reserve the watcher charges at entry",
+    "funding_estimate_bps": "the two legs' latest funding rates, normalised to bps per hour with the repository's own scale/intervals, sell leg minus buy leg; 'unknown' when the run carried no funding record for a leg",
+    "quality_ok": "the quality gate's verdict for this moment (freshness, skew, book sanity, disconnect, metadata, gap) - not a statement about profitability",
+    "mapping_verified": "whether the multiplier / settlement / underlying equivalence of this pair is verified; False means the row is a nominal comparison only",
+    "reject_reason": "why this row is not a usable comparison: a gate reason (recording_gap, no_book, empty/one_sided/crossed book, metadata_unknown, metadata_stale, disconnected, market_halted, session_mismatch, unknown_time, future_event_time, stale_book, event_skew, event_age_exceeded), or fee_unknown / insufficient_depth / below_one_step / quantity_step_unknown; empty when it passed. The three axes of F07 report separately: disconnected is the local feed, market_halted the venue's trading state, metadata_* the instrument facts",
+    "executable": "always False: this is a research observation, never an order promise",
+    "exit_status": "the round trip is 'unclosed' - P2 has no exit book and no realised funding interval, and the spread is never assumed to revert",
+    "quantity": "the ONE base quantity both legs are filled for: the nominal tier divided by the sell leg's then-visible best bid and floored to common_step",
+    "common_step": "the integer-scaled LCM of the two legs' quantity steps (never the maximum), so both venues can represent the quantity exactly. Each leg's step is its own instrument's real size_increment as of this arrival, or the caller's CLI override; a step is never inferred from size_precision",
+    "session_id": "the tape session this row was priced in. Metadata is announced per session: a session that published no instrument record is metadata_unknown for its whole span and never inherits another session's fee or step",
+    "step_origin": "where this row's quantity step came from: 'instrument_metadata' (both legs' own size_increment), 'override' (the caller's --steps declaration, which is never a statement that the venue verified anything), 'mixed' (one leg each) or 'quantity_step_unknown'",
+    "reference_price": "the two legs' touch mids averaged, the same reference the watcher divides by",
+    "entry_after_fees_and_reserve_bps": "entry_after_fees_bps - reserve_bps: the entry-only analogue of the watcher's legacy net_bps (which is NOT a full round-trip profit either)",
+    "arrival_seq": "the receive order of the record this row was evaluated at",
+    "receive_age_sell_ms": "the sell leg's own depth age at this record (per arrival)",
+    "receive_age_buy_ms": "the buy leg's own depth age at this record (per arrival)",
+    "event_skew_ms": "the absolute difference of the two legs' own exchange event times",
+    "event_age_sell_ms": "the sell leg's own VENUE event age at this record - the local epoch receipt time of the record being evaluated (ts_init_ns) minus the leg's own book venue event time (ts_event_ns), in exact integer-nanosecond milliseconds: it is the age measured on the local clock, so two legs delayed together by the same feed never cancel out to 0, and a missing/unusable stamp is 'unknown' (never 0). A negative value is kept: it is clock evidence (the venue's stamp is ahead of the local receipt), never floored to 0 and never made absolute; carried on every emitted row (the per-bucket examples and the stored hits), and it is no part of the bounded median sample, which is unchanged",
+    "event_age_buy_ms": "the buy leg's own VENUE event age at this record - the local epoch receipt time of the record being evaluated (ts_init_ns) minus the leg's own book venue event time (ts_event_ns), in exact integer-nanosecond milliseconds: it is the age measured on the local clock, so two legs delayed together by the same feed never cancel out to 0, and a missing/unusable stamp is 'unknown' (never 0). A negative value is kept: it is clock evidence (the venue's stamp is ahead of the local receipt), never floored to 0 and never made absolute; carried on every emitted row (the per-bucket examples and the stored hits), and it is no part of the bounded median sample, which is unchanged",
+    "clock_offset_unknown": "a fresh local receipt never proves a fresh venue event: the local clock offset to either venue is NOT measured (clock_offset_unknown), so receive_age_sell_ms / receive_age_buy_ms are local RECEIVE ages and are never network latency; read them beside event_age_sell_ms / event_age_buy_ms, which can be minutes while the receive age is one millisecond, and remember that the event age itself carries the unmeasured offset between the local clock and the venue's",
+    "event_age_status": "'not_checked' when no event-age threshold is configured (the default: the local clock offset to either venue is unmeasured, so an age threshold would turn a clock skew into a market conclusion), 'unknown' when a leg's age is not measurable, else 'exceeded' / 'ok' against max_event_age_ms. Published on every row so a report can never imply that an unconfigured threshold was passed",
+    "event_age_sell_ms_max": "the largest VENUE event age this bucket saw on the sell leg, across every moment it evaluated (not only the bounded examples and stored hits), 'unknown' when no moment carried a usable sell-leg event stamp",
+    "event_age_buy_ms_max": "the largest VENUE event age this bucket saw on the buy leg, across every moment it evaluated (not only the bounded examples and stored hits), 'unknown' when no moment carried a usable buy-leg event stamp",
+    "funding_status": "'observed' or 'missing:<VENUE>[,<VENUE>]'",
+    "cost_qualified": "both legs' taker fees are known for this run"
+  },
+  "fee_snapshot": {
+    "NVDA": {
+      "ONDO": {
+        "taker_fee_bps": "2.50",
+        "taker_fee_bps_values": [
+          "2.50"
+        ],
+        "fee_source": "instrument_metadata",
+        "size_increment": "unknown",
+        "size_increment_values": [],
+        "size_precision": 2,
+        "step": "unknown",
+        "step_origin": "quantity_step_unknown",
+        "metadata_version": null,
+        "metadata_available_ns": null,
+        "instrument_metadata": true,
+        "metadata_records": 1,
+        "metadata_stale_records": 0,
+        "sessions_with_metadata": [
+          "20260915T024236Z-c4921e79483d"
+        ],
+        "arrivals": [
+          {
+            "arrival_seq": 1,
+            "session_id": "20260915T024236Z-c4921e79483d",
+            "source": "instrument_metadata",
+            "valid": true,
+            "invalid_reason": null,
+            "taker_fee_bps": "2.50",
+            "size_increment": "unknown"
+          }
+        ]
+      },
+      "HL": {
+        "taker_fee_bps": "0.90",
+        "taker_fee_bps_values": [
+          "0.90"
+        ],
+        "fee_source": "registry",
+        "size_increment": "unknown",
+        "size_increment_values": [],
+        "size_precision": 3,
+        "step": "unknown",
+        "step_origin": "quantity_step_unknown",
+        "metadata_version": null,
+        "metadata_available_ns": null,
+        "instrument_metadata": true,
+        "metadata_records": 1,
+        "metadata_stale_records": 0,
+        "sessions_with_metadata": [
+          "20260915T024236Z-c4921e79483d"
+        ],
+        "arrivals": [
+          {
+            "arrival_seq": 2,
+            "session_id": "20260915T024236Z-c4921e79483d",
+            "source": "instrument_metadata",
+            "valid": true,
+            "invalid_reason": null,
+            "taker_fee_bps": "0.90",
+            "size_increment": "unknown"
+          }
+        ]
+      }
+    },
+    "TSLA": {
+      "ONDO": {
+        "taker_fee_bps": "2.50",
+        "taker_fee_bps_values": [
+          "2.50"
+        ],
+        "fee_source": "instrument_metadata",
+        "size_increment": "unknown",
+        "size_increment_values": [],
+        "size_precision": 2,
+        "step": "unknown",
+        "step_origin": "quantity_step_unknown",
+        "metadata_version": null,
+        "metadata_available_ns": null,
+        "instrument_metadata": true,
+        "metadata_records": 1,
+        "metadata_stale_records": 0,
+        "sessions_with_metadata": [
+          "20260915T024236Z-f05648c6d17e"
+        ],
+        "arrivals": [
+          {
+            "arrival_seq": 1,
+            "session_id": "20260915T024236Z-f05648c6d17e",
+            "source": "instrument_metadata",
+            "valid": true,
+            "invalid_reason": null,
+            "taker_fee_bps": "2.50",
+            "size_increment": "unknown"
+          }
+        ]
+      },
+      "HL": {
+        "taker_fee_bps": "0.90",
+        "taker_fee_bps_values": [
+          "0.90"
+        ],
+        "fee_source": "registry",
+        "size_increment": "unknown",
+        "size_increment_values": [],
+        "size_precision": 3,
+        "step": "unknown",
+        "step_origin": "quantity_step_unknown",
+        "metadata_version": null,
+        "metadata_available_ns": null,
+        "instrument_metadata": true,
+        "metadata_records": 1,
+        "metadata_stale_records": 0,
+        "sessions_with_metadata": [
+          "20260915T024236Z-f05648c6d17e"
+        ],
+        "arrivals": [
+          {
+            "arrival_seq": 2,
+            "session_id": "20260915T024236Z-f05648c6d17e",
+            "source": "instrument_metadata",
+            "valid": true,
+            "invalid_reason": null,
+            "taker_fee_bps": "0.90",
+            "size_increment": "unknown"
+          }
+        ]
+      }
+    }
+  },
+  "tapes": [
+    {
+      "tape": "l2_NVDA_ONDO-HL_20260915T024236Z.jsonl",
+      "manifest": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260915T024236Z-p2\\l2\\manifest.json",
+      "files": [
+        "l2_NVDA_ONDO-HL_20260915T024236Z.jsonl"
+      ],
+      "fragments": 1,
+      "records": 716,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 714,
+      "symbol": "NVDA",
+      "book_venues": [
+        "ONDO",
+        "HL"
+      ],
+      "instrument_records": 2,
+      "sessions": [
+        {
+          "session_id": "20260915T024236Z-c4921e79483d",
+          "run_id": "20260915T024236Z",
+          "records": 716,
+          "first_arrival_seq": 1,
+          "last_arrival_seq": 714,
+          "complete": true,
+          "reason": null,
+          "dropped": 0,
+          "gaps": 0
+        }
+      ],
+      "complete": true,
+      "gaps": 0,
+      "dropped": 0,
+      "truncated_tail": false,
+      "truncated_at": null,
+      "run_ids": [
+        "20260915T024236Z"
+      ],
+      "failure_reason": null
+    },
+    {
+      "tape": "l2_TSLA_ONDO-HL_20260915T024236Z.jsonl",
+      "manifest": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260915T024236Z-p2\\l2\\manifest.json",
+      "files": [
+        "l2_TSLA_ONDO-HL_20260915T024236Z.jsonl"
+      ],
+      "fragments": 1,
+      "records": 629,
+      "first_arrival_seq": 1,
+      "last_arrival_seq": 627,
+      "symbol": "TSLA",
+      "book_venues": [
+        "ONDO",
+        "HL"
+      ],
+      "instrument_records": 2,
+      "sessions": [
+        {
+          "session_id": "20260915T024236Z-f05648c6d17e",
+          "run_id": "20260915T024236Z",
+          "records": 629,
+          "first_arrival_seq": 1,
+          "last_arrival_seq": 627,
+          "complete": true,
+          "reason": null,
+          "dropped": 0,
+          "gaps": 0
+        }
+      ],
+      "complete": true,
+      "gaps": 0,
+      "dropped": 0,
+      "truncated_tail": false,
+      "truncated_at": null,
+      "run_ids": [
+        "20260915T024236Z"
+      ],
+      "failure_reason": null
+    }
+  ],
+  "markets": [
+    {
+      "symbol": "NVDA",
+      "tapes": [
+        "l2_NVDA_ONDO-HL_20260915T024236Z.jsonl"
+      ],
+      "notes": [],
+      "directions": [
+        {
+          "sell_venue": "ONDO",
+          "buy_venue": "HL",
+          "direction": "ONDO>HL",
+          "mapping_verified": false,
+          "mapping_status": "mapping_unverified",
+          "notes": [
+            "the multiplier / settlement-asset / underlying equivalence of this pair is not verified anywhere in this repository (plan 5.2), so the row is a nominal comparison and never an executable conclusion"
+          ],
+          "totals": {
+            "samples": 2049,
+            "quality_pass": 189,
+            "pass": 0,
+            "reject": 2049,
+            "hits": 0,
+            "executable_hits": 0,
+            "zero_opportunity": true,
+            "reject_reasons": {
+              "stale_book": 1233,
+              "event_skew": 621,
+              "quantity_step_unknown": 189,
+              "no_book": 6
+            }
+          },
+          "notionals": [
+            {
+              "notional_usd": "100",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 683,
+              "quality_pass": 63,
+              "pass": 0,
+              "reject": 683,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 411,
+                "event_skew": 207,
+                "quantity_step_unknown": 63,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "1158.686141",
+              "event_age_buy_ms_max": "6732.579536",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "500",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 683,
+              "quality_pass": 63,
+              "pass": 0,
+              "reject": 683,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 411,
+                "event_skew": 207,
+                "quantity_step_unknown": 63,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "1158.686141",
+              "event_age_buy_ms_max": "6732.579536",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "1000",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 683,
+              "quality_pass": 63,
+              "pass": 0,
+              "reject": 683,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 411,
+                "event_skew": 207,
+                "quantity_step_unknown": 63,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "1158.686141",
+              "event_age_buy_ms_max": "6732.579536",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            }
+          ]
+        },
+        {
+          "sell_venue": "HL",
+          "buy_venue": "ONDO",
+          "direction": "HL>ONDO",
+          "mapping_verified": false,
+          "mapping_status": "mapping_unverified",
+          "notes": [
+            "the multiplier / settlement-asset / underlying equivalence of this pair is not verified anywhere in this repository (plan 5.2), so the row is a nominal comparison and never an executable conclusion"
+          ],
+          "totals": {
+            "samples": 2049,
+            "quality_pass": 189,
+            "pass": 0,
+            "reject": 2049,
+            "hits": 0,
+            "executable_hits": 0,
+            "zero_opportunity": true,
+            "reject_reasons": {
+              "stale_book": 1233,
+              "event_skew": 621,
+              "quantity_step_unknown": 189,
+              "no_book": 6
+            }
+          },
+          "notionals": [
+            {
+              "notional_usd": "100",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 683,
+              "quality_pass": 63,
+              "pass": 0,
+              "reject": 683,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 411,
+                "event_skew": 207,
+                "quantity_step_unknown": 63,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "6732.579536",
+              "event_age_buy_ms_max": "1158.686141",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "500",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 683,
+              "quality_pass": 63,
+              "pass": 0,
+              "reject": 683,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 411,
+                "event_skew": 207,
+                "quantity_step_unknown": 63,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "6732.579536",
+              "event_age_buy_ms_max": "1158.686141",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "1000",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 63 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 683,
+              "quality_pass": 63,
+              "pass": 0,
+              "reject": 683,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 411,
+                "event_skew": 207,
+                "quantity_step_unknown": 63,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "6732.579536",
+              "event_age_buy_ms_max": "1158.686141",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "symbol": "TSLA",
+      "tapes": [
+        "l2_TSLA_ONDO-HL_20260915T024236Z.jsonl"
+      ],
+      "notes": [],
+      "directions": [
+        {
+          "sell_venue": "ONDO",
+          "buy_venue": "HL",
+          "direction": "ONDO>HL",
+          "mapping_verified": false,
+          "mapping_status": "mapping_unverified",
+          "notes": [
+            "the multiplier / settlement-asset / underlying equivalence of this pair is not verified anywhere in this repository (plan 5.2), so the row is a nominal comparison and never an executable conclusion"
+          ],
+          "totals": {
+            "samples": 1788,
+            "quality_pass": 186,
+            "pass": 0,
+            "reject": 1788,
+            "hits": 0,
+            "executable_hits": 0,
+            "zero_opportunity": true,
+            "reject_reasons": {
+              "stale_book": 1008,
+              "event_skew": 588,
+              "quantity_step_unknown": 186,
+              "future_event_time": 3,
+              "no_book": 3
+            }
+          },
+          "notionals": [
+            {
+              "notional_usd": "100",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 596,
+              "quality_pass": 62,
+              "pass": 0,
+              "reject": 596,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 336,
+                "event_skew": 196,
+                "quantity_step_unknown": 62,
+                "future_event_time": 1,
+                "no_book": 1
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "1139.089813",
+              "event_age_buy_ms_max": "6716.345136",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "500",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 596,
+              "quality_pass": 62,
+              "pass": 0,
+              "reject": 596,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 336,
+                "event_skew": 196,
+                "quantity_step_unknown": 62,
+                "future_event_time": 1,
+                "no_book": 1
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "1139.089813",
+              "event_age_buy_ms_max": "6716.345136",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "1000",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 596,
+              "quality_pass": 62,
+              "pass": 0,
+              "reject": 596,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 336,
+                "event_skew": 196,
+                "quantity_step_unknown": 62,
+                "future_event_time": 1,
+                "no_book": 1
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "1139.089813",
+              "event_age_buy_ms_max": "6716.345136",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            }
+          ]
+        },
+        {
+          "sell_venue": "HL",
+          "buy_venue": "ONDO",
+          "direction": "HL>ONDO",
+          "mapping_verified": false,
+          "mapping_status": "mapping_unverified",
+          "notes": [
+            "the multiplier / settlement-asset / underlying equivalence of this pair is not verified anywhere in this repository (plan 5.2), so the row is a nominal comparison and never an executable conclusion"
+          ],
+          "totals": {
+            "samples": 1788,
+            "quality_pass": 186,
+            "pass": 0,
+            "reject": 1788,
+            "hits": 0,
+            "executable_hits": 0,
+            "zero_opportunity": true,
+            "reject_reasons": {
+              "stale_book": 1008,
+              "event_skew": 588,
+              "quantity_step_unknown": 186,
+              "no_book": 6
+            }
+          },
+          "notionals": [
+            {
+              "notional_usd": "100",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 596,
+              "quality_pass": 62,
+              "pass": 0,
+              "reject": 596,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 336,
+                "event_skew": 196,
+                "quantity_step_unknown": 62,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "6716.345136",
+              "event_age_buy_ms_max": "1139.089813",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "500",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 596,
+              "quality_pass": 62,
+              "pass": 0,
+              "reject": 596,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 336,
+                "event_skew": 196,
+                "quantity_step_unknown": 62,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "6716.345136",
+              "event_age_buy_ms_max": "1139.089813",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            },
+            {
+              "notional_usd": "1000",
+              "common_step": "unknown",
+              "common_step_note": "quantity_step_unknown: 62 moment(s) passed the quality gate but no real size_increment reached both legs, and 10**-size_precision is never used as a quantity step",
+              "step_origin": "quantity_step_unknown",
+              "max_event_age_ms": null,
+              "event_age_rejects": 0,
+              "samples": 596,
+              "quality_pass": 62,
+              "pass": 0,
+              "reject": 596,
+              "hits": 0,
+              "executable_hits": 0,
+              "zero_opportunity": true,
+              "reject_reasons": {
+                "stale_book": 336,
+                "event_skew": 196,
+                "quantity_step_unknown": 62,
+                "no_book": 2
+              },
+              "entry_fees_bps": "3.40",
+              "entry_fees_note": "",
+              "exit_fee_assumption_bps": "3.40",
+              "reserve_bps": "5.0",
+              "mapping_verified": false,
+              "executable": false,
+              "gross_entry_bps_median": "unknown",
+              "gross_entry_bps_min": "unknown",
+              "gross_entry_bps_max": "unknown",
+              "entry_after_fees_bps_median": "unknown",
+              "entry_after_fees_bps_min": "unknown",
+              "entry_after_fees_bps_max": "unknown",
+              "funding_estimate_bps_median": "unknown",
+              "funding_estimate_bps_min": "unknown",
+              "funding_estimate_bps_max": "unknown",
+              "event_age_sell_ms_max": "6716.345136",
+              "event_age_buy_ms_max": "1139.089813",
+              "median_sample": "all",
+              "note": null,
+              "examples": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "hits": [],
+  "hits_written": 0,
+  "hit_limit": 200,
+  "zero_opportunity_markets": [
+    "NVDA",
+    "TSLA"
+  ],
+  "ignored_tapes": [],
+  "notes": [
+    "no row is executable: mapping_verified is False for every pair compared here, and executable is always False (plan 5.2)",
+    "the round trip stays 'unclosed' (exit_status): P2 has no exit book and no realised funding interval, and the spread is never assumed to revert",
+    "each bucket's 'examples' are the first rows it computed numbers for, so a withheld fee or a short book still shows the quantity and the VWAPs behind the rejection",
+    "a fresh local receipt does not prove a fresh venue event: every row carries each leg's own venue event age (event_age_sell_ms / event_age_buy_ms) beside the receive ages, and the local clock offset is not measured (clock_offset_unknown), so a receive age is never network latency",
+    "the event age is measured from the local epoch receipt time of the record being evaluated, so two legs delayed together by the same feed both report the full age instead of cancelling out to zero; a negative age is kept as clock evidence and is never floored to zero",
+    "instrument metadata is applied in receive order (F06): a fee or increment that arrived later never re-prices an earlier arrival, and a bucket whose moments disagreed reports 'unknown' with a note instead of electing one value",
+    "a quantity step is the instrument's real size_increment (the LCM of the two legs') or it is quantity_step_unknown: 10**-size_precision is never used as a step, and a CLI --steps override is published as 'override', never as a venue-verified increment",
+    "the three axes of F07 are separate states: a feed reconnect (adapter:snapshot_ready) never lifts a venue halt, and a metadata record marked stale makes that venue's metadata unusable from that arrival on",
+    "'unknown' is the one marker for a value this run's tape did not carry; it is never replaced by a registry default"
+  ]
+}

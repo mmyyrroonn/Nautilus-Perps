@@ -1,0 +1,6 @@
+START=Sat Sep 19 11:10:23 UTC 2026
+END=Sat Sep 19 11:10:39 UTC 2026
+EXIT_CODE=0
+WALL_SECONDS=16
+interpreter=E:\Nautilus-Perps\.worktrees\ondo-r52-app\.venv\Scripts\python.exe
+nautilus_file=E:\Nautilus-Perps\.worktrees\ondo-r52-app\.venv\Lib\site-packages\nautilus_trader\__init__.py

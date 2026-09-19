@@ -1,0 +1,115 @@
+{
+  "cancel_capable": false,
+  "caps": {
+    "exposure_usd": {
+      "applied": null,
+      "cap": "100",
+      "capped": false,
+      "configured": null
+    },
+    "minutes": {
+      "applied": 2.0,
+      "cap": 60.0,
+      "capped": false,
+      "configured": 2.0
+    },
+    "notional_per_order_usd": {
+      "applied": null,
+      "cap": "50",
+      "capped": false,
+      "configured": null
+    },
+    "orders": {
+      "applied": null,
+      "cap": 10,
+      "capped": false,
+      "configured": null
+    }
+  },
+  "client_constructed": false,
+  "converging_stop": {
+    "available": true,
+    "blocks": "nothing in the adapter lifecycle: the installed wheel exposes the ordered shutdown capability. The R5.2 real-account verification - that a real sandbox session left the account clean - is still outstanding",
+    "cancels_own_orders": null,
+    "capability_source": "native-factory",
+    "confirms_cancels": null,
+    "observed_reason": "this probe has no per-run native StopReport telemetry, so the ordered stop's cancel, confirmation and dead-man-switch release are unobserved (null), not absent: zero submitted orders does not imply the switch was not released - a trading-mode session arms it on connect and can release it on a clean disconnect, and a restored journal may carry prior owned orders. Capability describes what the installed adapter implements, not what this run did",
+    "observed_this_run": false,
+    "reason": "the installed OndoExecutionClientFactory exposes supports_ordered_shutdown = True: the native client lifecycle implements the ordered bounded stop (cancel this run's own orders -> confirm the cancels -> release the dead-man switch -> close the private stream) with a fail-closed synchronous fallback. This is a capability of the installed wheel and nothing more: it does not verify the venue protocol, and it does not prove that any particular run left the account clean",
+    "releases_dead_mans_switch": null
+  },
+  "converging_stop_available": true,
+  "converging_stop_reason": "the installed OndoExecutionClientFactory exposes supports_ordered_shutdown = True: the native client lifecycle implements the ordered bounded stop (cancel this run's own orders -> confirm the cancels -> release the dead-man switch -> close the private stream) with a fail-closed synchronous fallback. This is a capability of the installed wheel and nothing more: it does not verify the venue protocol, and it does not prove that any particular run left the account clean",
+  "credential_variables": [],
+  "credentials_required": false,
+  "deadline_secs": "120.0",
+  "dms_armed": false,
+  "dry_run": true,
+  "endpoint": "https://api.ondoperps.xyz",
+  "endpoint_class": "production",
+  "endpoint_source": "module-default",
+  "env_file_read": false,
+  "envelope": {
+    "allow_sandbox_orders": false,
+    "armed": false,
+    "instruments": [],
+    "max_exposure_usd": null,
+    "max_orders": null,
+    "notional_usd": null
+  },
+  "environment": "production",
+  "exit_code_zero_means_clean_account": false,
+  "expected_stop_condition": "deadline (a normal end for this mode)",
+  "instrument_ids": [
+    "NVDA-USD-PERP.ONDO"
+  ],
+  "log_level": "INFO",
+  "mode": "public",
+  "out": "reports/ondo-probe",
+  "protocol_verified": false,
+  "protocol_verified_reason": "no authenticated private/sandbox protocol acceptance has happened in these reports: the public surface has been read and recorded, but the REST auth header names, the WS login signature concatenation order, the real private frame shapes and the dead-man-switch renewal semantics are documented, not host-confirmed. Nothing in this report may be read as a private host fact",
+  "read_capable": true,
+  "requests_sent": 0,
+  "run_id": null,
+  "schema_version": 1,
+  "supports_ordered_shutdown": true,
+  "supports_ordered_shutdown_source": "native-factory",
+  "symbols": [
+    "NVDA"
+  ],
+  "synthetic": false,
+  "targets": [
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NVDA-USD-PERP.ONDO",
+      "raw_market": "NVDA-USD.P",
+      "symbol": "NVDA",
+      "venue": "ONDO"
+    }
+  ],
+  "tool": "ondo_probe",
+  "unverified": [
+    {
+      "documented_not_confirmed": [
+        "REST authentication header names",
+        "the WebSocket login signature concatenation order",
+        "the real private frame shapes",
+        "dead-man-switch renewal and release semantics"
+      ],
+      "item": "protocol",
+      "reason": "no authenticated private/sandbox protocol acceptance has happened in these reports: the public surface has been read and recorded, but the REST auth header names, the WS login signature concatenation order, the real private frame shapes and the dead-man-switch renewal semantics are documented, not host-confirmed. Nothing in this report may be read as a private host fact",
+      "verified": false
+    },
+    {
+      "adapter_capability": true,
+      "capability_source": "native-factory",
+      "consequence": "capability says what the installed adapter implements, not what this run did. The probe has no native StopReport telemetry, so a cancel, a confirmation or a dead-man-switch release is unobserved (null) rather than absent; a zero exit code must not be read as a cleaned account",
+      "item": "converging_stop",
+      "per_run_actions_observed": false,
+      "reason": "the installed OndoExecutionClientFactory exposes supports_ordered_shutdown = True: the native client lifecycle implements the ordered bounded stop (cancel this run's own orders -> confirm the cancels -> release the dead-man switch -> close the private stream) with a fail-closed synchronous fallback. This is a capability of the installed wheel and nothing more: it does not verify the venue protocol, and it does not prove that any particular run left the account clean",
+      "verified": false
+    }
+  ],
+  "venue": "ONDO",
+  "write_capable": false
+}

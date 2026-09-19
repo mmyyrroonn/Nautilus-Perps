@@ -1,0 +1,213 @@
+{
+  "run_id": "20260919-r52-build",
+  "generated_at_utc": "2026-09-19T11:14:57Z",
+  "task": "control/pi-build-task.md",
+  "release_authorization": "control/build-release.md",
+  "coordinator_note": "control/build-stage-coordination.md",
+  "result": "delivered_and_candidate_validated",
+  "canonical_main_checkout_or_venv_touched": false,
+  "source": {
+    "fork_worktree": "E:/nautilus_trader/.worktrees/ondo-r52-cleanup",
+    "base_head": "ff57243f74d730b1ababca7ee8e7b37e7c840287",
+    "base_branch": "task/ondo-r52-cleanup",
+    "final_diff_sha256": "d234f8f6ec9fe38d8f79e484e9e315a56711694e008c51637eeeb10e4336e1ef",
+    "final_status_porcelain_lines": 7,
+    "accepted_paths_sha256": {
+      "crates/adapters/ondo/src/execution.rs": "4AA6A7234883004F64C8EE629E0168385E34BBFD541A2EE1F0FFF7A09C1C09B1",
+      "crates/adapters/ondo/src/reconciliation.rs": "0AC8338632A5677D62E6531276A87D54DF946E7AC1CBBF2CB3F704E288488CD3",
+      "crates/adapters/ondo/src/websocket/private/stream.rs": "055A0C511AC18BFBBE3373877D323DD5ECA9A1E6AC804AF1D3240A3699C8D9C8",
+      "crates/adapters/ondo/src/python/factories.rs": "9D2DA4304B065460D659CC05CC668EE04C60CACCE3DE0DBAA05A3F72C515073D",
+      "crates/adapters/ondo/tests/private_runtime.rs": "49C909163F18E47F51A215B404DA6A4EAB93B6C3BBA26B800F7E639D96B863A3",
+      "crates/adapters/ondo/tests/reconciliation.rs": "7BC6E150FB9728E8A22C588A60D02CF814C37FA245E1703CDB873EA288309A03"
+    },
+    "accepted_paths_match_final_native_review": true,
+    "app_worktree": "E:/Nautilus-Perps/.worktrees/ondo-r52-app",
+    "app_base_head": "aef07e4e7d7e32fedf9acd8a6cba63700d092b6e"
+  },
+  "toolchain": {
+    "rustc": "1.98.0",
+    "cargo": "1.98.0",
+    "clang": "20.1.3",
+    "uv": "0.12.6",
+    "maturin": "1.15.0",
+    "build_python": "CPython 3.12.9 (uv-managed)",
+    "os": "Windows 11"
+  },
+  "build_configuration": {
+    "profile": "release",
+    "features": [
+      "extension-module",
+      "arrow",
+      "betfair",
+      "high-precision",
+      "mimalloc",
+      "redis",
+      "postgres",
+      "defi",
+      "hypersync",
+      "tracing-bridge"
+    ],
+    "release_target_dir": "E:/nautilus_trader/.worktrees/task-ondo-r5/target",
+    "stub_profile": "nextest",
+    "stub_target_dir": "E:/nautilus_trader/target",
+    "stub_profile_justification": "repository canonical: Makefile CARGO_CI_PROFILE ?= nextest; BUILD_WINDOWS.md py-stubs uses NAUTILUS_STUB_PROFILE=nextest; stub API comes from macro/inventory declarations, not optimization level",
+    "warnings_allow_scope": "per-invocation environment for release build and stub generator, recorded in build scripts; no global warning configuration changed"
+  },
+  "steps": [
+    {
+      "name": "uv_sync",
+      "exit_code": 0,
+      "wall_seconds": 3,
+      "log": "01-uv-sync.log"
+    },
+    {
+      "name": "strict_release_build",
+      "exit_code": 1,
+      "wall_seconds": 16,
+      "log": "02-strict-build.log",
+      "classification": "documented Windows platform exception: linker_messages lint on nautilus-persistence-macros proc-macro dylib link, denied by build.warnings=deny; several Nautilus crates had started compiling, but no completed native wheel was produced by the strict attempt",
+      "failure_lines": [
+        "warning: linker stdout: ...nautilus_persistence_macros-....dll.lib ... .dll.exp",
+        "= note: `#[warn(linker_messages)]` on by default",
+        "error: `nautilus-persistence-macros` (lib) generated 1 warning",
+        "error: warnings are denied by `build.warnings` configuration"
+      ]
+    },
+    {
+      "name": "release_build",
+      "exit_code": 0,
+      "wall_seconds": 1689,
+      "warning_count": 0,
+      "log": "03-release-build.log"
+    },
+    {
+      "name": "stub_generation",
+      "exit_code": 0,
+      "wall_seconds": 295,
+      "log": "04-stubs.log",
+      "crlf_files_normalized": 43,
+      "semantic_diff_files_after_normalize": 1,
+      "normalize_exit": 0
+    },
+    {
+      "name": "final_wheel_build",
+      "exit_code": 0,
+      "wall_seconds": 5,
+      "log": "05-final-wheel.log"
+    }
+  ],
+  "artifacts": {
+    "final_wheel": {
+      "path": "E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "bytes": 63621311,
+      "sha256": "4d19c5df5bec73391a760d4b8643e2f8eaa53ce183dca88ee917454e2b91d642",
+      "profile": "release",
+      "bundled_pyd_bytes": 165002752,
+      "bundled_stub_has_supports_ordered_shutdown": true
+    },
+    "superseded_intermediate_wheel": {
+      "sha256": "4c0cac31b01414a57436617868e38cc054e8853b754f3393bd3802562ae7d70a",
+      "bytes": 63621290
+    },
+    "undbundled_runtime_dependency": {
+      "library": "zlib.dll",
+      "resolved_from": "C:/ProgramData/miniconda3/zlib.dll",
+      "bundled": false,
+      "note": "candidate import succeeds with conda stripped from child PATH on this host"
+    }
+  },
+  "generated_stub": {
+    "path": "python/nautilus_trader/adapters/ondo/__init__.pyi",
+    "insertions": 2,
+    "deletions": 0,
+    "diff_sha256": "33c5cf784f3a671b8399d94cc6e47da755f1b4d3ae44e2f416e25190d75d7898",
+    "declaration": "@property def supports_ordered_shutdown(self) -> bool: ...",
+    "under_class": "OndoExecutionClientFactory",
+    "other_generated_pyi_modified": []
+  },
+  "candidate_validation": {
+    "venv": "E:/Nautilus-Perps/.worktrees/ondo-r52-app/.venv",
+    "python": "3.12.9",
+    "wheel_sha256_installed": "4d19c5df5bec73391a760d4b8643e2f8eaa53ce183dca88ee917454e2b91d642",
+    "direct_url": "file:///E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "imported_package_path_is_candidate": true,
+    "capability_value": true,
+    "capability_python_type_exact_bool": true,
+    "capability_class_level": "getset_descriptor",
+    "installed_stub_declares_readonly_bool_property": true,
+    "public_exports_unchanged": true,
+    "conda_stripped_child_import": true,
+    "checks_failed": []
+  },
+  "app_tests": {
+    "command": "<candidate python> -m pytest tests -q -p no:cacheprovider",
+    "env": {"PYTHON_DOTENV_DISABLED": "1"},
+    "exit_code": 0,
+    "wall_seconds": 16,
+    "passed": 836,
+    "subtests_passed": 97,
+    "warnings": 1,
+    "warning": "tests/test_maker_live.py::test_limits returned a Limits object (pre-existing PytestReturnNotNoneWarning)",
+    "log": "06-app-tests.log"
+  },
+  "dry_run": {
+    "command": "<candidate python> src/ondo_probe.py --mode public --symbols NVDA --dry-run",
+    "exit_code": 0,
+    "converging_stop_available": true,
+    "supports_ordered_shutdown": true,
+    "supports_ordered_shutdown_source": "native-factory",
+    "protocol_verified": false,
+    "exit_code_zero_means_clean_account": false,
+    "client_constructed": false,
+    "requests_sent": 0,
+    "per_run_actions": {"cancels_own_orders": null, "confirms_cancels": null, "releases_dead_mans_switch": null},
+    "file": "07-dry-run.json"
+  },
+  "public_probe": {
+    "command": "<candidate python> src/ondo_probe.py --mode public --symbols NVDA,TSLA --minutes 2 --out build/public-probe",
+    "external_timeout_seconds": 180,
+    "exit_code": 0,
+    "wall_seconds": 131,
+    "hard_timeout_hit": false,
+    "run_id": "20260919T111054953616Z",
+    "complete": true,
+    "exec_client": null,
+    "registered_data_client": "nautilus_trader.adapters.ondo.OndoDataClientFactory",
+    "orders_submitted_by_probe": 0,
+    "outstanding_orders": [],
+    "write_capable": false,
+    "dms_armed": false,
+    "cancel_capable": false,
+    "converging_stop_available": true,
+    "supports_ordered_shutdown_source": "native-factory",
+    "protocol_verified": false,
+    "exit_code_zero_means_clean_account": false,
+    "per_run_actions": {"cancels_own_orders": null, "confirms_cancels": null, "releases_dead_mans_switch": null},
+    "probe_json_sha256": "ff3fa4a65cfb2d14c41cc175f6f1431e9c92027228d8fcaf11920b36cb86a771",
+    "status": "08-public-probe.status",
+    "stdout_log": "08-public-probe.stdout.log"
+  },
+  "app_worktree_delivery_changes": {
+    "pyproject.toml": {
+      "wheel_path": "file:///E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "wheel_sha256": "4d19c5df5bec73391a760d4b8643e2f8eaa53ce183dca88ee917454e2b91d642",
+      "rollback": "dist-r5 wheel sha256 82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9"
+    },
+    "docs/ondo.md": "candidate wording finalized to delivered; native review accepted; sandbox semantics left unverified",
+    "canonical_main_venv_installed": false
+  },
+  "rollback": {
+    "previous_wheel_dir": "E:/nautilus_trader/dist-r5",
+    "previous_wheel_sha256": "82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9",
+    "instruction": "point the app worktree dependency back at the dist-r5 wheel path and reinstall"
+  },
+  "limits": {
+    "private_or_sandbox_mode_run": false,
+    "credentials_read": false,
+    "orders_or_cancels_or_dms_or_funds": false,
+    "protocol_verified": false,
+    "exit_code_zero_means_clean_account": false,
+    "public_probe_is_installation_lifecycle_validation_only": true,
+    "canonical_source_or_main_venv_integration_left_to_astra": true
+  }
+}

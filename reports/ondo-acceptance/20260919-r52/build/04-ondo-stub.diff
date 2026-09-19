@@ -1,0 +1,13 @@
+diff --git a/python/nautilus_trader/adapters/ondo/__init__.pyi b/python/nautilus_trader/adapters/ondo/__init__.pyi
+index 52e26bf..f6a081f 100644
+--- a/python/nautilus_trader/adapters/ondo/__init__.pyi
++++ b/python/nautilus_trader/adapters/ondo/__init__.pyi
+@@ -104,6 +104,8 @@ class OndoExecutionClientConfig:
+ class OndoExecutionClientFactory:
+     def __init__(self) -> None: ...
+     def name(self) -> str: ...
++    @property
++    def supports_ordered_shutdown(self) -> bool: ...
+ 
+ @typing.final
+ class OndoHttpClient:

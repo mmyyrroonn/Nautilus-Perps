@@ -1,0 +1,8 @@
+EXIT_CODE=0
+START=Sat Sep 19 10:59:34 UTC 2026
+END=Sat Sep 19 11:04:29 UTC 2026
+EXIT_CODE=0
+WALL_SECONDS=295
+normalize_exit=0
+--- git status after (stub tree) ---
+ M python/nautilus_trader/adapters/ondo/__init__.pyi

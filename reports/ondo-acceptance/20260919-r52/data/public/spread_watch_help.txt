@@ -1,0 +1,52 @@
+usage: spread_watch.py [-h] [--minutes MINUTES] [--until UNTIL] [--out OUT]
+                       [--symbols SYMBOLS] [--venues VENUES] [--pair PAIR]
+                       [--symbol {AERO,ANSEM,ARB,ASTER,BTC,DASH,EIGEN,ETH,ETHFI,FF,GOLD,GOLD1,GPRO,HOOD,HYPE,LIT,MON,MU,NVDA,PONS,PUMP,SNDK,SOL,SPCX,TIA,TSLA,USELESS,VVV,XPL,ZEC,ZRO}]
+                       [--all-sample-ms ALL_SAMPLE_MS]
+                       [--depth-levels DEPTH_LEVELS]
+                       [--max-restarts MAX_RESTARTS]
+                       [--reference {none,FUTU,FAKE}] [--dry-run]
+                       [--record-l2]
+
+Stage 1 read-only cross-venue spread watch
+
+options:
+  -h, --help            show this help message and exit
+  --minutes MINUTES     run duration in minutes
+  --until UNTIL         stop at this UTC ISO instant, e.g.
+                        2026-09-08T20:05:00Z (alternative to --minutes)
+  --out OUT             output directory
+  --symbols SYMBOLS     comma list of symbols, e.g. NVDA,TSLA; known: ['AERO',
+                        'ANSEM', 'ARB', 'ASTER', 'BTC', 'DASH', 'EIGEN',
+                        'ETH', 'ETHFI', 'FF', 'GOLD', 'GOLD1', 'GPRO', 'HOOD',
+                        'HYPE', 'LIT', 'MON', 'MU', 'NVDA', 'PONS', 'PUMP',
+                        'SNDK', 'SOL', 'SPCX', 'TIA', 'TSLA', 'USELESS',
+                        'VVV', 'XPL', 'ZEC', 'ZRO']
+  --venues VENUES       comma list of venues to watch per symbol; known:
+                        ['ASTER', 'ENTROPY', 'HL', 'LIGHTER', 'LIGHTER_RH',
+                        'ONDO']
+  --pair PAIR           legacy alias: SYMBOL:VENUE_A-VENUE_B, e.g. NVDA:HL-
+                        ASTER; venues: ['ASTER', 'ENTROPY', 'HL', 'LIGHTER',
+                        'LIGHTER_RH', 'ONDO']
+  --symbol {AERO,ANSEM,ARB,ASTER,BTC,DASH,EIGEN,ETH,ETHFI,FF,GOLD,GOLD1,GPRO,HOOD,HYPE,LIT,MON,MU,NVDA,PONS,PUMP,SNDK,SOL,SPCX,TIA,TSLA,USELESS,VVV,XPL,ZEC,ZRO}
+                        legacy alias for SYMBOL:HL-LIGHTER
+  --all-sample-ms ALL_SAMPLE_MS
+                        min interval between _all.csv rows per pair-direction;
+                        0 = every evaluation
+  --depth-levels DEPTH_LEVELS
+                        book depth levels for the depth10 fallback (v2 fixes
+                        this at 10; kept for config parity)
+  --max-restarts MAX_RESTARTS
+                        rebuild the node at most this many times before the
+                        deadline
+  --reference {none,FUTU,FAKE}
+                        reference price leg: FUTU streams the real US stock
+                        quote from the FUTUNN OPEN API WebSocket (needs
+                        FUTU_API_KEY / FUTU_PRIVATE_KEY in .env), FAKE is a
+                        local random walk for testing the path; writes
+                        <stem>_ref.csv per equity symbol
+  --dry-run             print the resolved plan and data clients as JSON, then
+                        exit before dotenv, the node and any subscription
+  --record-l2           record every observed leg's complete normalized L2 as
+                        JSONL fragments plus a manifest under <out>/l2 (a run
+                        with an ONDO leg also points its raw_md_path at
+                        <out>/raw_ondo); off by default

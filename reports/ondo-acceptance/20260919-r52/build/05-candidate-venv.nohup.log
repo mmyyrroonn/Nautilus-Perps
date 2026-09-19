@@ -1,0 +1,8 @@
+EXIT_CODE=0
+wheel=E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+wheel_sha256=4d19c5df5bec73391a760d4b8643e2f8eaa53ce183dca88ee917454e2b91d642
+uv_venv_exit=0
+deps_install_exit=0
+wheel_install_exit=0
+candidate_python=Python 3.12.9
+EXIT_CODE=0

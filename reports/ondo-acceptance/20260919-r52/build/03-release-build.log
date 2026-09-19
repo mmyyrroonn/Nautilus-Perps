@@ -1,0 +1,55 @@
+🍹 Building a mixed python/rust project
+🐍 Found CPython 3.12 at E:\nautilus_trader\.worktrees\ondo-r52-cleanup\.venv\Scripts\python.exe
+🔗 Found pyo3 bindings
+📡 Using build options features from pyproject.toml
+   Compiling pyo3-async-runtimes v0.29.0
+   Compiling pyo3-stub-gen v0.20.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\patches\pyo3-stub-gen)
+   Compiling nautilus-core v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\core)
+   Compiling nautilus-model v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\model)
+   Compiling nautilus-cryptography v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\cryptography)
+   Compiling nautilus-network v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\network)
+   Compiling nautilus-indicators v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\indicators)
+   Compiling nautilus-analysis v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\analysis)
+   Compiling nautilus-serialization v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\serialization)
+   Compiling nautilus-common v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\common)
+   Compiling nautilus-portfolio v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\portfolio)
+   Compiling nautilus-execution v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\execution)
+   Compiling nautilus-persistence v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\persistence)
+   Compiling nautilus-infrastructure v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\infrastructure)
+   Compiling nautilus-trading v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\trading)
+   Compiling nautilus-risk v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\risk)
+   Compiling nautilus-data v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\data)
+   Compiling nautilus-testkit v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\testkit)
+   Compiling nautilus-system v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\system)
+   Compiling nautilus-live v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\live)
+   Compiling nautilus-sandbox v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\sandbox)
+   Compiling nautilus-backtest v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\backtest)
+   Compiling nautilus-binance v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\binance)
+   Compiling nautilus-lighter v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\lighter)
+   Compiling nautilus-dydx v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\dydx)
+   Compiling nautilus-bitmex v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\bitmex)
+   Compiling nautilus-tardis v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\tardis)
+   Compiling nautilus-derive v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\derive)
+   Compiling nautilus-kraken v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\kraken)
+   Compiling nautilus-hyperliquid v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\hyperliquid)
+   Compiling nautilus-interactive-brokers v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\interactive_brokers)
+   Compiling nautilus-betfair v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\betfair)
+   Compiling nautilus-deribit v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\deribit)
+   Compiling nautilus-databento v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\databento)
+   Compiling nautilus-ondo v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\ondo)
+   Compiling nautilus-blockchain v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\blockchain)
+   Compiling nautilus-polymarket v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\polymarket)
+   Compiling nautilus-coinbase v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\coinbase)
+   Compiling nautilus-bybit v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\bybit)
+   Compiling nautilus-okx v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\okx)
+   Compiling nautilus-architect-ax v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\architect_ax)
+   Compiling nautilus-aster v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\adapters\aster)
+   Compiling nautilus-pyo3 v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\pyo3)
+    Finished `release` profile [optimized] target(s) in 28m 04s
+🔗 External shared libraries to be copied into the wheel:
+  E:\nautilus_trader\.worktrees\task-ondo-r5\target\maturin\nautilus_pyo3.dll requires:
+    zlib.dll => \\?\C:\ProgramData\miniconda3\zlib.dll
+⚠️  Warning: Your library requires copying the above external libraries. Re-run with `--auditwheel=repair` to copy them into the wheel.
+📦 Including files matching "**/*.pyi"
+📦 Built wheel for CPython 3.12 to E:/nautilus_trader/dist-r52\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+EXIT_CODE=0

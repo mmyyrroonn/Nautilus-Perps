@@ -1,0 +1,26 @@
+🍹 Building a mixed python/rust project
+🐍 Found CPython 3.12 at E:\nautilus_trader\.worktrees\ondo-r52-cleanup\.venv\Scripts\python.exe
+🔗 Found pyo3 bindings
+📡 Using build options features from pyproject.toml
+   Compiling nautilus-core v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\core)
+   Compiling pyo3-ffi v0.29.2
+   Compiling nautilus-common v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\common)
+   Compiling nautilus-serialization v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\serialization)
+   Compiling nautilus-persistence-macros v0.63.0 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\crates\persistence\macros)
+   Compiling arrow v57.3.1 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\patches\arrow-compat)
+   Compiling parquet v57.3.1 (E:\nautilus_trader\.worktrees\ondo-r52-cleanup\patches\parquet-compat)
+   Compiling hypersync-schema v0.4.0
+   Compiling hypersync-client v1.4.0
+   Compiling pyo3 v0.29.2
+warning: linker stdout: 正在创建库 E:/nautilus_trader/.worktrees/task-ondo-r5/target\release\deps\nautilus_persistence_macros-a48372616ee8169c.dll.lib 和对象 E:/nautilus_trader/.worktrees/task-ondo-r5/target\release\deps\nautilus_persistence_macros-a48372616ee8169c.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+  = note: the `linker_messages` lint ignores `-D warnings`
+
+error: `nautilus-persistence-macros` (lib) generated 1 warning
+error: warnings are denied by `build.warnings` configuration
+warning: build failed, waiting for other jobs to finish...
+💥 maturin failed
+  Caused by: Failed to build a native library through cargo
+  Caused by: Cargo build finished with "exit code: 101": `"cargo" "rustc" "--profile" "release" "--features" "extension-module" "--features" "arrow" "--features" "betfair" "--features" "high-precision" "--features" "mimalloc" "--features" "redis" "--features" "postgres" "--features" "defi" "--features" "hypersync" "--features" "tracing-bridge" "--message-format" "json-render-diagnostics" "--manifest-path" "E:\\nautilus_trader\\.worktrees\\ondo-r52-cleanup\\crates\\pyo3\\Cargo.toml" "--lib" "--crate-type" "cdylib"`
+EXIT_CODE=1

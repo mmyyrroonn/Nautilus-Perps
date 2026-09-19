@@ -285,6 +285,7 @@ FORK 跑 `cargo +1.98.0 test -p nautilus-ondo --locked --test market_data` 和�
 - [ ] 刷新官方鉴权材料并保存 hash；sandbox 分三步记录：A 鉴权/账户只读；B 私有订阅/恢复；C 明确许可下的受限下单/成交/撤单/DMS。A通过不能替代B/C。
 - [ ] 用真实 sandbox 验证 REST header 名称、WS签名串顺序/时间单位、实际private帧、DMS确认/续期/到期/释放；逐项更新 conflicts 和 observed fixtures。鉴权失败有有界诊断，不能轮流猜签名无限尝试。
 - [ ] 没有可用 sandbox 权限/凭据时，交付全部已完成离线能力，将对应在线项记 `blocked: sandbox credentials/permission unavailable`。不触碰生产写接口填补测试空白。
+- [ ] 应用侧以只读属性 `OndoExecutionClientFactory.supports_ordered_shutdown` 判断已安装适配器是否实现有序关机；旧 wheel（无该属性）回退为 `converging_stop_available: false`。属性为真只代表适配器能力，不代表协议通过或账户已清理；重建 wheel 后必须在生成的 `.pyi` 存根中确认该属性出现，并跑候选运行时检查（属性读取、报告字段、零下单）。
 
 ## 2. 最终完成标准
 

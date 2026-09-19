@@ -1,0 +1,453 @@
+{
+  "sandbox_auth_verified": false,
+  "sandbox_execution_verified": false,
+  "preflight": {
+    "complete": true,
+    "run_id": "20260919T093106338141Z",
+    "symbols": [
+      "NVDA",
+      "TSLA"
+    ],
+    "missing": [],
+    "failure": null,
+    "instruments": [
+      {
+        "symbol": "NVDA",
+        "instrument_id": "NVDA-USD-PERP.ONDO"
+      },
+      {
+        "symbol": "TSLA",
+        "instrument_id": "TSLA-USD-PERP.ONDO"
+      }
+    ]
+  },
+  "observation_run": {
+    "command": "spread_watch.py --venues ONDO,HL --symbols NVDA,TSLA --minutes 5 --max-restarts 0 --record-l2 --reference none",
+    "out": "E:/Nautilus-Perps/reports/ondo-acceptance/20260919-r52/data/public/observation",
+    "start_utc": "2026-09-19T09:31:32.8570043Z",
+    "end_utc": "2026-09-19T09:36:36.7549104Z",
+    "elapsed_seconds": 303.898,
+    "exit_code": 0,
+    "python": "E:/Nautilus-Perps/.venv/Scripts/python.exe",
+    "python_version": "Python 3.12.9",
+    "py_python_dotenv_disabled": "1",
+    "pythonpath": "E:/Nautilus-Perps/.worktrees/ondo-r52-app/src",
+    "credentials_removed_by_name": [
+      "HYPERLIQUID_PRIVATE_KEY",
+      "LIGHTER_ACCOUNT_INDEX",
+      "LIGHTER_API_KEY_INDEX",
+      "LIGHTER_API_SECRET",
+      "LIGHTER_TESTNET_ACCOUNT_INDEX",
+      "LIGHTER_TESTNET_API_KEY_INDEX",
+      "LIGHTER_TESTNET_API_SECRET",
+      "ASTER_USER_ADDRESS",
+      "ASTER_SIGNER_ADDRESS",
+      "ASTER_SIGNER_PRIVATE_KEY",
+      "ASTER_MAINNET_USER_ADDRESS",
+      "ASTER_MAINNET_SIGNER_ADDRESS",
+      "ASTER_MAINNET_SIGNER_PRIVATE_KEY",
+      "ONDO_SANDBOX_API_KEY",
+      "ONDO_SANDBOX_API_SECRET",
+      "ONDO_SANDBOX_ACCOUNT_ID",
+      "FUTU_API_KEY",
+      "FUTU_PRIVATE_KEY",
+      "ENTROPY_API_KEY",
+      "ENTROPY_API_SECRET"
+    ]
+  },
+  "observation_start_to_finish": {
+    "exit_code": 0,
+    "elapsed_seconds": 303.898,
+    "completed_within_5_minute_deadline": true
+  },
+  "l2_manifest": {
+    "tapes": [
+      {
+        "tape": "l2_NVDA_ONDO-HL_20260919T093133Z.jsonl",
+        "run_id": "20260919T093133Z",
+        "manifest": "l2_NVDA_ONDO-HL_20260919T093133Z.manifest.json",
+        "segments": 1,
+        "dropped": 0,
+        "gaps": 0,
+        "complete": true
+      },
+      {
+        "tape": "l2_TSLA_ONDO-HL_20260919T093133Z.jsonl",
+        "run_id": "20260919T093133Z",
+        "manifest": "l2_TSLA_ONDO-HL_20260919T093133Z.manifest.json",
+        "segments": 1,
+        "dropped": 0,
+        "gaps": 0,
+        "complete": true
+      }
+    ],
+    "any_dropped": false,
+    "any_gaps": false,
+    "all_complete": true
+  },
+  "raw_ondo_completeness": {
+    "line": "[stage1] raw_ondo recording (E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260919-r52\\data\\public\\observation\\raw_ondo): complete: segments=1 sessions=1 records=2624 dropped=0 gaps=0 run_ids=['20260919T093133Z']",
+    "segments": 1,
+    "sessions": 1,
+    "records": 2624,
+    "dropped": 0,
+    "gaps": 0,
+    "complete_from_log": true
+  },
+  "per_symbol": {
+    "NVDA": {
+      "session_id": "20260919T093133Z-1980d7eb74f6",
+      "l2_fragment_complete": true,
+      "l2_records": 1533,
+      "l2_dropped": 0,
+      "l2_gaps": 0,
+      "l2_first_arrival_seq": 1,
+      "l2_last_arrival_seq": 1533,
+      "record_kinds": {
+        "run_start": 1,
+        "instrument": 6,
+        "book": 1210,
+        "status": 5,
+        "quote": 305,
+        "funding": 7,
+        "run_end": 1
+      },
+      "venues_in_tape": {
+        "None": 2,
+        "ONDO": 1356,
+        "HL": 177
+      },
+      "sessions_in_tape": {
+        "20260919T093133Z-1980d7eb74f6": 1535
+      },
+      "instrument_metadata": {
+        "ONDO": {
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "size_increment": "0.01",
+          "price_precision": 2,
+          "size_precision": 2
+        },
+        "HL": {
+          "taker_fee_bps": "0.90",
+          "fee_source": "registry",
+          "size_increment": "0.001",
+          "price_precision": 3,
+          "size_precision": 3
+        }
+      },
+      "legs": {
+        "ONDO": {
+          "quotes": "186",
+          "books": "1154",
+          "trades": "4",
+          "funding": "True",
+          "fee": "2.50",
+          "fee_source": "instrument_metadata",
+          "feed": "True",
+          "market": "True",
+          "book": "True",
+          "disconnects": "0",
+          "meta": "True"
+        },
+        "HL": {
+          "quotes": "119",
+          "books": "56",
+          "trades": "54",
+          "funding": "True",
+          "fee": "0.90",
+          "fee_source": "registry"
+        }
+      }
+    },
+    "TSLA": {
+      "session_id": "20260919T093133Z-69461dd6b681",
+      "l2_fragment_complete": true,
+      "l2_records": 1378,
+      "l2_dropped": 0,
+      "l2_gaps": 0,
+      "l2_first_arrival_seq": 1,
+      "l2_last_arrival_seq": 1378,
+      "record_kinds": {
+        "run_start": 1,
+        "instrument": 6,
+        "book": 1210,
+        "status": 5,
+        "quote": 150,
+        "funding": 7,
+        "run_end": 1
+      },
+      "venues_in_tape": {
+        "None": 2,
+        "ONDO": 1216,
+        "HL": 162
+      },
+      "sessions_in_tape": {
+        "20260919T093133Z-69461dd6b681": 1380
+      },
+      "instrument_metadata": {
+        "ONDO": {
+          "taker_fee_bps": "2.50",
+          "fee_source": "instrument_metadata",
+          "size_increment": "0.01",
+          "price_precision": 2,
+          "size_precision": 2
+        },
+        "HL": {
+          "taker_fee_bps": "0.90",
+          "fee_source": "registry",
+          "size_increment": "0.001",
+          "price_precision": 3,
+          "size_precision": 3
+        }
+      },
+      "legs": {
+        "ONDO": {
+          "quotes": "46",
+          "books": "1154",
+          "trades": "1",
+          "funding": "True",
+          "fee": "2.50",
+          "fee_source": "instrument_metadata",
+          "feed": "True",
+          "market": "True",
+          "book": "True",
+          "disconnects": "0",
+          "meta": "True"
+        },
+        "HL": {
+          "quotes": "104",
+          "books": "56",
+          "trades": "54",
+          "funding": "True",
+          "fee": "0.90",
+          "fee_source": "registry"
+        }
+      }
+    }
+  },
+  "legs_observed": {
+    "NVDA": [
+      "HL",
+      "ONDO"
+    ],
+    "TSLA": [
+      "HL",
+      "ONDO"
+    ]
+  },
+  "both_venues_observed_for_every_symbol": true,
+  "replay": {
+    "NVDA ONDO>HL $100": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1515,
+      "quality_pass": 128,
+      "pass": 128,
+      "reject": 1387,
+      "hits": 0,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "-5.854800936768149882903981265",
+      "entry_after_fees_bps_median": "-9.254800936768149882903981265",
+      "funding_estimate_bps_median": "0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=925;event_skew=460;future_event_time=1;no_book=1"
+    },
+    "NVDA ONDO>HL $500": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1515,
+      "quality_pass": 128,
+      "pass": 128,
+      "reject": 1387,
+      "hits": 0,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "-5.854800936768149882903981265",
+      "entry_after_fees_bps_median": "-9.254800936768149882903981265",
+      "funding_estimate_bps_median": "0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=925;event_skew=460;future_event_time=1;no_book=1"
+    },
+    "NVDA ONDO>HL $1000": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1515,
+      "quality_pass": 128,
+      "pass": 128,
+      "reject": 1387,
+      "hits": 0,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "-5.854800936768149882903981265",
+      "entry_after_fees_bps_median": "-9.254800936768149882903981265",
+      "funding_estimate_bps_median": "0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=925;event_skew=460;future_event_time=1;no_book=1"
+    },
+    "NVDA HL>ONDO $100": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1515,
+      "quality_pass": 128,
+      "pass": 128,
+      "reject": 1387,
+      "hits": 104,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "3.604334211889797481471469442",
+      "entry_after_fees_bps_median": "0.204334211889797481471469442",
+      "funding_estimate_bps_median": "-0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=925;event_skew=460;no_book=2"
+    },
+    "NVDA HL>ONDO $500": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1515,
+      "quality_pass": 128,
+      "pass": 128,
+      "reject": 1387,
+      "hits": 89,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "3.604070347976721960976082834",
+      "entry_after_fees_bps_median": "0.204070347976721960976082834",
+      "funding_estimate_bps_median": "-0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=925;event_skew=460;no_book=2"
+    },
+    "NVDA HL>ONDO $1000": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1515,
+      "quality_pass": 128,
+      "pass": 128,
+      "reject": 1387,
+      "hits": 89,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "3.603847106786494582967317612",
+      "entry_after_fees_bps_median": "0.203847106786494582967317612",
+      "funding_estimate_bps_median": "-0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=925;event_skew=460;no_book=2"
+    },
+    "TSLA ONDO>HL $100": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1360,
+      "quality_pass": 135,
+      "pass": 135,
+      "reject": 1225,
+      "hits": 0,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "-8.505442797467572999334654878",
+      "entry_after_fees_bps_median": "-11.90544279746757299933465488",
+      "funding_estimate_bps_median": "0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=809;event_skew=414;future_event_time=1;no_book=1"
+    },
+    "TSLA ONDO>HL $500": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1360,
+      "quality_pass": 135,
+      "pass": 135,
+      "reject": 1225,
+      "hits": 0,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "-8.505442797467572999334654878",
+      "entry_after_fees_bps_median": "-11.90544279746757299933465488",
+      "funding_estimate_bps_median": "0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=809;event_skew=414;future_event_time=1;no_book=1"
+    },
+    "TSLA ONDO>HL $1000": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1360,
+      "quality_pass": 135,
+      "pass": 135,
+      "reject": 1225,
+      "hits": 0,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "-8.505442797467572999334654878",
+      "entry_after_fees_bps_median": "-11.90544279746757299933465488",
+      "funding_estimate_bps_median": "0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=809;event_skew=414;future_event_time=1;no_book=1"
+    },
+    "TSLA HL>ONDO $100": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1360,
+      "quality_pass": 135,
+      "pass": 135,
+      "reject": 1225,
+      "hits": 89,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "4.938644204981171418968509284",
+      "entry_after_fees_bps_median": "1.538644204981171418968509284",
+      "funding_estimate_bps_median": "-0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=809;event_skew=414;no_book=2"
+    },
+    "TSLA HL>ONDO $500": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1360,
+      "quality_pass": 135,
+      "pass": 135,
+      "reject": 1225,
+      "hits": 89,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "4.938644204981171418968509284",
+      "entry_after_fees_bps_median": "1.538644204981171418968509284",
+      "funding_estimate_bps_median": "-0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=809;event_skew=414;no_book=2"
+    },
+    "TSLA HL>ONDO $1000": {
+      "common_step": "0.010",
+      "step_origin": "instrument_metadata",
+      "samples": 1360,
+      "quality_pass": 135,
+      "pass": 135,
+      "reject": 1225,
+      "hits": 87,
+      "executable_hits": 0,
+      "entry_fees_bps": "3.40",
+      "gross_entry_bps_median": "4.524086479745525642923707550",
+      "entry_after_fees_bps_median": "1.124086479745525642923707550",
+      "funding_estimate_bps_median": "-0.00050000",
+      "mapping_verified": false,
+      "executable": false,
+      "reject_reasons": "stale_book=809;event_skew=414;no_book=2"
+    }
+  },
+  "replay_all_executable_false": true,
+  "replay_all_mapping_unverified": true,
+  "notes": [
+    "Saturday sample: low activity is an observation, not a pass/fail; the subscription/update counts prove both venue legs were live.",
+    "hits are nominal book comparisons with entry_after_fees_bps > 0 before the 5 bps one-leg failure reserve; no fill, no profit, no execution claim.",
+    "sandbox_auth_verified and sandbox_execution_verified stay false: no authenticated request was made in this acceptance."
+  ]
+}

@@ -1,0 +1,3 @@
+stub_member=nautilus_trader/adapters/ondo/__init__.pyi
+has_factory_class=True
+has_supports_ordered_shutdown=True

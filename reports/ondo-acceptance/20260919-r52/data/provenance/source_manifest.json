@@ -1,0 +1,281 @@
+{
+  "label": "app-worktree-src-tests",
+  "generated_utc": "2026-09-19T09:39:08.312529+00:00",
+  "roots": [
+    "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+    "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+    "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\pyproject.toml",
+    "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\docs\\ondo.md",
+    "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\AGENTS.md"
+  ],
+  "file_count": 38,
+  "tree_sha256": "61de4796fcc6dd3512b807f27cabbfe13e12793677ef0ab4d6a16daa914b33bf",
+  "entries": [
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\AGENTS.md",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\AGENTS.md",
+      "relpath": "AGENTS.md",
+      "size": 4290,
+      "sha256": "b99eec758f83e2ea3d1a93374de66ab783b8e59be8016f205cbfabb9a1c9feb6"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\docs\\ondo.md",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\docs\\ondo.md",
+      "relpath": "ondo.md",
+      "size": 31335,
+      "sha256": "4f9fac1c66f8538f55ce68ce721c87d5f9f275c7d344e744e90928a68487b1d0"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\pyproject.toml",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\pyproject.toml",
+      "relpath": "pyproject.toml",
+      "size": 1057,
+      "sha256": "66cf946b4687ce276daea940d0f1235ce8f00d0a7fa51301cf5d7cbfb3892721"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\aster_vs_ref.py",
+      "relpath": "analysis\\aster_vs_ref.py",
+      "size": 2696,
+      "sha256": "ef47716ce088f20d30eadfddd36aefe8464a7b3085d2497f319c19f2a12370aa"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\basis_reversion.py",
+      "relpath": "analysis\\basis_reversion.py",
+      "size": 26120,
+      "sha256": "7f82123744c60ac3b6cc031f57ceded7da2ff1767723a0b448bfdc54f544a190"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\funding_history.py",
+      "relpath": "analysis\\funding_history.py",
+      "size": 53353,
+      "sha256": "ce7076758555383dc935de34ec627b278d0ec0459df67da98e3592ec10ab7059"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\leadlag.py",
+      "relpath": "analysis\\leadlag.py",
+      "size": 18958,
+      "sha256": "6d665f2a28c068b9f5276803977526d4c1b12c25e75670dd162b6d9c66df2ab5"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\lighter_screen.py",
+      "relpath": "analysis\\lighter_screen.py",
+      "size": 40349,
+      "sha256": "f3193b822f89e655d97be41b58164f79e7035687dfd61dc82202b0de8a53084f"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\maker_fill.py",
+      "relpath": "analysis\\maker_fill.py",
+      "size": 39982,
+      "sha256": "adaae76464be73a8e94f9fa695abd57809dcade4f02e4bae34f44ceccc002eea"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\maker_inventory.py",
+      "relpath": "analysis\\maker_inventory.py",
+      "size": 65176,
+      "sha256": "aa22764d528df90342183f5e58346fdd52d30c27989759a08b33aa175bdf1fb1"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\mean_reversion.py",
+      "relpath": "analysis\\mean_reversion.py",
+      "size": 2033,
+      "sha256": "1eccc8dab834767ae48d3f668da04f30a2310c33f287b12a7e61010e2e530a36"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\ondo_depth.py",
+      "relpath": "analysis\\ondo_depth.py",
+      "size": 131383,
+      "sha256": "deaf8bae2c842f20902313a28dc51c06d2beb01f665ac0bd5d537821bd05c1e4"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\opportunities.py",
+      "relpath": "analysis\\opportunities.py",
+      "size": 38414,
+      "sha256": "71b43efa62824414ebc3daa3e55fba5a3ee8e427f2733674b1cd2c471bf62547"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\round_trip.py",
+      "relpath": "analysis\\round_trip.py",
+      "size": 1900,
+      "sha256": "54be340ddf2a41073a0cbcadcecac97515133cd332a7c50cdb2468c55a228fcc"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\analysis\\size_check.py",
+      "relpath": "analysis\\size_check.py",
+      "size": 3122,
+      "sha256": "32a1f5cdb909a0793725392e69a7c57e7d8bcf9ec46fb6209dc0e62d0c09d889"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\exec_probe.py",
+      "relpath": "exec_probe.py",
+      "size": 49564,
+      "sha256": "1a7f64c233d4b90d65f0d09eb0ac9ab273b61e3d9bc5927efb50e89e445ca0a9"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\live_limits.py",
+      "relpath": "live_limits.py",
+      "size": 35678,
+      "sha256": "ca011cbab572276dfedd8ce06a276f678fd668da0917a5e1e4a3ec2f443cff91"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\maker_live.py",
+      "relpath": "maker_live.py",
+      "size": 211736,
+      "sha256": "60c8b33af9df502170779e93e5ff332ed0045ee806b6700fa0287d69f5a29eaf"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\market_tape.py",
+      "relpath": "market_tape.py",
+      "size": 71223,
+      "sha256": "1fb0287004def40e7b3e938e66f23e5380f0fad0e7c0286fe07199a9e44b4716"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\ondo_preflight.py",
+      "relpath": "ondo_preflight.py",
+      "size": 38461,
+      "sha256": "d73d670c3c4ce6bfd945f0c830ead5acdc2e84b9ec4448c1e3433489c82b531b"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\ondo_probe.py",
+      "relpath": "ondo_probe.py",
+      "size": 95483,
+      "sha256": "7dffa176eb571e1e1d03c60f4e29b3947de3e8fcea5fea8ec57487d5eb850340"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\quote_gates.py",
+      "relpath": "quote_gates.py",
+      "size": 12089,
+      "sha256": "e93e546b41e7229d40e64afc123540f70a1147c85f5e4448c4d81876766373be"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\quote_placement.py",
+      "relpath": "quote_placement.py",
+      "size": 12333,
+      "sha256": "a1d2069df2e2514f373873e1f22d5424ed6da26369302514d513789aa3b4c6ec"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\ref_feed.py",
+      "relpath": "ref_feed.py",
+      "size": 42757,
+      "sha256": "39a0fe298ebdd343e876303d64038750f9cc74764e3ff4910bde4f594080ef35"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\src\\spread_watch.py",
+      "relpath": "spread_watch.py",
+      "size": 138178,
+      "sha256": "1e3158b21fb3260eaefc77c54f85fa4ab37ab810b0ec89ef21b0664f3bf479a3"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\fixtures\\futu_ws_frames.jsonl",
+      "relpath": "fixtures\\futu_ws_frames.jsonl",
+      "size": 426421,
+      "sha256": "c803f785b4febecf3fcd4132af158c476f7e2eabd68996862c7de1cb7b5bbad3"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_exec_probe.py",
+      "relpath": "test_exec_probe.py",
+      "size": 39219,
+      "sha256": "5673543ebbf5c4f4e82a346ae81e1e8aaf7d4ba776e648eabcf8d71518aeb1ad"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_funding_history.py",
+      "relpath": "test_funding_history.py",
+      "size": 12381,
+      "sha256": "5d7a15512c4d5cabaf119e3af9a70619ee6210668ad080662ab64ea19e786f51"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_leadlag.py",
+      "relpath": "test_leadlag.py",
+      "size": 10754,
+      "sha256": "da27e7f7a795fc8594fbde673554c14aad48d22dbb858f00519735126116f4ae"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_live_limits.py",
+      "relpath": "test_live_limits.py",
+      "size": 36327,
+      "sha256": "238b3f5085c7985d5d359b0cc78e6789cc49cf2457b2d51ac36a0b5a1bba62bd"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_maker_live.py",
+      "relpath": "test_maker_live.py",
+      "size": 183197,
+      "sha256": "6b4f3bfa159662ac525045b477ae30482cd369cb01c7589479d4e60a9e579861"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_market_tape.py",
+      "relpath": "test_market_tape.py",
+      "size": 51704,
+      "sha256": "b542457768ff5a022a9ff5160d12060d0c07f76c644a09ac70d72767080c4540"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_ondo_depth.py",
+      "relpath": "test_ondo_depth.py",
+      "size": 105908,
+      "sha256": "c02a60b9810e5872fd9853164b7e771637053379c1525c30c5a200b54c1cec79"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_ondo_preflight.py",
+      "relpath": "test_ondo_preflight.py",
+      "size": 37160,
+      "sha256": "451cafed3d45635ca6a3e79573b47682eee255471259d24d452a5e9a99707db3"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_ondo_probe.py",
+      "relpath": "test_ondo_probe.py",
+      "size": 92946,
+      "sha256": "6d25a251a1e1341a9fc184f46507aa63c73cb6b58ea9a4dd6fabf9ae06ba450f"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_opportunities.py",
+      "relpath": "test_opportunities.py",
+      "size": 4894,
+      "sha256": "cc34efb9c6f199afa471307ed2fb7f498d097d680db81962d8261b967633bcc4"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_ref_feed.py",
+      "relpath": "test_ref_feed.py",
+      "size": 27300,
+      "sha256": "162f49e504f82e202383a4e029b71b2503ece3c86c0f208c6ffb64197dae3477"
+    },
+    {
+      "root": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests",
+      "path": "E:\\Nautilus-Perps\\.worktrees\\ondo-r52-app\\tests\\test_spread_watch.py",
+      "relpath": "test_spread_watch.py",
+      "size": 101405,
+      "sha256": "4b887469410853fac3fae63be2a6a5295db35fe4d731359016524dd34cc506bd"
+    }
+  ]
+}
