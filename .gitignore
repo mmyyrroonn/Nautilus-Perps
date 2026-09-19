@@ -11,3 +11,6 @@ catalog/
 *.parquet
 reports/stage1/dev/
 reports/live/
+
+# Isolated git worktrees
+.worktrees/

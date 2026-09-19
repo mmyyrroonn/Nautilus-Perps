@@ -4,10 +4,12 @@ version = "0.1.0"
 description = "Hyperliquid (HIP-3 xyz dex) x Lighter x Aster cross-exchange spread feasibility validation"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    # Local fork wheel (E:/nautilus_trader, branch aster): v2.0.0rc4 + Aster adapter.
-    # Rebuild: see E:/nautilus_trader/BUILD_WINDOWS.md; install into this venv with
-    #   uv pip install --python .venv/Scripts/python.exe <wheel>
-    "nautilus_trader @ file:///E:/nautilus_trader/target/wheels/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    # Local fork wheel (E:/nautilus_trader, branch onde-perps): v2.0.0rc4 + Aster + Ondo adapters,
+    # release profile, strict build (0 warnings). Built R5.1 2026-09-19; sha256:
+    #   82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9
+    # Rollback target: dist-r4 wheel sha256 2e7b0b6e0511b08fe19628b81b17a25497d939de1aa72bb44c776fd4740498f0
+    # Build procedure: E:/nautilus_trader/BUILD_WINDOWS.md (maturin build --release from python/).
+    "nautilus_trader @ file:///E:/nautilus_trader/dist-r5/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
     "python-dotenv",
     # Reference-price leg (src/ref_feed.py): the FUTUNN OPEN API quote WebSocket
     # (wss://webapi-quote.futunn.com/ws) and its Ed25519 / RSA-SHA256 auth signature.
