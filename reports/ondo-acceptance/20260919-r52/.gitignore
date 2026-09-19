@@ -1,0 +1,8 @@
+# Agent transcripts and active output captures are local orchestration artifacts.
+/control/pi-*-session.jsonl
+/control/pi-*-events.jsonl
+/control/pi-merge-output.txt
+/control/pi-merge-stderr.log
+# Post-merge records contain the resulting commit IDs and stay local.
+/control/merge-result.*
+/control/merge-final-result.*
