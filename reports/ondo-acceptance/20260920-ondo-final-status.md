@@ -22,6 +22,8 @@ venue, fees, slippage and economic outcome remain unverified.
   `9251ed9a23adeb8f16f5cc7766f3c9dc2a2404bb0ec84a435edaa2cd46aa3972`.
 - Source manifest: 63/63 v6 hashes matched. Candidate build manifest: 49/49 files matched.
 - Final application suite against the installed v6 candidate: 493 passed, zero failed.
+- Post-merge verification: application 493 passed and native crate 1,031 passed, both with zero
+  failures; native format and scoped diff checks also passed.
 - Final dry-run recognized the native trade capability but retained zero credentials, zero client,
   zero requests, `live_execution_ready=false` and `production_execution_verified=false`.
 
