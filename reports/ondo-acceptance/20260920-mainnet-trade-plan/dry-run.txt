@@ -1,0 +1,82 @@
+{
+  "account": {
+    "environment": "production",
+    "expected_venue_account_id_present": true,
+    "journal_path": "reports/ondo-acceptance/20260920-mainnet-trade-plan/journal-20260920T023433003399Z.json"
+  },
+  "authorization": {
+    "approved_plan_sha256": "3323f01e37ed93e2c82e7e79f18562db563c9afa6c3aa03877649cbf0a01be1f",
+    "user_phrase_������_present": true
+  },
+  "cleanup": {
+    "cancel_own_orders_only": true,
+    "confirm_cancels": true,
+    "confirm_flat_position": true,
+    "stop_budget_secs": 5
+  },
+  "close": {
+    "limit_price": "221.47",
+    "max_close_attempts": 2,
+    "max_quote_age_secs": "2",
+    "order_type": "limit",
+    "reduce_only": true,
+    "side": "sell",
+    "time_in_force": "IOC"
+  },
+  "dms": {
+    "account_wide_effect": "a lapsed timer cancels every resting order on the dedicated account; it does not close a position",
+    "activation": "subscribe cancelAllOrdersAfterPerps after flat-account verification",
+    "mode": "trading",
+    "release_on_stop": "only after authoritative flat proof and matching host ACK",
+    "renewal_interval_secs": 15,
+    "renewal_message_verified": false,
+    "timeout_secs": 30
+  },
+  "dry_run": true,
+  "entry": {
+    "limit_price": "222.40",
+    "max_quote_age_secs": "2",
+    "max_slippage_bps": "20",
+    "notional_usd": "14",
+    "order_type": "limit",
+    "quantity": "0.06",
+    "reduce_only": false,
+    "side": "buy",
+    "time_in_force": "IOC"
+  },
+  "envelope": {
+    "deadline_secs": 120,
+    "max_app_requests": 6,
+    "max_gross_exposure_usd": "20",
+    "max_new_risk_requests": 1,
+    "max_notional_per_order_usd": "20",
+    "max_orders": 3,
+    "min_available_margin_usdc": "25",
+    "require_flat_start": true
+  },
+  "instrument": {
+    "instrument_id": "NVDA-USD-PERP.ONDO",
+    "max_quantity": "4500",
+    "min_notional": null,
+    "min_notional_currency": null,
+    "min_notional_source": "unpublished",
+    "min_quantity": null,
+    "min_quantity_source": "unpublished",
+    "price_increment": "0.01",
+    "quote_currency": "USD",
+    "size_increment": "0.01",
+    "symbol": "NVDA"
+  },
+  "limits_configured": true,
+  "live_execution_ready": false,
+  "live_execution_ready_reason": "dry-run has no account/readiness/authorization evidence",
+  "native_trade_capability": {
+    "missing": [],
+    "reason": "the installed adapter exposes the production write-envelope contract and the readiness snapshot; the native layer remains the enforcing authority",
+    "source": "native-trade-contract",
+    "supported": true
+  },
+  "native_write_capable": true,
+  "plan_sha256": "3323f01e37ed93e2c82e7e79f18562db563c9afa6c3aa03877649cbf0a01be1f",
+  "plan_version": 1
+}

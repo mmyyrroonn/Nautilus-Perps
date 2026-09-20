@@ -168,3 +168,37 @@ aggregate_min_notional_usd = 5.0
 # ... but it never waits longer than this before rounding up to the venue minimum.
 max_wait_s = 5.0
 
+# Restricted Ondo production-trade implementation envelope.
+#
+# This section enables offline plan/config construction only. It does not authorize account
+# connection, DMS, submit, cancel, or any other production side effect. A live run still
+# requires the native capability contract, a fully resolved hash-bound plan, current-turn
+# authorization, and every runtime start gate.
+[ondo_trade]
+instrument = "NVDA-USD-PERP.ONDO"
+symbol = "NVDA"
+
+# User-selected target band is USD 10-20; this implementation proposes USD 15.
+entry_notional_usd = "15"
+
+# Hard outer rails from CLAUDE.md/user scope.
+max_notional_per_order_usd = "50"
+max_gross_exposure_usd = "100"
+
+# Exactly one opening attempt plus at most two reduce-only exit attempts.
+max_orders = 3
+max_new_risk_requests = 1
+
+# App-visible writes: creates plus own-order cancels. Native background reads are excluded.
+max_app_requests = 6
+
+# Same-unit operator buffer in USDC. This is not an FX conversion and not a venue minimum.
+# Higher is stricter; the app/native hard safety floor is 25 USDC for the current USD15 target.
+min_available_margin_usdc = "25"
+
+# Total bounded session, with the final 5 seconds reserved for exits/cancels/reconciliation.
+deadline_secs = 600
+max_close_attempts = 2
+max_slippage_bps = "20"
+cleanup_budget_secs = 5
+

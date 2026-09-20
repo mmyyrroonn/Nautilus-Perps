@@ -12,5 +12,8 @@ catalog/
 reports/stage1/dev/
 reports/live/
 
+# Production probe recovery journals may contain account/order identifiers.
+reports/**/journal*.json*
+
 # Isolated git worktrees
 .worktrees/

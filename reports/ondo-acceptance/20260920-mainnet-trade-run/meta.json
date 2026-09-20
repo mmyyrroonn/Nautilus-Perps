@@ -1,0 +1,29 @@
+{
+  "complete": false,
+  "environment": "production",
+  "exit_code": 1,
+  "failure": "RuntimeError: readiness timeout while waiting for engine connections",
+  "fees": "unknown",
+  "files": {
+    "trade": {
+      "bytes": 9236,
+      "path": "trade.json",
+      "sha256": "a1736c333d67a93993caa210f264bc4db45d3ceb6fba93329655e3fdf0ed8ebf"
+    }
+  },
+  "finished_at_utc": "2026-09-20T02:37:58.289+00:00",
+  "mode": "production-trade",
+  "native_final_clean": false,
+  "native_write_capable": true,
+  "net_position": "0",
+  "outcome": "not_started",
+  "plan_sha256": "3323f01e37ed93e2c82e7e79f18562db563c9afa6c3aa03877649cbf0a01be1f",
+  "production_execution_verified": false,
+  "run_dir": "runs/20260920T023746500572Z",
+  "run_id": "20260920T023746500572Z",
+  "schema_version": 1,
+  "started_at_utc": "2026-09-20T02:37:46.500+00:00",
+  "stop_condition": "exception",
+  "tool": "ondo_trade_probe",
+  "venue": "ONDO"
+}
