@@ -122,6 +122,10 @@ EXPOSURE_HEADROOM = 0.90
 
 DEFAULT_PATH = Path("config/limits.toml")
 
+# Tables in the shared operator file that another strict loader owns. Their keys are not silently
+# ignored: that loader validates them. They are only outside this maker strategy's schema.
+EXTERNAL_LIMIT_SECTIONS = frozenset({"ondo_trade"})
+
 
 class LimitsError(ValueError):
     """Raised when the file exists but cannot produce a usable set of limits."""
@@ -574,6 +578,8 @@ def _unexpected_keys(data: dict, asked: set[tuple[str, str]]) -> tuple[str, ...]
     """
     out: list[str] = []
     for table, block in data.items():
+        if table in EXTERNAL_LIMIT_SECTIONS:
+            continue
         if not isinstance(block, dict):
             out.append(f"{table} (a value outside any table)")
             continue

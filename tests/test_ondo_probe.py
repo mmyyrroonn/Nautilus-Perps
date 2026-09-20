@@ -19,10 +19,9 @@ this file:
   ``EXIT_REFUSED`` before a client exists, and it must never be written up as "the probe
   ran but returned no data";
 * ``protocol_verified`` and ``exit_code_zero_means_clean_account`` are **false by
-  construction** in R4 - no authenticated private/sandbox request has been host-confirmed
-  (public reads are observed but are not protocol acceptance), and the adapter's
-  converging stop is unobserved from Python (no native ``StopReport`` telemetry; the
-  ordered stop is unreachable on the installed R5 wheel).
+  construction** in R4. Production read-only may host-confirm its authenticated subset,
+  but not the write/DMS protocol; the adapter's converging stop also remains unobserved
+  from Python because there is no native ``StopReport`` telemetry.
 
 The last section persists its stability evidence as JSON rather than printing it (R3
 acceptance report, section 7). It lands in ``tmp_path`` by default; point
@@ -2649,6 +2648,10 @@ def test_production_readonly_config_is_production_and_read_only(tmp_path):
                 or getattr(built, "account_read_only", None) is True)
         assert built.kwargs.get("allow_production_orders") is not True
         assert "api_key" not in built.kwargs and "api_secret" not in built.kwargs
+    builder = result.factory.calls[0][1]["builder"]
+    timeout_calls = [args for name, args, _kwargs in builder.calls
+                     if name == "with_timeout_connection"]
+    assert timeout_calls == [(30,)]
     assert result.writes == []
     for built in registry.built:
         calls = getattr(built, "calls", None)
@@ -2946,6 +2949,15 @@ def test_production_readonly_support_requires_all_native_acceptance_evidence(tmp
     payload = probe_report(out_dir)
     assert payload["production_readonly_support_verified"] is True
     assert "disabled" in payload["production_readonly_support_reason"]
+    assert payload["protocol_verified"] is False
+    protocol_reason = payload["protocol_verified_reason"].lower()
+    assert "production read-only" in protocol_reason
+    assert "host-confirmed" in protocol_reason
+    assert "no authenticated private" not in protocol_reason
+    protocol_gap = next(item for item in payload["unverified"]
+                        if item.get("item") == "protocol")
+    assert "order submission" in protocol_gap["documented_not_confirmed"]
+    assert "REST authentication header names" not in protocol_gap["documented_not_confirmed"]
 
 
 @pytest.mark.parametrize(

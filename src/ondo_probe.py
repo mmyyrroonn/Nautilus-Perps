@@ -48,12 +48,13 @@ a subscription or a recovery from a dry run, a factory marker or a separate run.
 
 Three things this probe refuses to claim, and they are the reason it exists in this shape:
 
-1. **No private/sandbox protocol acceptance has ever happened.**  The public surface has
-   been read and recorded, but no authenticated private request has been host-confirmed.
-   The REST auth header names, the WS login signature concatenation order, the real
-   private frame shapes and the dead-man-switch renewal semantics are all *documented, not
-   host-confirmed*. ``protocol_verified`` is therefore ``False`` in every report this file
-   can produce, and no field of it may be read as a private host fact.
+1. **A production read-only acceptance is not full private protocol acceptance.**  A passing
+   ``production-readonly`` run may host-confirm private login, the two read-only
+   subscriptions and signed account recovery. It still does not exercise authenticated
+   order submission/cancellation, order/fill event payloads or dead-man-switch semantics.
+   ``protocol_verified`` therefore remains ``False`` until those write-path facts are
+   independently accepted; the report names the read-only facts it did observe instead of
+   denying them.
 2. **Exit code 0 does not mean the account was cleaned, and capability is not a verdict.**
    The ordered bounded stop executor (``OndoAccountRuntime::stop_and_wait``:
    ``CancelOwnOrders -> ConfirmOwnOrders -> ReleaseDeadMansSwitch -> ClosePrivateStream``)
@@ -149,6 +150,7 @@ SCHEMA_VERSION = 1
 PROBE_INSTANCE = "ONDO-PROBE-001"
 TRADER_ID = "ONDO-PROBE-001"
 CONNECTION_TIMEOUT_SECS = 10
+PRODUCTION_READONLY_CONNECTION_TIMEOUT_SECS = 30
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -318,6 +320,25 @@ PROTOCOL_VERIFIED_REASON = (
     "switch renewal semantics are documented, not host-confirmed. Nothing in this report "
     "may be read as a private host fact"
 )
+PRODUCTION_READONLY_PROTOCOL_REASON = (
+    "authenticated production read-only access was host-confirmed in this run: the venue "
+    "accepted the private WebSocket login and both required subscriptions, and signed "
+    "account recovery published account-state events. Overall protocol_verified remains "
+    "false because authenticated order submission and cancellation, order/fill event "
+    "payloads, and dead-man-switch renewal and release semantics were not host-confirmed"
+)
+PROTOCOL_DOCUMENTED_NOT_CONFIRMED = [
+    "REST authentication header names",
+    "the WebSocket login signature concatenation order",
+    "the real private frame shapes",
+    "dead-man-switch renewal and release semantics",
+]
+PRODUCTION_READONLY_DOCUMENTED_NOT_CONFIRMED = [
+    "order submission",
+    "order cancellation",
+    "order and fill event payloads",
+    "dead-man-switch renewal and release semantics",
+]
 
 # The accounting buckets, named once so the report keys and the classifiers cannot drift.
 BUCKET_SUBMITTED = "submitted"
@@ -2067,12 +2088,17 @@ def build_node(plan: Plan, adapter: OndoAdapter, node_factory: Callable[..., obj
         if plan.mode == MODE_PRODUCTION_READONLY
         else LoggerConfig(stdout_level=LogLevel.from_str(plan.log_level))
     )
+    connection_timeout_secs = (
+        PRODUCTION_READONLY_CONNECTION_TIMEOUT_SECS
+        if plan.mode == MODE_PRODUCTION_READONLY
+        else CONNECTION_TIMEOUT_SECS
+    )
     builder = (
         LiveNode.builder(PROBE_INSTANCE, TraderId.from_str(TRADER_ID),
                          _node_environment(plan.mode))
         .with_logging(native_logging)
         .with_risk_engine_config(_risk_config(plan))
-        .with_timeout_connection(CONNECTION_TIMEOUT_SECS)
+        .with_timeout_connection(connection_timeout_secs)
         .add_data_client(None, adapter.OndoDataClientFactory(), _data_config(adapter, plan))
     )
 
@@ -2398,19 +2424,23 @@ def converging_stop_document(capability: ShutdownCapability) -> dict[str, object
     }
 
 
-def unverified_document(capability: ShutdownCapability) -> list[dict[str, object]]:
+def unverified_document(
+    capability: ShutdownCapability,
+    *,
+    protocol_reason: str = PROTOCOL_VERIFIED_REASON,
+    protocol_gaps: list[str] | None = None,
+) -> list[dict[str, object]]:
     """The two facts this probe will not let a reader infer as verified."""
     return [
         {
             "item": "protocol",
             "verified": False,
-            "reason": PROTOCOL_VERIFIED_REASON,
-            "documented_not_confirmed": [
-                "REST authentication header names",
-                "the WebSocket login signature concatenation order",
-                "the real private frame shapes",
-                "dead-man-switch renewal and release semantics",
-            ],
+            "reason": protocol_reason,
+            "documented_not_confirmed": (
+                list(protocol_gaps)
+                if protocol_gaps is not None
+                else list(PROTOCOL_DOCUMENTED_NOT_CONFIRMED)
+            ),
         },
         {
             "item": "converging_stop",
@@ -2521,6 +2551,13 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
             "execution remains disabled"
         )
 
+    if production_support_verified:
+        protocol_reason = PRODUCTION_READONLY_PROTOCOL_REASON
+        protocol_gaps = PRODUCTION_READONLY_DOCUMENTED_NOT_CONFIRMED
+    else:
+        protocol_reason = PROTOCOL_VERIFIED_REASON
+        protocol_gaps = PROTOCOL_DOCUMENTED_NOT_CONFIRMED
+
     document: dict[str, object] = {
         "tool": "ondo_probe",
         "schema_version": SCHEMA_VERSION,
@@ -2553,7 +2590,7 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
             "does not prove complete account coverage"
         ),
         "protocol_verified": False,
-        "protocol_verified_reason": PROTOCOL_VERIFIED_REASON,
+        "protocol_verified_reason": protocol_reason,
         "exit_code_zero_means_clean_account": False,
         "production_readonly_support_verified": production_support_verified,
         "production_readonly_support_reason": production_reason,
@@ -2567,7 +2604,11 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
         "converging_stop_reason": capability.reason,
         "converging_stop": converging_stop_document(capability),
         "native_diagnostics": native_diagnostics_document(diagnostics),
-        "unverified": unverified_document(capability),
+        "unverified": unverified_document(
+            capability,
+            protocol_reason=protocol_reason,
+            protocol_gaps=protocol_gaps,
+        ),
         "orders_submitted_by_probe": 0,
     }
     document.update(banner_document(plan, run_id=run_id))

@@ -209,26 +209,30 @@ Write-Output "probe_exit_code=$LASTEXITCODE"
 ```powershell
 # 1. 干跑：只解析计划，不读 .env、不建 client、不联网
 .\.venv\Scripts\python.exe src\ondo_probe.py --mode production-readonly `
-    --symbols NVDA --dry-run
+    --symbols BTC --dry-run
 
 # 2. 生产只读，有限时；需要 .env 里的 ONDO_MAINNET_* 三个名字
 .\.venv\Scripts\python.exe src\ondo_probe.py --mode production-readonly `
-    --symbols NVDA,TSLA --minutes 2 --out $runDir
+    --symbols BTC --minutes 0.5 --out $runDir
 Write-Output "probe_exit_code=$LASTEXITCODE"
 ```
 
-**当前安装的 wheel 不提供 production 只读能力。** 本模式已实现且离线测试通过，但旧 wheel 在构造
-鉴权客户端时会具名拒绝 production（`ProductionForbidden`）；probe 把这次拒绝**如实**写成 `complete: false`
-与失败原因，**不**把它当作通过。只有在安装了支持 production 只读 scope 的 candidate wheel 之后，
-这一模式才可能真正读到一个账户。**它仍然不是「上主网」授权**：不发任何写请求，主网真实下单的
-「上主网」规则见第 8 节。
+2026-09-20 的 BTC candidate 已完成 production 只读验收：同一轮 native snapshot 确认身份匹配、私有登录、
+`ordersPerps`/`fillsPerps` 订阅 ACK、账户恢复事件和完整关机。适配器会把 HTTP `Date` 观测到的服务器时钟偏移
+用于后续 REST 与 WebSocket 签名；只读连接成功后立即做首次账户恢复；空历史页允许 `pageInfo.nextCursor=""`
+表示结束。应用为这一模式保留 30 秒连接窗口，其余模式仍是 10 秒。
+
+这只是**生产只读 A/B 验收**，不是完整私有协议验收：`protocol_verified` 仍为 `false`，因为它没有测试认证下单、
+撤单、订单/成交事件载荷或 DMS 续期/释放。它也仍然不是「上主网」授权：不发任何写请求，主网真实下单的
+「上主网」规则见第 8 节。旧 wheel 若拒绝 production，或 native snapshot 缺少任一必需证据，probe 仍会
+如实写成失败，不会用退出码 0 冒充通过。
 
 Astra 跑主网只读的推荐命令（canonical `.env` 用环境变量显式传入，**不复制进 worktree**；日志脱敏见第 4 节）：
 
 ```powershell
 $env:ONDO_PROBE_ENV_FILE = 'E:\Nautilus-Perps\.env'
 .\\.venv\\Scripts\\python.exe src\\ondo_probe.py --mode production-readonly `
-    --symbols NVDA --minutes 2 --log-level WARNING --out $runDir
+    --symbols BTC --minutes 0.5 --log-level WARNING --out $runDir
 Write-Output "probe_exit_code=$LASTEXITCODE"
 Remove-Item Env:\ONDO_PROBE_ENV_FILE
 ```
