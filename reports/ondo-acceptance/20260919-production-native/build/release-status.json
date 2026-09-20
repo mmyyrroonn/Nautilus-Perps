@@ -1,0 +1,10 @@
+﻿{
+    "stage":  "release",
+    "started_utc":  "2026-09-19T15:39:44.1307536Z",
+    "ended_utc":  "2026-09-19T16:09:50.1199146Z",
+    "exit_code":  0,
+    "source":  "E:\\nautilus_trader\\.worktrees\\ondo-production-native",
+    "build_python":  "E:\\nautilus_trader\\.worktrees\\ondo-r52-cleanup\\.venv\\Scripts\\python.exe",
+    "cargo_target":  "E:\\nautilus_trader\\.worktrees\\task-ondo-r5\\target",
+    "warning_exception":  "CARGO_BUILD_WARNINGS=allow (existing Windows linker messages)"
+}

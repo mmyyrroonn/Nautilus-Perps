@@ -1,0 +1,17 @@
+{
+  "mode": "production-readonly",
+  "child_exit_code": 1,
+  "supervisor_timeout": false,
+  "raw_console_retained": false,
+  "production_readonly_support_verified": false,
+  "production_execution_verified": false,
+  "available": true,
+  "schema_confirmed": true,
+  "logged_in": false,
+  "reconnects": 0,
+  "recoveries": 0,
+  "account_state_events": 0,
+  "identity_match": "matched",
+  "shutdown_status": "stopping",
+  "required_subscriptions_acked": false
+}

@@ -1,0 +1,68 @@
+# Reference copy of the dedicated section now applied in the APP WORKTREE
+# config/limits.toml. It has not been synchronized to the canonical/main checkout.
+#
+# The app trade probe reads ONLY this table for its user-tightened bounds.  It must never
+# reuse the maker tables ([order], [inventory], [exposure], [daily], ...) above/around it:
+# those describe a quoting strategy, not a single bounded production trade.
+#
+# Each key can only make the run SMALLER / SAFER.  src/ondo_trade_limits.py holds a
+# module-constant hard cap for every numeric key and applies min(config, CAP); a value
+# above a cap is clamped and recorded in the configured/cap/applied report. Defaults may be
+# printed as an unapproved dry-run proposal, but live execution requires this complete table:
+# a missing file, section or required key refuses before credentials/client construction.
+# A malformed or inconsistent value is also a refusal, never a silent correction.
+#
+# Offline implementation is authorized. Account connection, DMS, orders and cancels are not.
+# Canonical sync and any live use remain separate steps.
+#
+#   src/ondo_trade_probe.py --mode production-trade --side buy --dry-run  # prints the resolved table
+
+[ondo_trade]
+# The single instrument this probe may trade.  One instrument only; NVDA is the candidate.
+instrument = "NVDA-USD-PERP.ONDO"
+symbol = "NVDA"
+
+# Intended entry notional.  Target band is [10, 20] USD; hard cap 20 on this key (the
+# per-order hard cap below is 50).  A value under 10 is refused rather than sized up to the
+# venue minimum.  Default: "15".
+entry_notional_usd = "15"
+
+# Native pre-send per-order notional ceiling.  Hard cap 50.  Must be >= entry_notional_usd.
+# Default: "50".
+max_notional_per_order_usd = "50"
+
+# Native gross exposure ceiling for this run.  Hard cap 100.  Must be >= entry_notional_usd.
+# Default: "100".
+max_gross_exposure_usd = "100"
+
+# Total orders this run may submit: 1 entry + at most 2 reduce-only close attempts.
+# Hard cap 3.  Default: 3.
+max_orders = 3
+
+# New-risk create requests. Exactly one opening attempt; exits are reduce-only.
+max_new_risk_requests = 1
+
+# App-originated writes: one entry + two reduce-only exits + up to three own-order cancels.
+# Native background REST reads are deliberately not advertised as an app-visible total.
+max_app_requests = 6
+
+# Same-unit operator buffer in USDC; not an FX conversion or venue requirement.
+min_available_margin_usdc = "25"
+
+# Fixed total run deadline in seconds.  Hard cap 600.  Default: 600.
+deadline_secs = 600
+
+# Reduce-only close attempts for the confirmed fill.  Hard cap 2.  Default: 2.
+max_close_attempts = 2
+
+# Maximum price tolerance versus the fresh touch, in bps.  Hard cap 100.  Default: "20".
+max_slippage_bps = "20"
+
+# Separate bounded cleanup budget (cancel own orders -> confirm) in seconds.  Hard cap 15.
+# Default: 5.
+cleanup_budget_secs = 5
+
+# There is no key here for leverage, deposits, API permissions, DMS timeout, or a market
+# order.  Those are not tunable by this file: the probe never sends a market order, never
+# changes leverage/settings, never transfers funds, and a write session necessarily arms
+# the account-wide dead-man switch (stated in the plan, not configured here).

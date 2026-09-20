@@ -1,0 +1,242 @@
+[
+  {
+    "path": "Cargo.toml",
+    "sha256": "b58127e9922c2606a80f9fdde5891bfded29e46e589e3b687e6cc76dc0e4a13b"
+  },
+  {
+    "path": "README.md",
+    "sha256": "e0a3c9287fc878bfdbb7f5a26c00d1be3ce591db4420684037c6626f3666f476"
+  },
+  {
+    "path": "src/config.rs",
+    "sha256": "7b9512bff502e4ddeff62c6f826e42e18d9c65b2faf1ea986f7ece7fdeaf364a"
+  },
+  {
+    "path": "src/data.rs",
+    "sha256": "eea550cdac6d70d07f3144330038d8f6dac17e90a31c3f6c89d294820b93dfc8"
+  },
+  {
+    "path": "src/diagnostics.rs",
+    "sha256": "b043b3cf2f72381097b3f25e01a70ddf24eae0cee27cbd520006b3a2c74a9b5d"
+  },
+  {
+    "path": "src/execution.rs",
+    "sha256": "ea49d177318c186e50816aed0ff1370d934e9f1f98c8a0d88232553700a1df90"
+  },
+  {
+    "path": "src/factories.rs",
+    "sha256": "a7294d8cb37b092011138857dea6d4627b2a462d543b36e911b8ce062362d5e8"
+  },
+  {
+    "path": "src/lib.rs",
+    "sha256": "2802682cd2bdfd6dac0c6f501261ab5502d5f60656e5d661d030a5b60e30ca62"
+  },
+  {
+    "path": "src/reconciliation.rs",
+    "sha256": "d5388828f122c5f6df67c15e8f879cef96df5d5eeaf86ade72ffda0e7bd719ef"
+  },
+  {
+    "path": "src/recording.rs",
+    "sha256": "11017ffa2aea32ce8834e202617725b159dfc519c59e94108025fa619f826401"
+  },
+  {
+    "path": "src/signing.rs",
+    "sha256": "4d7bd009623d742bf2222d2549824430cf9526ea1420e0353bfe04f20db3baef"
+  },
+  {
+    "path": "src/common/consts.rs",
+    "sha256": "71ead54a3e621bdc318ff32e3372b25ec5615763aa45cc1c38faf4d793542c14"
+  },
+  {
+    "path": "src/common/credential.rs",
+    "sha256": "83831734734c123c6a8073fdb0c7998173bda482c2994d527002a9a1f0933254"
+  },
+  {
+    "path": "src/common/endpoint.rs",
+    "sha256": "98198f524c0aef5a05ed1e68e48c8e30551929c476218055230a20cf72e86b4a"
+  },
+  {
+    "path": "src/common/enums.rs",
+    "sha256": "ed465d6ee394b4978807433d7236fd7e591eee29a299a82a97204f354b82b3bf"
+  },
+  {
+    "path": "src/common/mod.rs",
+    "sha256": "0c9eb974169a148a4c4a3a9229a46c7970a45dd5268a4de4a5cc61d9b58e39bf"
+  },
+  {
+    "path": "src/common/parse.rs",
+    "sha256": "95521ef7bcf5ce15efbf35985d4fa777423be551006ad4efaba0005ea477bf75"
+  },
+  {
+    "path": "src/http/client.rs",
+    "sha256": "699ffeb6744e2ee6fe754b8c9aafe5bf2db5a52eca09b4003d29cc5615fb0edc"
+  },
+  {
+    "path": "src/http/error.rs",
+    "sha256": "b459856c116dc869f5a789253520c942c4951bd0db5b6d2f88e91db47c9ea2c5"
+  },
+  {
+    "path": "src/http/mod.rs",
+    "sha256": "83eb7410385d06417896d6665de0ee916d72bb0c6e1edcfc2503a33f2732169b"
+  },
+  {
+    "path": "src/http/models.rs",
+    "sha256": "abd2e32148a1d203523368e8366bbe6c60de38af01f75a1661867a6068043b68"
+  },
+  {
+    "path": "src/http/orders.rs",
+    "sha256": "6e508a646ba242d08e70bf81a5cebe0fcfd00460d6d0d054f37682c4d4281d57"
+  },
+  {
+    "path": "src/http/private.rs",
+    "sha256": "c498b9ef631ae234b52d519519a6767728ed2dbe8153e4ea75e806ce818754c1"
+  },
+  {
+    "path": "src/http/query.rs",
+    "sha256": "24c3072c0128195568f7b537a98cfaa043cac3a4b33af5494c5708855150f5b1"
+  },
+  {
+    "path": "src/http/rate_limit.rs",
+    "sha256": "6460f4a1582591076fdba9a6182ad1a80187ee3a99bfc584a342720b0a0b1f95"
+  },
+  {
+    "path": "src/python/config.rs",
+    "sha256": "470cfa9840640792a35ca4b04e56b4a6d339964d64734fc8df384e57380b52a3"
+  },
+  {
+    "path": "src/python/factories.rs",
+    "sha256": "300f84ef2b99a2342af05a162c8f0a8bf95be1d734380cb5fea792bf58035f7e"
+  },
+  {
+    "path": "src/python/http.rs",
+    "sha256": "ea47b597f9de740ca297cdb6149f3dfce20f5d79e21b3d0569d81e7851f30fce"
+  },
+  {
+    "path": "src/python/mod.rs",
+    "sha256": "85d9b8fdb6756810be96b8b412a863cc2c3922363b3f83141e486fc327d5d4ab"
+  },
+  {
+    "path": "src/websocket/book.rs",
+    "sha256": "d5134a4e76e69af94349f5f39fcd1331fee3fb2497b3f3225e0670c5b5dbc740"
+  },
+  {
+    "path": "src/websocket/client.rs",
+    "sha256": "546cee22a4ccdfc1940d0fc670a29ae0dd7e8b0a65c14b01c262b0b8e4a82b22"
+  },
+  {
+    "path": "src/websocket/messages.rs",
+    "sha256": "449b2bad2ea4a6d6f8a5fb9712e66bf59cd5d3674ab1ac3bea9c6dc16d512e48"
+  },
+  {
+    "path": "src/websocket/mod.rs",
+    "sha256": "debd4f6ca9903d69c6a445b21de4f571e2ff721581fb15b10c7831b69df3cdff"
+  },
+  {
+    "path": "src/websocket/parse.rs",
+    "sha256": "b62e60cd482dbe8a948084a1b232c09acf3f30d444d68932fdabe5aada2b40a5"
+  },
+  {
+    "path": "src/websocket/private/diagnostics.rs",
+    "sha256": "ae7b058d6f805fc181c2b4f68ede614da2c3332c3e5513911fe3cc3d04108664"
+  },
+  {
+    "path": "src/websocket/private/messages.rs",
+    "sha256": "4fc088dc28715793660e20479d51d23dddc6cbc3db63cc14d6c19bd85a36efd8"
+  },
+  {
+    "path": "src/websocket/private/mod.rs",
+    "sha256": "84bd7e18a314b1ac2892563b4d746188ac23964c77b498a7400be7fc4ccc74f1"
+  },
+  {
+    "path": "src/websocket/private/parse.rs",
+    "sha256": "0500fcffc82a2c2eb4c19a8ad8766fcccf9913bca38bca387b735cf389077cd6"
+  },
+  {
+    "path": "src/websocket/private/session.rs",
+    "sha256": "e25b251d1e53b8123fa492aec0eaa7e9e99ed8e0fd269a171fe7d05e2f2ebe9d"
+  },
+  {
+    "path": "src/websocket/private/stream.rs",
+    "sha256": "855d5f8849bb825592ebb6667a28469005ddc32adad54408205d5e34256cdd85"
+  },
+  {
+    "path": "tests/execution.rs",
+    "sha256": "385893be7aad2f0b8faa3f1d47c3eba41c6521c916ac888937baf7a40db27e15"
+  },
+  {
+    "path": "tests/http_client.rs",
+    "sha256": "d9e34a4b9c025630bdddec6fe30df560123af0739b8a5b23b79e97ddc47b4190"
+  },
+  {
+    "path": "tests/http_contract.rs",
+    "sha256": "2896b7c2ec7cd192bb4dc44bc39109109e5ce43d8ffb75827d3595153013c485"
+  },
+  {
+    "path": "tests/market_data.rs",
+    "sha256": "62026500abab249ada626348ad86a7f4bc228dbf32868cdea2f327308955b7e0"
+  },
+  {
+    "path": "tests/private_runtime.rs",
+    "sha256": "84e3f7b19d4b6bc8669c17094b924072ad6f578e80952e47b106020f980ccca8"
+  },
+  {
+    "path": "tests/python.rs",
+    "sha256": "8a0ec3d05efd7c10a9373a504d58f43fbe0b89458b4424fa072ed08680c6d2fa"
+  },
+  {
+    "path": "tests/reconciliation.rs",
+    "sha256": "c0329818e596eea9222360c78c05436c40bc2f70350e8fdfe9fc0a7d549875fa"
+  },
+  {
+    "path": "tests/signing.rs",
+    "sha256": "3d43f762eea0080e0cf0d871e826cab0652e970ca1bb3391ec98e1f2f657b5a8"
+  },
+  {
+    "path": "test_data/conflicts.md",
+    "sha256": "6189a7c4b5086267f6755399ca961428e72ac39b63e2821d5fabfbf551945321"
+  },
+  {
+    "path": "test_data/manifest.json",
+    "sha256": "df99a8014e06df416d82d4a80a38581df9dc92d91a5f0043458dc6655eb68ee5"
+  },
+  {
+    "path": "test_data/README.md",
+    "sha256": "03399f3a3ab2e8e4f7d9f431bb6ed4e990c5cbed4bce8e0c521f5dbf4d6f5364"
+  },
+  {
+    "path": "test_data/signing_rest_vectors.json",
+    "sha256": "a60d10f0c9e2ae85fb7227f2cce00e8b51af1a20e2ed1b3b283a329d4123de2f"
+  },
+  {
+    "path": "test_data/rest/markets_observed_20260914.json",
+    "sha256": "3fc411115f1d9ba2ca664adcddb87805d087331a803e4e8511d55f691e4d5af7"
+  },
+  {
+    "path": "test_data/rest/markets_synthetic.json",
+    "sha256": "06aaf025ac03a90740e1473cff26d31e0857da32b22842efb1b922b0cd785fa4"
+  },
+  {
+    "path": "test_data/ws/depth_observed.json",
+    "sha256": "79b814f2be32533681fb2e8c258ec95ec8f0563e55b71cf6d1ad78cc9b5e9866"
+  },
+  {
+    "path": "test_data/ws/funding_observed.json",
+    "sha256": "83b4a25fbc114c0e5ec37b111055b9e90e0e4ce05ed68b4168b2522fba01e82f"
+  },
+  {
+    "path": "test_data/ws/markprices_observed.json",
+    "sha256": "b1c297728ff964ab3a3f06a54abfbb156ce34f41254db27dc3d9228a856899f6"
+  },
+  {
+    "path": "test_data/ws/subscribe_observed.json",
+    "sha256": "7457b14f45efe1ecc561916df3d265061f20c7962b434a1408b149f480255af0"
+  },
+  {
+    "path": "test_data/ws/topofbook_observed.json",
+    "sha256": "482c75541f3d81cf8fc71abf6e426b1882d4a6065dc8b50e8d8b49da9a08afdf"
+  },
+  {
+    "path": "test_data/ws/trades_observed.json",
+    "sha256": "07e8f57bbaf05093ce51c327f3c6014876bfdcc1a7ee58a1e15f414db5baf3a4"
+  }
+]

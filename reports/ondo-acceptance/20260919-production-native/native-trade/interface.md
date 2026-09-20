@@ -1,0 +1,19 @@
+# Native production trade interface — frozen v5
+
+Source: `E:/nautilus_trader/.worktrees/ondo-production-trade`. Full offline Python-feature suite: **1031 passed**, exit 0. Source manifest: source-sha256-v5.json. **supports_production_trade_envelope remains exact False** after independent review clearance because automatic approval review rejected the final marker flip; no v6 or venue acceptance is claimed. The parent owns any markerFalse candidate build.
+
+The adapter exports OndoExecutionEnvelopeConfig with the exact constructor in ../trade-app/required-native-interface.md, including the required exact string **min_available_margin_usdc**, with an absolute native floor of25 USDC (higher is stricter). Config requires production environment, account_read_only=False, allow_production_orders=True, complete envelope, verbatim expected_venue_account_id, diagnostics_run_id, journal_path and reconcile_interval_secs=1. DMS timeout is bounded to 1-30 seconds; current app plan uses30, renewal is max(1, timeout//2).
+
+The native probe permits only NVDA-USD-PERP.ONDO, one approved limit IOC opening and at most two owned reduce-only IOC closes. Exact approval bounds and USD50/order, USD100gross, three creates and six total create/own-cancel requests are enforced at the native transport. Both absolute deadlines remain immutable. No max_total_requests promise applies to background reads.
+
+Start snapshot uses **available_margin_usdc**, compared directly with envelope min_available_margin_usdc (current app25 USDC). There is no available_margin_usd alias and no implicit conversion. The USD order budget is separate. Missing standalone venue minimum notional remains None/unpublished; if native Money supplies one, its currency must equal USD quote currency. Positive baseIncrement and quoteIncrement remain mandatory. Additional snapshot fields minimum_notional_usd=None and minimum_notional_policy=enforce_if_published state that policy without inventing zero.
+
+Production connect waits for phase=start before returning connected. Initial identity, complete whole-account flat/no-open-orders and required metadata precede any DMS arm. MarketInfo tradability must agree with exactly one Contract having disabled=False and isClosed=False; isClosed remains underlying hours, not the perp's disabled flag. Reconnect validates only this run's owned residual and refuses foreign/unknown state.
+
+production_trade_snapshot() takes zero arguments; factory clones share the current client's bound token, and returned mappings are detached. The nine-key readonly accessor remains unchanged. phase=reconciled requires a complete new REST read and event drain after latest activity; creates then freeze. phase=final/clean additionally requires ordered shutdown with matching host DMS-release ACK inside the original cleanup allowance. Sent-only/no/wrong ACK is unclean; late activity invalidates proof. Unavailable cost data stays None.
+
+Actual native commands supply serialized body/current native quote; the final send point rechecks actual bytes, quote/grid/notional, readiness, genuine DMS send-based deadline and durable journal after budget waiting. Low-level production transports require an unforgeable native run authority. Production journal binding paths cannot be silently reused as fresh runs.
+
+At cleanup_deadline the native execution private task independently exits and stops renewal/arming; unconfirmed shutdown cannot become final clean. The app watchdog still owns stopping the node/process. No account-wide cancel-all or position-flattening order is emitted by native stop.
+
+The report subagent-implementation.md lists actual verification, prior failures, remaining specifically requested coverage cases, and parent review/build gates. This interface is implementation evidence only and does not authorize account connection, DMS or actual orders/cancels.

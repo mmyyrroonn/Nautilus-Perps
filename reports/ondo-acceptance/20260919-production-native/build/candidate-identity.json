@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0rc4",
+  "wheel": "E:\\Nautilus-Perps\\reports\\ondo-acceptance\\20260919-production-native\\build\\dist\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+  "wheel_sha256": "df6c440170ad47fd1d8497a7c4da5cdddab69059d499bbddfb5d36f504f2c1d2",
+  "binary_sha256": "94174213891865f38080be9ef256d38b8e9692cba56c675962efd3b30a0054c7",
+  "stub_sha256": "11505b6c7af3f4a63bff6d8ba886a5ebc0bc7b734318d7b6d7554e515d104493",
+  "installer_recorded_archive_hash": false,
+  "frozen_source_files_verified": 47,
+  "config_and_factory_api_verified": true,
+  "production_trade_capability": false,
+  "credentials_read": false,
+  "network_started": false
+}

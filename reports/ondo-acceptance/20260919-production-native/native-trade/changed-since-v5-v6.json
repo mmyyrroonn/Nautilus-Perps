@@ -1,0 +1,4 @@
+﻿[
+    "crates/adapters/ondo/src/python/factories.rs",
+    "crates/adapters/ondo/tests/python.rs"
+]
