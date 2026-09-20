@@ -6,11 +6,11 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     # Local fork wheel (E:/nautilus_trader, branch onde-perps): v2.0.0rc4 + Aster + Ondo adapters,
     # Release profile with a per-command Windows linker-warning exception; strict attempt failed.
-    # Built R5.2 2026-09-19; sha256:
-    #   4d19c5df5bec73391a760d4b8643e2f8eaa53ce183dca88ee917454e2b91d642
+    # Built Ondo production v6 2026-09-20; sha256:
+    #   2cea63a07b5969ecf11558bc28a5021f4f89dd609f9ebe29d11b9278ef384db3
     # Rollback target: dist-r5 wheel sha256 82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9
     # Build procedure: E:/nautilus_trader/BUILD_WINDOWS.md (maturin build --release from python/).
-    "nautilus_trader @ file:///E:/nautilus_trader/dist-r52/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "nautilus_trader @ file:///E:/nautilus_trader/dist-ondo-production-v6/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
     "python-dotenv",
     # Reference-price leg (src/ref_feed.py): the FUTUNN OPEN API quote WebSocket
     # (wss://webapi-quote.futunn.com/ws) and its Ed25519 / RSA-SHA256 auth signature.
