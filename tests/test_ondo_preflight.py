@@ -30,6 +30,8 @@ import spread_watch  # noqa: E402
 
 ONDO_ID = "NVDA-USD-PERP.ONDO"
 TSLA_ONDO_ID = "TSLA-USD-PERP.ONDO"
+BTC_ONDO_ID = "BTC-USD-PERP.ONDO"
+ETH_ONDO_ID = "ETH-USD-PERP.ONDO"
 
 # plan 4.1: GET /v1/markets -> perps.tradingPairs, with baseIncrement (size step)
 # and quoteIncrement (price step); the fee/status fields are the documented
@@ -72,6 +74,7 @@ class FakeClient:
         self._instruments = instruments
         self._error = error or {}
         self.calls: list[str] = []
+        self.loaded_ids: list[str] = []
         if aio:
             self.get_status = self._async("get_status", self._status)
             self.get_markets = self._async("get_markets", self._markets)
@@ -81,8 +84,10 @@ class FakeClient:
             )
 
     def _async(self, name, value):
-        async def call(*_args):
+        async def call(*args):
             self.calls.append(name)
+            if name == "load_instrument_definitions" and args:
+                self.loaded_ids = [str(item) for item in args[0]]
             failure = self._error.get(name)
             if failure is not None:
                 raise failure
@@ -112,6 +117,7 @@ class FakeClient:
 
     def load_instrument_definitions(self, load_ids) -> object:
         self.calls.append("load_instrument_definitions")
+        self.loaded_ids = [str(value) for value in load_ids]
         failure = self._error.get("load_instrument_definitions")
         if failure is not None:
             raise failure
@@ -143,14 +149,38 @@ def test_targets_are_the_two_planned_markets():
     assert rows["NVDA"]["raw_market"] != rows["NVDA"]["instrument_id"]
 
 
-def test_a_symbol_outside_the_plan_is_rejected():
+def test_any_valid_ondo_symbol_is_derived_without_a_static_allowlist():
+    rows = {row["symbol"]: row for row in ondo_preflight.targets(["BTC", "US100"])}
+    assert rows["BTC"]["raw_market"] == "BTC-USD.P"
+    assert rows["BTC"]["instrument_id"] == BTC_ONDO_ID
+    assert rows["US100"]["raw_market"] == "US100-USD.P"
+    assert rows["US100"]["instrument_id"] == "US100-USD-PERP.ONDO"
+
+
+def test_an_invalid_symbol_is_rejected_before_any_network_call():
     with pytest.raises(ondo_preflight.OndoPreflightError):
-        ondo_preflight.targets(["AAPL"])
+        ondo_preflight.targets(["../BTC"])
 
 
-def test_only_the_two_mapped_symbols_have_markets():
+def test_cross_venue_registry_stays_curated_while_ondo_preflight_is_open():
     assert sorted(spread_watch.ONDO_RAW_MARKETS) == ["NVDA", "TSLA"]
-    assert ondo_preflight.targets(["NVDA", "TSLA"])
+    assert ondo_preflight.targets(["BTC", "ETH"])
+
+
+def test_all_discovers_only_enabled_usd_perpetual_markets():
+    markets = {"perps": {"tradingPairs": [
+        {"market": "BTC-USD.P", "baseIncrement": "0.0001", "quoteIncrement": "1",
+         "takerFee": "0.00025"},
+        {"market": "ETH-USD.P", "baseIncrement": "0.001", "quoteIncrement": "0.1",
+         "disabled": False, "takerFee": "0.00025"},
+        {"market": "LIT-USD.P", "baseIncrement": "1", "quoteIncrement": "0.0001",
+         "disabled": True, "takerFee": "0.00035"},
+        {"market": "BTC-USDC.P", "baseIncrement": "0.0001", "quoteIncrement": "1",
+         "takerFee": "0.00025"},
+    ]}}
+    rows = ondo_preflight.discover_enabled_targets(markets)
+    assert [row["symbol"] for row in rows] == ["BTC", "ETH"]
+    assert [row["instrument_id"] for row in rows] == [BTC_ONDO_ID, ETH_ONDO_ID]
 
 
 # ------------------------------------------------------------------------ dry run
@@ -190,6 +220,23 @@ def test_dry_run_does_not_construct_the_http_client(tmp_path, capsys):
     assert code == 0
     assert calls == []
     assert json.loads(capsys.readouterr().out)["mode"] == "dry-run"
+
+
+def test_all_dry_run_describes_dynamic_discovery_without_network(tmp_path, capsys):
+    out_dir = tmp_path / "preflight"
+    with patch.object(ondo_preflight, "load_adapter", return_value=fake_adapter()), \
+            patch("socket.socket.connect",
+                  side_effect=AssertionError("ALL dry-run must not open a socket")):
+        code = ondo_preflight.main(
+            ["--symbols", "ALL", "--out", str(out_dir), "--dry-run"],
+        )
+    assert code == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["selector"] == "all-enabled"
+    assert plan["targets"] == []
+    assert plan["load_ids"] == []
+    assert plan["network"] == "not contacted in --dry-run"
+    assert not out_dir.exists()
 
 
 def test_adapter_missing_is_reported_with_a_build_pointer(tmp_path, capsys):
@@ -263,6 +310,36 @@ def test_report_records_hashes_fetch_time_and_a_normalized_table(tmp_path):
         digest = hashlib.sha256((out / f"{name}.json").read_bytes()).hexdigest()
         assert meta["files"][name]["sha256"] == digest, name
         assert meta["files"][name]["bytes"] == (out / f"{name}.json").stat().st_size
+
+
+def test_all_run_discovers_enabled_targets_before_loading_instruments(tmp_path):
+    markets = {"perps": {"tradingPairs": [
+        {"market": "BTC-USD.P", "baseIncrement": "0.0001", "quoteIncrement": "1",
+         "takerFee": "0.00025"},
+        {"market": "ETH-USD.P", "baseIncrement": "0.001", "quoteIncrement": "0.1",
+         "takerFee": "0.00025"},
+        {"market": "LIT-USD.P", "baseIncrement": "1", "quoteIncrement": "0.0001",
+         "disabled": True, "takerFee": "0.00035"},
+    ]}}
+    contracts = [
+        {"market": "BTC-USD.P", "takerFee": "0.00025"},
+        {"market": "ETH-USD.P", "takerFee": "0.00025"},
+    ]
+    instruments = [
+        {"id": BTC_ONDO_ID, "market": "BTC-USD.P"},
+        {"id": ETH_ONDO_ID, "market": "ETH-USD.P"},
+    ]
+    client = FakeClient(markets=markets, contracts=contracts, instruments=instruments)
+    code = ondo_preflight.run(["ALL"], tmp_path / "out", client=client)
+    assert code == 0
+    assert client.loaded_ids == [BTC_ONDO_ID, ETH_ONDO_ID]
+    meta = read_json(tmp_path / "out" / "meta.json")
+    assert meta["requested_symbols"] == ["ALL"]
+    assert meta["symbols"] == ["BTC", "ETH"]
+    assert meta["discovery"]["enabled"] == 2
+    assert meta["discovery"]["disabled"] == 1
+    rows = read_json(tmp_path / "out" / "instruments.json")
+    assert [row["symbol"] for row in rows] == ["BTC", "ETH"]
 
 
 def test_exact_decimals_survive_the_normalized_table(tmp_path):
@@ -773,10 +850,10 @@ def test_the_default_targets_are_the_two_planned_symbols():
     assert parser_defaults.dry_run is False
 
 
-def test_main_writes_nothing_when_the_symbol_list_is_unknown(tmp_path, capsys):
+def test_main_writes_nothing_when_the_symbol_syntax_is_invalid(tmp_path, capsys):
     with patch.object(ondo_preflight, "load_adapter", return_value=fake_adapter()):
         code = ondo_preflight.main(
-            ["--symbols", "AAPL", "--out", str(tmp_path / "p"), "--dry-run"],
+            ["--symbols", "../AAPL", "--out", str(tmp_path / "p"), "--dry-run"],
         )
     assert code != 0
     assert not (tmp_path / "p").exists()

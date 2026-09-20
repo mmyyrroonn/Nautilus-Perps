@@ -1,0 +1,32 @@
+{
+  "account_reconciled": false,
+  "complete": true,
+  "converging_stop_available": true,
+  "environment": "production",
+  "exit_code": 0,
+  "failure": null,
+  "files": {
+    "probe": {
+      "bytes": 8132,
+      "path": "probe.json",
+      "sha256": "eb42f2888b044c5f8e4e40e02af371a623913374a699312c15d39aafc4a744c5"
+    }
+  },
+  "finished_at_utc": "2026-09-20T08:09:14.047+00:00",
+  "mode": "public",
+  "native_diagnostics_available": false,
+  "native_diagnostics_source": "no-target",
+  "outstanding_orders": 0,
+  "pending_ids": 0,
+  "production_readonly_support_verified": null,
+  "protocol_verified": false,
+  "run_dir": "runs/20260920T080832310195Z",
+  "run_id": "20260920T080832310195Z",
+  "schema_version": 1,
+  "started_at_utc": "2026-09-20T08:08:32.310+00:00",
+  "stop_condition": "deadline (a normal end for this mode)",
+  "supports_ordered_shutdown": true,
+  "supports_ordered_shutdown_source": "native-factory",
+  "tool": "ondo_probe",
+  "venue": "ONDO"
+}

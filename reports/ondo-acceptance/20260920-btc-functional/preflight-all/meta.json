@@ -1,0 +1,589 @@
+{
+  "complete": true,
+  "discovery": {
+    "disabled": 16,
+    "enabled": 65,
+    "total": 81,
+    "unknown": 0
+  },
+  "environment": "production",
+  "failure": null,
+  "fetched_at_ns": 1789891782668240128,
+  "fetched_at_utc": "2026-09-20T08:09:42.668+00:00",
+  "files": {
+    "contracts": {
+      "bytes": 66224,
+      "path": "contracts.json",
+      "sha256": "c987f6688a7b777522a2f7eb70de060782159bc1d4f00629f2e446af0e5a1abc"
+    },
+    "instruments": {
+      "bytes": 53097,
+      "path": "instruments.json",
+      "sha256": "69fe1d03c19f06892960afd2015d89da9e2c404cd593bd000dd07f3c12b0dc73"
+    },
+    "markets": {
+      "bytes": 369086,
+      "path": "markets.json",
+      "sha256": "aeedb7dae4d65263d68b45b9ba2d854a36aa142803924ee65d9ef2f51b544cae"
+    },
+    "missing": {
+      "bytes": 3,
+      "path": "missing.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "status": {
+      "bytes": 29,
+      "path": "status.json",
+      "sha256": "8b7474f6848e7feed84824218c2cac56d60d4848532de216bd63fb9500f68dcc"
+    }
+  },
+  "market_status_convention": {
+    "disabled_false": 0,
+    "disabled_true": 16,
+    "markets": 81,
+    "pinned_capture_2026_09_14": {
+      "captured": "2026-09-14",
+      "markets": 81,
+      "source": "reports/ondo-acceptance/20260914T142730Z-p1-build/rest-capture/markets.json",
+      "with_disabled_true": 20,
+      "with_status_string": 0
+    },
+    "rule": "disabled present-and-true => disabled; disabled absent => enabled by the venue convention; a status string, if one ever appears, is mapped through the adapter's rule",
+    "with_disabled_flag": 16,
+    "with_status_string": 0
+  },
+  "missing": [],
+  "requested_symbols": [
+    "ALL"
+  ],
+  "run_dir": "runs/20260920T080939253976Z",
+  "run_id": "20260920T080939253976Z",
+  "schema_version": 1,
+  "started_at_utc": "2026-09-20T08:09:39.253+00:00",
+  "symbols": [
+    "BTC",
+    "ENA",
+    "ETH",
+    "HYPE",
+    "ONDO",
+    "PUMP",
+    "SOL",
+    "XRP",
+    "ZEC",
+    "AAPL",
+    "AMD",
+    "AMZN",
+    "ARM",
+    "AVGO",
+    "BABA",
+    "BB",
+    "BMNR",
+    "CBRS",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "CXMT",
+    "GLW",
+    "GOOGL",
+    "HOOD",
+    "INTC",
+    "LITE",
+    "MINIMAX",
+    "MRNA",
+    "MRVL",
+    "META",
+    "MSFT",
+    "MSTR",
+    "MU",
+    "NBIS",
+    "NFLX",
+    "NVDA",
+    "ORCL",
+    "PLTR",
+    "PURR",
+    "SPCX",
+    "SMSN",
+    "SKHY",
+    "SNDK",
+    "TSLA",
+    "TSM",
+    "TTWO",
+    "UNITREE",
+    "ZHIPU",
+    "XAG",
+    "XAU",
+    "WTI",
+    "BRENT",
+    "COPPER",
+    "NATGAS",
+    "QQQ",
+    "SPY",
+    "DRAM",
+    "EWY",
+    "SOXL",
+    "KORU",
+    "URNM",
+    "US100",
+    "US500",
+    "USDJPY"
+  ],
+  "targets": [
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BTC-USD-PERP.ONDO",
+      "raw_market": "BTC-USD.P",
+      "symbol": "BTC",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ENA-USD-PERP.ONDO",
+      "raw_market": "ENA-USD.P",
+      "symbol": "ENA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ETH-USD-PERP.ONDO",
+      "raw_market": "ETH-USD.P",
+      "symbol": "ETH",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "HYPE-USD-PERP.ONDO",
+      "raw_market": "HYPE-USD.P",
+      "symbol": "HYPE",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ONDO-USD-PERP.ONDO",
+      "raw_market": "ONDO-USD.P",
+      "symbol": "ONDO",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "PUMP-USD-PERP.ONDO",
+      "raw_market": "PUMP-USD.P",
+      "symbol": "PUMP",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SOL-USD-PERP.ONDO",
+      "raw_market": "SOL-USD.P",
+      "symbol": "SOL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "XRP-USD-PERP.ONDO",
+      "raw_market": "XRP-USD.P",
+      "symbol": "XRP",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ZEC-USD-PERP.ONDO",
+      "raw_market": "ZEC-USD.P",
+      "symbol": "ZEC",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AAPL-USD-PERP.ONDO",
+      "raw_market": "AAPL-USD.P",
+      "symbol": "AAPL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AMD-USD-PERP.ONDO",
+      "raw_market": "AMD-USD.P",
+      "symbol": "AMD",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AMZN-USD-PERP.ONDO",
+      "raw_market": "AMZN-USD.P",
+      "symbol": "AMZN",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ARM-USD-PERP.ONDO",
+      "raw_market": "ARM-USD.P",
+      "symbol": "ARM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AVGO-USD-PERP.ONDO",
+      "raw_market": "AVGO-USD.P",
+      "symbol": "AVGO",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BABA-USD-PERP.ONDO",
+      "raw_market": "BABA-USD.P",
+      "symbol": "BABA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BB-USD-PERP.ONDO",
+      "raw_market": "BB-USD.P",
+      "symbol": "BB",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BMNR-USD-PERP.ONDO",
+      "raw_market": "BMNR-USD.P",
+      "symbol": "BMNR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CBRS-USD-PERP.ONDO",
+      "raw_market": "CBRS-USD.P",
+      "symbol": "CBRS",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "COIN-USD-PERP.ONDO",
+      "raw_market": "COIN-USD.P",
+      "symbol": "COIN",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CRCL-USD-PERP.ONDO",
+      "raw_market": "CRCL-USD.P",
+      "symbol": "CRCL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CRWV-USD-PERP.ONDO",
+      "raw_market": "CRWV-USD.P",
+      "symbol": "CRWV",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CXMT-USD-PERP.ONDO",
+      "raw_market": "CXMT-USD.P",
+      "symbol": "CXMT",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "GLW-USD-PERP.ONDO",
+      "raw_market": "GLW-USD.P",
+      "symbol": "GLW",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "GOOGL-USD-PERP.ONDO",
+      "raw_market": "GOOGL-USD.P",
+      "symbol": "GOOGL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "HOOD-USD-PERP.ONDO",
+      "raw_market": "HOOD-USD.P",
+      "symbol": "HOOD",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "INTC-USD-PERP.ONDO",
+      "raw_market": "INTC-USD.P",
+      "symbol": "INTC",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "LITE-USD-PERP.ONDO",
+      "raw_market": "LITE-USD.P",
+      "symbol": "LITE",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MINIMAX-USD-PERP.ONDO",
+      "raw_market": "MINIMAX-USD.P",
+      "symbol": "MINIMAX",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MRNA-USD-PERP.ONDO",
+      "raw_market": "MRNA-USD.P",
+      "symbol": "MRNA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MRVL-USD-PERP.ONDO",
+      "raw_market": "MRVL-USD.P",
+      "symbol": "MRVL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "META-USD-PERP.ONDO",
+      "raw_market": "META-USD.P",
+      "symbol": "META",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MSFT-USD-PERP.ONDO",
+      "raw_market": "MSFT-USD.P",
+      "symbol": "MSFT",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MSTR-USD-PERP.ONDO",
+      "raw_market": "MSTR-USD.P",
+      "symbol": "MSTR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MU-USD-PERP.ONDO",
+      "raw_market": "MU-USD.P",
+      "symbol": "MU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NBIS-USD-PERP.ONDO",
+      "raw_market": "NBIS-USD.P",
+      "symbol": "NBIS",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NFLX-USD-PERP.ONDO",
+      "raw_market": "NFLX-USD.P",
+      "symbol": "NFLX",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NVDA-USD-PERP.ONDO",
+      "raw_market": "NVDA-USD.P",
+      "symbol": "NVDA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ORCL-USD-PERP.ONDO",
+      "raw_market": "ORCL-USD.P",
+      "symbol": "ORCL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "PLTR-USD-PERP.ONDO",
+      "raw_market": "PLTR-USD.P",
+      "symbol": "PLTR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "PURR-USD-PERP.ONDO",
+      "raw_market": "PURR-USD.P",
+      "symbol": "PURR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SPCX-USD-PERP.ONDO",
+      "raw_market": "SPCX-USD.P",
+      "symbol": "SPCX",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SMSN-USD-PERP.ONDO",
+      "raw_market": "SMSN-USD.P",
+      "symbol": "SMSN",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SKHY-USD-PERP.ONDO",
+      "raw_market": "SKHY-USD.P",
+      "symbol": "SKHY",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SNDK-USD-PERP.ONDO",
+      "raw_market": "SNDK-USD.P",
+      "symbol": "SNDK",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "TSLA-USD-PERP.ONDO",
+      "raw_market": "TSLA-USD.P",
+      "symbol": "TSLA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "TSM-USD-PERP.ONDO",
+      "raw_market": "TSM-USD.P",
+      "symbol": "TSM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "TTWO-USD-PERP.ONDO",
+      "raw_market": "TTWO-USD.P",
+      "symbol": "TTWO",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "UNITREE-USD-PERP.ONDO",
+      "raw_market": "UNITREE-USD.P",
+      "symbol": "UNITREE",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ZHIPU-USD-PERP.ONDO",
+      "raw_market": "ZHIPU-USD.P",
+      "symbol": "ZHIPU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "XAG-USD-PERP.ONDO",
+      "raw_market": "XAG-USD.P",
+      "symbol": "XAG",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "XAU-USD-PERP.ONDO",
+      "raw_market": "XAU-USD.P",
+      "symbol": "XAU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "WTI-USD-PERP.ONDO",
+      "raw_market": "WTI-USD.P",
+      "symbol": "WTI",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BRENT-USD-PERP.ONDO",
+      "raw_market": "BRENT-USD.P",
+      "symbol": "BRENT",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "COPPER-USD-PERP.ONDO",
+      "raw_market": "COPPER-USD.P",
+      "symbol": "COPPER",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NATGAS-USD-PERP.ONDO",
+      "raw_market": "NATGAS-USD.P",
+      "symbol": "NATGAS",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "QQQ-USD-PERP.ONDO",
+      "raw_market": "QQQ-USD.P",
+      "symbol": "QQQ",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SPY-USD-PERP.ONDO",
+      "raw_market": "SPY-USD.P",
+      "symbol": "SPY",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "DRAM-USD-PERP.ONDO",
+      "raw_market": "DRAM-USD.P",
+      "symbol": "DRAM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "EWY-USD-PERP.ONDO",
+      "raw_market": "EWY-USD.P",
+      "symbol": "EWY",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SOXL-USD-PERP.ONDO",
+      "raw_market": "SOXL-USD.P",
+      "symbol": "SOXL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "KORU-USD-PERP.ONDO",
+      "raw_market": "KORU-USD.P",
+      "symbol": "KORU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "URNM-USD-PERP.ONDO",
+      "raw_market": "URNM-USD.P",
+      "symbol": "URNM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "US100-USD-PERP.ONDO",
+      "raw_market": "US100-USD.P",
+      "symbol": "US100",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "US500-USD-PERP.ONDO",
+      "raw_market": "US500-USD.P",
+      "symbol": "US500",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "USDJPY-USD-PERP.ONDO",
+      "raw_market": "USDJPY-USD.P",
+      "symbol": "USDJPY",
+      "venue": "ONDO"
+    }
+  ],
+  "tool": "ondo_preflight",
+  "venue": "ONDO"
+}

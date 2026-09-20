@@ -90,6 +90,7 @@ session observed, and ``submitted`` is empty for every mode here.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import inspect
 import ipaddress
@@ -113,9 +114,11 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from ondo_preflight import (  # noqa: E402  (needs sys.path above)
+    ALL_SYMBOLS,
     BUILD_POINTER,
     RUNS_DIRNAME,
     STAGING_PREFIX,
+    discover_enabled_targets,
     new_run_id,
 )
 from ondo_native_diagnostics import (  # noqa: E402  (needs sys.path above)
@@ -1034,6 +1037,8 @@ def parse_symbols(raw: str) -> tuple[str, ...]:
     symbols = tuple(part.strip().upper() for part in str(raw).split(",") if part.strip())
     if not symbols:
         raise OndoProbeRefused("--symbols resolved to no symbol at all")
+    if ALL_SYMBOLS in symbols and symbols != (ALL_SYMBOLS,):
+        raise OndoProbeRefused("--symbols ALL cannot be combined with explicit symbols")
     return symbols
 
 
@@ -1046,6 +1051,44 @@ def resolve_targets(symbols: Sequence[str]) -> tuple[dict[str, str], ...]:
     except OndoPreflightError as exc:
         raise OndoProbeRefused(f"--symbols {','.join(symbols)}: {exc}") from exc
     return tuple(dict(row) for row in rows)
+
+
+async def _resolve_discovery(value):
+    return await value if inspect.isawaitable(value) else value
+
+
+async def _read_discovery_markets(client):
+    """Invoke the native async method only after an event loop is running."""
+    return await _resolve_discovery(client.get_markets())
+
+
+def discover_probe_symbols(args: argparse.Namespace, client=None) -> tuple[str, ...]:
+    """Resolve ``ALL`` through the public market surface before constructing a node."""
+    if parse_symbols(args.symbols) != (ALL_SYMBOLS,):
+        return parse_symbols(args.symbols)
+    if args.dry_run:
+        return (ALL_SYMBOLS,)
+    if client is None:
+        try:
+            from ondo_preflight import _environment as preflight_environment
+            from ondo_preflight import load_adapter as load_preflight_adapter
+            preflight_adapter = load_preflight_adapter()
+            environment = "sandbox" if args.mode == MODE_SANDBOX else "production"
+            client = preflight_adapter.OndoHttpClient(
+                preflight_environment(preflight_adapter, environment), 15,
+            )
+        except Exception as exc:  # noqa: BLE001 - discovery is a bounded public startup gate
+            raise OndoProbeError(
+                f"could not construct the public market-discovery client: {type(exc).__name__}: {exc}",
+            ) from exc
+    try:
+        markets = asyncio.run(_read_discovery_markets(client))
+        rows = discover_enabled_targets(markets)
+    except Exception as exc:  # noqa: BLE001 - no partial market set may reach the node
+        raise OndoProbeError(
+            f"ALL market discovery failed: {type(exc).__name__}: {exc}",
+        ) from exc
+    return tuple(row["symbol"] for row in rows)
 
 
 def _validate_instruments(instruments: Sequence[str]) -> tuple[str, ...]:
@@ -2283,6 +2326,8 @@ def plan_document(plan: Plan, capability: ShutdownCapability) -> dict[str, objec
         "requests_sent": 0,
         "env_file_read": False,
         "symbols": list(plan.symbols),
+        "selector": "all-enabled" if plan.symbols == (ALL_SYMBOLS,) else "explicit",
+        "dynamic_discovery_deferred": plan.symbols == (ALL_SYMBOLS,),
         "targets": [dict(row) for row in plan.targets],
         "instrument_ids": list(plan.instrument_ids()),
         # POSIX form: a published document should not need to say which platform wrote it.
@@ -2480,6 +2525,9 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
         "tool": "ondo_probe",
         "schema_version": SCHEMA_VERSION,
         "venue": ONDO_VENUE,
+        "symbols": list(plan.symbols),
+        "targets": [dict(row) for row in plan.targets],
+        "instrument_ids": list(plan.instrument_ids()),
         "run_id": run_id,
         "run_dir": f"{RUNS_DIRNAME}/{run_id}",
         "started_at_utc": started.isoformat(timespec="milliseconds"),
@@ -2740,7 +2788,7 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
 
 
 def main(argv: Sequence[str] | None = None, *, adapter=None, node_factory=None,
-         environ=None, now=None) -> int:
+         environ=None, now=None, discovery_client=None) -> int:
     """Resolve, refuse, or run. The exit code is the answer; the report is the evidence.
 
     Every refusal happens here, before a session is built: a plan that cannot be resolved
@@ -2767,6 +2815,15 @@ def main(argv: Sequence[str] | None = None, *, adapter=None, node_factory=None,
                   sort_keys=True, ensure_ascii=False, default=_json_default)
         sys.stdout.write("\n")
         return EXIT_OK
+
+    if plan.symbols == (ALL_SYMBOLS,):
+        try:
+            discovered = discover_probe_symbols(args, discovery_client)
+            args.symbols = ",".join(discovered)
+            plan = resolve_plan(args, adapter)
+        except OndoProbeError as exc:
+            print(f"ondo_probe: {exc}", file=sys.stderr)
+            return EXIT_FAILURE
 
     try:
         # Credentials are resolved only for a mode that reads one, and only after the

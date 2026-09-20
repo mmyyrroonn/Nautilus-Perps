@@ -57,6 +57,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Sequence
@@ -69,11 +70,14 @@ _SRC_DIR = Path(__file__).resolve().parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from spread_watch import INSTRUMENTS, ONDO_RAW_MARKETS, _adapter_missing  # noqa: E402
+from spread_watch import _adapter_missing  # noqa: E402
 
 ONDO_ADAPTER = "nautilus_trader.adapters.ondo"
 ONDO_VENUE = "ONDO"
 DEFAULT_SYMBOLS = "NVDA,TSLA"
+ALL_SYMBOLS = "ALL"
+SYMBOL_RE = re.compile(r"[A-Z0-9][A-Z0-9._-]*")
+USD_PERP_RE = re.compile(r"([A-Z0-9][A-Z0-9._-]*)-USD\.P")
 SCHEMA_VERSION = 1
 STATUS_FILE = "status"
 MARKET_FILE = "markets"
@@ -177,25 +181,68 @@ def load_adapter() -> OndoAdapter:
 
 
 def targets(symbols: Sequence[str]) -> list[dict[str, str]]:
-    """CLI symbol -> the venue's raw market and the planned Nautilus instrument id."""
+    """Derive explicit CLI symbols without maintaining a venue-market allowlist.
+
+    The derived target is still verified against the venue's public market response and
+    the adapter's normalized instrument definitions before a preflight can pass. ``ALL``
+    is different: it needs the live market response and is resolved by
+    :func:`discover_enabled_targets`.
+    """
     if not symbols:
         raise OndoPreflightError("no symbols requested")
+    normalized = [str(symbol).strip().upper() for symbol in symbols]
+    if ALL_SYMBOLS in normalized:
+        if normalized != [ALL_SYMBOLS]:
+            raise OndoPreflightError("ALL cannot be combined with explicit symbols")
+        return []
     rows: list[dict[str, str]] = []
-    for symbol in symbols:
-        raw = ONDO_RAW_MARKETS.get(symbol)
-        planned = INSTRUMENTS.get(symbol, {}).get("ONDO")
-        if raw is None or planned is None:
-            raise OndoPreflightError(
-                f"{symbol} is not a mapped Ondo market; known: {sorted(ONDO_RAW_MARKETS)}",
-            )
+    seen: set[str] = set()
+    for symbol in normalized:
+        if not SYMBOL_RE.fullmatch(symbol):
+            raise OndoPreflightError(f"{symbol!r} is not a valid Ondo symbol")
+        if symbol in seen:
+            continue
+        seen.add(symbol)
         rows.append({
             "symbol": symbol,
-            "raw_market": raw,
-            "instrument_id": planned[0],
+            "raw_market": f"{symbol}-USD.P",
+            "instrument_id": f"{symbol}-USD-PERP.ONDO",
             "venue": ONDO_VENUE,
             "client_id": ONDO_VENUE,
         })
     return rows
+
+
+def discover_enabled_targets(markets: object) -> list[dict[str, str]]:
+    """Return every enabled USD perpetual advertised by the venue, in venue order."""
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in market_entries(markets):
+        raw = entry.get("market")
+        match = USD_PERP_RE.fullmatch(raw) if isinstance(raw, str) else None
+        if match is None or market_status(entry)["status"] != "active":
+            continue
+        symbol = match.group(1)
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        rows.extend(targets([symbol]))
+    if not rows:
+        raise OndoPreflightError("venue returned no enabled USD perpetual markets")
+    return rows
+
+
+def discovery_summary(markets: object) -> dict[str, int]:
+    """Count discoverable USD perpetuals by resolved market state."""
+    counts = {"total": 0, "enabled": 0, "disabled": 0, "unknown": 0}
+    for entry in market_entries(markets):
+        raw = entry.get("market")
+        if not isinstance(raw, str) or USD_PERP_RE.fullmatch(raw) is None:
+            continue
+        counts["total"] += 1
+        state = str(market_status(entry)["status"])
+        counts["enabled" if state == "active" else state] += 1
+    return counts
 
 
 def describe(symbols: Sequence[str], args) -> dict[str, object]:
@@ -209,6 +256,8 @@ def describe(symbols: Sequence[str], args) -> dict[str, object]:
         "environment": args.environment,
         "timeout_secs": args.timeout_secs,
         "symbols": [row["symbol"] for row in rows],
+        "requested_symbols": [str(symbol).upper() for symbol in symbols],
+        "selector": "all-enabled" if not rows and list(symbols) == [ALL_SYMBOLS] else "explicit",
         "targets": rows,
         "load_ids": [row["instrument_id"] for row in rows],
         "out": str(args.out),
@@ -254,6 +303,34 @@ async def collect(client, rows: Sequence[dict[str, str]]) -> dict[str, object]:
                 f"an empty {name} result as if the venue had none",
             ) from exc
     return payloads
+
+
+async def collect_all(client) -> tuple[dict[str, object], list[dict[str, str]]]:
+    """Discover enabled markets first, then load exactly their normalized instruments."""
+    payloads: dict[str, object] = {}
+    for name, method, call in (
+        (STATUS_FILE, "get_status", lambda: client.get_status()),
+        (MARKET_FILE, "get_markets", lambda: client.get_markets()),
+        (CONTRACT_FILE, "get_contracts", lambda: client.get_contracts()),
+    ):
+        try:
+            payloads[name] = await _resolve(call())
+        except Exception as exc:  # noqa: BLE001 - any transport/schema fault is fatal
+            raise OndoPreflightError(
+                f"{method} failed: {exc.__class__.__name__}: {exc} - refusing to write "
+                f"an empty {name} result as if the venue had none",
+            ) from exc
+    rows = discover_enabled_targets(payloads[MARKET_FILE])
+    try:
+        payloads[INSTRUMENT_FILE] = await _resolve(client.load_instrument_definitions(
+            [row["instrument_id"] for row in rows],
+        ))
+    except Exception as exc:  # noqa: BLE001 - public adapter failure is fatal
+        raise OndoPreflightError(
+            f"load_instrument_definitions failed: {exc.__class__.__name__}: {exc} - refusing "
+            "to publish an incomplete dynamic market set",
+        ) from exc
+    return payloads, rows
 
 
 # ------------------------------------------------------------------------ schema
@@ -558,6 +635,11 @@ def normalize(payloads: dict[str, object], rows: Sequence[dict[str, str]]) -> tu
 def build_report(payloads: dict[str, object], symbols: Sequence[str]) -> dict[str, object]:
     """Assemble the report body from the raw payloads (no I/O, no clock)."""
     rows = targets(symbols)
+    return build_report_for_rows(payloads, rows)
+
+
+def build_report_for_rows(payloads: dict[str, object], rows: Sequence[dict[str, str]]) -> dict[str, object]:
+    """Assemble a report for already resolved explicit or discovered targets."""
     table, missing = normalize(payloads, rows)
     return {
         STATUS_FILE: payloads.get(STATUS_FILE),
@@ -747,7 +829,9 @@ def run(symbols: Sequence[str], out_dir: Path, *, environment: str = "production
     that could not read the venue still has a status, and leaving the previous run's
     success in place would report that failed attempt as the current state (F12).
     """
-    rows = targets(symbols)  # validates the symbols before any client exists
+    requested = [str(symbol).strip().upper() for symbol in symbols]
+    dynamic = requested == [ALL_SYMBOLS]
+    rows = targets(requested)  # explicit validation; ALL intentionally resolves to []
     if client is None:
         adapter = load_adapter()
         client = adapter.OndoHttpClient(_environment(adapter, environment), timeout_secs)
@@ -759,16 +843,23 @@ def run(symbols: Sequence[str], out_dir: Path, *, environment: str = "production
         "schema_version": SCHEMA_VERSION,
         "venue": ONDO_VENUE,
         "environment": environment,
+        "requested_symbols": requested,
         "symbols": [row["symbol"] for row in rows],
         "targets": rows,
         "started_at_utc": started.isoformat(timespec="milliseconds"),
     }
     out_dir = Path(out_dir)
     try:
-        payloads = asyncio.run(collect(client, rows))
+        if dynamic:
+            payloads, rows = asyncio.run(collect_all(client))
+            base_meta["symbols"] = [row["symbol"] for row in rows]
+            base_meta["targets"] = rows
+            base_meta["discovery"] = discovery_summary(payloads[MARKET_FILE])
+        else:
+            payloads = asyncio.run(collect(client, rows))
         # The schema checks run before anything is written: an error body must fail
         # the run rather than become a tidy "no markets" report.
-        report = build_report(payloads, symbols)
+        report = build_report_for_rows(payloads, rows)
     except OndoPreflightError as exc:
         # Nothing was read, so no payload is invented - but this attempt's own status is
         # published, with the previous published view cleared of payloads it cannot back.
@@ -835,7 +926,7 @@ def parse_args(argv: Sequence[str] | None = None):
         description="Ondo Perps public status/markets/contracts preflight (read-only, no keys)",
     )
     parser.add_argument("--symbols", default=DEFAULT_SYMBOLS,
-                        help=f"comma list of CLI symbols; known: {sorted(ONDO_RAW_MARKETS)}")
+                        help="comma list of Ondo symbols, or ALL for every enabled USD perp")
     parser.add_argument("--out", type=Path, default=Path("reports/ondo-preflight"),
                         help="output directory for the evidence files")
     parser.add_argument("--environment", default="production", choices=["production", "sandbox"],

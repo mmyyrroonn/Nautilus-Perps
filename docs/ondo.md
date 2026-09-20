@@ -112,8 +112,8 @@ UTC stamp，**一个 run 一个不可变目录**。
 （venv 里没有 ondo 适配器时会打印构建指引）。
 
 ```powershell
-# 1. 先看映射：离线、不联网、不建客户端、不读 .env
-.\.venv\Scripts\python.exe src\ondo_preflight.py --dry-run --symbols NVDA,TSLA
+# 1. 先看显式 symbol 的派生映射：离线、不联网、不建客户端、不读 .env
+.\.venv\Scripts\python.exe src\ondo_preflight.py --dry-run --symbols BTC,ETH
 
 # 2. 建立本次 run 的目录（UTC stamp；后面所有命令都用同一个 $runDir）
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
@@ -121,13 +121,18 @@ $runDir = Join-Path 'reports\ondo-acceptance' $stamp
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 
 # 3. 真实公开读取（production 只读公开行情是允许的，不涉及任何签名）
-.\.venv\Scripts\python.exe src\ondo_preflight.py --symbols NVDA,TSLA --out (Join-Path $runDir 'preflight')
+.\.venv\Scripts\python.exe src\ondo_preflight.py --symbols BTC --out (Join-Path $runDir 'preflight-btc')
+
+# 4. 动态发现并验证 venue 当前全部启用的 USD 永续；停用市场只计入发现摘要，不加载
+.\.venv\Scripts\python.exe src\ondo_preflight.py --symbols ALL --out (Join-Path $runDir 'preflight-all')
 if ($LASTEXITCODE -ne 0) { throw "Ondo public preflight failed (exit $LASTEXITCODE)" }
 ```
 
-`--dry-run` 的 stdout 是纯 JSON（实际输出：`environment=production`、`NVDA-USD.P → NVDA-USD-PERP.ONDO`、
-`TSLA-USD.P → TSLA-USD-PERP.ONDO`、`network: "not contacted"`、`env_file: "never read"`），可以直接核对
-instrument id。**预检失败时不要拿旧的 metadata 宣布通过**：`--out` 目录的 `meta.json` 永远描述**当前**
+显式 symbol 不再受 NVDA/TSLA 静态白名单限制；按 `<SYMBOL>-USD.P → <SYMBOL>-USD-PERP.ONDO` 派生后，
+真实预检仍必须在 venue `/v1/markets` 和 adapter instrument definitions 中同时验证。`--symbols ALL` 在真实
+预检中从当前 market metadata 动态展开，只选择 `active` 市场；与显式 symbol 混用会被拒绝。ALL 的
+`--dry-run` 不联网，因此只打印 `selector: "all-enabled"` 和空 targets/load_ids，表示发现被推迟到真实运行。
+**预检失败时不要拿旧的 metadata 宣布通过**：`--out` 目录的 `meta.json` 永远描述**当前**
 这一次尝试，失败的那次自己写 `complete: false` 和原因，不会把上一次的 `complete: true` 留在原地。
 
 ### 3.2 有限时公开采集
@@ -137,12 +142,16 @@ instrument id。**预检失败时不要拿旧的 metadata 宣布通过**：`--ou
 `<out>/l2` 下，含 ONDO 腿的 run 还会把适配器的公开帧录到 `<out>/raw_ondo`。
 
 ```powershell
-# 1. 有限时公开 probe（默认模式就是 public，这里写出来是为了显式）
-.\.venv\Scripts\python.exe src\ondo_probe.py --mode public --symbols NVDA,TSLA `
+# 1. 有限时 BTC 公开 probe（默认模式就是 public，这里写出来是为了显式）
+.\.venv\Scripts\python.exe src\ondo_probe.py --mode public --symbols BTC `
     --minutes 2 --out $runDir
 Write-Output "probe_exit_code=$LASTEXITCODE"
 
-# 2. 同一段时间的 stage-1 录制（产出 l2 tape，供 3.3 重放）
+# 2. 全部启用市场：先经公开 REST 动态发现，再把解析出的 instrument ids 交给 DataClient
+.\.venv\Scripts\python.exe src\ondo_probe.py --mode public --symbols ALL `
+    --minutes 2 --out (Join-Path $runDir 'all-enabled')
+
+# 3. 同一段时间的 stage-1 录制（产出 l2 tape，供 3.3 重放）
 .\.venv\Scripts\python.exe src\spread_watch.py --symbols NVDA,TSLA --venues ONDO,ASTER `
     --minutes 2 --max-restarts 0 --record-l2 --out $runDir
 Write-Output "watch_exit_code=$LASTEXITCODE"
@@ -150,6 +159,8 @@ Write-Output "watch_exit_code=$LASTEXITCODE"
 
 `--minutes` 是硬截止，`--max-restarts` 限制重建 node 的次数（本路径用 `0`：**不无限重连直到"凑到成功"**，
 失败就保留数据与原因）。`--venues ONDO` 必须显式写，`ONDO` 不在默认腿里。
+`ondo_probe` 的开放映射只作用于 Ondo 单 venue probe；`spread_watch.INSTRUMENTS` 仍是经过验证的跨 venue
+组合注册表，不会因为 Ondo 出现新 ticker 就猜测另一条腿。
 
 ### 3.3 已有 tape 的离线重放
 
@@ -295,8 +306,8 @@ Write-Output "probe_exit_code=$LASTEXITCODE"
 configured / cap / applied 三个数一起出现，钳没钳住是看得见的。sandbox 的额度不修改主网阶段的
 `config/limits.toml`（原方案 §Task 9），主网那套上限也不因为这条路径而放宽。
 
-`--instrument ID` 是 Nautilus 的 InstrumentId 形式；`src/ondo_preflight.py --dry-run` 打印的 `load_ids`
-就是这条 id（本机当前为 `NVDA-USD-PERP.ONDO` / `TSLA-USD-PERP.ONDO`），**先用第 3.1 节的干跑核对它，不要
+`--instrument ID` 是 Nautilus 的 InstrumentId 形式；显式 symbol 的 `src/ondo_preflight.py --dry-run`
+会打印派生的 `load_ids`（例如 `BTC-USD-PERP.ONDO`），**再用第 3.1 节的真实预检核对 venue 当前确实返回它，不要
 按记忆写**。`--instrument` 可以重复给多次。
 
 **`sandbox` 不是主网，也不需要"上主网"授权**；但主网**写入**在任何模式下都继续被拒绝（第 8 节）。

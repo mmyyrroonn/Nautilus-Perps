@@ -1,0 +1,768 @@
+{
+  "account": null,
+  "account_coverage_proven": false,
+  "account_coverage_reason": "this report has no per-run authoritative position, order and fill coverage telemetry: an account object in the cache or an account-state event alone does not prove complete account coverage",
+  "account_id_mapping": null,
+  "account_reconciled": false,
+  "acked": [],
+  "cache_errors": [],
+  "cancel_capable": false,
+  "canceled": [],
+  "caps": {
+    "exposure_usd": {
+      "applied": null,
+      "cap": "100",
+      "capped": false,
+      "configured": null
+    },
+    "minutes": {
+      "applied": 0.2,
+      "cap": 60.0,
+      "capped": false,
+      "configured": 0.2
+    },
+    "notional_per_order_usd": {
+      "applied": null,
+      "cap": "50",
+      "capped": false,
+      "configured": null
+    },
+    "orders": {
+      "applied": null,
+      "cap": 10,
+      "capped": false,
+      "configured": null
+    }
+  },
+  "complete": true,
+  "converging_stop": {
+    "available": true,
+    "blocks": "nothing in the adapter lifecycle: the installed wheel exposes the ordered shutdown capability. The R5.2 real-account verification - that a real sandbox session left the account clean - is still outstanding",
+    "cancels_own_orders": null,
+    "capability_source": "native-factory",
+    "confirms_cancels": null,
+    "observed_reason": "this probe has no per-run native StopReport telemetry, so the ordered stop's cancel, confirmation and dead-man-switch release are unobserved (null), not absent: zero submitted orders does not imply the switch was not released - a trading-mode session arms it on connect and can release it on a clean disconnect, and a restored journal may carry prior owned orders. Capability describes what the installed adapter implements, not what this run did",
+    "observed_this_run": false,
+    "reason": "the installed OndoExecutionClientFactory exposes supports_ordered_shutdown = True: the native client lifecycle implements the ordered bounded stop (cancel this run's own orders -> confirm the cancels -> release the dead-man switch -> close the private stream) with a fail-closed synchronous fallback. This is a capability of the installed wheel and nothing more: it does not verify the venue protocol, and it does not prove that any particular run left the account clean",
+    "releases_dead_mans_switch": null
+  },
+  "converging_stop_available": true,
+  "converging_stop_reason": "the installed OndoExecutionClientFactory exposes supports_ordered_shutdown = True: the native client lifecycle implements the ordered bounded stop (cancel this run's own orders -> confirm the cancels -> release the dead-man switch -> close the private stream) with a fail-closed synchronous fallback. This is a capability of the installed wheel and nothing more: it does not verify the venue protocol, and it does not prove that any particular run left the account clean",
+  "credential_variables": [],
+  "credentials_required": false,
+  "deadline_secs": "12.0",
+  "dms_armed": false,
+  "duplicate_receipts": {
+    "acked": 0,
+    "fills": 0
+  },
+  "endpoint": "https://api.ondoperps.xyz",
+  "endpoint_class": "production",
+  "endpoint_source": "module-default",
+  "envelope": {
+    "allow_sandbox_orders": false,
+    "armed": false,
+    "instruments": [],
+    "max_exposure_usd": null,
+    "max_orders": null,
+    "notional_usd": null
+  },
+  "environment": "production",
+  "exit_code": 0,
+  "exit_code_zero_means_clean_account": false,
+  "expected_stop_condition": "deadline (a normal end for this mode)",
+  "failure": null,
+  "filled": [],
+  "finished_at_utc": "2026-09-20T08:15:56.919+00:00",
+  "instrument_ids": [
+    "BTC-USD-PERP.ONDO",
+    "ENA-USD-PERP.ONDO",
+    "ETH-USD-PERP.ONDO",
+    "HYPE-USD-PERP.ONDO",
+    "ONDO-USD-PERP.ONDO",
+    "PUMP-USD-PERP.ONDO",
+    "SOL-USD-PERP.ONDO",
+    "XRP-USD-PERP.ONDO",
+    "ZEC-USD-PERP.ONDO",
+    "AAPL-USD-PERP.ONDO",
+    "AMD-USD-PERP.ONDO",
+    "AMZN-USD-PERP.ONDO",
+    "ARM-USD-PERP.ONDO",
+    "AVGO-USD-PERP.ONDO",
+    "BABA-USD-PERP.ONDO",
+    "BB-USD-PERP.ONDO",
+    "BMNR-USD-PERP.ONDO",
+    "CBRS-USD-PERP.ONDO",
+    "COIN-USD-PERP.ONDO",
+    "CRCL-USD-PERP.ONDO",
+    "CRWV-USD-PERP.ONDO",
+    "CXMT-USD-PERP.ONDO",
+    "GLW-USD-PERP.ONDO",
+    "GOOGL-USD-PERP.ONDO",
+    "HOOD-USD-PERP.ONDO",
+    "INTC-USD-PERP.ONDO",
+    "LITE-USD-PERP.ONDO",
+    "MINIMAX-USD-PERP.ONDO",
+    "MRNA-USD-PERP.ONDO",
+    "MRVL-USD-PERP.ONDO",
+    "META-USD-PERP.ONDO",
+    "MSFT-USD-PERP.ONDO",
+    "MSTR-USD-PERP.ONDO",
+    "MU-USD-PERP.ONDO",
+    "NBIS-USD-PERP.ONDO",
+    "NFLX-USD-PERP.ONDO",
+    "NVDA-USD-PERP.ONDO",
+    "ORCL-USD-PERP.ONDO",
+    "PLTR-USD-PERP.ONDO",
+    "PURR-USD-PERP.ONDO",
+    "SPCX-USD-PERP.ONDO",
+    "SMSN-USD-PERP.ONDO",
+    "SKHY-USD-PERP.ONDO",
+    "SNDK-USD-PERP.ONDO",
+    "TSLA-USD-PERP.ONDO",
+    "TSM-USD-PERP.ONDO",
+    "TTWO-USD-PERP.ONDO",
+    "UNITREE-USD-PERP.ONDO",
+    "ZHIPU-USD-PERP.ONDO",
+    "XAG-USD-PERP.ONDO",
+    "XAU-USD-PERP.ONDO",
+    "WTI-USD-PERP.ONDO",
+    "BRENT-USD-PERP.ONDO",
+    "COPPER-USD-PERP.ONDO",
+    "NATGAS-USD-PERP.ONDO",
+    "QQQ-USD-PERP.ONDO",
+    "SPY-USD-PERP.ONDO",
+    "DRAM-USD-PERP.ONDO",
+    "EWY-USD-PERP.ONDO",
+    "SOXL-USD-PERP.ONDO",
+    "KORU-USD-PERP.ONDO",
+    "URNM-USD-PERP.ONDO",
+    "US100-USD-PERP.ONDO",
+    "US500-USD-PERP.ONDO",
+    "USDJPY-USD-PERP.ONDO"
+  ],
+  "lookup_failures": {},
+  "mode": "public",
+  "native_diagnostics": {
+    "account_state_events": null,
+    "available": false,
+    "identity_match": null,
+    "logged_in": null,
+    "reason": "no native object was available to read a diagnostics snapshot from, so the native read-only telemetry is unknown rather than unsupported or passed",
+    "reconnects": null,
+    "recoveries": null,
+    "run_id": null,
+    "run_state": null,
+    "schema_confirmed": false,
+    "shutdown_status": null,
+    "source": "no-target",
+    "subscriptions_acked": null
+  },
+  "no_trade": [],
+  "orders_submitted_by_probe": 0,
+  "outstanding_orders": [],
+  "partial": [],
+  "pending_ids": {},
+  "production_readonly_support_reason": null,
+  "production_readonly_support_verified": null,
+  "protocol_verified": false,
+  "protocol_verified_reason": "no authenticated private/sandbox protocol acceptance has happened in these reports: the public surface has been read and recorded, but the REST auth header names, the WS login signature concatenation order, the real private frame shapes and the dead-man-switch renewal semantics are documented, not host-confirmed. Nothing in this report may be read as a private host fact",
+  "read_capable": true,
+  "run_dir": "runs/20260920T081534282957Z",
+  "run_id": "20260920T081534282957Z",
+  "schema_version": 1,
+  "session": {
+    "account_read_only": false,
+    "data_client": "nautilus_trader.adapters.ondo.OndoDataClientFactory",
+    "exec_client": null,
+    "node_environment": "LIVE",
+    "simulated": false
+  },
+  "started_at_utc": "2026-09-20T08:15:34.282+00:00",
+  "stop_condition": "deadline (a normal end for this mode)",
+  "stops": [
+    {
+      "attempted": true,
+      "cancels_own_orders": null,
+      "confirms_cancels": null,
+      "error": null,
+      "iterations": 2,
+      "label": "watchdog",
+      "releases_dead_mans_switch": null,
+      "requested": true,
+      "stop_target": "handle",
+      "stopped": true
+    },
+    {
+      "attempted": true,
+      "cancels_own_orders": null,
+      "confirms_cancels": null,
+      "error": null,
+      "iterations": 1,
+      "label": "final",
+      "releases_dead_mans_switch": null,
+      "requested": true,
+      "stop_target": "handle",
+      "stopped": true
+    }
+  ],
+  "submitted": [],
+  "supports_ordered_shutdown": true,
+  "supports_ordered_shutdown_source": "native-factory",
+  "symbols": [
+    "BTC",
+    "ENA",
+    "ETH",
+    "HYPE",
+    "ONDO",
+    "PUMP",
+    "SOL",
+    "XRP",
+    "ZEC",
+    "AAPL",
+    "AMD",
+    "AMZN",
+    "ARM",
+    "AVGO",
+    "BABA",
+    "BB",
+    "BMNR",
+    "CBRS",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "CXMT",
+    "GLW",
+    "GOOGL",
+    "HOOD",
+    "INTC",
+    "LITE",
+    "MINIMAX",
+    "MRNA",
+    "MRVL",
+    "META",
+    "MSFT",
+    "MSTR",
+    "MU",
+    "NBIS",
+    "NFLX",
+    "NVDA",
+    "ORCL",
+    "PLTR",
+    "PURR",
+    "SPCX",
+    "SMSN",
+    "SKHY",
+    "SNDK",
+    "TSLA",
+    "TSM",
+    "TTWO",
+    "UNITREE",
+    "ZHIPU",
+    "XAG",
+    "XAU",
+    "WTI",
+    "BRENT",
+    "COPPER",
+    "NATGAS",
+    "QQQ",
+    "SPY",
+    "DRAM",
+    "EWY",
+    "SOXL",
+    "KORU",
+    "URNM",
+    "US100",
+    "US500",
+    "USDJPY"
+  ],
+  "synthetic": false,
+  "targets": [
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BTC-USD-PERP.ONDO",
+      "raw_market": "BTC-USD.P",
+      "symbol": "BTC",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ENA-USD-PERP.ONDO",
+      "raw_market": "ENA-USD.P",
+      "symbol": "ENA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ETH-USD-PERP.ONDO",
+      "raw_market": "ETH-USD.P",
+      "symbol": "ETH",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "HYPE-USD-PERP.ONDO",
+      "raw_market": "HYPE-USD.P",
+      "symbol": "HYPE",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ONDO-USD-PERP.ONDO",
+      "raw_market": "ONDO-USD.P",
+      "symbol": "ONDO",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "PUMP-USD-PERP.ONDO",
+      "raw_market": "PUMP-USD.P",
+      "symbol": "PUMP",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SOL-USD-PERP.ONDO",
+      "raw_market": "SOL-USD.P",
+      "symbol": "SOL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "XRP-USD-PERP.ONDO",
+      "raw_market": "XRP-USD.P",
+      "symbol": "XRP",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ZEC-USD-PERP.ONDO",
+      "raw_market": "ZEC-USD.P",
+      "symbol": "ZEC",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AAPL-USD-PERP.ONDO",
+      "raw_market": "AAPL-USD.P",
+      "symbol": "AAPL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AMD-USD-PERP.ONDO",
+      "raw_market": "AMD-USD.P",
+      "symbol": "AMD",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AMZN-USD-PERP.ONDO",
+      "raw_market": "AMZN-USD.P",
+      "symbol": "AMZN",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ARM-USD-PERP.ONDO",
+      "raw_market": "ARM-USD.P",
+      "symbol": "ARM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "AVGO-USD-PERP.ONDO",
+      "raw_market": "AVGO-USD.P",
+      "symbol": "AVGO",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BABA-USD-PERP.ONDO",
+      "raw_market": "BABA-USD.P",
+      "symbol": "BABA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BB-USD-PERP.ONDO",
+      "raw_market": "BB-USD.P",
+      "symbol": "BB",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BMNR-USD-PERP.ONDO",
+      "raw_market": "BMNR-USD.P",
+      "symbol": "BMNR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CBRS-USD-PERP.ONDO",
+      "raw_market": "CBRS-USD.P",
+      "symbol": "CBRS",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "COIN-USD-PERP.ONDO",
+      "raw_market": "COIN-USD.P",
+      "symbol": "COIN",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CRCL-USD-PERP.ONDO",
+      "raw_market": "CRCL-USD.P",
+      "symbol": "CRCL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CRWV-USD-PERP.ONDO",
+      "raw_market": "CRWV-USD.P",
+      "symbol": "CRWV",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "CXMT-USD-PERP.ONDO",
+      "raw_market": "CXMT-USD.P",
+      "symbol": "CXMT",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "GLW-USD-PERP.ONDO",
+      "raw_market": "GLW-USD.P",
+      "symbol": "GLW",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "GOOGL-USD-PERP.ONDO",
+      "raw_market": "GOOGL-USD.P",
+      "symbol": "GOOGL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "HOOD-USD-PERP.ONDO",
+      "raw_market": "HOOD-USD.P",
+      "symbol": "HOOD",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "INTC-USD-PERP.ONDO",
+      "raw_market": "INTC-USD.P",
+      "symbol": "INTC",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "LITE-USD-PERP.ONDO",
+      "raw_market": "LITE-USD.P",
+      "symbol": "LITE",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MINIMAX-USD-PERP.ONDO",
+      "raw_market": "MINIMAX-USD.P",
+      "symbol": "MINIMAX",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MRNA-USD-PERP.ONDO",
+      "raw_market": "MRNA-USD.P",
+      "symbol": "MRNA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MRVL-USD-PERP.ONDO",
+      "raw_market": "MRVL-USD.P",
+      "symbol": "MRVL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "META-USD-PERP.ONDO",
+      "raw_market": "META-USD.P",
+      "symbol": "META",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MSFT-USD-PERP.ONDO",
+      "raw_market": "MSFT-USD.P",
+      "symbol": "MSFT",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MSTR-USD-PERP.ONDO",
+      "raw_market": "MSTR-USD.P",
+      "symbol": "MSTR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "MU-USD-PERP.ONDO",
+      "raw_market": "MU-USD.P",
+      "symbol": "MU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NBIS-USD-PERP.ONDO",
+      "raw_market": "NBIS-USD.P",
+      "symbol": "NBIS",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NFLX-USD-PERP.ONDO",
+      "raw_market": "NFLX-USD.P",
+      "symbol": "NFLX",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NVDA-USD-PERP.ONDO",
+      "raw_market": "NVDA-USD.P",
+      "symbol": "NVDA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ORCL-USD-PERP.ONDO",
+      "raw_market": "ORCL-USD.P",
+      "symbol": "ORCL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "PLTR-USD-PERP.ONDO",
+      "raw_market": "PLTR-USD.P",
+      "symbol": "PLTR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "PURR-USD-PERP.ONDO",
+      "raw_market": "PURR-USD.P",
+      "symbol": "PURR",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SPCX-USD-PERP.ONDO",
+      "raw_market": "SPCX-USD.P",
+      "symbol": "SPCX",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SMSN-USD-PERP.ONDO",
+      "raw_market": "SMSN-USD.P",
+      "symbol": "SMSN",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SKHY-USD-PERP.ONDO",
+      "raw_market": "SKHY-USD.P",
+      "symbol": "SKHY",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SNDK-USD-PERP.ONDO",
+      "raw_market": "SNDK-USD.P",
+      "symbol": "SNDK",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "TSLA-USD-PERP.ONDO",
+      "raw_market": "TSLA-USD.P",
+      "symbol": "TSLA",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "TSM-USD-PERP.ONDO",
+      "raw_market": "TSM-USD.P",
+      "symbol": "TSM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "TTWO-USD-PERP.ONDO",
+      "raw_market": "TTWO-USD.P",
+      "symbol": "TTWO",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "UNITREE-USD-PERP.ONDO",
+      "raw_market": "UNITREE-USD.P",
+      "symbol": "UNITREE",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "ZHIPU-USD-PERP.ONDO",
+      "raw_market": "ZHIPU-USD.P",
+      "symbol": "ZHIPU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "XAG-USD-PERP.ONDO",
+      "raw_market": "XAG-USD.P",
+      "symbol": "XAG",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "XAU-USD-PERP.ONDO",
+      "raw_market": "XAU-USD.P",
+      "symbol": "XAU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "WTI-USD-PERP.ONDO",
+      "raw_market": "WTI-USD.P",
+      "symbol": "WTI",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BRENT-USD-PERP.ONDO",
+      "raw_market": "BRENT-USD.P",
+      "symbol": "BRENT",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "COPPER-USD-PERP.ONDO",
+      "raw_market": "COPPER-USD.P",
+      "symbol": "COPPER",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "NATGAS-USD-PERP.ONDO",
+      "raw_market": "NATGAS-USD.P",
+      "symbol": "NATGAS",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "QQQ-USD-PERP.ONDO",
+      "raw_market": "QQQ-USD.P",
+      "symbol": "QQQ",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SPY-USD-PERP.ONDO",
+      "raw_market": "SPY-USD.P",
+      "symbol": "SPY",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "DRAM-USD-PERP.ONDO",
+      "raw_market": "DRAM-USD.P",
+      "symbol": "DRAM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "EWY-USD-PERP.ONDO",
+      "raw_market": "EWY-USD.P",
+      "symbol": "EWY",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "SOXL-USD-PERP.ONDO",
+      "raw_market": "SOXL-USD.P",
+      "symbol": "SOXL",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "KORU-USD-PERP.ONDO",
+      "raw_market": "KORU-USD.P",
+      "symbol": "KORU",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "URNM-USD-PERP.ONDO",
+      "raw_market": "URNM-USD.P",
+      "symbol": "URNM",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "US100-USD-PERP.ONDO",
+      "raw_market": "US100-USD.P",
+      "symbol": "US100",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "US500-USD-PERP.ONDO",
+      "raw_market": "US500-USD.P",
+      "symbol": "US500",
+      "venue": "ONDO"
+    },
+    {
+      "client_id": "ONDO",
+      "instrument_id": "USDJPY-USD-PERP.ONDO",
+      "raw_market": "USDJPY-USD.P",
+      "symbol": "USDJPY",
+      "venue": "ONDO"
+    }
+  ],
+  "tool": "ondo_probe",
+  "unknown": [],
+  "unverified": [
+    {
+      "documented_not_confirmed": [
+        "REST authentication header names",
+        "the WebSocket login signature concatenation order",
+        "the real private frame shapes",
+        "dead-man-switch renewal and release semantics"
+      ],
+      "item": "protocol",
+      "reason": "no authenticated private/sandbox protocol acceptance has happened in these reports: the public surface has been read and recorded, but the REST auth header names, the WS login signature concatenation order, the real private frame shapes and the dead-man-switch renewal semantics are documented, not host-confirmed. Nothing in this report may be read as a private host fact",
+      "verified": false
+    },
+    {
+      "adapter_capability": true,
+      "capability_source": "native-factory",
+      "consequence": "capability says what the installed adapter implements, not what this run did. The probe has no native StopReport telemetry, so a cancel, a confirmation or a dead-man-switch release is unobserved (null) rather than absent; a zero exit code must not be read as a cleaned account",
+      "item": "converging_stop",
+      "per_run_actions_observed": false,
+      "reason": "the installed OndoExecutionClientFactory exposes supports_ordered_shutdown = True: the native client lifecycle implements the ordered bounded stop (cancel this run's own orders -> confirm the cancels -> release the dead-man switch -> close the private stream) with a fail-closed synchronous fallback. This is a capability of the installed wheel and nothing more: it does not verify the venue protocol, and it does not prove that any particular run left the account clean",
+      "verified": false
+    }
+  ],
+  "venue": "ONDO",
+  "watchdog": {
+    "fired": false,
+    "stopped": true,
+    "timed_out": true
+  },
+  "write_capable": false
+}

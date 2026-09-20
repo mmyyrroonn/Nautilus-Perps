@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import asyncio
 import datetime
 import enum
 import hashlib
@@ -137,6 +138,8 @@ SECRET_SENTINELS = {
 
 DEFAULT_SYMBOLS = "NVDA,TSLA"
 ONDO_ID = "NVDA-USD-PERP.ONDO"
+BTC_ONDO_ID = "BTC-USD-PERP.ONDO"
+ETH_ONDO_ID = "ETH-USD-PERP.ONDO"
 
 
 # ------------------------------------------------------------------------- test doubles
@@ -722,6 +725,7 @@ def clean_environ(**overrides) -> dict:
 
 
 def run_probe(argv, *, environ=None, registry=None, adapter=None, factory=None,
+              discovery_client=None,
               node_failure: BaseException | None = None, blocking_node: bool = False,
               with_handle: bool = True, run_return: object = None, **fake) -> Result:
     """Call ``main`` through all five seams and hand back everything it produced.
@@ -745,6 +749,7 @@ def run_probe(argv, *, environ=None, registry=None, adapter=None, factory=None,
                     node_factory=factory,
                     environ=environ if environ is not None else clean_environ(),
                     now=clock,
+                    discovery_client=discovery_client,
                 )
     return Result(code, out.getvalue(), err.getvalue(), handler.text, registry, factory, clock)
 
@@ -1205,6 +1210,69 @@ def test_a_flag_inside_the_cap_is_kept_as_given(tmp_path):
     row = caps_view(probe_report(out_dir))["minutes"]
     assert float(row["applied"]) == 0.5, "a bound inside the cap is not changed"
     assert float(row["cap"]) == 60.0
+
+
+def test_public_dry_run_accepts_btc_without_a_static_allowlist(tmp_path):
+    out_dir = tmp_path / "out"
+    result = run_probe([
+        "--mode", "public", "--symbols", "BTC", "--out", str(out_dir), "--dry-run",
+    ])
+    assert result.code == EXIT_OK, result.streams
+    plan = json.loads(result.out)
+    assert plan["symbols"] == ["BTC"]
+    assert plan["instrument_ids"] == [BTC_ONDO_ID]
+    assert plan["requests_sent"] == 0
+    assert not out_dir.exists()
+
+
+def test_public_all_discovers_enabled_markets_before_building_the_node(tmp_path):
+    markets = {"perps": {"tradingPairs": [
+        {"market": "BTC-USD.P"},
+        {"market": "ETH-USD.P", "disabled": False},
+        {"market": "LIT-USD.P", "disabled": True},
+    ]}}
+    discovery = Calls(answers={"get_markets": markets})
+    out_dir = tmp_path / "out"
+    result = run_probe(
+        ["--mode", "public", "--symbols", "ALL", "--minutes", "0.01",
+         "--out", str(out_dir)],
+        discovery_client=discovery,
+    )
+    assert result.code == EXIT_OK, result.streams
+    assert discovery.names == ["get_markets"]
+    payload = probe_report(out_dir)
+    assert payload["symbols"] == ["BTC", "ETH"]
+    assert payload["instrument_ids"] == [BTC_ONDO_ID, ETH_ONDO_ID]
+    assert "LIT" not in payload["symbols"]
+
+
+def test_all_invokes_native_market_discovery_inside_a_running_event_loop():
+    markets = {"perps": {"tradingPairs": [{"market": "BTC-USD.P"}]}}
+
+    class NeedsRunningLoop:
+        def get_markets(self):
+            asyncio.get_running_loop()
+
+            async def result():
+                return markets
+
+            return result()
+
+    args = ondo_probe.parse_args(["--mode", "public", "--symbols", "ALL"])
+    assert ondo_probe.discover_probe_symbols(args, NeedsRunningLoop()) == ("BTC",)
+
+
+def test_all_does_not_discover_before_a_sandbox_plan_is_refused(tmp_path):
+    discovery = Calls(answers={"get_markets": {"perps": {"tradingPairs": [
+        {"market": "BTC-USD.P"},
+    ]}}})
+    result = run_probe(
+        ["--mode", "sandbox", "--symbols", "ALL", "--out", str(tmp_path / "out")],
+        discovery_client=discovery,
+    )
+    assert result.code == EXIT_REFUSED
+    assert discovery.names == []
+    assert not (tmp_path / "out").exists()
 
 
 def test_money_keeps_exact_decimals_through_the_clamp(tmp_path):
