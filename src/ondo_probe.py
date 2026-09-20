@@ -3,6 +3,7 @@
 
     src/ondo_probe.py --mode public --minutes 2
     src/ondo_probe.py --mode account-readonly --minutes 1
+    src/ondo_probe.py --mode production-readonly --minutes 1
     src/ondo_probe.py --mode paper --minutes 1
     src/ondo_probe.py --mode sandbox --symbols NVDA --instrument NVDA-USD-PERP.ONDO \
         --notional-usd 10 --max-orders 2 --max-exposure-usd 25 --allow-sandbox-orders
@@ -15,12 +16,19 @@ One Ondo session, one bounded deadline, one published run:
     <out>/probe.json        the published view - the accounting of the run that just ended
     <out>/meta.json         written last, by temp-file + rename: the commit point
 
-The four modes differ in what may be *sent*, and the report says which was which rather
+The five modes differ in what may be *sent*, and the report says which was which rather
 than collapsing them into one verdict:
 
 * ``public`` reads the venue's public surface and registers no execution client at all;
-* ``account-readonly`` syncs a private account and stops there: ``account_read_only``, no
-  dead-man switch armed, no cancel path, never trading-ready;
+* ``account-readonly`` syncs a *sandbox* private account and stops there: ``account_read_only``,
+  no dead-man switch armed, no cancel path, never trading-ready;
+* ``production-readonly`` is the production counterpart of ``account-readonly``: it resolves
+  only ``ONDO_MAINNET_*`` and is dialled at the production authority, with ``account_read_only``
+  set and no write/DMS flag. It carries no write parameter at all - one present is refused
+  before ``.env``, a client or a connection exists - and a sandbox endpoint is refused too.
+  An older installed wheel may still refuse production authentication or expose no native
+  snapshot; the mode reports either condition honestly rather than pretending to have read
+  an account;
 * ``paper`` runs the framework's simulated execution client, so every order, fill, balance
   and position it reports is ``synthetic`` and no remote write exists to make;
 * ``sandbox`` is the only writing mode, and it starts only when the caller names every
@@ -30,6 +38,13 @@ than collapsing them into one verdict:
   only: this file implements no REST signing, no HMAC, no POST retry, and must never
   grow one - that is the adapter's job and a second implementation of it would be the
   one thing this probe could do that is worse than doing nothing.
+
+The report's ``native_diagnostics`` group is the sanitized, per-run snapshot the native
+adapter exposes through its read-only accessor: counters and fixed enum labels only, never a
+frame, a credential, a key id, an account id, an order id or a monetary field. A snapshot
+that is absent, raises, is not a mapping, carries no run token, or carries another run's
+token is reported unavailable with every field ``null`` - the probe never fabricates a login,
+a subscription or a recovery from a dry run, a factory marker or a separate run.
 
 Three things this probe refuses to claim, and they are the reason it exists in this shape:
 
@@ -103,6 +118,12 @@ from ondo_preflight import (  # noqa: E402  (needs sys.path above)
     STAGING_PREFIX,
     new_run_id,
 )
+from ondo_native_diagnostics import (  # noqa: E402  (needs sys.path above)
+    UNSUPPORTED_REASON,
+    NativeDiagnostics,
+    native_diagnostics_document,
+    read_native_diagnostics,
+)
 
 from nautilus_trader.adapters.sandbox import (  # noqa: E402
     SandboxExecutionClientConfig,
@@ -133,19 +154,26 @@ EXIT_TIMEOUT = 3
 
 MODE_PUBLIC = "public"
 MODE_ACCOUNT_READONLY = "account-readonly"
+MODE_PRODUCTION_READONLY = "production-readonly"
 MODE_PAPER = "paper"
 MODE_SANDBOX = "sandbox"
-MODES = (MODE_PUBLIC, MODE_ACCOUNT_READONLY, MODE_PAPER, MODE_SANDBOX)
+MODES = (MODE_PUBLIC, MODE_ACCOUNT_READONLY, MODE_PRODUCTION_READONLY, MODE_PAPER,
+         MODE_SANDBOX)
 
 # Modes whose session is authenticated, and therefore the only ones that resolve a
 # credential or read a ``.env`` file. ``public`` and ``paper`` never read either.
-CREDENTIAL_MODES = (MODE_ACCOUNT_READONLY, MODE_SANDBOX)
+CREDENTIAL_MODES = (MODE_ACCOUNT_READONLY, MODE_PRODUCTION_READONLY, MODE_SANDBOX)
+# Modes that sync an account and are forbidden to write, whatever the flags say.
+READ_ONLY_MODES = (MODE_ACCOUNT_READONLY, MODE_PRODUCTION_READONLY)
 # Modes whose clients are pointed at the sandbox authority. The endpoint allowlist is
 # enforced for these and only these: ``public`` and ``paper`` read the *production*
 # public surface on purpose, and a refusal there would contradict the mode's meaning.
 SANDBOX_ENDPOINT_MODES = (MODE_ACCOUNT_READONLY, MODE_SANDBOX)
+# Modes whose authenticated client is pointed at the production authority. The production
+# gate is enforced for these and only these; a sandbox endpoint is refused there.
+PRODUCTION_ENDPOINT_MODES = (MODE_PRODUCTION_READONLY,)
 # Modes whose data client reads the production public surface.
-PRODUCTION_DATA_MODES = (MODE_PUBLIC, MODE_PAPER)
+PRODUCTION_DATA_MODES = (MODE_PUBLIC, MODE_PAPER, MODE_PRODUCTION_READONLY)
 
 DEFAULT_SYMBOLS = "NVDA,TSLA"
 DEFAULT_OUT = "reports/ondo-probe"
@@ -166,12 +194,59 @@ MAX_MINUTES_CAP = 60.0
 # The adapter's Rust side reads exactly these two names from the process environment.
 # It is handed no credential by this file, and neither value is ever read, rendered,
 # logged or copied into a report: only their presence is checked.
-API_KEY_VARIABLE = "ONDO_SANDBOX_API_KEY"
-API_SECRET_VARIABLE = "ONDO_SANDBOX_API_SECRET"
+SANDBOX_API_KEY_VARIABLE = "ONDO_SANDBOX_API_KEY"
+SANDBOX_API_SECRET_VARIABLE = "ONDO_SANDBOX_API_SECRET"
 # The third name is app-side only - the adapter does not read it. This probe resolves it
 # and passes it in as the execution config's ``account_id``.
-ACCOUNT_ID_VARIABLE = "ONDO_SANDBOX_ACCOUNT_ID"
-CREDENTIAL_VARIABLES = (API_KEY_VARIABLE, API_SECRET_VARIABLE, ACCOUNT_ID_VARIABLE)
+SANDBOX_ACCOUNT_ID_VARIABLE = "ONDO_SANDBOX_ACCOUNT_ID"
+SANDBOX_CREDENTIAL_VARIABLES = (
+    SANDBOX_API_KEY_VARIABLE, SANDBOX_API_SECRET_VARIABLE, SANDBOX_ACCOUNT_ID_VARIABLE,
+)
+
+# Production read-only resolves exactly these three names, and nothing else. There is no
+# fallback in either direction: a production-readonly session with only the sandbox names
+# set is a refusal, and a sandbox session with the MAINNET names exported is unaffected.
+# The native side must name its own production variables the same way before this mode
+# can authenticate; the app-side names are the contract this file owns.
+MAINNET_API_KEY_VARIABLE = "ONDO_MAINNET_API_KEY"
+MAINNET_API_SECRET_VARIABLE = "ONDO_MAINNET_API_SECRET"
+MAINNET_ACCOUNT_ID_VARIABLE = "ONDO_MAINNET_ACCOUNT_ID"
+MAINNET_CREDENTIAL_VARIABLES = (
+    MAINNET_API_KEY_VARIABLE, MAINNET_API_SECRET_VARIABLE, MAINNET_ACCOUNT_ID_VARIABLE,
+)
+
+# ``ONDO_MAINNET_ACCOUNT_ID`` is the venue's own raw ``accountID``, which is **not** a
+# Nautilus ``AccountId`` (the venue id has no ``-``). The native execution config still
+# needs a Nautilus ``AccountId``, so this probe constructs one as ``ONDO-{raw}`` for
+# production-readonly only. The raw value is passed unchanged to the native
+# ``expected_venue_account_id`` field; an existing prefix is never stripped from it.
+PRODUCTION_ACCOUNT_ID_PREFIX = "ONDO-"
+
+# The sandbox spellings the existing messages and helpers already used stay the names
+# ``CREDENTIAL_VARIABLES`` refers to; a credentialed mode resolves its own set through
+# :func:`credential_variables` instead of this alias.
+API_KEY_VARIABLE = SANDBOX_API_KEY_VARIABLE
+API_SECRET_VARIABLE = SANDBOX_API_SECRET_VARIABLE
+ACCOUNT_ID_VARIABLE = SANDBOX_ACCOUNT_ID_VARIABLE
+CREDENTIAL_VARIABLES = SANDBOX_CREDENTIAL_VARIABLES
+
+MODE_CREDENTIAL_VARIABLES: dict[str, tuple[str, ...]] = {
+    MODE_ACCOUNT_READONLY: SANDBOX_CREDENTIAL_VARIABLES,
+    MODE_PRODUCTION_READONLY: MAINNET_CREDENTIAL_VARIABLES,
+    MODE_SANDBOX: SANDBOX_CREDENTIAL_VARIABLES,
+}
+
+# A live operator points this at the canonical ``.env`` (e.g.
+# ``E:\Nautilus-Perps\.env``) so the credential file is read from its canonical location
+# and never copied into a worktree. It is honoured only by a credentialed, non-dry-run
+# session; ``public``, ``paper`` and ``--dry-run`` never reach the loader. The path itself
+# is not a secret, and no value from the file is ever rendered.
+ENV_FILE_VARIABLE = "ONDO_PROBE_ENV_FILE"
+
+
+def credential_variables(mode: str) -> tuple[str, ...]:
+    """The exact variable names ``mode`` resolves, or an empty tuple for a public mode."""
+    return MODE_CREDENTIAL_VARIABLES.get(mode, ())
 
 # ------------------------------------------------------------ endpoint allowlist
 
@@ -184,12 +259,17 @@ CREDENTIAL_VARIABLES = (API_KEY_VARIABLE, API_SECRET_VARIABLE, ACCOUNT_ID_VARIAB
 SANDBOX_ENDPOINT_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("https", "api.ondoperps-sandbox.xyz"),
 )
-SANDBOX_BASE_URL_HTTP = SANDBOX_ENDPOINT_ALLOWLIST[0][0] + "://" + SANDBOX_ENDPOINT_ALLOWLIST[0][1]
+SANDBOX_HOST = SANDBOX_ENDPOINT_ALLOWLIST[0][1]
+SANDBOX_BASE_URL_HTTP = SANDBOX_ENDPOINT_ALLOWLIST[0][0] + "://" + SANDBOX_HOST
 # Bound to the domain the same way the adapter binds its own constants to its policy, so
 # the host this file reports and the host it refuses cannot drift apart.
 PRODUCTION_HOST = "api.ondoperps.xyz"
 PRODUCTION_DOMAIN = "ondoperps.xyz"
 PRODUCTION_BASE_URL_HTTP = "https://" + PRODUCTION_HOST
+# The private WebSocket authority the production read-only session would sign for. The
+# app does not dial it; the native client does, and this constant is what the plan
+# reports and what the production gate compares against.
+PRODUCTION_BASE_URL_WS = "wss://" + PRODUCTION_HOST + "/ws"
 
 ENDPOINT_OFFICIAL = "official"
 ENDPOINT_LOOPBACK = "loopback"
@@ -291,11 +371,15 @@ class OndoAdapter:
     OndoDataClientFactory: object
     OndoExecutionClientConfig: object
     OndoExecutionClientFactory: object
+    # Optional so the read-only probe still loads older wheels. The trade probe requires a
+    # callable value and fails closed when this candidate-only class is absent.
+    OndoExecutionEnvelopeConfig: object | None = None
 
 
 def load_adapter() -> OndoAdapter:
     """Import the adapter's public classes, or say clearly that they are absent."""
     try:
+        import nautilus_trader.adapters.ondo as ondo_module
         from nautilus_trader.adapters.ondo import (
             OndoDataClientConfig,
             OndoDataClientFactory,
@@ -313,6 +397,9 @@ def load_adapter() -> OndoAdapter:
         OndoDataClientFactory=OndoDataClientFactory,
         OndoExecutionClientConfig=OndoExecutionClientConfig,
         OndoExecutionClientFactory=OndoExecutionClientFactory,
+        OndoExecutionEnvelopeConfig=getattr(
+            ondo_module, "OndoExecutionEnvelopeConfig", None,
+        ),
     )
 
 
@@ -482,7 +569,7 @@ class EndpointVerdict:
 
     @property
     def allowed(self) -> bool:
-        return self.endpoint_class == ENDPOINT_OFFICIAL
+        return self.endpoint_class in (ENDPOINT_OFFICIAL, ENDPOINT_PRODUCTION)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -611,6 +698,63 @@ def production_endpoint_verdict(url: str) -> EndpointVerdict:
                            f"({PRODUCTION_BASE_URL_HTTP})")
 
 
+def _is_sandbox_host(host: str) -> bool:
+    """Whether ``host`` names the sandbox authority (the production gate refuses it)."""
+    return host == SANDBOX_HOST or host.endswith("." + SANDBOX_HOST)
+
+
+def classify_production_endpoint(url: str) -> EndpointVerdict:
+    """Classify a base URL against the production authority, mirroring the production gate.
+
+    The mirror of :func:`classify_endpoint` for the other environment: the same parse, the
+    same userinfo and non-default-port refusals, but the admitted authority is the
+    production host. A sandbox host is refused *by name* here, which is the cross-
+    environment rejection a production-read-only session needs; a host that merely
+    contains either authority is a different authority and is refused too.
+    """
+    parts = urlsplit(url)
+    scheme = (parts.scheme or "").lower()
+    host = (parts.hostname or "").rstrip(".").lower()
+    try:
+        port = parts.port
+    except ValueError:  # a non-numeric port: the parser read it, and it is not a port
+        return EndpointVerdict(f"{scheme}://{parts.netloc}", scheme, "", ENDPOINT_REFUSED,
+                               f"the port in {scheme}://{parts.netloc!r} is not a number")
+    if not scheme or not host:
+        return EndpointVerdict(url if not scheme else f"{scheme}://", scheme, host,
+                               ENDPOINT_REFUSED,
+                               f"{url!r} does not parse as an absolute URL with a host, so "
+                               f"the endpoint it would be dialled as cannot be judged")
+    shown = f"{scheme}://{host}" + (f":{port}" if port is not None else "")
+    if _is_sandbox_host(host):
+        return EndpointVerdict(shown, scheme, host, ENDPOINT_REFUSED,
+                               f"the host {host!r} belongs to the sandbox authority "
+                               f"{SANDBOX_BASE_URL_HTTP}, so a production-read-only session "
+                               f"may not be dialled at it")
+    if parts.username is not None or parts.password is not None:
+        return EndpointVerdict(shown, scheme, host, ENDPOINT_REFUSED,
+                               f"the base URL for {host!r} carries userinfo; a credential "
+                               f"belongs in the credential store, not in a URL")
+    if scheme != "https" or host != PRODUCTION_HOST:
+        return EndpointVerdict(shown, scheme, host, ENDPOINT_REFUSED,
+                               f"{shown} is not the production authority "
+                               f"{PRODUCTION_BASE_URL_HTTP}: a production-read-only session "
+                               f"may only sign for that authority, and a host that only "
+                               f"contains its name is a different authority")
+    if port is not None and port != DEFAULT_PORTS.get(scheme):
+        return EndpointVerdict(shown, scheme, host, ENDPOINT_REFUSED,
+                               f"{shown} names a port the production authority does not "
+                               f"listen on: an explicit port may only be the scheme's "
+                               f"default")
+    return EndpointVerdict(shown, scheme, host, ENDPOINT_PRODUCTION, None)
+
+
+def production_endpoint_refusal(url: str) -> str | None:
+    """Why ``url`` may not be signed for by a production-read-only session, or ``None``."""
+    verdict = classify_production_endpoint(url)
+    return None if verdict.allowed else verdict.reason
+
+
 def resolve_endpoint(mode: str, adapter: OndoAdapter | None) -> tuple[str, str]:
     """The endpoint this session would use, and where that value came from.
 
@@ -626,6 +770,19 @@ def resolve_endpoint(mode: str, adapter: OndoAdapter | None) -> tuple[str, str]:
     to the same host (``consts::ONDO_HTTP_BASE_URL_PRODUCTION``), so reading a value back
     would only be a second way to say the same thing.
     """
+    if mode in PRODUCTION_ENDPOINT_MODES:
+        if adapter is None:
+            return PRODUCTION_BASE_URL_HTTP, "module-default"
+        try:
+            config = _exec_config(adapter, mode, account_id=None, base_url_http=None)
+        except Exception:
+            # The plan only reports the endpoint; a config that cannot be read here is a
+            # fact for the session build to surface, not a reason a dry run cannot print.
+            return PRODUCTION_BASE_URL_HTTP, "module-default"
+        carried = getattr(config, "base_url_http", None)
+        if isinstance(carried, str) and carried:
+            return carried, "adapter-config"
+        return PRODUCTION_BASE_URL_HTTP, "adapter-default"
     if mode not in SANDBOX_ENDPOINT_MODES:
         return PRODUCTION_BASE_URL_HTTP, "module-default"
     if adapter is None:
@@ -693,6 +850,7 @@ class Plan:
     max_exposure_usd: Decimal | None
     allow_sandbox_orders: bool
     credentials_required: bool
+    credential_variables: tuple[str, ...]
     endpoint: str
     endpoint_source: str
     endpoint_class: str
@@ -740,6 +898,15 @@ def mode_facts(mode: str) -> dict[str, object]:
     if mode == MODE_ACCOUNT_READONLY:
         return {
             "environment": "sandbox",
+            "read_capable": True,
+            "write_capable": False,
+            "dms_armed": False,
+            "cancel_capable": False,
+            "expected_stop_condition": STOP_DEADLINE_NORMAL,
+        }
+    if mode == MODE_PRODUCTION_READONLY:
+        return {
+            "environment": "production",
             "read_capable": True,
             "write_capable": False,
             "dms_armed": False,
@@ -945,8 +1112,8 @@ def resolve_plan(args: argparse.Namespace, adapter: OndoAdapter | None = None) -
             )
         raise OndoProbeRefused(
             f"{flag} is a sandbox-only parameter and --mode {args.mode} may not write: "
-            f"account-readonly syncs an account and stops there, and --mode sandbox is the "
-            f"only mode that may carry a write parameter",
+            f"the read-only modes ({', '.join(READ_ONLY_MODES)}) sync an account and stop "
+            f"there, and --mode sandbox is the only mode that may carry a write parameter",
         )
 
     if args.minutes is None or args.minutes != args.minutes or args.minutes in (
@@ -1024,6 +1191,14 @@ def resolve_plan(args: argparse.Namespace, adapter: OndoAdapter | None = None) -
                 f"allowlist (resolved from {endpoint_source}): {refusal}",
             )
         verdict = classify_endpoint(endpoint)
+    elif args.mode in PRODUCTION_ENDPOINT_MODES:
+        refusal = production_endpoint_refusal(endpoint)
+        if refusal is not None:
+            raise OndoProbeRefused(
+                f"--mode {args.mode} would sign for an endpoint outside the production "
+                f"authority (resolved from {endpoint_source}): {refusal}",
+            )
+        verdict = classify_production_endpoint(endpoint)
     else:
         verdict = production_endpoint_verdict(endpoint)
     symbols = parse_symbols(args.symbols)
@@ -1043,6 +1218,7 @@ def resolve_plan(args: argparse.Namespace, adapter: OndoAdapter | None = None) -
         max_exposure_usd=args.max_exposure_usd,
         allow_sandbox_orders=bool(args.allow_sandbox_orders),
         credentials_required=args.mode in CREDENTIAL_MODES,
+        credential_variables=credential_variables(args.mode),
         endpoint=endpoint,
         endpoint_source=endpoint_source,
         endpoint_class=verdict.endpoint_class,
@@ -1085,13 +1261,78 @@ def load_environment(environ) -> dict[str, str]:
     """
     if environ is not None:
         return {str(key): str(value) for key, value in dict(environ).items()}
+    explicit = str(os.environ.get(ENV_FILE_VARIABLE) or "").strip()
     try:
         from dotenv import load_dotenv
 
-        load_dotenv()
+        if explicit:
+            # The operator named the canonical credential file; never a copy in a worktree.
+            # A named-but-unreadable file is a refusal, so a typo cannot silently fall back
+            # to whatever the process environment happened to hold.
+            if not Path(explicit).is_file():
+                raise OndoProbeRefused(
+                    f"{ENV_FILE_VARIABLE} names {explicit!r}, which is not a readable file: "
+                    f"the credential file is refused rather than silently skipped, and no "
+                    f"other location is tried",
+                )
+            load_dotenv(explicit)
+        else:
+            load_dotenv()
     except ImportError:  # pragma: no cover - dotenv is a convenience, not a requirement
         pass
     return dict(os.environ)
+
+
+def _validate_venue_account_id(variable: str, raw: str) -> None:
+    """Refuse a raw venue account id this session cannot be opened with.
+
+    ``ONDO_MAINNET_ACCOUNT_ID`` is the venue's own ``accountID``, not a Nautilus
+    ``AccountId``: it is the adapter that maps it, and this file must not demand it already
+    parse as one. The local check is deliberately narrow and safe - non-empty, bounded, and
+    no whitespace or control characters - so it cannot reject a valid venue id on a guessed
+    format, and it never prints the value.
+    """
+    if not raw:
+        raise OndoProbeRefused(
+            f"{variable} is empty; the value is not printed here",
+        )
+    if len(raw) > 128:
+        raise OndoProbeRefused(
+            f"{variable} is longer than a venue account id this session accepts; the value "
+            f"is not printed here",
+        )
+    if any(character.isspace() or not character.isprintable() for character in raw):
+        raise OndoProbeRefused(
+            f"{variable} contains whitespace or a non-printable character, which a venue "
+            f"account id cannot carry; the value is not printed here",
+        )
+
+
+def resolve_account_identity(mode: str, environ: dict[str, str],
+                             variables: tuple[str, ...]) -> tuple[AccountId | None, str | None]:
+    """The Nautilus ``AccountId`` and the raw venue id for ``mode``, or ``(None, None)``.
+
+    Sandbox modes keep their previous behaviour: ``ONDO_SANDBOX_ACCOUNT_ID`` is the Nautilus
+    ``AccountId`` and is passed through unchanged. For ``production-readonly`` the configured
+    value is the venue's raw ``accountID``; the native ``AccountId`` this session is opened
+    with is constructed as ``ONDO-{raw}`` and the *raw* value is handed to the native
+    ``expected_venue_account_id`` field unchanged - an existing prefix is neither stripped
+    from nor added to the raw expected id.
+    """
+    if not variables:
+        return None, None
+    account_var = variables[2]
+    raw = str(environ[account_var]).strip()
+    if mode == MODE_PRODUCTION_READONLY:
+        _validate_venue_account_id(account_var, raw)
+        return AccountId.from_str(f"{PRODUCTION_ACCOUNT_ID_PREFIX}{raw}"), raw
+    try:
+        return AccountId.from_str(raw), None
+    except Exception as exc:
+        raise OndoProbeRefused(
+            f"{account_var} is not an account id this session can be opened with "
+            f"({type(exc).__name__}); its value is not printed here",
+        ) from exc
 
 
 def check_credentials(mode: str, environ: dict[str, str]) -> None:
@@ -1104,47 +1345,80 @@ def check_credentials(mode: str, environ: dict[str, str]) -> None:
     """
     if mode not in CREDENTIAL_MODES:
         return
-    missing = [name for name in CREDENTIAL_VARIABLES if not str(environ.get(name) or "").strip()]
+    variables = credential_variables(mode)
+    key_var, secret_var, account_var = variables
+    missing = [name for name in variables if not str(environ.get(name) or "").strip()]
     if missing:
         raise OndoProbeRefused(
             f"--mode {mode} needs credentials and {', '.join(missing)} "
             f"{'is' if len(missing) == 1 else 'are'} missing or empty in the environment. "
             f"Their values are never read into this message. Note that "
-            f"{ACCOUNT_ID_VARIABLE} is read by this probe alone: the adapter reads "
-            f"{API_KEY_VARIABLE} and {API_SECRET_VARIABLE} from the process environment, "
-            f"and is handed no credential by this file",
+            f"{account_var} is read by this probe alone: the adapter reads "
+            f"{key_var} and {secret_var} from the process environment, and is handed no "
+            f"credential by this file. No other mode's variable names are consulted, so "
+            f"there is no fallback between environments",
         )
-    try:
-        # Parsed here so that an unusable account id is a startup rejection, and reported
-        # by variable name - the value never appears in the message, valid or not.
-        AccountId.from_str(str(environ[ACCOUNT_ID_VARIABLE]).strip())
-    except Exception as exc:
-        raise OndoProbeRefused(
-            f"{ACCOUNT_ID_VARIABLE} is not an account id this session can be opened with "
-            f"({type(exc).__name__}); its value is not printed here",
-        ) from exc
+    # Parsed here so that an unusable account id is a startup rejection, reported by
+    # variable name - the value never appears in the message, valid or not.
+    resolve_account_identity(mode, environ, variables)
 
 
 # ------------------------------------------------------------------------ config
 
 
+def _config_accepts_field(config_cls: object, field: str) -> bool:
+    """Whether the installed execution config exposes ``field`` as a constructor kwarg.
+
+    The candidate native wheel adds ``expected_venue_account_id``; the installed R52 wheel
+    does not. Passing an unknown kwarg to the real config raises, so support is read from
+    the constructor signature and a config that cannot be introspected is treated as
+    accepting (the call then falls back on ``TypeError``).
+    """
+    try:
+        parameters = inspect.signature(config_cls).parameters
+    except (TypeError, ValueError):
+        return True
+    if field in parameters:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+
+
 def _exec_config(adapter: OndoAdapter, mode: str, *, account_id: AccountId | None,
-                 base_url_http: str | None) -> object:
+                 base_url_http: str | None,
+                 expected_venue_account_id: str | None = None,
+                 diagnostics_run_id: str | None = None) -> object:
     """The execution client config for ``mode``, carrying no credential value.
 
     The credential is *not* passed in: the adapter resolves it from the process
     environment through its own gate-first path, and an explicit override would put the
-    secret in an object this file owns. ``environment`` is sandbox for every credentialed
-    mode because the adapter refuses to authenticate against production at all.
+    secret in an object this file owns. ``environment`` is production only for
+    ``production-readonly`` and sandbox for every other credentialed mode; every read-only
+    mode sets ``account_read_only`` and none of them passes ``allow_production_orders``.
     """
-    environment = adapter.OndoEnvironment.SANDBOX
-    kwargs: dict[str, object] = {"environment": environment, "account_read_only": False}
+    if mode == MODE_PRODUCTION_READONLY:
+        environment = adapter.OndoEnvironment.PRODUCTION
+    else:
+        environment = adapter.OndoEnvironment.SANDBOX
+    kwargs: dict[str, object] = {
+        "environment": environment,
+        "account_read_only": mode in READ_ONLY_MODES,
+    }
     if account_id is not None:
         kwargs["account_id"] = account_id
     if base_url_http is not None:
         kwargs["base_url_http"] = base_url_http
-    if mode == MODE_ACCOUNT_READONLY:
-        kwargs["account_read_only"] = True
+    # The venue identity is a required native field only on the candidate wheel; without it
+    # the identity check stays unknown rather than being guessed from a string prefix.
+    if expected_venue_account_id is not None and _config_accepts_field(
+        adapter.OndoExecutionClientConfig, "expected_venue_account_id",
+    ):
+        kwargs["expected_venue_account_id"] = expected_venue_account_id
+    # The native factory snapshots only the client it creates. Passing this app-minted token
+    # through the config lets the reader prove that the post-stop snapshot belongs to this run.
+    if diagnostics_run_id is not None and _config_accepts_field(
+        adapter.OndoExecutionClientConfig, "diagnostics_run_id",
+    ):
+        kwargs["diagnostics_run_id"] = diagnostics_run_id
     config = adapter.OndoExecutionClientConfig(**kwargs)
     # The adapter's config object exposes no api_key/api_secret attribute and this file
     # never asks for one; if that ever changes, this assertion is where it shows up.
@@ -1625,6 +1899,66 @@ def ledger_document(ledger: Ledger, plan: Plan, observation: dict[str, object]) 
     }
 
 
+def _withheld_count(value: object) -> dict[str, object]:
+    """Count a private collection without publishing any of its elements."""
+    return {"count": len(value or []), "details": "withheld"}
+
+
+def production_readonly_ledger_document(
+        ledger: Ledger, observation: dict[str, object]) -> dict[str, object]:
+    """Production account evidence reduced to counters and fixed labels only."""
+    ledger.settle()
+    return {
+        BUCKET_SUBMITTED: _withheld_count(ledger.submitted),
+        BUCKET_ACKED: _withheld_count(ledger.acked),
+        BUCKET_FILLED: _withheld_count(ledger.filled),
+        BUCKET_PARTIAL: _withheld_count(ledger.partial),
+        BUCKET_CANCELED: _withheld_count(ledger.canceled),
+        BUCKET_UNKNOWN: _withheld_count(ledger.unknown),
+        BUCKET_NO_TRADE: _withheld_count(ledger.no_trade),
+        "pending_ids": _withheld_count(ledger.pending_ids),
+        "outstanding_orders": _withheld_count(observation.get("outstanding")),
+        "duplicate_receipts": {
+            "acked": int(ledger.duplicates.get("acked", 0)),
+            "fills": int(ledger.duplicates.get("fills", 0)),
+        },
+        "lookup_failures": _withheld_count(ledger.lookups),
+        "cache_errors": _withheld_count(observation.get("errors")),
+    }
+
+
+def production_readonly_stops(
+        stops: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    """Retain stop outcomes while withholding exception text from a live account run."""
+    documents: list[dict[str, object]] = []
+    for stop in stops:
+        label = stop.get("label")
+        stop_target = stop.get("stop_target")
+        documents.append({
+            "label": label if label in {"watchdog", "final"} else "unknown",
+            "attempted": bool(stop.get("attempted")),
+            "requested": bool(stop.get("requested")),
+            "stopped": bool(stop.get("stopped")),
+            "error": None if stop.get("error") is None else "withheld",
+            "iterations": max(0, int(stop.get("iterations") or 0)),
+            "stop_target": (
+                stop_target if stop_target in {"handle", "node", "none"} else "unknown"
+            ),
+            "cancels_own_orders": None,
+            "confirms_cancels": None,
+            "releases_dead_mans_switch": None,
+        })
+    return documents
+
+
+def _document_count(value: object) -> int:
+    """Read either the detailed collection shape or the production count-only shape."""
+    if isinstance(value, dict) and set(value) == {"count", "details"}:
+        count = value.get("count")
+        return count if isinstance(count, int) and count >= 0 else 0
+    return len(value or [])
+
+
 # ------------------------------------------------------------------------ node
 
 
@@ -1660,7 +1994,10 @@ def _invoke_node_factory(factory: Callable[..., object], builder: object,
 
 
 def build_node(plan: Plan, adapter: OndoAdapter, node_factory: Callable[..., object] | None,
-               *, account_id: AccountId | None) -> tuple[object, dict[str, object]]:
+               *, account_id: AccountId | None,
+               expected_venue_account_id: str | None = None,
+               diagnostics_run_id: str | None = None,
+               ) -> tuple[object, dict[str, object], object | None]:
     """Configure one node for ``plan`` and hand it to the factory (or to ``build()``).
 
     Registration is by mode and nothing else: ``public`` registers no execution client at
@@ -1673,13 +2010,24 @@ def build_node(plan: Plan, adapter: OndoAdapter, node_factory: Callable[..., obj
         "data_client": f"{ONDO_ADAPTER}.OndoDataClientFactory",
         "exec_client": None,
         "simulated": False,
-        "account_read_only": plan.mode == MODE_ACCOUNT_READONLY,
+        "account_read_only": plan.mode in READ_ONLY_MODES,
         "node_environment": _node_environment(plan.mode).name,
     }
+    # The instance whose per-run diagnostics snapshot the report reads after the stop. It
+    # is never serialized: only the sanitized counters/enums the snapshot carries are.
+    exec_factory_instance: object | None = None
+    # Native account/config/error logs may include private response data. The read-only
+    # production probe reports only its sanitized Python diagnostics, even with --log-level DEBUG.
+    native_logging = (
+        LoggerConfig(stdout_level=LogLevel.OFF, fileout_level=LogLevel.OFF,
+                     bypass_logging=True, print_config=False)
+        if plan.mode == MODE_PRODUCTION_READONLY
+        else LoggerConfig(stdout_level=LogLevel.from_str(plan.log_level))
+    )
     builder = (
         LiveNode.builder(PROBE_INSTANCE, TraderId.from_str(TRADER_ID),
                          _node_environment(plan.mode))
-        .with_logging(LoggerConfig(stdout_level=LogLevel.from_str(plan.log_level)))
+        .with_logging(native_logging)
         .with_risk_engine_config(_risk_config(plan))
         .with_timeout_connection(CONNECTION_TIMEOUT_SECS)
         .add_data_client(None, adapter.OndoDataClientFactory(), _data_config(adapter, plan))
@@ -1687,22 +2035,29 @@ def build_node(plan: Plan, adapter: OndoAdapter, node_factory: Callable[..., obj
 
     if plan.mode in CREDENTIAL_MODES:
         exec_config = _exec_config(adapter, plan.mode, account_id=account_id,
-                                   base_url_http=None)
+                                   base_url_http=None,
+                                   expected_venue_account_id=expected_venue_account_id,
+                                   diagnostics_run_id=diagnostics_run_id)
+        exec_factory_instance = adapter.OndoExecutionClientFactory()
         # The real object's own endpoint is checked again here, because this is the value
         # the client will actually dial; the plan check judged what the probe *resolved*.
         carried = getattr(exec_config, "base_url_http", None)
         if isinstance(carried, str) and carried:
-            refusal = sandbox_endpoint_refusal(carried)
+            if plan.mode in PRODUCTION_ENDPOINT_MODES:
+                refusal = production_endpoint_refusal(carried)
+                gate = "production authority"
+            else:
+                refusal = sandbox_endpoint_refusal(carried)
+                gate = "sandbox allowlist"
             if refusal is not None:
                 # A failure, not a refusal: the plan already gated the endpoint this probe
                 # resolved, so reaching here means the config disagrees with the plan, and
                 # the session has begun - exit 2 is reserved for "nothing was constructed".
                 raise OndoProbeError(
                     f"the execution config for --mode {plan.mode} carries an endpoint "
-                    f"outside the sandbox allowlist, which the plan did not: {refusal}",
+                    f"outside the {gate}, which the plan did not: {refusal}",
                 )
-        builder = builder.add_exec_client(None, adapter.OndoExecutionClientFactory(),
-                                          exec_config)
+        builder = builder.add_exec_client(None, exec_factory_instance, exec_config)
         registered["exec_client"] = f"{ONDO_ADAPTER}.OndoExecutionClientFactory"
     elif plan.mode == MODE_PAPER:
         builder = builder.add_simulated_exec_client(
@@ -1720,7 +2075,8 @@ def build_node(plan: Plan, adapter: OndoAdapter, node_factory: Callable[..., obj
         registered["simulated"] = True
 
     factory = node_factory if node_factory is not None else _default_node_factory
-    return _invoke_node_factory(factory, builder, plan), registered
+    node = _invoke_node_factory(factory, builder, plan)
+    return node, registered, exec_factory_instance
 
 
 def _default_node_factory(builder: object) -> object:
@@ -1878,7 +2234,7 @@ def banner_document(plan: Plan, *, run_id: str | None = None) -> dict[str, objec
         "endpoint_source": plan.endpoint_source,
         "endpoint_class": plan.endpoint_class,
         "credentials_required": plan.credentials_required,
-        "credential_variables": list(CREDENTIAL_VARIABLES) if plan.credentials_required else [],
+        "credential_variables": list(plan.credential_variables) if plan.credentials_required else [],
         "run_id": run_id,
     }
 
@@ -1934,6 +2290,10 @@ def plan_document(plan: Plan, capability: ShutdownCapability) -> dict[str, objec
         "log_level": plan.log_level,
         "caps": caps_document(plan),
         "envelope": envelope_document(plan),
+        "account_id_mapping": (
+            f"{PRODUCTION_ACCOUNT_ID_PREFIX}{{raw venue accountID}}"
+            if plan.mode == MODE_PRODUCTION_READONLY else None
+        ),
         "protocol_verified": False,
         "protocol_verified_reason": PROTOCOL_VERIFIED_REASON,
         "exit_code_zero_means_clean_account": False,
@@ -1943,6 +2303,9 @@ def plan_document(plan: Plan, capability: ShutdownCapability) -> dict[str, objec
         "converging_stop_reason": capability.reason,
         "unverified": unverified_document(capability),
         "converging_stop": converging_stop_document(capability),
+        "native_diagnostics": native_diagnostics_document(
+            read_native_diagnostics(None, run_id="dry-run"),
+        ),
     }
     document.update(banner_document(plan))
     return document
@@ -2021,13 +2384,98 @@ def unverified_document(capability: ShutdownCapability) -> list[dict[str, object
     ]
 
 
+def _reported_account(plan: Plan, observation: dict[str, object]) -> object:
+    """The account view the report carries, without dumping the account object.
+
+    A production read-only report publishes the reconciliation boolean and nothing that
+    identifies the account: the live run is the one place account material must not leak,
+    and the native account values are deliberately not in this report.
+    """
+    account = observation.get("account")
+    if account is None:
+        return None
+    if plan.mode == MODE_PRODUCTION_READONLY:
+        return {"reconciled": True, "account_object_published": False}
+    return account
+
+
 def report_document(plan: Plan, *, run_id: str, started: datetime, finished: datetime,
                     exit_code: int, stop_condition: str, failure: str | None,
                     node: dict[str, object] | None, ledger: Ledger,
                     observation: dict[str, object], stops: Sequence[dict[str, object]],
                     watchdog: dict[str, bool] | None,
-                    capability: ShutdownCapability) -> dict[str, object]:
+                    capability: ShutdownCapability,
+                    diagnostics: NativeDiagnostics) -> dict[str, object]:
     """The published report: the axes, the banner, and the two honest denials."""
+    # ``production-readonly`` passes only on same-run, schema-confirmed native evidence for
+    # identity, login, both required subscription acknowledgements, an account-state event,
+    # and clean shutdown. Every other mode reports ``None`` (not applicable).
+    if plan.mode != MODE_PRODUCTION_READONLY:
+        production_support_verified: bool | None = None
+        production_reason: str | None = None
+    elif exit_code != EXIT_OK or failure is not None:
+        production_support_verified = False
+        production_reason = (
+            "the bounded session did not finish successfully, so this run is not a passed "
+            "production read-only acceptance; production execution remains disabled"
+        )
+    elif not diagnostics.available:
+        production_support_verified = False
+        production_reason = (
+            "the native diagnostics snapshot was unavailable for this run, so production "
+            "read-only support is not verified; production execution remains disabled"
+        )
+    elif not diagnostics.schema_confirmed:
+        production_support_verified = False
+        production_reason = (
+            "the native diagnostics schema was not confirmed for this run, so production "
+            "read-only support is not verified; production execution remains disabled"
+        )
+    elif diagnostics.field("identity_match") != "matched":
+        production_support_verified = False
+        production_reason = (
+            "the configured account identity was not matched to the authenticated identity, "
+            "so this run is not a passed production read-only acceptance; production "
+            "execution remains disabled"
+        )
+    elif diagnostics.field("logged_in") is not True:
+        production_support_verified = False
+        production_reason = (
+            "the native snapshot did not report an accepted private login for this run; "
+            "production execution remains disabled"
+        )
+    elif set(diagnostics.field("subscriptions_acked") or ()) != {
+        "ordersPerps", "fillsPerps",
+    }:
+        production_support_verified = False
+        production_reason = (
+            "the required private subscriptions were not all acknowledged for this run; "
+            "production execution remains disabled"
+        )
+    elif not isinstance(diagnostics.field("account_state_events"), int) or (
+        diagnostics.field("account_state_events") <= 0
+    ):
+        production_support_verified = False
+        production_reason = (
+            "native account-state events were not observed for this run; production "
+            "execution remains disabled"
+        )
+    elif diagnostics.field("shutdown_status") != "complete":
+        production_support_verified = False
+        production_reason = (
+            "a clean native shutdown was not observed for this run; production execution "
+            "remains disabled"
+        )
+    else:
+        production_support_verified = True
+        production_reason = (
+            "the same-run native snapshot confirmed the schema, matched account identity, "
+            "accepted private login, acknowledged both required private subscriptions, "
+            "published account-state events and completed a clean shutdown. This is a "
+            "production read-only acceptance, not a production order acceptance; production "
+            "execution remains disabled"
+        )
+
     document: dict[str, object] = {
         "tool": "ondo_probe",
         "schema_version": SCHEMA_VERSION,
@@ -2044,28 +2492,42 @@ def report_document(plan: Plan, *, run_id: str, started: datetime, finished: dat
         "envelope": envelope_document(plan),
         "session": node or {},
         "watchdog": dict(watchdog) if watchdog is not None else None,
-        "stops": [dict(stop) for stop in stops],
+        "stops": (
+            production_readonly_stops(stops)
+            if plan.mode == MODE_PRODUCTION_READONLY else [dict(stop) for stop in stops]
+        ),
         "account_reconciled": bool(observation.get("account")),
-        "account": observation.get("account"),
+        "account": _reported_account(plan, observation),
         "account_coverage_proven": False,
         "account_coverage_reason": (
-            "this run requested no venue response, so no coverage of the account could be "
-            "proven from one: an account object in the cache is the client's view, not a "
-            "reconciliation against the venue"
+            "this report has no per-run authoritative position, order and fill coverage "
+            "telemetry: an account object in the cache or an account-state event alone "
+            "does not prove complete account coverage"
         ),
         "protocol_verified": False,
         "protocol_verified_reason": PROTOCOL_VERIFIED_REASON,
         "exit_code_zero_means_clean_account": False,
+        "production_readonly_support_verified": production_support_verified,
+        "production_readonly_support_reason": production_reason,
+        "account_id_mapping": (
+            f"{PRODUCTION_ACCOUNT_ID_PREFIX}{{raw venue accountID}}"
+            if plan.mode == MODE_PRODUCTION_READONLY else None
+        ),
         "supports_ordered_shutdown": capability.supported,
         "supports_ordered_shutdown_source": capability.source,
         "converging_stop_available": capability.supported,
         "converging_stop_reason": capability.reason,
         "converging_stop": converging_stop_document(capability),
+        "native_diagnostics": native_diagnostics_document(diagnostics),
         "unverified": unverified_document(capability),
         "orders_submitted_by_probe": 0,
     }
     document.update(banner_document(plan, run_id=run_id))
-    document.update(ledger_document(ledger, plan, observation))
+    document.update(
+        production_readonly_ledger_document(ledger, observation)
+        if plan.mode == MODE_PRODUCTION_READONLY
+        else ledger_document(ledger, plan, observation)
+    )
     return document
 
 
@@ -2084,10 +2546,10 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
     accounting is never lost to the way it ended.
     """
     # Only a credentialed mode has one: public and paper never resolve a credential, so
-    # the account id is absent rather than empty for them.
-    account_id = (
-        AccountId.from_str(str(environ[ACCOUNT_ID_VARIABLE]).strip())
-        if plan.credentials_required else None
+    # the account id is absent rather than empty for them. For production-readonly the
+    # Nautilus AccountId is ``ONDO-{raw venue id}`` and the raw value is the expected id.
+    account_id, expected_venue_account_id = resolve_account_identity(
+        plan.mode, environ, plan.credential_variables,
     )
     started = now()
     run_id = new_run_id(started)
@@ -2098,6 +2560,8 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
     watchdog_state: dict[str, bool] | None = None
     node: object | None = None
     session: dict[str, object] | None = None
+    native_target: object | None = None
+    diagnostics: NativeDiagnostics | None = None
     # The watchdog must never touch the node itself. A `LiveNode` is unsendable in PyO3, so
     # an attribute read from another thread trips a Rust assertion and the run dies where it
     # stood instead of stopping - which is exactly what a deadline stop did before this held
@@ -2121,7 +2585,11 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
         return outcome
 
     try:
-        node, session = build_node(plan, adapter, node_factory, account_id=account_id)
+        node, session, native_target = build_node(
+            plan, adapter, node_factory, account_id=account_id,
+            expected_venue_account_id=expected_venue_account_id,
+            diagnostics_run_id=run_id,
+        )
         # Resolved here, on the thread that built the node and before `run()` blocks: the
         # watchdog is only ever handed this, never the node.
         target, via = resolve_stop_target(node)
@@ -2139,7 +2607,14 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
         run = _attr(node, "run")
         if not callable(run):
             raise OndoProbeError("the node exposed no run(): nothing can be started")
-        run()
+        lifecycle_result = run()
+        if lifecycle_result is False:
+            # The native lifecycle's own verdict is not discarded: a run that reports False
+            # is a failed run, and it must not be published as a clean one.
+            raise OndoProbeError(
+                "the node run() returned False: the native lifecycle reported failure, so "
+                "this run is not complete",
+            )
         if watchdog_state["timed_out"]:
             stop_condition = (
                 STOP_DEADLINE_SANDBOX if plan.mode == MODE_SANDBOX else STOP_DEADLINE_NORMAL
@@ -2159,15 +2634,23 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
         log("ondo_probe: interrupted; stopping and publishing what was observed")
     except OndoProbeRefused as exc:
         stop_condition = STOP_EXCEPTION
-        failure = f"refused late, before any request was sent: {exc}"
         exit_code = EXIT_REFUSED
-        print(f"ondo_probe: refused: {exc}", file=sys.stderr)
+        if plan.mode == MODE_PRODUCTION_READONLY:
+            failure = "session_refused"
+            print("ondo_probe: refused: session_refused", file=sys.stderr)
+        else:
+            failure = f"refused late, before any request was sent: {exc}"
+            print(f"ondo_probe: refused: {exc}", file=sys.stderr)
     except Exception as exc:
         stop_condition = STOP_EXCEPTION
-        failure = f"{type(exc).__name__}: {exc}"
         exit_code = EXIT_FAILURE
-        log(f"ondo_probe: the session failed: {failure}")
-        log(traceback.format_exc())
+        if plan.mode == MODE_PRODUCTION_READONLY:
+            failure = "session_runtime_error"
+            log("ondo_probe: the session failed: session_runtime_error")
+        else:
+            failure = f"{type(exc).__name__}: {exc}"
+            log(f"ondo_probe: the session failed: {failure}")
+            log(traceback.format_exc())
     finally:
         done.set()
         # The watchdog writes its own outcome into `stops` from its own thread, and the document
@@ -2188,12 +2671,16 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
             merge_observation(ledger, observation)
         except Exception as exc:  # pragma: no cover - observe_cache is already defensive
             observation["errors"] = [f"the post-run observation failed: {type(exc).__name__}: {exc}"]
+        # The native snapshot is read from the object the interface declares: the execution
+        # factory this run built the client with. A wheel without the accessor reports every
+        # field unknown rather than a fabricated host fact.
+        diagnostics = read_native_diagnostics(native_target, run_id=run_id)
         finished = now()
         document = report_document(
             plan, run_id=run_id, started=started, finished=finished, exit_code=exit_code,
             stop_condition=stop_condition, failure=failure, node=session, ledger=ledger,
             observation=observation, stops=stops, watchdog=watchdog_state,
-            capability=capability,
+            capability=capability, diagnostics=diagnostics,
         )
         meta = {
             "tool": "ondo_probe",
@@ -2206,13 +2693,17 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
             "exit_code": exit_code,
             "stop_condition": stop_condition,
             "failure": failure,
-            "outstanding_orders": len(document.get("outstanding_orders") or []),
-            "pending_ids": len(document.get("pending_ids") or {}),
+            "outstanding_orders": _document_count(document.get("outstanding_orders")),
+            "pending_ids": _document_count(document.get("pending_ids")),
             "account_reconciled": document.get("account_reconciled"),
             "protocol_verified": False,
             "supports_ordered_shutdown": capability.supported,
             "supports_ordered_shutdown_source": capability.source,
             "converging_stop_available": capability.supported,
+            "native_diagnostics_available": diagnostics.available,
+            "native_diagnostics_source": diagnostics.source,
+            "production_readonly_support_verified": document.get(
+                "production_readonly_support_verified"),
         }
         try:
             manifest = write_report(
@@ -2223,8 +2714,12 @@ def execute(plan: Plan, *, adapter: OndoAdapter, node_factory: Callable[..., obj
                 f"(run {manifest.get('run_id')}, complete={manifest.get('complete')})")
         except Exception as exc:
             # A report that cannot be written is a failure of the run, never a silent one.
-            print(f"ondo_probe: the report could not be written: {type(exc).__name__}: {exc}",
-                  file=sys.stderr)
+            if plan.mode == MODE_PRODUCTION_READONLY:
+                print("ondo_probe: the report could not be written: report_write_error",
+                      file=sys.stderr)
+            else:
+                print(f"ondo_probe: the report could not be written: "
+                      f"{type(exc).__name__}: {exc}", file=sys.stderr)
             if exit_code == EXIT_OK:
                 exit_code = EXIT_FAILURE
         if exit_code == EXIT_OK and failure is None:

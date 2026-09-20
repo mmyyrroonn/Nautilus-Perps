@@ -1,4 +1,4 @@
-# Ondo Perps probe runbook（`ONDO`：public / account-readonly / paper / sandbox）
+# Ondo Perps probe runbook（`ONDO`：public / account-readonly / production-readonly / paper / sandbox）
 
 本文件是 Ondo Perps（venue 字符串与 ClientId 都是 `ONDO`）在应用侧的操作说明。实现计划与取舍见
 [`docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md`](superpowers/plans/2026-09-15-ondo-perps-continuation.md)，
@@ -7,8 +7,8 @@
 R2 行情/录制/回放（[`20260915T153817Z-r2`](../reports/ondo-acceptance/20260915T153817Z-r2/README.md)）
 与 R3 私有生命周期/账户/DMS（[`20260916T030333Z-r3`](../reports/ondo-acceptance/20260916T030333Z-r3/README.md)）。
 
-本路径只做四件事：公开行情预检、有限时公开采集与录制、已有 tape 的离线重放、以及三种受限的账户路径
-（只读 / 模拟 / sandbox）。默认只读、默认有限时运行、没有默认下单参数。
+本路径只做四件事：公开行情预检、有限时公开采集与录制、已有 tape 的离线重放、以及四种受限的账户路径
+（sandbox 只读 / production 只读 / 模拟 / sandbox 写入）。默认只读、默认有限时运行、没有默认下单参数。
 
 **开篇两条必须先看，因为它们决定这份文档里哪些话不能说。**
 
@@ -36,7 +36,8 @@ R2 行情/录制/回放（[`20260915T153817Z-r2`](../reports/ondo-acceptance/202
 | 模式 | 读什么 | 写什么 | 结束条件 |
 |---|---|---|---|
 | `public` | 公开行情（`ONDO` data client）+ 录制 | 不写；不注册执行 factory、不读交易凭据 | 到达 `--minutes` 截止 |
-| `account-readonly` | 公开行情 + 私有账户同步（`account_read_only=True`） | 不发单、不撤单、**不武装死手开关**；永不进入 trading-ready | 到达截止 |
+| `account-readonly` | 公开行情 + **sandbox** 私有账户同步（`account_read_only=True`） | 不发单、不撤单、**不武装死手开关**；永不进入 trading-ready | 到达截止 |
+| `production-readonly` | 公开行情 + **production（主网）** 私有账户同步（`account_read_only=True`） | 不发单、不撤单、不武装死手开关；永不进入 trading-ready | 到达截止 |
 | `paper` | 公开行情（真实 `ONDO` data client） | **全部是模拟的**：执行侧用模拟（sandbox）client，不产生任何远程写入；它报告的每一笔 order / fill / balance / position 都标为 synthetic | 到达截止 |
 | `sandbox` | 同上，但执行侧接到**真实**的 sandbox client，可写能力处于**武装待命** | **R4 里它同样一次单也不下**——写能力是"已被武装的状态"，不是"已发生的事实" | 到达截止或边界用尽 |
 
@@ -44,6 +45,12 @@ R2 行情/录制/回放（[`20260915T153817Z-r2`](../reports/ondo-acceptance/202
 `paper` 挂框架的模拟 client，**结构上**不可能产生远程写；`sandbox` 挂真实的、可写能力已被武装的 client。
 两者在这一轮都是零远程写；差别是后者**具备**写能力而前者不具备。这一条在 R4 之后的实现里必须重新核对，
 它描述的是当前 probe 的行为，不是 sandbox 永远不发单。
+
+**`production-readonly` 与 `account-readonly` 是两条独立的环境路径。** 前者只解析 `ONDO_MAINNET_*`、
+只被指向 production 权威；后者只解析 `ONDO_SANDBOX_*`、只被指向 sandbox 权威，**两个命名空间之间没有任何
+回退**。`production-readonly` 不接受任何写参数：一旦命令行上出现 `--instrument` / `--notional-usd` /
+`--max-orders` / `--max-exposure-usd` / `--allow-sandbox-orders`，它在**读 `.env`、构造 client、建连之前**就以
+退出码 2 拒绝。
 
 **`sandbox` 仍然不是主网。** 按 `CLAUDE.md` 的硬规则，主网真实下单还必须在**当轮对话**里由用户明确说
 「上主网」，之前只允许 testnet / paper；这条规则不在本计划或本文件的授权范围内，`sandbox` 模式不触碰它。
@@ -60,10 +67,24 @@ R2 行情/录制/回放（[`20260915T153817Z-r2`](../reports/ondo-acceptance/202
 | `ONDO_SANDBOX_API_KEY` | 适配器（`common/credential.rs` 的 `ONDO_SANDBOX_API_KEY_VAR`） | sandbox API key id。原样使用，不 trim 内容、不做归一 |
 | `ONDO_SANDBOX_API_SECRET` | 适配器（同文件的 `ONDO_SANDBOX_API_SECRET_VAR`） | sandbox HMAC secret，同样原样使用 |
 | `ONDO_SANDBOX_ACCOUNT_ID` | **应用侧入口**（适配器**不**读它） | `account_id` 是执行配置的**必填字段**，但它是一个配置项而不是环境变量：适配器只从上面两个变量解析凭据。这个 `.env` 名字来自原方案 §Task 9 的 `.env.example` 清单，由应用侧读进来再作为 `account_id` 传入 |
+| `ONDO_MAINNET_API_KEY` | 适配器（candidate wheel 的 production 命名空间） | **仅** `--mode production-readonly` 读取；sandbox 模式不读它 |
+| `ONDO_MAINNET_API_SECRET` | 适配器（同上） | 仅 production-readonly；原样使用 |
+| `ONDO_MAINNET_ACCOUNT_ID` | **应用侧入口**（适配器**不**读它） | 仅 production-readonly 读取。它是**venue 的原始 `accountID`，不是 Nautilus `AccountId`**：应用侧只做非空/长度/无空白字符的本地校验，**不要求**它能直接解析成 Nautilus `AccountId`；它**原样**传给原生 `expected_venue_account_id`（已有前缀不剥离也不添加），而执行配置所需的 Nautilus `AccountId` 另构为 `ONDO-{raw}`（`src/ondo_probe.py` 的 `PRODUCTION_ACCOUNT_ID_PREFIX`）。sandbox 路径不变 |
 
-**production 不认任何变量名。** 生产环境的签名写入被无条件拒绝，包括配置了 `allow_production_orders=true`
-的组合；拒绝发生在构造可发请求之前。`allow_production_orders` **什么都不开启**——它对任何输入都只是产生
-一次具名拒绝（无论有没有给 `account_id`）。
+**两个命名空间之间没有回退。** `production-readonly` 只解析 `ONDO_MAINNET_*`：只给了 `ONDO_SANDBOX_*`
+会被拒绝（退出码 2），反之 `account-readonly` / `sandbox` 只解析 `ONDO_SANDBOX_*`，`ONDO_MAINNET_*`
+存在也不影响它们，更不会把值写进报告。
+
+**凭据文件默认位置。** 入口用 `python-dotenv` 读一次。要显式指定 canonical `.env`（例如主网只读要用的
+那个）而不把凭据复制进 worktree，设环境变量 `ONDO_PROBE_ENV_FILE=E:\Nautilus-Perps\.env`：只有**需要凭据
+且非 `--dry-run`** 的会话会读它，路径本身不是密钥；名字给了但文件读不到是**拒绝启动**（退出码 2），不会
+静默退回进程环境。`public` / `paper` / `--dry-run` 不读任何 `.env`。
+
+**production 的签名写入仍然被无条件拒绝。** candidate wheel 可能开启 production **只读**（`--mode
+production-readonly`，`account_read_only=true`），但生产环境的**签名写入**仍被拒绝，包括配置了
+`allow_production_orders=true` 的组合；拒绝发生在构造可发请求之前。`allow_production_orders` **什么都不开启**
+——它对任何输入都只是产生一次具名拒绝（无论有没有给 `account_id`）。**能否只读与能否写入是两条独立的能力**：
+只读 scope 被启用**不**代表任何写路径被开启。
 
 **一条必须写死的判据：缺凭据是「拒绝启动」，既不是功能失败，也不是通过。** 凭据解析失败的类型是
 `CredentialError::MissingVariable` / `EmptyValue`，报错只点名**变量名**，不带值（`python/config.rs` 的文档
@@ -168,6 +189,58 @@ Write-Output "probe_exit_code=$LASTEXITCODE"
 这一模式**只**验证「私有会话能起来、账户能对账」这一件事。它不证明任何写路径可用，也不证明 DMS 的语义
 （第 7 节）。退出码 2 = 拒绝启动（典型是凭据缺失）。
 
+### 3.4b 生产账户只读（`production-readonly`）
+
+这一模式是 `account-readonly` 的**主网对应物**，两者是独立的环境路径：它只解析 `ONDO_MAINNET_*`、
+执行配置的 `environment` 是 `PRODUCTION`、`account_read_only=True`，**不武装 DMS、不撤单、不发单**，
+也**不接受任何写参数**。它**不能**用 sandbox 端点：配置若被指向 sandbox 权威会在建连前拒绝。
+
+```powershell
+# 1. 干跑：只解析计划，不读 .env、不建 client、不联网
+.\.venv\Scripts\python.exe src\ondo_probe.py --mode production-readonly `
+    --symbols NVDA --dry-run
+
+# 2. 生产只读，有限时；需要 .env 里的 ONDO_MAINNET_* 三个名字
+.\.venv\Scripts\python.exe src\ondo_probe.py --mode production-readonly `
+    --symbols NVDA,TSLA --minutes 2 --out $runDir
+Write-Output "probe_exit_code=$LASTEXITCODE"
+```
+
+**当前安装的 wheel 不提供 production 只读能力。** 本模式已实现且离线测试通过，但旧 wheel 在构造
+鉴权客户端时会具名拒绝 production（`ProductionForbidden`）；probe 把这次拒绝**如实**写成 `complete: false`
+与失败原因，**不**把它当作通过。只有在安装了支持 production 只读 scope 的 candidate wheel 之后，
+这一模式才可能真正读到一个账户。**它仍然不是「上主网」授权**：不发任何写请求，主网真实下单的
+「上主网」规则见第 8 节。
+
+Astra 跑主网只读的推荐命令（canonical `.env` 用环境变量显式传入，**不复制进 worktree**；日志脱敏见第 4 节）：
+
+```powershell
+$env:ONDO_PROBE_ENV_FILE = 'E:\Nautilus-Perps\.env'
+.\\.venv\\Scripts\\python.exe src\\ondo_probe.py --mode production-readonly `
+    --symbols NVDA --minutes 2 --log-level WARNING --out $runDir
+Write-Output "probe_exit_code=$LASTEXITCODE"
+Remove-Item Env:\ONDO_PROBE_ENV_FILE
+```
+
+### 3.4c 原生只读诊断快照（`native_diagnostics`）
+
+报告里的 `native_diagnostics` 组是应用侧从原生适配器读取的**每轮、有界、已脱敏**快照，包含登录结果、
+已确认订阅的固定频道名、run state、重连/恢复计数、已发布的账户状态事件数、身份匹配枚举与关机状态。
+读取通过 native factory 的只读访问器 `read_only_snapshot()` 完成，只接受计数器与固定枚举标签；
+**帧字节、凭据、key id、账户 id、订单 id、金额字段一律不出现**。
+
+应用生成非密钥的 `run_id`，通过原生配置的 `diagnostics_run_id` 交给本轮 client；停止后从**同一个 factory
+实例**读取快照。读取是**fail-closed** 的：访问器缺失、抛错、返回非映射、缺少 run token，或 token 与本轮
+run id 不一致时，整个快照标记为 `available: false` 并把每个字段留成 `null`（未知），**绝不**从 dry-run、
+factory 标记或另一轮 run 推测出「登录成功」这类事实。
+
+`schema_confirmed: true` 只在快照精确符合 `native-readonly/interface.md` 冻结的九个键、固定标签与类型时成立；
+多键、缺键、错误类型或未知枚举都不能通过 schema gate，未知值仍保留为 `null`。即使 schema 通过，
+`production_readonly_support_verified` 也只有在本轮同时观察到以下事实时才是 `true`：身份 `matched`、真实
+`loggedIn` 已接受、`ordersPerps` 与 `fillsPerps` 都收到订阅 ACK、至少发布 1 个原生 `AccountState` 事件、
+并且 `shutdown_status=complete`。任一项缺失、为零、未支持或未知都保留为失败判定；退出码 0 本身不构成
+production 验收。订阅 ACK 只证明频道已被 venue 接受，不证明产生过订单或成交事件。
+
 ### 3.5 模拟（`paper`）
 
 `paper` 用真实的 Ondo **公开数据** client 配一个**模拟的**执行 client：它报告的每一笔订单、成交、余额和
@@ -226,7 +299,8 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的�
 就是这条 id（本机当前为 `NVDA-USD-PERP.ONDO` / `TSLA-USD-PERP.ONDO`），**先用第 3.1 节的干跑核对它，不要
 按记忆写**。`--instrument` 可以重复给多次。
 
-**`sandbox` 不是主网，也不需要"上主网"授权**；但主网写入在任何模式下都继续被拒绝（第 8 节）。
+**`sandbox` 不是主网，也不需要"上主网"授权**；但主网**写入**在任何模式下都继续被拒绝（第 8 节）。
+`--mode production-readonly` 只做只读账户同步，同样不是「上主网」授权。
 
 ## 4. probe 写了什么
 
@@ -256,6 +330,7 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的�
 | 账户是否对账 | 账户读数是否来自归并后的状态、覆盖范围是否被证明 |
 | 结果是否 synthetic | `paper` 的每一笔都是模拟的，必须能从报告里看出来 |
 | **协议验证状态** | 第 7 节那些项仍然是「文档规定、未经 sandbox 证实」 |
+| 原生只读诊断快照 | 应用把本轮 `run_id` 作为 `diagnostics_run_id` 交给原生 config，再从同一 factory 的 `read_only_snapshot()` 读取有界、脱敏快照（登录、已确认订阅频道、run state、重连/恢复计数、账户状态事件数、身份匹配枚举、关机状态）；**每个字符串字段都过显式 allowlist**，未识别值丢弃为 `null`。访问器缺失/抛错/非映射/无 token/跨 run 时 `available: false` 且字段全为 `null`；只有精确九键安全 schema 才有 `schema_confirmed: true`。production 通过还要求身份匹配、真实登录、两个频道 ACK、账户事件大于零与干净关机，绝不从 dry-run 或 factory 标记伪造 host 事实 |
 | 适配器关机能力 vs 本轮观察 | `supports_ordered_shutdown` / `converging_stop_available` 描述**已安装适配器实现了什么**（离线读取，缺失/false/类型不对/读取失败一律不可用）；`cancels_own_orders` / `confirms_cancels` / `releases_dead_mans_switch` 描述**本轮实际观察到了什么**，无原生 StopReport 遥测时为 `null`（未观察，而不是「未发生」）；`observed_this_run` 明确标注是否观察过。二者不可互相替代，零下单也不代表 DMS 没被解除 |
 
 **这些是必须能分辨的组，不是 JSON 键名清单**——确切的键名以 probe 写出的 `meta.json` 为准，读之前先开
@@ -273,6 +348,12 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的�
 > 单，也没有原生 StopReport 遥测去观察取消/确认/释放（这些字段是 `null` = 未观察，不是 `false` = 未发生）。
 > 看到 `0` 只说明这一次 probe 按它自己的定义完成了；账户里还剩什么，去报告里的未决/残留条目看，不要从退出码
 > 推断。
+
+**日志过滤建议（主网只读 run）。** probe 自己的日志只打印 banner、caps、envelope 与报告路径；原生 node 的
+日志可能带有 venue 文本。建议：`--log-level WARNING` 降噪；展示前把 `stdout`/`stderr` 过一遍
+`ONDO-MAINNET|ONDO_SANDBOX|ONDO-KEY-ID|ONDO-SIGN|Authorization|api.?key|secret|accountID` 大小写不敏感
+过滤（发现匹配先停下核对，不要直接贴）；只贴报告里的组与计数，**不贴** `native_diagnostics` 以外的原生对象
+repr。报告里也**不**出现原始 payload、key id、账户 id 或金额字段。
 
 ## 5. 未知字段与费用口径
 
@@ -375,8 +456,9 @@ venv 中独立验证了 `supports_ordered_shutdown` 为精确布尔 `True`、生
 - **这条路径不开启主网交易。** production 的签名写入在任何模式下都继续被**无条件拒绝**，包括
   `allow_production_orders=true` 的组合；`allow_production_orders` 只产生拒绝，不开启任何东西。
   主网真实下单还需要用户**在当轮对话里**明确说「上主网」，这是 `CLAUDE.md` 的硬规则。
-- **只读模式没有撤单或死手开关副作用。** `account-readonly` 用 `account_read_only=True`：不发单、不撤单、
-  不订阅死手开关、永不进入 trading-ready。不该为了"把账户弄干净"而自动撤单或下单。
+- **只读模式没有撤单或死手开关副作用。** `account-readonly` 与 `production-readonly` 都用
+  `account_read_only=True`：不发单、不撤单、不订阅死手开关、永不进入 trading-ready。不该为了"把账户弄干净"
+  而自动撤单或下单。
 - **`sandbox` 通过不等于任何生产资格。** sandbox 不足以证明生产资格、容量、提现或收益；合约映射未验证
   期间 `executable=false` 继续成立。
 - **死手开关的解除取决于安装的 wheel。** 旧的 R5.1 wheel 的带凭据 `sandbox` 会话会武装一个它不解除
@@ -392,3 +474,48 @@ venv 中独立验证了 `supports_ordered_shutdown` 为精确布尔 `True`、生
   不放进它，它也不读 `ONDO_*` 变量。
 - 本文件**不**描述任何未经 sandbox 证实的协议细节（第 7 节），也**不**把任何离线通过写成在线通过。
 - 历史的 24–72 小时长观察**不默认启动**；公开 smoke 先按 2–5 分钟做有限观察。
+
+Production read-only sessions always disable native console/file logging, even when
+`--log-level DEBUG` is requested, because native account/configuration errors may contain
+private account details. Sanitized Python progress and the fixed native diagnostic fields
+remain available in the report.
+
+## 9. Restricted production-trade implementation (offline/default-off)
+
+`src/ondo_trade_probe.py` is a separate app path for one bounded NVDA cycle: exactly one
+price-protected limit-IOC opening attempt at a target USD 15 notional, followed only by the
+confirmed filled quantity in at most two opposite-side reduce-only limit-IOC exit attempts.
+`config/limits.toml` now carries the complete `[ondo_trade]` table: USD 50 per-order hard rail,
+USD 100 gross rail, three total orders, one new-risk request, six app-visible create/cancel
+requests, a 25 USDC available-margin threshold, 600 seconds total and five seconds reserved for
+bounded cleanup/reconciliation. The USDC threshold is an operator buffer in the balance's actual
+unit; it is not an FX conversion, a USD=USDC claim, or a venue minimum.
+
+This is implementation/configuration evidence only. It does not connect a trading account, arm
+DMS, submit, cancel, or authorize any production write. The default installed wheel remains
+unsupported unless it exposes the exact native envelope and per-run snapshot contract. An
+unpublished standalone venue minimum remains explicit `null`; positive quantity/price grids still
+apply, and a present malformed minimum blocks. The USD 10-20 target is a user budget, not a venue
+minimum.
+
+Production-trade native stdout/file/config logging is always disabled (`OFF`, bypassed,
+`print_config=false`) because native errors may contain account or private-response data. The
+trade CLI intentionally has no `--log-level`; only sanitized app reporting remains.
+
+Safe offline intent check (no `.env`, client or network):
+
+```powershell
+.\.venv\Scripts\python.exe src\ondo_trade_probe.py --mode production-trade `
+    --side buy --dry-run
+```
+
+Expected dry-run facts are `client_constructed=false`, `env_file_read=false`,
+`requests_sent=0`, `production_execution_verified=false`, plus the installed native capability
+result. `limits_configured=true` means only that the complete local `[ondo_trade]` section
+exists. A dry-run always reports `live_execution_ready=false`: it has no native account/readiness
+or authorization evidence and cannot establish that a production run is runnable.
+
+A future live plan must be generated from fresh official metadata and executable quotes, include
+both directional worst prices and exact ticks, be hash-bound, and pass every native start gate.
+Actual production execution still requires current-turn `上主网` authorization and approval of
+that exact plan. Do not reuse the dry-run null fields or an older public snapshot as a priced plan.

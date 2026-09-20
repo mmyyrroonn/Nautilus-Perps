@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import ondo_preflight  # noqa: E402  (the run-id/staging vocabulary the probe mirrors)
 import ondo_probe  # noqa: E402
+import ondo_native_diagnostics as ondo_diag  # noqa: E402  (the app's required snapshot contract)
 
 
 # --------------------------------------------------------------- frozen contract values
@@ -84,7 +85,7 @@ CONTRACT_GROUPS = (
     "pending_ids", "account_reconciled", "synthetic", "protocol_verified",
     "exit_code_zero_means_clean_account", "mode", "environment", "read_capable",
     "write_capable", "stop_condition", "caps", "converging_stop_available",
-    "outstanding_orders",
+    "outstanding_orders", "native_diagnostics",
 )
 
 # Groups that count events. Each is a collection a reader can inspect on its own; none of
@@ -115,6 +116,13 @@ WRITE_METHODS = frozenset({
 CREDENTIAL_VARS = (
     "ONDO_SANDBOX_API_KEY", "ONDO_SANDBOX_API_SECRET", "ONDO_SANDBOX_ACCOUNT_ID",
 )
+MAINNET_CREDENTIAL_VARS = (
+    "ONDO_MAINNET_API_KEY", "ONDO_MAINNET_API_SECRET", "ONDO_MAINNET_ACCOUNT_ID",
+)
+
+PRODUCTION_AUTHORITY = "api.ondoperps.xyz"
+PRODUCTION_REST_URL = f"https://{PRODUCTION_AUTHORITY}"
+PRODUCTION_WS_URL = f"wss://{PRODUCTION_AUTHORITY}/ws"
 
 # Sentinels, not real credentials. If one of these shows up in a stream or a report, the
 # assertion is about the leak, not about the value.
@@ -122,6 +130,9 @@ SECRET_SENTINELS = {
     "ONDO_SANDBOX_API_KEY": "SENTINEL-API-KEY-2f4c9a",
     "ONDO_SANDBOX_API_SECRET": "SENTINEL-API-SECRET-8b1d7e",
     "ONDO_SANDBOX_ACCOUNT_ID": "SENTINEL-ACCOUNT-3a6f20",
+    "ONDO_MAINNET_API_KEY": "SENTINEL-MAINNET-KEY-77a1c4",
+    "ONDO_MAINNET_API_SECRET": "SENTINEL-MAINNET-SECRET-4c02b8",
+    "ONDO_MAINNET_ACCOUNT_ID": "SENTINEL-MAINNET-ACCOUNT-9e13f7",
 }
 
 DEFAULT_SYMBOLS = "NVDA,TSLA"
@@ -296,6 +307,11 @@ def _environment_enum(name: str):
     })
 
 
+# A sentinel: an injected adapter with no diagnostics snapshot models the installed wheel,
+# which exposes no accessor at all. It must not be a value the fake can mistake for one.
+_NO_DIAGNOSTICS = object()
+
+
 class FakeAdapter:
     """What ``ondo_probe`` loads from ``nautilus_trader.adapters.ondo``.
 
@@ -306,12 +322,13 @@ class FakeAdapter:
     """
 
     def __init__(self, registry: Registry, *, aio=True, fail=None, answers=None,
-                 config_base_url=None) -> None:
+                 config_base_url=None, diagnostics=_NO_DIAGNOSTICS) -> None:
         object.__setattr__(self, "_registry", registry)
         object.__setattr__(self, "_aio", aio)
         object.__setattr__(self, "_fail", fail)
         object.__setattr__(self, "_answers", answers)
         object.__setattr__(self, "_config_base_url", config_base_url)
+        object.__setattr__(self, "_diagnostics", diagnostics)
         object.__setattr__(self, "_cache", {})
 
     def __getattr__(self, name: str):
@@ -330,6 +347,7 @@ class FakeAdapter:
         registry, aio = self._registry, self._aio
         fail, answers = self._fail, self._answers
         config_base_url = self._config_base_url
+        diagnostics = self._diagnostics
         is_config = "Config" in name
 
         class Generated:
@@ -359,9 +377,16 @@ class FakeAdapter:
                 # injected one is how a test asks "what if the client dialled elsewhere?".
                 if is_config and config_base_url is not None:
                     self.base_url_http = config_base_url
+                # A diagnostics snapshot exists on the execution factory only when the test
+                # injects one; without it the fake exposes no accessor, which is the
+                # installed wheel's shape.
+                if "Factory" in name and diagnostics is not _NO_DIAGNOSTICS:
+                    self.read_only_snapshot = diagnostics
 
             def __getattr__(self, attr):
                 if attr.startswith("_"):
+                    raise AttributeError(attr)
+                if attr == "read_only_snapshot":
                     raise AttributeError(attr)
                 if is_config:
                     return None
@@ -473,11 +498,12 @@ class FakeNode:
 
     def __init__(self, registry: Registry, *, failure: BaseException | None = None,
                  blocking: bool = False, with_handle: bool = True,
-                 handle_stop_delay: float = 0.0) -> None:
+                 handle_stop_delay: float = 0.0, run_return: object = None) -> None:
         self.registry = registry
         self.failure = failure
         self.blocking = blocking
         self.with_handle = with_handle
+        self.run_return = run_return
         self.cache = FakeCache()
         self.stop_calls = 0
         self.the_handle = (
@@ -513,7 +539,7 @@ class FakeNode:
         self.calls.append(("handle", (), {}))
         return self.the_handle
 
-    def run(self) -> None:
+    def run(self):
         self.calls.append(("run", (), {}))
         if self.failure is not None:
             raise self.failure
@@ -522,6 +548,7 @@ class FakeNode:
             # shape in which a deadline can end a run at all.
             self._release.wait(timeout=30.0)
         self._running = False
+        return self.run_return
 
     def release(self) -> None:
         """End the hosted run: what a stop does to the run it is stopping, from any thread."""
@@ -548,17 +575,19 @@ class NodeFactory:
     """The ``node_factory`` seam: records how the node was asked for."""
 
     def __init__(self, registry: Registry, *, failure: BaseException | None = None,
-                 blocking: bool = False, with_handle: bool = True) -> None:
+                 blocking: bool = False, with_handle: bool = True,
+                 run_return: object = None) -> None:
         self.registry = registry
         self.failure = failure
         self.blocking = blocking
         self.with_handle = with_handle
+        self.run_return = run_return
         self.calls: list[tuple[tuple, dict]] = []
 
     def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         return FakeNode(self.registry, failure=self.failure, blocking=self.blocking,
-                        with_handle=self.with_handle)
+                        with_handle=self.with_handle, run_return=self.run_return)
 
 
 class SlowWatchdogFactory:
@@ -694,7 +723,7 @@ def clean_environ(**overrides) -> dict:
 
 def run_probe(argv, *, environ=None, registry=None, adapter=None, factory=None,
               node_failure: BaseException | None = None, blocking_node: bool = False,
-              with_handle: bool = True, **fake) -> Result:
+              with_handle: bool = True, run_return: object = None, **fake) -> Result:
     """Call ``main`` through all five seams and hand back everything it produced.
 
     ``node_failure`` is raised from the node's ``run()``: a real session blocks there, so
@@ -703,7 +732,8 @@ def run_probe(argv, *, environ=None, registry=None, adapter=None, factory=None,
     registry = registry if registry is not None else Registry()
     adapter = adapter if adapter is not None else FakeAdapter(registry, **fake)
     factory = factory if factory is not None else NodeFactory(
-        registry, failure=node_failure, blocking=blocking_node, with_handle=with_handle)
+        registry, failure=node_failure, blocking=blocking_node, with_handle=with_handle,
+        run_return=run_return)
     clock = Clock()
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -827,14 +857,15 @@ def test_the_cli_carries_exactly_the_eleven_contract_flags():
     )
 
 
-def test_the_mode_choices_are_exactly_the_four_modes():
+def test_the_mode_choices_are_exactly_the_five_modes():
     parser = getattr(ondo_probe, "build_parser", None)
+    expected = {"public", "account-readonly", "production-readonly", "paper", "sandbox"}
     if parser is None:
-        for mode in ("public", "account-readonly", "paper", "sandbox"):
+        for mode in expected:
             assert f'"{mode}"' in _source(), mode
         return
     action = next(a for a in parser()._actions if "--mode" in a.option_strings)
-    assert set(action.choices) == {"public", "account-readonly", "paper", "sandbox"}
+    assert set(action.choices) == expected
 
 
 def test_the_four_exit_codes_are_the_contract():
@@ -888,7 +919,7 @@ def assert_refused(result: Result, *, why: str) -> None:
     assert result.writes == [], f"{why}: a refusal issues no write requests"
 
 
-@pytest.mark.parametrize("mode", ["public", "account-readonly", "paper"])
+@pytest.mark.parametrize("mode", ["public", "account-readonly", "production-readonly", "paper"])
 @pytest.mark.parametrize("flag,value", [
     ("--allow-sandbox-orders", None),
     ("--instrument", ONDO_ID),
@@ -1308,7 +1339,7 @@ def test_paper_marks_every_result_synthetic(tmp_path):
 
 def test_sandbox_is_the_only_mode_that_may_write(tmp_path):
     payloads = {}
-    for mode in ("public", "account-readonly", "paper", "sandbox"):
+    for mode in ("public", "account-readonly", "production-readonly", "paper", "sandbox"):
         out_dir = tmp_path / mode
         argv = (sandbox_argv(out_dir) if mode == "sandbox"
                 else ["--mode", mode, "--symbols", "NVDA", "--minutes", "0.5",
@@ -1317,7 +1348,7 @@ def test_sandbox_is_the_only_mode_that_may_write(tmp_path):
         assert result.code == EXIT_OK, (mode, result.streams)
         payloads[mode] = probe_report(out_dir)
     assert payloads["sandbox"]["write_capable"] is True
-    for mode in ("public", "account-readonly", "paper"):
+    for mode in ("public", "account-readonly", "production-readonly", "paper"):
         assert payloads[mode]["write_capable"] is False, f"{mode} claims it may write"
 
 
@@ -2340,6 +2371,933 @@ def test_the_manifest_carries_the_capability_too(tmp_path):
     assert meta["converging_stop_available"] is True
     assert meta["supports_ordered_shutdown"] is True
     assert meta["protocol_verified"] is False
+
+
+# ============================================================ 10. production read-only
+#
+# A mode distinct from sandbox ``account-readonly``: MAINNET variable names only, the
+# production authority, and a native execution config with ``account_read_only`` set and no
+# write/DMS flag. The installed R52 wheel refuses production authentication, so a real
+# session is honestly reported unsupported; every test here uses the injected adapter and
+# opens no socket.
+
+
+def production_readonly_argv(out_dir, *extra):
+    return ["--mode", "production-readonly", "--symbols", "NVDA", "--minutes", "0.5",
+            "--out", str(out_dir), *extra]
+
+
+def mainnet_credentials(**overrides):
+    values = {k: v for k, v in SECRET_SENTINELS.items() if k.startswith("ONDO_MAINNET_")}
+    # The raw venue account id is numeric (no ``-``), unlike a Nautilus AccountId; the app
+    # constructs ``ONDO-{raw}`` for production-readonly and passes the raw value unchanged.
+    values["ONDO_MAINNET_ACCOUNT_ID"] = "987654321"
+    values.update(overrides)
+    return values
+
+
+def run_probe_with_diagnostics(argv, diagnostics, **kwargs):
+    registry = Registry()
+    adapter = FakeAdapter(registry, diagnostics=diagnostics)
+    return run_probe(argv, registry=registry, adapter=adapter, **kwargs), registry
+
+
+def test_production_readonly_is_a_distinct_read_only_mode():
+    assert ondo_probe.MODE_PRODUCTION_READONLY == "production-readonly"
+    assert ondo_probe.MODE_PRODUCTION_READONLY in ondo_probe.MODES
+    assert ondo_probe.MODE_PRODUCTION_READONLY in ondo_probe.CREDENTIAL_MODES
+    facts = ondo_probe.mode_facts(ondo_probe.MODE_PRODUCTION_READONLY)
+    assert facts["environment"] == "production"
+    assert facts["read_capable"] is True
+    assert facts["write_capable"] is False
+    assert facts["dms_armed"] is False
+    assert facts["cancel_capable"] is False
+    assert ondo_probe.credential_variables(
+        ondo_probe.MODE_PRODUCTION_READONLY) == MAINNET_CREDENTIAL_VARS
+    assert ondo_probe.credential_variables("public") == ()
+
+
+def test_production_readonly_plan_resolves_the_production_authority(tmp_path):
+    result = run_probe(production_readonly_argv(tmp_path / "out", "--dry-run"),
+                       environ=None)
+    assert result.code == EXIT_OK, result.streams
+    document = json.loads(result.out)
+    assert document["mode"] == "production-readonly"
+    assert document["environment"] == "production"
+    assert document["endpoint"] == PRODUCTION_REST_URL
+    assert document["endpoint_class"] == ondo_probe.ENDPOINT_PRODUCTION
+    assert document["write_capable"] is False
+    assert document["dms_armed"] is False
+    assert document["cancel_capable"] is False
+    assert document["credentials_required"] is True
+    assert document["credential_variables"] == list(MAINNET_CREDENTIAL_VARS)
+    assert document["account_id_mapping"] == "ONDO-{raw venue accountID}"
+    # A dry run observes no session, so the native snapshot is unavailable, never faked.
+    assert document["native_diagnostics"]["available"] is False
+    assert document["native_diagnostics"]["schema_confirmed"] is False
+    assert not (tmp_path / "out").exists()
+
+
+def test_production_readonly_dry_run_reads_no_dotenv_and_opens_no_socket(tmp_path):
+    with contextlib.ExitStack() as stack:
+        if importlib.util.find_spec("dotenv") is not None:
+            for name in ("load_dotenv", "dotenv_values", "find_dotenv"):
+                stack.enter_context(patch(
+                    f"dotenv.{name}",
+                    side_effect=AssertionError("production-readonly dry run must not read .env")))
+        stack.enter_context(patch.object(
+            socket.socket, "connect",
+            side_effect=AssertionError("dry-run must not open a socket")))
+        result = run_probe(production_readonly_argv(tmp_path / "out", "--dry-run"),
+                           environ=None)
+    assert result.code == EXIT_OK, result.streams
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("var", MAINNET_CREDENTIAL_VARS)
+def test_production_readonly_missing_mainnet_credential_is_refused(tmp_path, var):
+    environ = clean_environ(**mainnet_credentials())
+    environ.pop(var, None)
+    result = run_probe(production_readonly_argv(tmp_path / "out"), environ=environ)
+    assert_refused(result, why=f"production-readonly without {var}")
+    assert var in result.streams
+    for name in CREDENTIAL_VARS:
+        assert name not in result.streams, (
+            f"a production-readonly refusal named the sandbox variable {name}: "
+            f"{result.streams!r}"
+        )
+    assert not (tmp_path / "out").exists()
+
+
+def test_production_readonly_does_not_fall_back_to_sandbox_credentials(tmp_path):
+    environ = clean_environ(**credentials())
+    for var in MAINNET_CREDENTIAL_VARS:
+        environ.pop(var, None)
+    result = run_probe(production_readonly_argv(tmp_path / "out"), environ=environ)
+    assert_refused(result, why="production-readonly with only sandbox credentials")
+    assert "ONDO_MAINNET" in result.streams
+
+
+def test_sandbox_ignores_mainnet_credentials(tmp_path):
+    # Sandbox names absent, mainnet names present: still a sandbox refusal.
+    result = run_probe(sandbox_argv(tmp_path / "a"),
+                       environ=clean_environ(**mainnet_credentials()))
+    assert_refused(result, why="sandbox with only mainnet credentials")
+    assert "ONDO_SANDBOX" in result.streams
+    # Sandbox complete with mainnet exported: the run proceeds and reads no mainnet value.
+    result = run_probe(sandbox_argv(tmp_path / "b"),
+                       environ=clean_environ(**credentials()))
+    assert result.code == EXIT_OK, result.streams
+    mainnet = [v for k, v in SECRET_SENTINELS.items() if k.startswith("ONDO_MAINNET")]
+    for value in mainnet:
+        assert value not in result.streams
+    for path in (tmp_path / "b").rglob("*.json"):
+        text = path.read_text(encoding="utf-8")
+        for value in mainnet:
+            assert value not in text
+
+
+def test_public_and_paper_read_no_mainnet_credential(tmp_path):
+    for mode in ("public", "paper"):
+        result = run_probe(["--mode", mode, "--symbols", "NVDA", "--minutes", "0.5",
+                            "--out", str(tmp_path / mode)],
+                           environ=clean_environ(**credentials()))
+        assert result.code == EXIT_OK, result.streams
+        payload = probe_report(tmp_path / mode)
+        assert payload["credentials_required"] is False
+        assert payload["credential_variables"] == []
+        for built in result.registry.built:
+            for value in built.kwargs.values():
+                assert value not in SECRET_SENTINELS.values()
+
+
+@pytest.mark.parametrize("flag,value", [
+    ("--allow-sandbox-orders", None),
+    ("--instrument", ONDO_ID),
+    ("--notional-usd", "10"),
+    ("--max-orders", "2"),
+    ("--max-exposure-usd", "25"),
+])
+def test_a_write_option_in_production_readonly_refuses_before_reading_env(tmp_path, flag, value):
+    argv = production_readonly_argv(tmp_path / "out", flag)
+    if value is not None:
+        argv.append(value)
+    with patch.object(ondo_probe, "load_environment",
+                      side_effect=AssertionError("no .env read for a refused plan")):
+        result = run_probe(argv, environ=clean_environ(**mainnet_credentials()))
+    assert_refused(result, why=f"production-readonly + {flag}")
+    assert not (tmp_path / "out").exists()
+
+
+def test_production_readonly_refuses_a_sandbox_endpoint_from_config(tmp_path):
+    result = run_probe(production_readonly_argv(tmp_path / "out"),
+                       environ=clean_environ(**mainnet_credentials()),
+                       config_base_url=SANDBOX_REST_URL)
+    assert_refused(result, why="production-readonly configured with a sandbox endpoint")
+    assert not (tmp_path / "out").exists()
+
+
+PRODUCTION_NON_AUTHORITIES = (
+    SANDBOX_REST_URL,
+    f"https://{PRODUCTION_AUTHORITY}.evil.example",
+    "https://evil-api.ondoperps.xyz",
+    f"https://{PRODUCTION_AUTHORITY}@evil.example",
+    "http://api.ondoperps.xyz",
+    "https://api.ondoperps.xyz:8443",
+    "not-a-url",
+)
+
+
+@pytest.mark.parametrize("url", PRODUCTION_NON_AUTHORITIES)
+def test_the_production_gate_refuses_a_non_production_authority(url):
+    refusal = ondo_probe.production_endpoint_refusal(url)
+    assert refusal, f"{url!r} was admitted as a production endpoint"
+    assert isinstance(refusal, str) and refusal.strip()
+
+
+def test_the_production_gate_admits_the_authority_it_names():
+    assert ondo_probe.production_endpoint_refusal(PRODUCTION_REST_URL) is None
+    for spelling in (f"HTTPS://{PRODUCTION_AUTHORITY.upper()}",
+                     f"https://{PRODUCTION_AUTHORITY}.",
+                     f"https://{PRODUCTION_AUTHORITY}:443"):
+        verdict = ondo_probe.classify_production_endpoint(spelling)
+        assert verdict.allowed, f"{spelling}: {verdict.reason}"
+        assert verdict.host == PRODUCTION_AUTHORITY
+
+
+def test_production_readonly_config_is_production_and_read_only(tmp_path):
+    registry = Registry()
+    adapter = FakeAdapter(registry)
+    result = run_probe(production_readonly_argv(tmp_path / "out"),
+                       registry=registry, adapter=adapter,
+                       environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    configs = [b for b in registry.built if "OndoExecutionClientConfig" in b.name]
+    assert configs, "production-readonly must build an Ondo execution config"
+    for built in configs:
+        if "environment" in built.kwargs:
+            assert built.kwargs["environment"] is adapter.OndoEnvironment.PRODUCTION
+        assert (built.kwargs.get("account_read_only") is True
+                or getattr(built, "account_read_only", None) is True)
+        assert built.kwargs.get("allow_production_orders") is not True
+        assert "api_key" not in built.kwargs and "api_secret" not in built.kwargs
+    assert result.writes == []
+    for built in registry.built:
+        calls = getattr(built, "calls", None)
+        if calls is None:
+            continue
+        assert calls.matching("dms", "dead_man", "deadman", "cancel", "delete") == []
+
+
+def test_production_readonly_never_leaks_a_credential(tmp_path):
+    out_dir = tmp_path / "out"
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    assert_no_secret_anywhere(result, out_dir)
+
+
+def test_production_readonly_reports_a_native_refusal_honestly(tmp_path):
+    out_dir = tmp_path / "out"
+    denial = RuntimeError("ProductionForbidden: authenticated production is refused")
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()),
+                       node_failure=denial)
+    assert result.code != EXIT_OK, "a native refusal is not a successful run"
+    meta = manifest(out_dir)
+    assert meta["complete"] is False
+    assert meta.get("failure")
+    payload = probe_report(out_dir)
+    assert payload["write_capable"] is False
+    assert payload["protocol_verified"] is False
+    assert payload["exit_code_zero_means_clean_account"] is False
+    assert result.writes == []
+    assert_no_secret_anywhere(result, out_dir)
+
+
+def test_a_lifecycle_false_return_propagates_as_a_failure(tmp_path):
+    out_dir = tmp_path / "out"
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()),
+                       run_return=False)
+    assert result.code != EXIT_OK, "a lifecycle False return was published as success"
+    meta = manifest(out_dir)
+    assert meta["complete"] is False
+    assert meta.get("failure")
+
+
+def test_production_readonly_report_does_not_dump_the_account_object(tmp_path):
+    out_dir = tmp_path / "out"
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["account"] in (
+        None, {"reconciled": True, "account_object_published": False})
+    text = (out_dir / "probe.json").read_text(encoding="utf-8")
+    assert SECRET_SENTINELS["ONDO_MAINNET_ACCOUNT_ID"] not in text
+
+
+# ------------------------------- the native snapshot reader (fail closed, no invented fact)
+
+
+def diag_snapshot(**overrides):
+    base = {
+        "run_id": "RUN-1",
+        "logged_in": True,
+        "subscriptions_acked": {"ordersPerps": True, "fillsPerps": True},
+        "run_state": "read_only_synced",
+        "reconnects": 1,
+        "recoveries": 0,
+        "account_state_events": 2,
+        "identity_match": "matched",
+        "shutdown_status": "complete",
+    }
+    base.update(overrides)
+    return base
+
+
+class DiagTarget:
+    """A native object that either exposes a snapshot or does not expose the accessor."""
+
+    def __init__(self, value=None, *, absent=False):
+        if not absent:
+            object.__setattr__(self, "read_only_snapshot", value)
+
+
+def test_native_snapshot_matching_run_is_read_and_fields_are_typed():
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(diag_snapshot()), run_id="RUN-1")
+    assert diag.available is True
+    assert diag.source == ondo_diag.SOURCE_NATIVE
+    assert diag.field("logged_in") is True
+    assert diag.field("subscriptions_acked") == ("fillsPerps", "ordersPerps")
+    assert diag.field("run_state") == "read_only_synced"
+    assert diag.field("reconnects") == 1
+    assert diag.field("recoveries") == 0
+    assert diag.field("account_state_events") == 2
+    assert diag.field("identity_match") == "matched"
+    assert diag.field("shutdown_status") == "complete"
+
+
+def test_native_snapshot_missing_fields_stay_unknown():
+    diag = ondo_diag.read_native_diagnostics(
+        DiagTarget({"run_id": "RUN-1"}), run_id="RUN-1")
+    assert diag.available is True
+    for key in ondo_diag.REQUIRED_NATIVE_DIAGNOSTICS_KEYS:
+        assert diag.field(key) is None
+
+
+def test_native_snapshot_absent_accessor_is_unsupported():
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(absent=True), run_id="RUN-1")
+    assert diag.available is False
+    assert diag.source == ondo_diag.SOURCE_ACCESSOR_ABSENT
+    assert all(diag.field(k) is None for k in ondo_diag.REQUIRED_NATIVE_DIAGNOSTICS_KEYS)
+
+
+def test_native_snapshot_cross_run_is_rejected():
+    diag = ondo_diag.read_native_diagnostics(
+        DiagTarget(diag_snapshot(run_id="RUN-0")), run_id="RUN-1")
+    assert diag.available is False
+    assert diag.source == ondo_diag.SOURCE_CROSS_RUN
+    assert all(diag.field(k) is None for k in ondo_diag.REQUIRED_NATIVE_DIAGNOSTICS_KEYS)
+    # The foreign token is not echoed into the report; the app's own run id is elsewhere.
+    assert diag.run_id is None
+    assert "RUN-0" not in json.dumps(diag.as_dict())
+
+
+def test_native_snapshot_without_a_run_token_is_not_merged():
+    payload = diag_snapshot()
+    payload.pop("run_id")
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(payload), run_id="RUN-1")
+    assert diag.available is False
+    assert diag.source == ondo_diag.SOURCE_NO_RUN_TOKEN
+
+
+def test_native_snapshot_false_positive_is_not_merged():
+    # Claims a login but cannot prove it belongs to this run.
+    diag = ondo_diag.read_native_diagnostics(
+        DiagTarget({"logged_in": True, "subscriptions_acked": ["orders"]}), run_id="RUN-1")
+    assert diag.available is False
+    assert diag.field("logged_in") is None
+
+
+def test_native_snapshot_raising_getter_fails_closed():
+    def boom():
+        raise RuntimeError("the snapshot store is gone: SENTINEL-MAINNET-KEY-77a1c4")
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(boom), run_id="RUN-1")
+    assert diag.available is False
+    assert diag.source == ondo_diag.SOURCE_LOOKUP_FAILED
+    # The fixed category carries no exception text, so the sentinel cannot ride along.
+    assert "SENTINEL" not in json.dumps(diag.as_dict())
+    assert "RuntimeError" not in json.dumps(diag.as_dict())
+
+
+def test_native_snapshot_wrong_types_are_unknown():
+    payload = diag_snapshot(logged_in="yes", reconnects=-3, identity_match="maybe",
+                            subscriptions_acked=42, run_state="")
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(payload), run_id="RUN-1")
+    assert diag.available is True
+    for key in ("logged_in", "reconnects", "identity_match", "subscriptions_acked",
+                "run_state"):
+        assert diag.field(key) is None, key
+
+
+def test_native_snapshot_unrecognized_labels_are_dropped_not_echoed():
+    """A label outside the fixed vocabulary becomes null; it is never echoed."""
+    payload = diag_snapshot(
+        run_state="LoggedIn",
+        shutdown_status="SENTINEL-MAINNET-SECRET-4c02b8",
+    )
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(payload), run_id="RUN-1")
+    assert diag.available is True
+    assert diag.field("run_state") is None
+    assert diag.field("shutdown_status") is None
+    rendered = json.dumps(diag.as_dict())
+    assert "LoggedIn" not in rendered
+    assert "SENTINEL-MAINNET-SECRET-4c02b8" not in rendered
+
+
+def test_native_snapshot_malicious_values_are_not_echoed(tmp_path):
+    """A hostile snapshot cannot smuggle a key, account id or frame text into the report.
+
+    Every string member is checked against an allowlist; unknown labels are dropped. The
+    report must not contain any of the planted strings.
+    """
+    planted = [
+        "SENTINEL-MAINNET-KEY-77a1c4",
+        "SENTINEL-MAINNET-ACCOUNT-9e13f7",
+        "SENTINEL-MAINNET-SECRET-4c02b8",
+        '{"raw_frame":"login","signature":"deadbeef"}',
+    ]
+    payload = diag_snapshot(
+        run_state=planted[0],
+        shutdown_status=planted[1],
+        subscriptions_acked={"ordersPerps": True, planted[0]: True, planted[3]: True},
+        identity_match=planted[1],
+    )
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(payload), run_id="RUN-1")
+    assert diag.available is True
+    # The one recognized channel survives; the planted keys are dropped.
+    assert diag.field("subscriptions_acked") == ("ordersPerps",)
+    assert diag.field("run_state") is None
+    assert diag.field("shutdown_status") is None
+    assert diag.field("identity_match") is None
+    rendered = json.dumps(diag.as_dict())
+    for value in planted:
+        assert value not in rendered, f"a planted value was echoed: {value}"
+
+
+def test_native_snapshot_with_only_unknown_channels_is_unknown():
+    """A subscription map naming no known channel is unknown, not an empty confident set."""
+    payload = diag_snapshot(subscriptions_acked={"orders": True, "fills": True})
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(payload), run_id="RUN-1")
+    assert diag.available is True
+    assert diag.field("subscriptions_acked") is None
+
+
+def test_native_diagnostics_document_carries_only_counters_and_labels():
+    diag = ondo_diag.read_native_diagnostics(DiagTarget(diag_snapshot()), run_id="RUN-1")
+    document = diag.as_dict()
+    assert document["available"] is True
+    assert document["schema_confirmed"] is True
+    assert document["identity_match"] == "matched"
+    assert document["subscriptions_acked"] == ["fillsPerps", "ordersPerps"]
+    rendered = json.dumps(document)
+    for sentinel in SECRET_SENTINELS.values():
+        assert sentinel not in rendered
+
+
+def test_native_snapshot_schema_requires_exact_confirmed_keys_and_types():
+    """A same-run mapping is available, but only the frozen native shape is confirmed."""
+    missing = diag_snapshot()
+    missing.pop("account_state_events")
+    extra = diag_snapshot(account_id="SENTINEL-MAINNET-ACCOUNT-9e13f7")
+    wrong_subscriptions = diag_snapshot(
+        subscriptions_acked=["ordersPerps", "fillsPerps"],
+    )
+
+    for payload in (missing, extra, wrong_subscriptions):
+        diag = ondo_diag.read_native_diagnostics(DiagTarget(payload), run_id="RUN-1")
+        assert diag.available is True
+        assert diag.schema_confirmed is False
+        assert diag.as_dict()["schema_confirmed"] is False
+
+    rendered = json.dumps(
+        ondo_diag.read_native_diagnostics(DiagTarget(extra), run_id="RUN-1").as_dict(),
+    )
+    assert "account_id" not in rendered
+    assert "SENTINEL-MAINNET-ACCOUNT-9e13f7" not in rendered
+
+
+def test_production_readonly_report_marks_native_diagnostics_unsupported(tmp_path):
+    out_dir = tmp_path / "out"
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    native = probe_report(out_dir)["native_diagnostics"]
+    assert native["available"] is False
+    assert native["source"] == ondo_diag.SOURCE_ACCESSOR_ABSENT
+    assert native["schema_confirmed"] is False
+    for key in ondo_diag.REQUIRED_NATIVE_DIAGNOSTICS_KEYS:
+        assert native[key] is None
+    assert manifest(out_dir)["native_diagnostics_available"] is False
+
+
+def test_production_readonly_support_is_explicitly_unverified_on_the_old_wheel(tmp_path):
+    """An exit 0 on a wheel with no native read-only support is not a passed acceptance."""
+    out_dir = tmp_path / "out"
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["production_readonly_support_verified"] is False, (
+        "the production read-only mode claimed verified native support without a native "
+        "snapshot"
+    )
+    assert payload["production_readonly_support_reason"]
+    assert manifest(out_dir)["production_readonly_support_verified"] is False
+
+
+def test_non_production_modes_do_not_assess_production_support(tmp_path):
+    out_dir = tmp_path / "out"
+    result = run_probe(["--mode", "public", "--symbols", "NVDA", "--minutes", "0.5",
+                        "--out", str(out_dir)])
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["production_readonly_support_verified"] is None
+    assert payload["production_readonly_support_reason"] is None
+
+
+def test_production_readonly_support_requires_all_native_acceptance_evidence(tmp_path):
+    out_dir = tmp_path / "out"
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-OK"):
+        result = run_probe(production_readonly_argv(out_dir),
+                           diagnostics=diag_snapshot(run_id="RUN-OK"),
+                           environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["production_readonly_support_verified"] is True
+    assert "disabled" in payload["production_readonly_support_reason"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "missing_fact"),
+    [
+        ({"identity_match": "unknown"}, "identity"),
+        ({"logged_in": False}, "login"),
+        ({"subscriptions_acked": {"ordersPerps": True, "fillsPerps": False}},
+         "subscriptions"),
+        ({"account_state_events": 0}, "account-state"),
+        ({"shutdown_status": "incomplete"}, "shutdown"),
+    ],
+)
+def test_production_readonly_support_fails_when_native_acceptance_evidence_is_missing(
+        tmp_path, overrides, missing_fact):
+    out_dir = tmp_path / missing_fact
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-INCOMPLETE"):
+        result = run_probe(
+            production_readonly_argv(out_dir),
+            diagnostics=diag_snapshot(run_id="RUN-INCOMPLETE", **overrides),
+            environ=clean_environ(**mainnet_credentials()),
+        )
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["production_readonly_support_verified"] is False
+    assert missing_fact in payload["production_readonly_support_reason"]
+
+
+def test_production_readonly_support_fails_on_identity_mismatch(tmp_path):
+    out_dir = tmp_path / "out"
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-MM"):
+        result = run_probe(production_readonly_argv(out_dir),
+                           diagnostics=diag_snapshot(run_id="RUN-MM",
+                                                     identity_match="mismatch"),
+                           environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["production_readonly_support_verified"] is False
+    assert "identity" in payload["production_readonly_support_reason"].lower()
+
+
+def test_production_readonly_support_fails_when_login_is_absent(tmp_path):
+    out_dir = tmp_path / "out"
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-NOLOGIN"):
+        result = run_probe(production_readonly_argv(out_dir),
+                           diagnostics=diag_snapshot(run_id="RUN-NOLOGIN",
+                                                     logged_in=False),
+                           environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["production_readonly_support_verified"] is False
+    assert "login" in payload["production_readonly_support_reason"].lower()
+
+
+def test_production_readonly_report_reads_a_matching_native_snapshot(tmp_path):
+    out_dir = tmp_path / "out"
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-INTEGRATION"):
+        result = run_probe(production_readonly_argv(out_dir),
+                           diagnostics=diag_snapshot(run_id="RUN-INTEGRATION"),
+                           environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    native = probe_report(out_dir)["native_diagnostics"]
+    assert native["available"] is True
+    assert native["run_id"] == "RUN-INTEGRATION"
+    assert native["logged_in"] is True
+    assert native["identity_match"] == "matched"
+    assert native["schema_confirmed"] is True
+    assert manifest(out_dir)["native_diagnostics_available"] is True
+
+
+def test_production_readonly_passes_this_run_id_to_the_native_config(tmp_path):
+    """The factory snapshot can only correlate a run if config receives the app token."""
+    out_dir = tmp_path / "out"
+    registry = Registry()
+    adapter = FakeAdapter(registry, diagnostics=diag_snapshot(run_id="RUN-CONFIG"))
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-CONFIG"):
+        result = run_probe(
+            production_readonly_argv(out_dir),
+            registry=registry,
+            adapter=adapter,
+            environ=clean_environ(**mainnet_credentials()),
+        )
+    assert result.code == EXIT_OK, result.streams
+    configs = [built for built in registry.built
+               if "OndoExecutionClientConfig" in built.name
+               and "diagnostics_run_id" in built.kwargs]
+    assert len(configs) == 1
+    assert configs[0].kwargs["diagnostics_run_id"] == "RUN-CONFIG"
+
+
+def test_an_identity_mismatch_is_surfaced_verbatim(tmp_path):
+    """A native identity mismatch is reported as mismatch, never softened to matched."""
+    out_dir = tmp_path / "out"
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-MISMATCH"):
+        result = run_probe(production_readonly_argv(out_dir),
+                           diagnostics=diag_snapshot(run_id="RUN-MISMATCH",
+                                                     identity_match="mismatch"),
+                           environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    native = probe_report(out_dir)["native_diagnostics"]
+    assert native["identity_match"] == "mismatch"
+    # The account id itself must not be published to prove the mismatch.
+    text = (out_dir / "probe.json").read_text(encoding="utf-8")
+    assert SECRET_SENTINELS["ONDO_MAINNET_ACCOUNT_ID"] not in text
+
+
+def test_production_readonly_login_timeout_still_publishes_a_report(tmp_path):
+    out_dir = tmp_path / "out"
+    boom = TimeoutError("no login answer within the login deadline")
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()),
+                       node_failure=boom)
+    assert result.code in (EXIT_TIMEOUT, EXIT_FAILURE)
+    assert out_dir.exists(), "a login timeout still publishes a report"
+    assert manifest(out_dir)["complete"] is False
+    assert_no_secret_anywhere(result, out_dir)
+
+
+def test_production_readonly_passes_the_expected_venue_id_verbatim(tmp_path):
+    """The configured raw venue id reaches the native identity field unmodified.
+
+    ``ONDO_MAINNET_ACCOUNT_ID`` is the venue's raw ``accountID``. No prefix is stripped or
+    added to the *expected* id; the Nautilus ``AccountId`` the config needs is constructed
+    separately as ``ONDO-{raw}``.
+    """
+    registry = Registry()
+    adapter = FakeAdapter(registry)
+    raw = "987654321"
+    result = run_probe(production_readonly_argv(tmp_path / "out"),
+                       registry=registry, adapter=adapter,
+                       environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    configs = [b for b in registry.built if "OndoExecutionClientConfig" in b.name]
+    assert configs, "no execution config was built"
+    assert any(b.kwargs.get("expected_venue_account_id") == raw for b in configs), (
+        f"the raw venue id was not passed verbatim: "
+        f"{[b.kwargs.get('expected_venue_account_id') for b in configs]}"
+    )
+    assert any(str(b.kwargs.get("account_id")) == f"ONDO-{raw}" for b in configs), (
+        f"the Nautilus AccountId was not constructed as ONDO-{{raw}}: "
+        f"{[b.kwargs.get('account_id') for b in configs]}"
+    )
+
+
+def test_production_readonly_does_not_strip_an_existing_prefix_from_the_raw_id(tmp_path):
+    """A raw id that already starts with ``ONDO-`` is passed as-is; the prefix is not split."""
+    registry = Registry()
+    adapter = FakeAdapter(registry)
+    raw = "ONDO-987654321"
+    result = run_probe(production_readonly_argv(tmp_path / "out"),
+                       registry=registry, adapter=adapter,
+                       environ=clean_environ(**mainnet_credentials(
+                           ONDO_MAINNET_ACCOUNT_ID=raw)))
+    assert result.code == EXIT_OK, result.streams
+    configs = [b for b in registry.built if "OndoExecutionClientConfig" in b.name]
+    assert any(b.kwargs.get("expected_venue_account_id") == raw for b in configs), (
+        "the expected id was mutated (a prefix stripped or added)"
+    )
+    assert any(str(b.kwargs.get("account_id")) == f"ONDO-{raw}" for b in configs)
+
+
+@pytest.mark.parametrize("raw", ["has space", "has\ttab", "bad\nnewline", "x" * 129, ""])
+def test_production_readonly_refuses_an_unusable_raw_venue_id(tmp_path, raw):
+    result = run_probe(production_readonly_argv(tmp_path / "out"),
+                       environ=clean_environ(**mainnet_credentials(
+                           ONDO_MAINNET_ACCOUNT_ID=raw)))
+    assert_refused(result, why=f"production-readonly with raw id {raw[:8]!r}...")
+    assert "ONDO_MAINNET_ACCOUNT_ID" in result.streams
+    assert not (tmp_path / "out").exists()
+
+
+def test_sandbox_account_id_is_unchanged_by_the_production_mapping(tmp_path):
+    """The sandbox path keeps its previous behaviour: the env value is the AccountId."""
+    registry = Registry()
+    adapter = FakeAdapter(registry)
+    sandbox_id = SECRET_SENTINELS["ONDO_SANDBOX_ACCOUNT_ID"]
+    result = run_probe(["--mode", "account-readonly", "--symbols", "NVDA",
+                        "--minutes", "0.5", "--out", str(tmp_path / "out")],
+                       registry=registry, adapter=adapter,
+                       environ=clean_environ(**credentials()))
+    assert result.code == EXIT_OK, result.streams
+    configs = [b for b in registry.built if "OndoExecutionClientConfig" in b.name]
+    assert any(str(b.kwargs.get("account_id")) == sandbox_id for b in configs), (
+        f"the sandbox account id was changed: "
+        f"{[b.kwargs.get('account_id') for b in configs]}"
+    )
+    assert all(b.kwargs.get("expected_venue_account_id") is None for b in configs), (
+        "the sandbox path must not pass a production expected-venue id"
+    )
+
+
+def test_a_wheel_without_the_identity_field_does_not_receive_it():
+    """An old config whose signature lacks the field is not handed it (it would raise)."""
+    class OldConfig:
+        def __init__(self, environment=None, account_id=None, account_read_only=None,
+                     base_url_http=None, base_url_ws=None):
+            pass
+
+    adapter = FakeAdapter(Registry())
+    adapter._cache["OndoExecutionClientConfig"] = OldConfig
+    config = ondo_probe._exec_config(
+        adapter, ondo_probe.MODE_PRODUCTION_READONLY, account_id=None,
+        base_url_http=None, expected_venue_account_id="SENTINEL-MAINNET-ACCOUNT-9e13f7")
+    assert isinstance(config, OldConfig)
+
+
+def test_a_named_env_file_is_read_from_its_canonical_path(tmp_path, monkeypatch):
+    """A live operator points ONDO_PROBE_ENV_FILE at the canonical .env; no copy is made.
+
+    The injected-environment tests above never exercise this path. Here the process
+    environment is used deliberately, but only to name a temporary file - the repository's
+    own .env is never touched.
+    """
+    env_file = tmp_path / "canonical.env"
+    lines = [f"{name}={value}" for name, value in mainnet_credentials().items()]
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for name in SECRET_SENTINELS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(ondo_probe.ENV_FILE_VARIABLE, str(env_file))
+    out_dir = tmp_path / "out"
+    registry = Registry()
+    adapter = FakeAdapter(registry)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with capture_logs() as handler:
+            with patch.object(ondo_probe, "LiveNode", fake_live_node(registry)):
+                code = ondo_probe.main(
+                    production_readonly_argv(out_dir),
+                    adapter=adapter,
+                    node_factory=NodeFactory(registry),
+                    environ=None,  # the real default path: the named file is consulted
+                    now=Clock(),
+                )
+    result = Result(code, out.getvalue(), err.getvalue(), handler.text, registry,
+                    NodeFactory(registry), Clock())
+    assert result.code == EXIT_OK, result.streams
+    assert manifest(out_dir)["complete"] is True
+    assert_no_secret_anywhere(result, out_dir)
+
+
+def test_a_named_env_file_that_does_not_exist_is_refused(tmp_path, monkeypatch):
+    """A named-but-unreadable credential file is a refusal, never a silent fallback."""
+    monkeypatch.setenv(ondo_probe.ENV_FILE_VARIABLE, str(tmp_path / "missing.env"))
+    registry = Registry()
+    adapter = FakeAdapter(registry)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = ondo_probe.main(
+            production_readonly_argv(tmp_path / "out"),
+            adapter=adapter,
+            node_factory=NodeFactory(registry),
+            environ=None,
+            now=Clock(),
+        )
+    assert code == EXIT_REFUSED, err.getvalue()
+    assert ondo_probe.ENV_FILE_VARIABLE in err.getvalue()
+    assert [b for b in registry.built if not is_config(b.name)] == []
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_dry_run_ignores_the_named_env_file(tmp_path, monkeypatch):
+    """--dry-run still reads no .env, even when one is named."""
+    monkeypatch.setenv(ondo_probe.ENV_FILE_VARIABLE, str(tmp_path / "canonical.env"))
+    result = run_probe(production_readonly_argv(tmp_path / "out", "--dry-run"),
+                       environ=None)
+    assert result.code == EXIT_OK, result.streams
+    assert not (tmp_path / "out").exists()
+
+
+def test_public_and_paper_ignore_the_named_env_file(tmp_path, monkeypatch):
+    """A non-credentialed mode never consults the credential file, named or not."""
+    monkeypatch.setenv(ondo_probe.ENV_FILE_VARIABLE, str(tmp_path / "canonical.env"))
+    for mode in ("public", "paper"):
+        result = run_probe(["--mode", mode, "--symbols", "NVDA", "--minutes", "0.5",
+                            "--out", str(tmp_path / mode)], environ=None)
+        assert result.code == EXIT_OK, result.streams
+        assert probe_report(tmp_path / mode)["credentials_required"] is False
+
+
+def test_production_readonly_report_does_not_echo_a_malicious_snapshot(tmp_path):
+    """A hostile snapshot cannot leak a planted string into the published report."""
+    out_dir = tmp_path / "out"
+    planted = "SENTINEL-MAINNET-KEY-77a1c4"
+    with patch.object(ondo_probe, "new_run_id", return_value="RUN-EVIL"):
+        result = run_probe(production_readonly_argv(out_dir),
+                           diagnostics=diag_snapshot(
+                               run_id="RUN-EVIL", run_state=planted,
+                               shutdown_status=planted, identity_match=planted,
+                               subscriptions_acked={planted: True},
+                           ),
+                           environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    native = probe_report(out_dir)["native_diagnostics"]
+    assert native["available"] is True
+    assert native["run_state"] is None
+    assert native["shutdown_status"] is None
+    assert native["identity_match"] is None
+    assert native["subscriptions_acked"] is None
+    assert_no_secret_anywhere(result, out_dir)
+    for path in out_dir.rglob("*.json"):
+        assert planted not in path.read_text(encoding="utf-8")
+
+
+def test_production_readonly_disables_native_logging_even_when_debug_requested(tmp_path):
+    captured = []
+    real_logger_config = ondo_probe.LoggerConfig
+
+    def capture_config(**kwargs):
+        config = real_logger_config(**kwargs)
+        captured.append(config)
+        return config
+
+    with patch.object(ondo_probe, "LoggerConfig", side_effect=capture_config):
+        result = run_probe(
+            production_readonly_argv(tmp_path / "out", "--log-level", "DEBUG"),
+            environ=clean_environ(**mainnet_credentials()),
+        )
+    assert result.code == EXIT_OK, result.streams
+    assert captured
+    for config in captured:
+        assert config.stdout_level == ondo_probe.LogLevel.OFF
+        assert config.fileout_level == ondo_probe.LogLevel.OFF
+        assert config.bypass_logging is True
+        assert config.print_config is False
+
+
+def test_production_readonly_runtime_error_never_echoes_private_payload(tmp_path):
+    out_dir = tmp_path / "out"
+    planted = "PRIVATE-ACCOUNT-ERROR-SENTINEL"
+    result = run_probe(
+        production_readonly_argv(out_dir),
+        node_failure=RuntimeError(planted),
+        environ=clean_environ(**mainnet_credentials()),
+    )
+    assert result.code == EXIT_FAILURE
+    assert planted not in result.streams
+    for path in out_dir.rglob("*.json"):
+        assert planted not in path.read_text(encoding="utf-8")
+    assert probe_report(out_dir)["production_readonly_support_verified"] is False
+
+
+def test_production_readonly_withholds_stop_cache_and_order_details_but_keeps_counts(
+        tmp_path):
+    """Private cache and shutdown payloads become counts, never convincing empty buckets."""
+    out_dir = tmp_path / "out"
+    planted = "PRIVATE-ORDER-AND-STOP-SENTINEL"
+
+    class PrivateOrder:
+        client_order_id = planted
+        status = planted
+        filled_qty = planted
+        avg_px = planted
+        instrument_id = planted
+
+    class PrivateAccount:
+        id = planted
+
+    class PrivateCache:
+        def orders_open(self):
+            return [PrivateOrder()]
+
+        def orders_closed(self):
+            raise RuntimeError(planted)
+
+        def orders(self):
+            return [PrivateOrder()]
+
+        def account_for_venue(self, _venue):
+            return PrivateAccount()
+
+    class PrivateStopHandle:
+        @property
+        def is_running(self):
+            return False
+
+        def stop(self):
+            raise RuntimeError(planted)
+
+    class PrivatePayloadFactory(NodeFactory):
+        def __call__(self, *args, **kwargs):
+            node = super().__call__(*args, **kwargs)
+            node.cache = PrivateCache()
+            node.the_handle = PrivateStopHandle()
+            return node
+
+    registry = Registry()
+    factory = PrivatePayloadFactory(registry, failure=RuntimeError(planted))
+    result = run_probe(
+        production_readonly_argv(out_dir),
+        registry=registry,
+        factory=factory,
+        environ=clean_environ(**mainnet_credentials()),
+    )
+
+    assert result.code == EXIT_FAILURE
+    assert planted not in result.streams
+    payload = probe_report(out_dir)
+    assert payload["failure"] == "session_runtime_error"
+    assert payload["unknown"] == {"count": 1, "details": "withheld"}
+    assert payload["no_trade"] == {"count": 0, "details": "withheld"}
+    assert payload["outstanding_orders"] == {"count": 1, "details": "withheld"}
+    assert payload["cache_errors"] == {"count": 1, "details": "withheld"}
+    assert any(stop["error"] == "withheld" for stop in payload["stops"])
+    meta = manifest(out_dir)
+    assert meta["failure"] == "session_runtime_error"
+    assert meta["outstanding_orders"] == 1
+    assert meta["pending_ids"] == 0
+    for path in out_dir.rglob("*.json"):
+        assert planted not in path.read_text(encoding="utf-8"), path
+
+
+def test_production_readonly_report_documents_the_account_id_mapping(tmp_path):
+    out_dir = tmp_path / "out"
+    result = run_probe(production_readonly_argv(out_dir),
+                       environ=clean_environ(**mainnet_credentials()))
+    assert result.code == EXIT_OK, result.streams
+    payload = probe_report(out_dir)
+    assert payload["account_id_mapping"] == "ONDO-{raw venue accountID}"
+    # The mapping is documented, not a rendered value: the raw id is not published.
+    assert "987654321" not in (out_dir / "probe.json").read_text(encoding="utf-8")
 
 
 # ======================================================================= 9. stability
