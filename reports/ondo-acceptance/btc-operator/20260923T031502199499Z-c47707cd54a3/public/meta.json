@@ -1,0 +1,71 @@
+{
+  "complete": true,
+  "environment": "production",
+  "failure": null,
+  "fetched_at_ns": 1790133305642617088,
+  "fetched_at_utc": "2026-09-23T03:15:05.642+00:00",
+  "files": {
+    "contracts": {
+      "bytes": 66541,
+      "path": "contracts.json",
+      "sha256": "2c59dc3b0679debcc3a4f6c2ae415dc84181c44ca6574cc9d71bb648e2adc9a1"
+    },
+    "instruments": {
+      "bytes": 815,
+      "path": "instruments.json",
+      "sha256": "3a2ba2b2d408c999ad5b7ddb531f5ca67856bd85329d562baada61091acd5c71"
+    },
+    "markets": {
+      "bytes": 371554,
+      "path": "markets.json",
+      "sha256": "87e5f8600b36cfb7c39e83554841fd2cf2c152187db35c8efc3fcafe98f6051b"
+    },
+    "missing": {
+      "bytes": 3,
+      "path": "missing.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "status": {
+      "bytes": 29,
+      "path": "status.json",
+      "sha256": "8b7474f6848e7feed84824218c2cac56d60d4848532de216bd63fb9500f68dcc"
+    }
+  },
+  "market_status_convention": {
+    "disabled_false": 0,
+    "disabled_true": 16,
+    "markets": 81,
+    "pinned_capture_2026_09_14": {
+      "captured": "2026-09-14",
+      "markets": 81,
+      "source": "reports/ondo-acceptance/20260914T142730Z-p1-build/rest-capture/markets.json",
+      "with_disabled_true": 20,
+      "with_status_string": 0
+    },
+    "rule": "disabled present-and-true => disabled; disabled absent => enabled by the venue convention; a status string, if one ever appears, is mapped through the adapter's rule",
+    "with_disabled_flag": 16,
+    "with_status_string": 0
+  },
+  "missing": [],
+  "requested_symbols": [
+    "BTC"
+  ],
+  "run_dir": "runs/20260923T031502347500Z",
+  "run_id": "20260923T031502347500Z",
+  "schema_version": 1,
+  "started_at_utc": "2026-09-23T03:15:02.347+00:00",
+  "symbols": [
+    "BTC"
+  ],
+  "targets": [
+    {
+      "client_id": "ONDO",
+      "instrument_id": "BTC-USD-PERP.ONDO",
+      "raw_market": "BTC-USD.P",
+      "symbol": "BTC",
+      "venue": "ONDO"
+    }
+  ],
+  "tool": "ondo_preflight",
+  "venue": "ONDO"
+}

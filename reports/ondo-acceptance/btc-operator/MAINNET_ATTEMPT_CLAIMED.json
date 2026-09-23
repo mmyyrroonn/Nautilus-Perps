@@ -1,0 +1,7 @@
+{
+  "claimed_at_utc": "2026-09-23T03:18:02.104703+00:00",
+  "plan_sha256": "915af89c6e2012d9d18e611f34f2ac90c1753b1a48f69f9e0ef702f15f8376cb",
+  "review_required_before_any_further_live_attempt": true,
+  "run_dir": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\btc-operator\\20260923T031758387417Z-240158e4b603",
+  "state": "dispatch_claimed_not_proof_of_submission"
+}

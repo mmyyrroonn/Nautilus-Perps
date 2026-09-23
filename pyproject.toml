@@ -4,13 +4,17 @@ version = "0.1.0"
 description = "Hyperliquid (HIP-3 xyz dex) x Lighter x Aster cross-exchange spread feasibility validation"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    # Local fork wheel (E:/nautilus_trader, branch onde-perps): v2.0.0rc4 + Aster + Ondo adapters,
+    # Isolated local fork candidate: v2.0.0rc4 + Aster + Ondo adapters.
     # Release profile with a per-command Windows linker-warning exception; strict attempt failed.
-    # Built Ondo production v6 2026-09-20; sha256:
-    #   2cea63a07b5969ecf11558bc28a5021f4f89dd609f9ebe29d11b9278ef384db3
-    # Rollback target: dist-r5 wheel sha256 82a3953c6c6c8bc39c0e2c269bbb7002c5bf54165354295a16109d5cac71a7a9
+    # Built BTC functional candidate 2026-09-22, DMS implementation unchanged; sha256:
+    #   4fe1507cc3882b181fdf2c1b2b99e5c32e1a3875c31554d844bcb95ac4b877bd
+    # Freshness-diagnostics candidate built 2026-09-23; sha256:
+    #   3db8edf72c46c61a5887b1fdb0c4271416093cb5beb0d580da8789bc8598df45
+    # Final build adds the bounded clock-skew retry of the identity read; sha256:
+    #   8f20735b299ef204464d8a104ca9fdbcec92a5b20d1a5795f474818d56e12985
+    # Prior isolated candidate: dist-dms-observation, sha256 ec589e09cf6e38d2a6d53132807a342c122598390a847391eb34f9e1c886b16d
     # Build procedure: E:/nautilus_trader/BUILD_WINDOWS.md (maturin build --release from python/).
-    "nautilus_trader @ file:///E:/nautilus_trader/dist-ondo-production-v6/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "nautilus_trader @ file:///E:/Nautilus-Perps/.worktrees/ondo-mainnet-resume/reports/ondo-acceptance/20260919-production-native/build/dist-freshness-final/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
     "python-dotenv",
     # Reference-price leg (src/ref_feed.py): the FUTUNN OPEN API quote WebSocket
     # (wss://webapi-quote.futunn.com/ws) and its Ed25519 / RSA-SHA256 auth signature.

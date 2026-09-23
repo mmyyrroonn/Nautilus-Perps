@@ -1,0 +1,7 @@
+{
+  "automatic_retry": false,
+  "child_exit_code": 1,
+  "finished_at_utc": "2026-09-23T03:19:10.699937+00:00",
+  "plan_sha256": "915af89c6e2012d9d18e611f34f2ac90c1753b1a48f69f9e0ef702f15f8376cb",
+  "report": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\btc-operator\\20260923T031758387417Z-240158e4b603\\trade\\trade.json"
+}

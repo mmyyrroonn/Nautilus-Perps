@@ -1,0 +1,29 @@
+{
+  "complete": false,
+  "environment": "production",
+  "exit_code": 1,
+  "failure": "RuntimeError: Failed to disconnect execution clients: the Ondo shutdown left work unresolved: outcome=Complete, tasks_drained=true, switch_released=false, outstanding=[]",
+  "fees": "unknown",
+  "files": {
+    "trade": {
+      "bytes": 11180,
+      "path": "trade.json",
+      "sha256": "502c73ae204bb6ca7da04fd5e0029aa6642b28fbca3d67e323f2ede82fe60231"
+    }
+  },
+  "finished_at_utc": "2026-09-22T06:58:55.294+00:00",
+  "mode": "production-trade",
+  "native_final_clean": false,
+  "native_write_capable": true,
+  "net_position": "0",
+  "outcome": "rejected",
+  "plan_sha256": "cb4154b0033f0532f1e0708c3e1b9f62e26af0b51f4978459736847e39f1a4b0",
+  "production_execution_verified": false,
+  "run_dir": "runs/20260922T065754074659Z",
+  "run_id": "20260922T065754074659Z",
+  "schema_version": 1,
+  "started_at_utc": "2026-09-22T06:57:54.074+00:00",
+  "stop_condition": "exception",
+  "tool": "ondo_trade_probe",
+  "venue": "ONDO"
+}

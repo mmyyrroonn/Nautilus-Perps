@@ -1,0 +1,198 @@
+﻿[
+    {
+        "path":  "crates\\adapters\\ondo\\Cargo.toml",
+        "sha256":  "B58127E9922C2606A80F9FDDE5891BFDED29E46E589E3B687E6CC76DC0E4A13B"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\common\\consts.rs",
+        "sha256":  "71EAD54A3E621BDC318FF32E3372B25EC5615763AA45CC1C38FAF4D793542C14"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\common\\credential.rs",
+        "sha256":  "A0D2D29036CB58E7DB64313507B5661A4557F61B51501E213D276CC1CE0C5B63"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\common\\endpoint.rs",
+        "sha256":  "98198F524C0AEF5A05ED1E68E48C8E30551929C476218055230A20CF72E86B4A"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\common\\enums.rs",
+        "sha256":  "1791755718483EAE2A8B89FA4295A9D551CCD75BB5E5DEEA73CC4ED3A297F861"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\common\\mod.rs",
+        "sha256":  "0C9EB974169A148A4C4A3A9229A46C7970A45DD5268A4DE4A5CC61D9B58E39BF"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\common\\parse.rs",
+        "sha256":  "95521EF7BCF5CE15EFBF35985D4FA777423BE551006AD4EFABA0005EA477BF75"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\config.rs",
+        "sha256":  "AFB5ECB71E46B4FF15FE1A9572F843BECB99EDC0DAC1BE99B5D2EB6939BA15A0"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\data.rs",
+        "sha256":  "EEA550CDAC6D70D07F3144330038D8F6DAC17E90A31C3F6C89D294820B93DFC8"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\diagnostics.rs",
+        "sha256":  "B043B3CF2F72381097B3F25E01A70DDF24EAE0CEE27CBD520006B3A2C74A9B5D"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\execution.rs",
+        "sha256":  "C032FC2F4B89A7B0C84CD8F2859B03621125661C00DCDEE336ECE031BEF0A0BE"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\factories.rs",
+        "sha256":  "7D1AB4E9144E921A9C058392430F06C7DE512CE0F3F4AF253A1054E148249513"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\client.rs",
+        "sha256":  "F10C3B3F19FB9CF88CC8319EDF994E38F7CFCF4D560DB4901A2485B72686929E"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\error.rs",
+        "sha256":  "B459856C116DC869F5A789253520C942C4951BD0DB5B6D2F88E91DB47C9EA2C5"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\mod.rs",
+        "sha256":  "83EB7410385D06417896D6665DE0EE916D72BB0C6E1EDCFC2503A33F2732169B"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\models.rs",
+        "sha256":  "ABD2E32148A1D203523368E8366BBE6C60DE38AF01F75A1661867A6068043B68"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\orders.rs",
+        "sha256":  "6E508A646BA242D08E70BF81A5CEBE0FCFD00460D6D0D054F37682C4D4281D57"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\private.rs",
+        "sha256":  "957F0794932E9F502DCD562FD0C48FEE9389A0FA735654B2F2C986A099A8449B"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\query.rs",
+        "sha256":  "24C3072C0128195568F7B537A98CFAA043CAC3A4B33AF5494C5708855150F5B1"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\http\\rate_limit.rs",
+        "sha256":  "E9C61B50C652F98EB09598593B29D24BE4C0A522EBFF05FB0D721B5185954854"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\lib.rs",
+        "sha256":  "17CF766609EE8E73616704C0AC599C2F9A309F9ABE2F0FE167C09B68DFB14DD4"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\production.rs",
+        "sha256":  "27CAFF1F3E863D086F046C735A98C0E52E1F9FEA776BB6060960F7AA6A7CA12B"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\python\\config.rs",
+        "sha256":  "8FFE2F38B11908B512D88D5BCDA7915B7EBE4D9A06D8F1567F0BCD773EC48A0C"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\python\\factories.rs",
+        "sha256":  "9738DDC3D6BD22234E22CECC46CE16400FA53E308D016956F36669A8DB32FD76"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\python\\http.rs",
+        "sha256":  "EA47B597F9DE740CA297CDB6149F3DFCE20F5D79E21B3D0569D81E7851F30FCE"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\python\\mod.rs",
+        "sha256":  "93F01B6C65EE8C6E6DE35FB981DAF370092A3FB44CB79292EEA096FE029FA213"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\reconciliation.rs",
+        "sha256":  "7DF063AC005D591737F6759BFB6CEBE37972B4BD3ADDC588CE9B02796247FAD4"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\recording.rs",
+        "sha256":  "11017FFA2AEA32CE8834E202617725B159DFC519C59E94108025FA619F826401"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\signing.rs",
+        "sha256":  "A94144FAC7C9AB20F007438D26B6EC1BE3764B0D00810076E8B6F0BB501DF61E"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\book.rs",
+        "sha256":  "D5134A4E76E69AF94349F5F39FCD1331FEE3FB2497B3F3225E0670C5B5DBC740"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\client.rs",
+        "sha256":  "546CEE22A4CCDFC1940D0FC670A29AE0DD7E8B0A65C14B01C262B0B8E4A82B22"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\messages.rs",
+        "sha256":  "449B2BAD2EA4A6D6F8A5FB9712E66BF59CD5D3674AB1AC3BEA9C6DC16D512E48"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\mod.rs",
+        "sha256":  "DEBD4F6CA9903D69C6A445B21DE4F571E2FF721581FB15B10C7831B69DF3CDFF"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\parse.rs",
+        "sha256":  "B62E60CD482DBE8A948084A1B232C09ACF3F30D444D68932FDABE5AADA2B40A5"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\private\\diagnostics.rs",
+        "sha256":  "FB3FA243CEBC883FCD27BC00E471738A6CCE05B00C971A94FF73CE33BAB82726"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\private\\messages.rs",
+        "sha256":  "4FC088DC28715793660E20479D51D23DDDC6CBC3DB63CC14D6C19BD85A36EFD8"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\private\\mod.rs",
+        "sha256":  "84BD7E18A314B1AC2892563B4D746188AC23964C77B498A7400BE7FC4CCC74F1"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\private\\parse.rs",
+        "sha256":  "8BE021734305F5B6887AEDD2FB2B7462D1CE565041ACA0B467F4FBC81FC5196A"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\private\\session.rs",
+        "sha256":  "28A3839AF5AE69ABC604A9023209CA4BC7C999070904AC557043AA4D38C4ED7F"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\src\\websocket\\private\\stream.rs",
+        "sha256":  "F64C51FA3BAAD22A5E8F1DF72E1B75CE901C6AA4155651C21600739C3FB8C52C"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\execution.rs",
+        "sha256":  "973ABCA66336BAD1DA45639FBAC663FDF51E074F47911EB76174A0D7837AD4F9"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\http_client.rs",
+        "sha256":  "D9E34A4B9C025630BDDDEC6FE30DF560123AF0739B8A5B23B79E97DDC47B4190"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\http_contract.rs",
+        "sha256":  "43460F60891B4500AFA0CE2D55B32275FC927BF9A6AA70BE08A1E06D14CF54DE"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\market_data.rs",
+        "sha256":  "62026500ABAB249ADA626348AD86A7F4BC228DBF32868CDEA2F327308955B7E0"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\private_runtime.rs",
+        "sha256":  "43503FC089AFC6F280068D2A7AE7157E0AD23484D53C86F24215934428BE2F2E"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\production_envelope.rs",
+        "sha256":  "60F189876E16DAC367F3FE0A5C453972F8F0C401ECAD714AD6E05BC2429E28AD"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\python.rs",
+        "sha256":  "19C436E865B718D1BDA6F964BBE04C0555DB2D225D322BA515E0C247D74592AE"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\reconciliation.rs",
+        "sha256":  "EDD9F65E9530ABD7ADEEA4ACB3633215D12E2DC6371BC8084B086A4EC163B3B0"
+    },
+    {
+        "path":  "crates\\adapters\\ondo\\tests\\signing.rs",
+        "sha256":  "3D43F762EEA0080E0CF0D871E826CAB0652E970CA1BB3391EC98E1F2F657B5A8"
+    }
+]

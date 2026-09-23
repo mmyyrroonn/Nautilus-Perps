@@ -1,0 +1,114 @@
+{
+  "account": {
+    "environment": "production",
+    "expected_venue_account_id_present": true,
+    "journal_path": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\btc-operator\\20260923T031758387417Z-240158e4b603\\journal.json"
+  },
+  "authorization": {
+    "approved_plan_sha256": "915af89c6e2012d9d18e611f34f2ac90c1753b1a48f69f9e0ef702f15f8376cb",
+    "confirmed_at_utc": "2026-09-23T03:18:02.102704+00:00",
+    "confirmed_policy": {
+      "cleanup_stop_budget_secs": 15,
+      "deadline_secs": 120,
+      "dms_timeout_secs": 30,
+      "entry_notional_usd": "15",
+      "entry_side": "buy",
+      "instrument_id": "BTC-USD-PERP.ONDO",
+      "max_app_requests": 6,
+      "max_gross_exposure_usd": "20",
+      "max_new_risk_requests": 1,
+      "max_notional_per_order_usd": "20",
+      "max_orders": 3,
+      "min_available_margin_usdc": "25"
+    },
+    "source": "chat_operator_confirmation",
+    "supersedes": {
+      "superseded_claim_path": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\btc-operator\\20260922T115835918127Z-6f5a48b3d7bc\\MAINNET_ATTEMPT_CLAIMED.superseded-20260923T031758387417Z-240158e4b603.json",
+      "superseded_plan_sha256": "8193d4cf4435170ac58e5524205b8347fb766bc9a158922ab88f26dedf0ad9b6",
+      "superseded_run_dir": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\btc-operator\\20260922T115835918127Z-6f5a48b3d7bc"
+    },
+    "user_phrase_上主网_present": true
+  },
+  "candidate_evidence": {
+    "binary_sha256": "708450d8dabe55ec098c5fed510619a1cc6d25126c02bfbdc8558b0a12f4dd8f",
+    "candidate_identity_sha256": "1a8441b650857b0d8a2972cd36def69e37d856b085c33085c580e43a93d67211",
+    "dms_release_host_contract_verified": false,
+    "launcher_sha256": "9443c0fa346119ae4e606e58148be38e06fcf5a42e4e1ea4a8ad57f456912539",
+    "operator_script_sha256": "2eecc96e5e24b6446012c2c3ae645cc1ab9981d6f6bef4e1c2ebca4723ea753d",
+    "wheel_sha256": "8f20735b299ef204464d8a104ca9fdbcec92a5b20d1a5795f474818d56e12985"
+  },
+  "cleanup": {
+    "cancel_own_orders_only": true,
+    "confirm_cancels": true,
+    "confirm_flat_position": true,
+    "stop_budget_secs": 15
+  },
+  "close": {
+    "limit_price": "86330",
+    "max_close_attempts": 2,
+    "max_quote_age_secs": "5",
+    "order_type": "limit",
+    "reduce_only": true,
+    "side": "sell",
+    "time_in_force": "IOC"
+  },
+  "dms": {
+    "account_wide_effect": "a lapsed timer cancels every resting order account-wide",
+    "activation": "subscribe cancelAllOrdersAfterPerps on login",
+    "mode": "trading",
+    "release_on_stop": "only when nothing is unconfirmed",
+    "renewal_interval_secs": 15,
+    "renewal_message_verified": false,
+    "timeout_secs": 30
+  },
+  "entry": {
+    "limit_price": "86681",
+    "max_quote_age_secs": "5",
+    "max_slippage_bps": "20",
+    "notional_usd": "15",
+    "order_type": "limit",
+    "quantity": "0.0001",
+    "reduce_only": false,
+    "side": "buy",
+    "time_in_force": "IOC"
+  },
+  "envelope": {
+    "deadline_secs": 120,
+    "max_app_requests": 6,
+    "max_gross_exposure_usd": "20",
+    "max_new_risk_requests": 1,
+    "max_notional_per_order_usd": "20",
+    "max_orders": 3,
+    "min_available_margin_usdc": "25",
+    "require_flat_start": true
+  },
+  "instrument": {
+    "instrument_id": "BTC-USD-PERP.ONDO",
+    "max_quantity": "13",
+    "min_notional": null,
+    "min_notional_currency": null,
+    "min_notional_source": "unpublished",
+    "min_quantity": null,
+    "min_quantity_source": "unpublished",
+    "price_increment": "1",
+    "quote_currency": "USD",
+    "size_increment": "0.0001",
+    "symbol": "BTC"
+  },
+  "operator_context": {
+    "account_readiness_requires_live_reconciliation": true,
+    "agent_executed": false,
+    "confirmation_source": "interactive_local_operator",
+    "run_id": "20260923T031758387417Z-240158e4b603"
+  },
+  "plan_sha256": "915af89c6e2012d9d18e611f34f2ac90c1753b1a48f69f9e0ef702f15f8376cb",
+  "plan_version": 1,
+  "public_evidence": {
+    "ask": "86508",
+    "bid": "86503",
+    "fetched_at_utc": "2026-09-23T03:18:01.853+00:00",
+    "manifest_sha256": "8ef2423241090d9b48d01d82008c82b7bc38cf8b1608223f13fab757da09a6fb",
+    "run_id": "20260923T031758543238Z",
+    "started_at_utc": "2026-09-23T03:17:58.543+00:00"
+  }
+}
