@@ -1,0 +1,87 @@
+{
+  "account": {
+    "environment": "production",
+    "expected_venue_account_id_present": true,
+    "journal_path": "reports/ondo-acceptance/20260922-dms-observation/journal-20260922T100848634743Z.json"
+  },
+  "authorization": {
+    "approved_plan_sha256": null,
+    "user_phrase_上主网_present": false
+  },
+  "candidate_evidence": {
+    "binary_sha256": "2f0244a8dc5514118151c66542873dfebe659bb1b1dec9adbdc6333ac1e23769",
+    "candidate_identity_sha256": "084906ab3bc1af7de18eaf7a89e2130fb738ef92b9c32a27713341e42e9b62a0",
+    "dms_release_host_contract_verified": false,
+    "mainnet_test_ready": false,
+    "reason": "draft only; DMS release semantics remain unresolved",
+    "wheel_sha256": "ec589e09cf6e38d2a6d53132807a342c122598390a847391eb34f9e1c886b16d"
+  },
+  "cleanup": {
+    "cancel_own_orders_only": true,
+    "confirm_cancels": true,
+    "confirm_flat_position": true,
+    "stop_budget_secs": 15
+  },
+  "close": {
+    "limit_price": "226.89",
+    "max_close_attempts": 2,
+    "max_quote_age_secs": "2",
+    "order_type": "limit",
+    "reduce_only": true,
+    "side": "sell",
+    "time_in_force": "IOC"
+  },
+  "dms": {
+    "account_wide_effect": "a lapsed timer cancels every resting order on the dedicated account; it does not close a position",
+    "activation": "subscribe cancelAllOrdersAfterPerps after flat-account verification",
+    "mode": "trading",
+    "release_on_stop": "only after authoritative flat proof and matching host ACK",
+    "renewal_interval_secs": 15,
+    "renewal_message_verified": false,
+    "timeout_secs": 30
+  },
+  "entry": {
+    "limit_price": "227.81",
+    "max_quote_age_secs": "2",
+    "max_slippage_bps": "20",
+    "notional_usd": "14",
+    "order_type": "limit",
+    "quantity": "0.06",
+    "reduce_only": false,
+    "side": "buy",
+    "time_in_force": "IOC"
+  },
+  "envelope": {
+    "deadline_secs": 120,
+    "max_app_requests": 6,
+    "max_gross_exposure_usd": "20",
+    "max_new_risk_requests": 1,
+    "max_notional_per_order_usd": "20",
+    "max_orders": 3,
+    "min_available_margin_usdc": "25",
+    "require_flat_start": true
+  },
+  "instrument": {
+    "instrument_id": "NVDA-USD-PERP.ONDO",
+    "max_quantity": "4500",
+    "min_notional": null,
+    "min_notional_currency": null,
+    "min_notional_source": "unpublished",
+    "min_quantity": null,
+    "min_quantity_source": "unpublished",
+    "price_increment": "0.01",
+    "quote_currency": "USD",
+    "size_increment": "0.01",
+    "symbol": "NVDA"
+  },
+  "plan_sha256": "0c4ef5638c53e100f6e4d0a0b13f83b881b79252515520a5025585a5407a4391",
+  "plan_version": 1,
+  "public_evidence": {
+    "ask": "227.36",
+    "bid": "227.34",
+    "contract_disabled": false,
+    "fetched_at_utc": "2026-09-22T10:08:51.948+00:00",
+    "run_id": "20260922T100848634743Z",
+    "underlying_market_closed": false
+  }
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "base_currency": "NVDA",
+    "base_currency_source": "raw_market_name",
+    "fee_source": "market_fields:takerFee",
+    "instrument_id": "NVDA-USD-PERP.ONDO",
+    "is_inverse": false,
+    "maker_fee_bps": "1",
+    "maker_fee_source": "market_fields:makerFee",
+    "market_status": "active",
+    "market_status_raw": null,
+    "market_status_source": "venue_convention:enabled - no status string and no `disabled` flag present; by the venue convention absence of `disabled` means enabled (2026-09-14 capture: 0/81 markets carried a status string, 20/81 carried disabled:true)",
+    "price_increment": "0.01",
+    "quote_currency": "USD",
+    "raw_market": "NVDA-USD.P",
+    "settlement_currency": "USDC",
+    "size_increment": "0.01",
+    "symbol": "NVDA",
+    "taker_fee_bps": "2.5",
+    "venue": "ONDO"
+  }
+]

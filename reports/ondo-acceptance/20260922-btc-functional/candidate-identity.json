@@ -1,0 +1,90 @@
+{
+  "app_source_files": [
+    {
+      "path": "src/exec_probe.py",
+      "sha256": "1a7f64c233d4b90d65f0d09eb0ac9ab273b61e3d9bc5927efb50e89e445ca0a9"
+    },
+    {
+      "path": "src/live_limits.py",
+      "sha256": "f842b10fd34f94b11d51ff3032fc0a1524e48def036cc813eb05f9ecdcff8cc4"
+    },
+    {
+      "path": "src/maker_live.py",
+      "sha256": "60c8b33af9df502170779e93e5ff332ed0045ee806b6700fa0287d69f5a29eaf"
+    },
+    {
+      "path": "src/market_tape.py",
+      "sha256": "1fb0287004def40e7b3e938e66f23e5380f0fad0e7c0286fe07199a9e44b4716"
+    },
+    {
+      "path": "src/ondo_dms_diagnostics.py",
+      "sha256": "bc415b0e5ee0b72f020da34d837d73381e87b75644fdb7bba19172b266975d60"
+    },
+    {
+      "path": "src/ondo_native_diagnostics.py",
+      "sha256": "c784a710a44f38878ca83c2221bfcda8805e02f4dc5cc2b80acf44e18a3b8d9e"
+    },
+    {
+      "path": "src/ondo_preflight.py",
+      "sha256": "27076d4cce0acb32b8adbbd8a36c047ec67c2ba6e58b3c2f6e2adcb74fceefbe"
+    },
+    {
+      "path": "src/ondo_probe.py",
+      "sha256": "c4aa08fa0aae072f74be5380a63352097050d4cee550a3a31614cf8d132bd436"
+    },
+    {
+      "path": "src/ondo_trade_limits.py",
+      "sha256": "39f888986b4153834496fcf17da68fb4998aa1f169d72797e8f08f50973d1cf5"
+    },
+    {
+      "path": "src/ondo_trade_probe.py",
+      "sha256": "b95db1772452f57547c279ef521b7c68d8f455cc0f90f439675a957ec4a719e9"
+    },
+    {
+      "path": "src/quote_gates.py",
+      "sha256": "e93e546b41e7229d40e64afc123540f70a1147c85f5e4448c4d81876766373be"
+    },
+    {
+      "path": "src/quote_placement.py",
+      "sha256": "a1d2069df2e2514f373873e1f22d5424ed6da26369302514d513789aa3b4c6ec"
+    },
+    {
+      "path": "src/ref_feed.py",
+      "sha256": "39a0fe298ebdd343e876303d64038750f9cc74764e3ff4910bde4f594080ef35"
+    },
+    {
+      "path": "src/spread_watch.py",
+      "sha256": "1e3158b21fb3260eaefc77c54f85fa4ab37ab810b0ec89ef21b0664f3bf479a3"
+    },
+    {
+      "path": "config/limits.toml",
+      "sha256": "010af2d10a9685c1b8489c41722011866c4ee7ca43965081fb77bf46c76115b2"
+    },
+    {
+      "path": "config/ondo_btc_test.toml",
+      "sha256": "70994ab2deffc39b10f949476d89c26e47c808dcdc9f07403e2700c6b63a4a2b"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "3f072061db709817521baf3ea2883804508a08c4757f520bb9de7a38f7d6b20b"
+    },
+    {
+      "path": "tests/test_ondo_btc_trade.py",
+      "sha256": "26ecf7d1e007a3ed19efe3f49eec59dfa28bfc3a8923f8e71d5682e98d78a9e3"
+    }
+  ],
+  "binary_sha256": "bfa5a8cee84f144ed3e2d978dcb6dddd39c3158e71d9fcf23ca070d422a99300",
+  "candidate_kind": "btc-functional-dms-unchanged",
+  "credentials_read": false,
+  "dms_authority_suffix_sha256": "b569675d92e2eea7801c47f0542134db068612046a350422246cf7d64b2c84f6",
+  "dms_authority_suffix_unchanged": true,
+  "dms_release_host_contract_verified": false,
+  "frozen_source_files_verified": 49,
+  "native_source_manifest": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\20260919-production-native\\build\\20260922-btc-functional-release-source.json",
+  "network_started": false,
+  "production_execution_verified": false,
+  "stub_sha256": "9251ed9a23adeb8f16f5cc7766f3c9dc2a2404bb0ec84a435edaa2cd46aa3972",
+  "version": "2.0.0rc4",
+  "wheel": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\20260919-production-native\\build\\dist-btc-functional\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+  "wheel_sha256": "4fe1507cc3882b181fdf2c1b2b99e5c32e1a3875c31554d844bcb95ac4b877bd"
+}

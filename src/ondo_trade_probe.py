@@ -67,6 +67,7 @@ _SRC_DIR = Path(__file__).resolve().parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+from ondo_dms_diagnostics import read_dms_release_diagnostics  # noqa: E402
 from ondo_native_diagnostics import (  # noqa: E402  (needs sys.path above)
     IDENTITY_MATCHED,
     read_native_diagnostics,
@@ -81,6 +82,7 @@ from ondo_probe import (  # noqa: E402
     ONDO_VENUE,
     PRODUCTION_BASE_URL_HTTP,
     PRODUCTION_BASE_URL_WS,
+    PRODUCTION_READONLY_CONNECTION_TIMEOUT_SECS,
     OndoAdapter,
     OndoProbeError,
     OndoProbeRefused,
@@ -111,7 +113,14 @@ from ondo_trade_limits import (  # noqa: E402
 from nautilus_trader.common import Environment, LogLevel, LoggerConfig  # noqa: E402
 from nautilus_trader.config import LiveRiskEngineConfig  # noqa: E402
 from nautilus_trader.live import LiveNode  # noqa: E402
-from nautilus_trader.model import AccountId, ClientOrderId, InstrumentId, OrderSide, TraderId  # noqa: E402
+from nautilus_trader.model import (  # noqa: E402
+    AccountId,
+    ClientOrderId,
+    InstrumentId,
+    OrderRejected,
+    OrderSide,
+    TraderId,
+)
 from nautilus_trader.model import TimeInForce  # noqa: E402
 from nautilus_trader.trading import Strategy, StrategyConfig  # noqa: E402
 
@@ -126,10 +135,9 @@ TRADER_ID = "ONDO-TRADE-001"
 TRADE_FILE = "trade"
 META_FILE = "meta"
 PAYLOAD_FILES = (TRADE_FILE,)
-CONNECTION_TIMEOUT_SECS = 10
-
 DEFAULT_OUT = "reports/ondo-trade"
 DEFAULT_MINUTES = 10.0
+PRODUCTION_TRADE_DISCONNECTION_TIMEOUT_SECS = 30
 
 # The environment names this tool resolves.  There is no fallback between them.
 MAINNET_API_KEY_VARIABLE = "ONDO_MAINNET_API_KEY"
@@ -1664,6 +1672,7 @@ class TradeSequencer:
         self.close = plan.close
         self.phase = PHASE_NOT_STARTED
         self.outcome = OUTCOME_NOT_STARTED
+        self.terminal_reason: str | None = None
         self.done = False
         self.failures: list[str] = []
         self.entry_client_order_id: str | None = None
@@ -2029,6 +2038,7 @@ class TradeSequencer:
         self.done = True
         self.phase = PHASE_DONE
         self.outcome = outcome
+        self.terminal_reason = reason
         self._pending_close = False
         if outcome == OUTCOME_UNCERTAIN:
             self.failures.append(reason)
@@ -2329,7 +2339,12 @@ class OndoTradeStrategy(Strategy):
         reason = None
         if status in REJECTED_STATUSES:
             try:
-                reason = str(getattr(order, "reason", "") or "")
+                rejection = next(
+                    (event for event in reversed(order.events())
+                     if isinstance(event, OrderRejected)),
+                    None,
+                )
+                reason = str(getattr(rejection, "reason", "") or "")
             except Exception:
                 reason = ""
         return OrderView(role, str(client_order_id), status, filled, avg, closed, reason or None)
@@ -2927,7 +2942,8 @@ def trade_report_document(*, run_id: str, started: datetime, finished: datetime,
                           watchdog: dict[str, bool] | None,
                           diagnostics: object,
                           reconciliation: FinalReconciliation | None = None,
-                          final: FinalReconciliation | None = None) -> dict[str, object]:
+                          final: FinalReconciliation | None = None,
+                          dms_release_target: object | None = None) -> dict[str, object]:
     """The published report: plan identity, gates, accounting and honest verdicts."""
     sequencer = strategy.sequencer if strategy is not None else None
     net = sequencer.net_position if sequencer is not None else None
@@ -2973,7 +2989,9 @@ def trade_report_document(*, run_id: str, started: datetime, finished: datetime,
         "account_id_published": False,
         "credentials_published": False,
         "raw_frames_published": False,
+        "dms_release": read_dms_release_diagnostics(dms_release_target, run_id=run_id),
         "outcome": outcome,
+        "terminal_reason": sequencer.terminal_reason if sequencer is not None else None,
         "phase": sequencer.phase if sequencer is not None else PHASE_NOT_STARTED,
         "entry_client_order_id": sequencer.entry_client_order_id if sequencer else None,
         "close_client_order_ids": list(sequencer.close_client_order_ids) if sequencer else [],
@@ -3170,7 +3188,11 @@ def _build_node(plan: TradePlan, adapter: OndoAdapter, limits: TradeLimits,
             max_notional_per_order={plan.instrument.instrument_id: str(
                 plan.envelope.max_notional_per_order_usd)},
         ))
-        .with_timeout_connection(CONNECTION_TIMEOUT_SECS)
+        .with_timeout_connection(PRODUCTION_READONLY_CONNECTION_TIMEOUT_SECS)
+        # Production stop performs a fresh signed account reconciliation before it can release
+        # the DMS. Keep the node's outer bound wider than the native 15-second production budget
+        # and its final private-stream close allowance.
+        .with_timeout_disconnection_secs(PRODUCTION_TRADE_DISCONNECTION_TIMEOUT_SECS)
     )
     builder = builder.add_data_client(
         None, adapter.OndoDataClientFactory(),
@@ -3514,7 +3536,7 @@ def execute(plan: TradePlan, limits: TradeLimits, *, adapter: OndoAdapter, envir
             failure=failure, plan=plan, limits=limits, capability=capability,
             readiness=readiness, strategy=strategy, stop_condition=stop_condition,
             stops=stops, watchdog=watchdog_state, diagnostics=diagnostics, final=final,
-            reconciliation=reconciliation,
+            reconciliation=reconciliation, dms_release_target=native_target,
         )
         meta = {
             "tool": TOOL,

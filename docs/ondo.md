@@ -534,3 +534,64 @@ A future live plan must be generated from fresh official metadata and executable
 both directional worst prices and exact ticks, be hash-bound, and pass every native start gate.
 Actual production execution still requires current-turn `上主网` authorization and approval of
 that exact plan. Do not reuse the dry-run null fields or an older public snapshot as a priced plan.
+
+### DMS release observations (2026-09-22 candidate)
+
+The trade report now includes `dms_release`, read from the same run's native snapshot through a
+strict allowlist. `attempted`, `frame_sent`, and `acknowledged` are separate facts. The `outcome`
+label distinguishes validation refusal, missing transport, send failure, and acknowledgement or
+shutdown timeout. A missing native observation remains unavailable; it is never filled from another
+run or inferred from a read-only reconnect.
+
+The configured cleanup reserve is now 15 seconds, matching the native production stop budget.
+It shortens entry admission without extending the plan's total absolute deadline or its exposure
+limits. New plans must include this reserve; old approved plans and consumed hashes are unchanged.
+
+Ambiguous DMS updates retain only fixed classifications of their `data` kind and the `op`,
+`timeout_seconds`, `status`, and `enabled` fields. Raw frames, arbitrary keys, private identifiers,
+and free-form messages are not published. Labels such as `disabled` or `success` only describe a
+received field, and do not authorize release or prove its semantics. These diagnostics never enter
+the `production_execution_verified` acceptance calculation.
+
+`updates_after_release` counts updates observed after the single release attempt starts, including
+responses racing with the socket send completion. It is not a count of verified release responses.
+
+The official endpoint schema defines `update` with an unstructured object, but no release-specific
+response contract. This candidate must not treat an arbitrary `update` as an acknowledgement.
+Evidence and remaining limits are in
+`reports/ondo-acceptance/20260922-dms-observation/contract-review.md`.
+
+### BTC functional checks; DMS work paused (2026-09-22)
+
+The user paused DMS investigation and requested BTC checks. This preserves the existing native
+implementation and its unverified release contract; it does not disable DMS or accept an
+ambiguous acknowledgement. Existing production safety/start/shutdown gates are unchanged,
+except that the exact native instrument allowlist now includes BTC alongside NVDA. A plan
+still freezes one instrument; it cannot send the other instrument in the same run. Older
+NVDA-only wheels reject the BTC native envelope even when generic capability detection passes.
+
+Use the separate, explicit `config/ondo_btc_test.toml` profile with `--limits`. It selects
+`BTC-USD-PERP.ONDO`, a USD 15 target, USD 20 per-order/gross caps, one opening attempt, at most
+two reduce-only exits, a 120-second total deadline and the existing 15-second cleanup reserve.
+The default NVDA profile is unchanged. This profile is not an approved or priced plan.
+
+```powershell
+# Offline intent only: no credentials, client, network, order, cancel or DMS operation.
+.\.venv\Scripts\python.exe src\ondo_trade_probe.py --mode production-trade `
+    --side buy --limits config/ondo_btc_test.toml --dry-run
+```
+
+`tests/test_ondo_btc_trade.py` uses synthetic BTC prices and events, including the observed
+1 USD price grid and 0.0001 BTC quantity grid. Its test passes are not host-confirmed trades.
+It also constructs the real installed native envelope offline to catch an NVDA-only wheel;
+this is a configuration DTO, not an execution client, and opens no connection.
+The existing report already exposes `entry_confirmed`, `close_confirmed`, `flat_reconciled`
+and `pre_stop_reconciliation` separately from `native_final_clean` and DMS diagnostics.
+Report those facts independently; an incomplete shutdown still cannot pass the full
+`production_execution_verified` flag. Read-only reconnects cannot supply account coverage.
+
+This BTC check performed public metadata and authenticated read-only checks only. Real order
+acceptance, fills, reduce-only closing, cancellation and full final account reconciliation are
+still unverified for BTC. No priced/approved BTC plan was generated, and no consumed hash was
+reused. Actual mainnet execution is a user-initiated step with a fresh exact plan.
+Evidence: `reports/ondo-acceptance/20260922-btc-functional/acceptance.md`.

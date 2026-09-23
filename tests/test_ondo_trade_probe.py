@@ -56,6 +56,7 @@ from nautilus_trader.model import (  # noqa: E402
     Money,
     OrderAccepted,
     OrderFilled,
+    OrderRejected,
     OrderSide,
     OrderSubmitted,
     OrderType,
@@ -354,8 +355,8 @@ class NodeFactory:
 # --------------------------------------------------------------------------------- limits
 
 
-def test_limits_defaults_are_inside_every_hard_cap():
-    limits = load_trade_limits(None)
+def test_limits_defaults_are_inside_every_hard_cap(tmp_path):
+    limits = load_trade_limits(tmp_path / "missing-limits.toml")
     assert limits.entry_notional_usd == Decimal("15")
     assert limits.max_notional_per_order_usd == Decimal("50")
     assert limits.max_gross_exposure_usd == Decimal("100")
@@ -377,6 +378,7 @@ def test_canonical_limits_section_is_complete_for_offline_implementation():
     assert limits.max_orders == 3
     assert limits.max_close_attempts == 2
     assert limits.min_available_margin_usdc == Decimal("25")
+    assert limits.cleanup_budget_secs == 15
 
 
 def test_implicit_limits_are_never_configured_for_execution(tmp_path):
@@ -1145,7 +1147,19 @@ def test_a_rejected_entry_is_rejected_with_no_close():
         "entry", "E1", "REJECTED", Decimal("0"), None, True, "venue said no",
     ), now=0.0) is None
     assert sequencer.outcome == trade.OUTCOME_REJECTED
+    assert sequencer.terminal_reason == "entry rejected: venue said no"
     assert sequencer.close_client_order_ids == []
+
+    document = trade.trade_report_document(
+        run_id="r", started=datetime.datetime.now(datetime.timezone.utc),
+        finished=datetime.datetime.now(datetime.timezone.utc),
+        exit_code=1, failure=None, plan=sequencer.plan,
+        limits=sequencer.limits,
+        capability=trade.detect_native_trade_capability(CapableAdapter()),
+        readiness=good_readiness(), strategy=FakeStrategy(sequencer),
+        stop_condition="run-returned", stops=[], watchdog=None, diagnostics=None,
+    )
+    assert document["terminal_reason"] == "entry rejected: venue said no"
 
 
 def test_a_close_that_does_not_fill_is_retried_within_the_budget_then_uncertain():
@@ -1406,6 +1420,38 @@ def test_local_flat_without_a_native_final_is_not_verified():
     assert acceptance["flat_reconciled"] is False
     assert acceptance["native_final_clean"] is False
     assert acceptance["clean"] is False
+
+
+@pytest.mark.parametrize("acknowledged", [False, True])
+def test_dms_observations_are_reported_but_cannot_replace_final_proof(acknowledged):
+    sequencer = seq_for()
+    _drive_entry(sequencer)
+    sequencer.bind_close("C1")
+    sequencer.note_close(trade.OrderView(
+        "close", "C1", "FILLED", Decimal("0.100"), Decimal("100.00"), True,
+    ), now=0.0)
+    native = SnapshotTarget({
+        "run_id": "r", "phase": "reconciled",
+        "dms_release": {
+            "attempted": True, "frame_sent": True, "acknowledged": acknowledged,
+            "outcome": "acknowledged" if acknowledged else "ack_timeout",
+            "raw_frame": "SYNTHETIC_PRIVATE_FRAME",
+        },
+    })
+    document = trade.trade_report_document(
+        run_id="r", started=datetime.datetime.now(datetime.timezone.utc),
+        finished=datetime.datetime.now(datetime.timezone.utc),
+        exit_code=1, failure=None, plan=sequencer.plan, limits=sequencer.limits,
+        capability=trade.detect_native_trade_capability(CapableAdapter()),
+        readiness=good_readiness(), strategy=FakeStrategy(sequencer),
+        stop_condition="run-returned", stops=[], watchdog=None, diagnostics=None,
+        dms_release_target=native,
+    )
+
+    assert document["dms_release"]["acknowledged"] is acknowledged
+    assert document["dms_release"]["frame_sent"] is True
+    assert document["production_execution_verified"] is False
+    assert "SYNTHETIC_PRIVATE_FRAME" not in json.dumps(document, default=trade._json_default)
 
 
 @pytest.mark.parametrize("overrides", [
@@ -2041,6 +2087,41 @@ def test_order_view_reads_a_real_filled_order_through_client_order_id():
     assert strategy._order_view("entry", "not-a-client-order-id") is None
 
 
+def test_order_view_reads_the_rejection_reason_from_the_real_terminal_event():
+    order = _new_limit_order("E-REJECTED", OrderSide.BUY, "0.060", "226.51")
+    order.apply(OrderSubmitted(
+        trader_id=TraderId.from_str("TESTER-001"),
+        strategy_id=StrategyId.from_str("S-001"),
+        instrument_id=order.instrument_id,
+        client_order_id=order.client_order_id,
+        account_id=AccountId.from_str("ONDO-1"),
+        event_id=UUID4(),
+        ts_event=1,
+        ts_init=1,
+    ))
+    order.apply(OrderRejected(
+        trader_id=TraderId.from_str("TESTER-001"),
+        strategy_id=StrategyId.from_str("S-001"),
+        instrument_id=order.instrument_id,
+        client_order_id=order.client_order_id,
+        account_id=AccountId.from_str("ONDO-1"),
+        reason="submit-order-error: minimum notional",
+        event_id=UUID4(),
+        ts_event=2,
+        ts_init=2,
+        reconciliation=False,
+    ))
+    cache = TypeStrictCache()
+    cache.add(order)
+    strategy = _integration_strategy(cache)
+
+    view = strategy._order_view("entry", str(order.client_order_id))
+
+    assert view is not None
+    assert view.status == "REJECTED"
+    assert view.rejected_reason == "submit-order-error: minimum notional"
+
+
 def test_a_real_entry_fill_triggers_a_reduce_only_close_for_the_confirmed_quantity():
     cache = TypeStrictCache()
     order_factory = FakeOrderFactory()
@@ -2281,6 +2362,40 @@ def test_the_run_token_dms_timeout_and_identity_reach_the_native_config(monkeypa
     assert logger_config.fileout_level == trade.LogLevel.OFF
     assert logger_config.bypass_logging is True
     assert logger_config.print_config is False
+
+
+def test_production_trade_node_uses_thirty_second_connection_window(monkeypatch):
+    plan = parse(resolved_plan())
+    limits = load_trade_limits(None)
+    monkeypatch.setattr(trade, "LiveNode", _FakeLiveNode)
+    trade._build_node(
+        plan, CapableAdapter(), limits, lambda: good_readiness(), lambda _b: _FakeNode(),
+        AccountId.from_str("ONDO-1234567890"), "1234567890", 123, 456,
+        "run-abc",
+    )
+
+    timeout_calls = [
+        args for name, args, _kwargs in _FakeLiveNode.last_builder.calls
+        if name == "with_timeout_connection"
+    ]
+    assert timeout_calls == [(30,)]
+
+
+def test_production_trade_node_allows_native_bounded_shutdown_to_finish(monkeypatch):
+    plan = parse(resolved_plan())
+    limits = load_trade_limits(None)
+    monkeypatch.setattr(trade, "LiveNode", _FakeLiveNode)
+    trade._build_node(
+        plan, CapableAdapter(), limits, lambda: good_readiness(), lambda _b: _FakeNode(),
+        AccountId.from_str("ONDO-1234567890"), "1234567890", 123, 456,
+        "run-abc",
+    )
+
+    timeout_calls = [
+        args for name, args, _kwargs in _FakeLiveNode.last_builder.calls
+        if name == "with_timeout_disconnection_secs"
+    ]
+    assert timeout_calls == [(30,)]
 
 
 def test_trade_cli_does_not_offer_an_unsafe_native_log_level():

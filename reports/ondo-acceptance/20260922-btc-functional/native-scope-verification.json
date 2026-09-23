@@ -1,0 +1,11 @@
+﻿{
+    "changed_native_files":  [
+                                 "crates/adapters/ondo/src/production.rs",
+                                 "crates/adapters/ondo/tests/production_envelope.rs"
+                             ],
+    "dms_authority_suffix_sha256":  "b569675d92e2eea7801c47f0542134db068612046a350422246cf7d64b2c84f6",
+    "dms_authority_suffix_unchanged":  true,
+    "independent_review":  "no critical finding; exact frozen instrument matching retained",
+    "native_regression_passed":  1067,
+    "native_envelope_passed":  35
+}

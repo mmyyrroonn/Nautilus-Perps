@@ -196,9 +196,10 @@ max_app_requests = 6
 # Higher is stricter; the app/native hard safety floor is 25 USDC for the current USD15 target.
 min_available_margin_usdc = "25"
 
-# Total bounded session, with the final 5 seconds reserved for exits/cancels/reconciliation.
+# Total bounded session, with the final 15 seconds reserved for exits/cancels/reconciliation.
+# This shortens new-risk admission; it does not extend the absolute session deadline.
 deadline_secs = 600
 max_close_attempts = 2
 max_slippage_bps = "20"
-cleanup_budget_secs = 5
+cleanup_budget_secs = 15
 

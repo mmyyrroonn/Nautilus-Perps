@@ -1,0 +1,95 @@
+{
+  "account": {
+    "environment": "production",
+    "expected_venue_account_id_present": true,
+    "journal_path": "E:\\Nautilus-Perps\\.worktrees\\ondo-mainnet-resume\\reports\\ondo-acceptance\\btc-operator\\20260922T115835918127Z-6f5a48b3d7bc\\journal.json"
+  },
+  "authorization": {
+    "approved_plan_sha256": "8193d4cf4435170ac58e5524205b8347fb766bc9a158922ab88f26dedf0ad9b6",
+    "confirmed_at_utc": "2026-09-22T11:58:46.075274+00:00",
+    "source": "interactive_local_operator",
+    "user_phrase_上主网_present": true
+  },
+  "candidate_evidence": {
+    "binary_sha256": "bfa5a8cee84f144ed3e2d978dcb6dddd39c3158e71d9fcf23ca070d422a99300",
+    "candidate_identity_sha256": "705a1e46c814b9ebe5ed1f8460f475fba2d9f25f4374b670a22d17150840111a",
+    "dms_release_host_contract_verified": false,
+    "launcher_sha256": "7502f783c7a669afc0552e3f72781c91d8c8cd7bcdbc674a843c78930d259764",
+    "operator_script_sha256": "cfbf673f520457d798d331a563d6095d3a0c4a9321038a368d5db868bf2f1c44",
+    "wheel_sha256": "4fe1507cc3882b181fdf2c1b2b99e5c32e1a3875c31554d844bcb95ac4b877bd"
+  },
+  "cleanup": {
+    "cancel_own_orders_only": true,
+    "confirm_cancels": true,
+    "confirm_flat_position": true,
+    "stop_budget_secs": 15
+  },
+  "close": {
+    "limit_price": "85757",
+    "max_close_attempts": 2,
+    "max_quote_age_secs": "5",
+    "order_type": "limit",
+    "reduce_only": true,
+    "side": "sell",
+    "time_in_force": "IOC"
+  },
+  "dms": {
+    "account_wide_effect": "a lapsed timer cancels every resting order account-wide",
+    "activation": "subscribe cancelAllOrdersAfterPerps on login",
+    "mode": "trading",
+    "release_on_stop": "only when nothing is unconfirmed",
+    "renewal_interval_secs": 15,
+    "renewal_message_verified": false,
+    "timeout_secs": 30
+  },
+  "entry": {
+    "limit_price": "86117",
+    "max_quote_age_secs": "5",
+    "max_slippage_bps": "20",
+    "notional_usd": "15",
+    "order_type": "limit",
+    "quantity": "0.0001",
+    "reduce_only": false,
+    "side": "buy",
+    "time_in_force": "IOC"
+  },
+  "envelope": {
+    "deadline_secs": 120,
+    "max_app_requests": 6,
+    "max_gross_exposure_usd": "20",
+    "max_new_risk_requests": 1,
+    "max_notional_per_order_usd": "20",
+    "max_orders": 3,
+    "min_available_margin_usdc": "25",
+    "require_flat_start": true
+  },
+  "instrument": {
+    "instrument_id": "BTC-USD-PERP.ONDO",
+    "max_quantity": "13",
+    "min_notional": null,
+    "min_notional_currency": null,
+    "min_notional_source": "unpublished",
+    "min_quantity": null,
+    "min_quantity_source": "unpublished",
+    "price_increment": "1",
+    "quote_currency": "USD",
+    "size_increment": "0.0001",
+    "symbol": "BTC"
+  },
+  "operator_context": {
+    "account_readiness_requires_live_reconciliation": true,
+    "agent_executed": false,
+    "confirmation_source": "interactive_local_operator",
+    "run_id": "20260922T115835918127Z-6f5a48b3d7bc"
+  },
+  "plan_sha256": "8193d4cf4435170ac58e5524205b8347fb766bc9a158922ab88f26dedf0ad9b6",
+  "plan_version": 1,
+  "public_evidence": {
+    "ask": "85946",
+    "bid": "85928",
+    "fetched_at_utc": "2026-09-22T11:58:39.373+00:00",
+    "manifest_sha256": "2cd929011c7dc46a41f196d7f7bee83944a1c0926e85aaf172be1700a6b9bb5a",
+    "run_id": "20260922T115836057160Z",
+    "started_at_utc": "2026-09-22T11:58:36.057+00:00"
+  }
+}

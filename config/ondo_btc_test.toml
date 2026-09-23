@@ -1,0 +1,18 @@
+# Explicit BTC functional-test profile, selected only with --limits.
+# This file does not authorize a live run or disable/verify DMS. The default NVDA
+# profile, native protection, consumed hashes and production acceptance stay unchanged.
+# Prices and quantities must come from fresh evidence in a separately approved plan.
+[ondo_trade]
+instrument = "BTC-USD-PERP.ONDO"
+symbol = "BTC"
+entry_notional_usd = "15"
+max_notional_per_order_usd = "20"
+max_gross_exposure_usd = "20"
+max_orders = 3
+max_new_risk_requests = 1
+max_app_requests = 6
+min_available_margin_usdc = "25"
+deadline_secs = 120
+max_close_attempts = 2
+max_slippage_bps = "20"
+cleanup_budget_secs = 15
