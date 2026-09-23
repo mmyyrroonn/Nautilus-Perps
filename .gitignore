@@ -17,3 +17,27 @@ reports/**/journal*.json*
 
 # Isolated git worktrees
 .worktrees/
+
+# Local working material that is deliberately not published. These are kept on disk for the
+# session that produced them; the evidence that was accepted lives in the report directories
+# that are committed. 学习课题/ is the one local folder that is tracked on purpose.
+.commandcode/
+reports/entropy-survey-2026-09-04.sources.json
+reports/ondo-acceptance/20260914T114942Z/
+reports/ondo-acceptance/20260914T142730Z-p1-build/
+reports/ondo-acceptance/20260915T-signed-fixture-correction/
+reports/ondo-acceptance/20260915T024236Z-p2/
+reports/ondo-acceptance/20260915T033038Z-p1-ondo-hl/
+reports/ondo-acceptance/20260919-mainnet-readonly/
+reports/ondo-acceptance/20260919-r52/control/merge-app-tests-merged.txt
+reports/ondo-acceptance/20260919T090714Z-status-check/
+reports/ondo-acceptance/20260920-btc-private-readonly/candidate-run/
+reports/ondo-acceptance/20260920-btc-private-readonly/run/
+reports/ondo-acceptance/20260920-btc-private-readonly/run-timeout30/
+reports/ondo-review-2026-09-15/
+reports/ondo-stage-status-2026-09-15.md
+reports/perps-candidates-2026-09-11/
+reports/perps-survey-2026-09-04.md
+reports/perps-survey-2026-09-04.sources.json
+reports/polymarket-survey-2026-09-10.md
+reports/stage1/*NVDA_HL-LIGHTER_*.csv
