@@ -75,6 +75,8 @@ jobs:
         with:
           toolchain: 1.98.0
           cache: false
+          override: true
+          components: rustfmt, clippy
 
       - name: Install pinned Python
         shell: pwsh
