@@ -233,6 +233,7 @@ def main() -> int:
         record["config_sha256"] = config_hashes
 
         env = _test_environment()
+        env["NAUTILUS_ISSUE3_WHEEL_SHA256"] = identity["wheel"]["sha256"]
         logs_dir = output.parent / f"{output.stem}.logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         collection_command = [
