@@ -1,0 +1,317 @@
+name: joint native and application acceptance
+
+# Manual, no-secrets run. Both refs are immutable full commit SHAs.
+on:
+  workflow_dispatch:
+    inputs:
+      app_sha:
+        description: Full Nautilus-Perps commit SHA
+        required: true
+        type: string
+      native_sha:
+        description: Full nautilus_trader fork commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  joint:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - name: Validate immutable inputs
+        id: validate
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+          NATIVE_SHA: ${{ inputs.native_sha }}
+        run: |
+          if ($env:APP_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'app_sha must be a lowercase full commit SHA' }
+          if ($env:NATIVE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'native_sha must be a lowercase full commit SHA' }
+
+      - name: Checkout application
+        id: app_checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.app_sha }}
+          path: app
+          persist-credentials: false
+
+      - name: Checkout native fork
+        id: native_checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mmyyrroonn/nautilus_trader
+          ref: ${{ inputs.native_sha }}
+          path: native
+          persist-credentials: false
+
+      - name: Verify resolved refs and clean checkouts
+        id: verify_refs
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+          NATIVE_SHA: ${{ inputs.native_sha }}
+        run: |
+          if ((git -C app rev-parse HEAD) -cne $env:APP_SHA) { throw 'application ref resolution changed' }
+          if ((git -C native rev-parse HEAD) -cne $env:NATIVE_SHA) { throw 'native ref resolution changed' }
+          if (git -C app status --porcelain) { throw 'application checkout is dirty' }
+          if (git -C native status --porcelain) { throw 'native checkout is dirty' }
+          if ((Test-Path app/.env) -or (Test-Path native/.env)) { throw 'dotenv credentials must be absent' }
+
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.12.6
+
+      - name: Install pinned Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.98.0
+          cache: false
+
+      - name: Install pinned Python
+        shell: pwsh
+        run: uv python install 3.12.9
+
+      - name: Sync locked Python dependencies
+        shell: pwsh
+        run: |
+          $env:UV_PROJECT_ENVIRONMENT = Join-Path $env:GITHUB_WORKSPACE 'native/.venv'
+          Push-Location native/python
+          uv sync --locked --all-groups --all-extras --no-install-package nautilus-trader --inexact --managed-python --python 3.12.9
+          if ($LASTEXITCODE -ne 0) { throw 'native locked dependency sync failed' }
+          Pop-Location
+          $env:UV_PROJECT_ENVIRONMENT = Join-Path $env:GITHUB_WORKSPACE 'app/.venv'
+          Push-Location app
+          uv sync --locked --inexact --managed-python --python 3.12.9
+          if ($LASTEXITCODE -ne 0) { throw 'application locked dependency sync failed' }
+          Pop-Location
+
+      - name: Resolve pinned cargo-nextest
+        shell: pwsh
+        run: |
+          $version = bash native/scripts/cargo-tool-version.sh cargo-nextest
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^0[.]9[.]143$') { throw 'unexpected cargo-nextest version' }
+          "CARGO_NEXTEST_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install pinned cargo-nextest
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: nextest@${{ env.CARGO_NEXTEST_VERSION }}
+
+      - name: Fetch locked Cargo dependencies
+        shell: pwsh
+        run: |
+          Push-Location native
+          cargo fetch --locked
+          if ($LASTEXITCODE -ne 0) { throw 'native Cargo fetch failed' }
+          Pop-Location
+
+      - name: Run native adapter checks
+        id: native_checks
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          $env:CARGO_NET_OFFLINE = 'true'
+          if ($IsWindows) { $nativePython = Join-Path $env:GITHUB_WORKSPACE 'native/.venv/Scripts/python.exe' }
+          else { $nativePython = Join-Path $env:GITHUB_WORKSPACE 'native/.venv/bin/python' }
+          Push-Location native
+          & $nativePython scripts/adapter-evidence/test_native_checks.py
+          if ($LASTEXITCODE -ne 0) { throw 'native check tooling regression failed' }
+          & $nativePython scripts/adapter-evidence/native_checks.py --crates nautilus-aster nautilus-ondo nautilus-portfolio --output (Join-Path $evidence 'native-checks.json')
+          if ($LASTEXITCODE -ne 0) { throw 'native adapter checks failed' }
+          Pop-Location
+
+      - name: Build one source-bound wheel
+        id: build
+        shell: pwsh
+        run: |
+          $native = Join-Path $env:GITHUB_WORKSPACE 'native'
+          $app = Join-Path $env:GITHUB_WORKSPACE 'app'
+          $output = Join-Path $env:GITHUB_WORKSPACE 'wheel-output'
+          if ($IsWindows) {
+            $nativePython = Join-Path $native '.venv/Scripts/python.exe'
+            $appPython = Join-Path $app '.venv/Scripts/python.exe'
+          } else {
+            $nativePython = Join-Path $native '.venv/bin/python'
+            $appPython = Join-Path $app '.venv/bin/python'
+          }
+          & $appPython (Join-Path $app 'scripts/build_native.py') --native-root $native --native-python $nativePython --output-dir $output --profile release --online
+          if ($LASTEXITCODE -ne 0) { throw 'source-bound wheel build failed' }
+
+      - name: Install and verify the built wheel
+        id: install
+        shell: pwsh
+        run: |
+          $native = Join-Path $env:GITHUB_WORKSPACE 'native'
+          $app = Join-Path $env:GITHUB_WORKSPACE 'app'
+          $output = Join-Path $env:GITHUB_WORKSPACE 'wheel-output'
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          if ($IsWindows) { $appPython = Join-Path $app '.venv/Scripts/python.exe' }
+          else { $appPython = Join-Path $app '.venv/bin/python' }
+          $provenancePath = Join-Path $output 'native-provenance.json'
+          $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+          $wheel = Join-Path $output $provenance.wheel.filename
+          Push-Location $app
+          & $appPython scripts/install_native.py --python $appPython --local-override --native-root $native --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --output (Join-Path $evidence 'installed.json')
+          if ($LASTEXITCODE -ne 0) { throw 'wheel install/identity failed' }
+          Pop-Location
+
+      - name: Run loopback-only application tests
+        id: integration
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+          NATIVE_SHA: ${{ inputs.native_sha }}
+        run: |
+          $native = Join-Path $env:GITHUB_WORKSPACE 'native'
+          $app = Join-Path $env:GITHUB_WORKSPACE 'app'
+          $output = Join-Path $env:GITHUB_WORKSPACE 'wheel-output'
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          if ($IsWindows) { $appPython = Join-Path $app '.venv/Scripts/python.exe' }
+          else { $appPython = Join-Path $app '.venv/bin/python' }
+          $provenancePath = Join-Path $output 'native-provenance.json'
+          $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+          $wheel = Join-Path $output $provenance.wheel.filename
+          $guardRecord = Join-Path $evidence 'offline-guard.json'
+          $integrationRecord = Join-Path $evidence 'integration.json'
+          & $appPython (Join-Path $app 'scripts/offline_guard.py') --output $guardRecord --workspace $app --workspace $native -- $appPython (Join-Path $app 'scripts/test_integration.py') --python $appPython --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --native-root $native --expected-app-sha $env:APP_SHA --expected-native-sha $env:NATIVE_SHA --offline-guard $guardRecord --require-clean --fail-on-skip --required-test tests/test_installed_wheel_livenode.py::test_installed_wheel_livenode_loopback_lifecycle --config (Join-Path $app 'config/limits.toml') --output $integrationRecord tests
+          if ($LASTEXITCODE -ne 0) { throw 'loopback-only application tests failed' }
+
+      - name: Write detailed joint audit
+        id: joint_audit
+        if: always()
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+          NATIVE_SHA: ${{ inputs.native_sha }}
+        run: |
+          $app = Join-Path $env:GITHUB_WORKSPACE 'app'
+          $native = Join-Path $env:GITHUB_WORKSPACE 'native'
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          $script = Join-Path $app 'scripts/joint_audit.py'
+          if (-not (Test-Path $script)) { throw 'application checkout or joint audit script is missing' }
+          if ($IsWindows) { $appPython = Join-Path $app '.venv/Scripts/python.exe' }
+          else { $appPython = Join-Path $app '.venv/bin/python' }
+          $auditor = if (Test-Path $appPython) { $appPython } else { 'python' }
+          $auditArgs = @(
+            $script, '--output', (Join-Path $evidence 'joint-audit.json'),
+            '--app-root', $app, '--native-root', $native,
+            '--app-sha', $env:APP_SHA, '--native-sha', $env:NATIVE_SHA,
+            '--provenance', (Join-Path $env:GITHUB_WORKSPACE 'wheel-output/native-provenance.json'),
+            '--native-checks', (Join-Path $evidence 'native-checks.json'),
+            '--installed', (Join-Path $evidence 'installed.json'),
+            '--integration', (Join-Path $evidence 'integration.json'),
+            '--offline-guard', (Join-Path $evidence 'offline-guard.json')
+          )
+          $manifest = Join-Path $env:GITHUB_WORKSPACE 'wheel-output/native-provenance.json'
+          if (Test-Path $manifest) {
+            try {
+              $provenance = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+              if ($provenance.wheel.filename) {
+                $auditArgs += @('--wheel', (Join-Path $env:GITHUB_WORKSPACE ('wheel-output/' + $provenance.wheel.filename)))
+              }
+            } catch {
+              Write-Output 'build provenance is unreadable; detailed audit will record the build failure'
+            }
+          }
+          & $auditor @auditArgs
+          if ($LASTEXITCODE -ne 0) { throw 'joint audit script failed' }
+
+      - name: Audit cross-layer result
+        id: audit
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+          NATIVE_SHA: ${{ inputs.native_sha }}
+        run: |
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          $joint = Get-Content (Join-Path $evidence 'joint-audit.json') -Raw | ConvertFrom-Json
+          if ($joint.status -ne 'passed') { throw ('joint audit failed: ' + ($joint.failure_layers -join ', ')) }
+          $native = Get-Content (Join-Path $evidence 'native-checks.json') -Raw | ConvertFrom-Json
+          $guard = Get-Content (Join-Path $evidence 'offline-guard.json') -Raw | ConvertFrom-Json
+          $installed = Get-Content (Join-Path $evidence 'installed.json') -Raw | ConvertFrom-Json
+          $integration = Get-Content (Join-Path $evidence 'integration.json') -Raw | ConvertFrom-Json
+          $provenance = Get-Content (Join-Path $env:GITHUB_WORKSPACE 'wheel-output/native-provenance.json') -Raw | ConvertFrom-Json
+          if ($native.native.commit -cne $env:NATIVE_SHA) { throw 'native checks ran against a different SHA' }
+          if ($native.identity_changed_during_checks) { throw 'native source changed during checks' }
+          if (@($native.checks | Where-Object { $_.blocking -and $_.exit_code -ne 0 }).Count) { throw 'native blocking check failed' }
+          if ($guard.status -ne 'passed' -or $guard.exit_code -ne 0) { throw 'offline network guard failed' }
+          if ($guard.firewall_cleanup -eq $false) { throw 'Windows firewall cleanup failed' }
+          if ($integration.status -ne 'passed' -or $integration.exit_code -ne 0) { throw 'application integration failed' }
+          if ($integration.source_refs.app.resolved -cne $env:APP_SHA -or $integration.source_refs.native.resolved -cne $env:NATIVE_SHA) { throw 'application/native SHA mismatch' }
+          if ($integration.candidate.wheel.sha256 -cne $provenance.wheel.sha256 -or $installed.wheel.sha256 -cne $provenance.wheel.sha256) { throw 'built, installed and tested wheels differ' }
+          if ($integration.collection.items -lt 1188) { throw 'application test collection count declined below 1188' }
+          if ($integration.collection.required_tests.'tests/test_installed_wheel_livenode.py::test_installed_wheel_livenode_loopback_lifecycle' -ne $true) { throw 'installed-wheel LiveNode test was not collected' }
+          if ($integration.pytest.item_passed -lt 1188) { throw 'application passing item count declined below 1188' }
+          if ($integration.pytest.subtests_passed -lt 97) { throw 'application subtest count declined below 97' }
+          if ($integration.pytest.skipped -ne 0) { throw 'application tests were skipped' }
+          if ($integration.pytest.counts.failed -ne 0 -or $integration.pytest.counts.errors -ne 0) { throw 'application tests failed' }
+          Write-Output "joint acceptance passed for $env:APP_SHA + $env:NATIVE_SHA"
+
+      - name: Write job-layer result
+        if: always()
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+          NATIVE_SHA: ${{ inputs.native_sha }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          APP_CHECKOUT_OUTCOME: ${{ steps.app_checkout.outcome }}
+          NATIVE_CHECKOUT_OUTCOME: ${{ steps.native_checkout.outcome }}
+          VERIFY_REFS_OUTCOME: ${{ steps.verify_refs.outcome }}
+          NATIVE_OUTCOME: ${{ steps.native_checks.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          INTEGRATION_OUTCOME: ${{ steps.integration.outcome }}
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+          JOINT_AUDIT_OUTCOME: ${{ steps.joint_audit.outcome }}
+        run: |
+          $evidence = Join-Path $env:GITHUB_WORKSPACE 'evidence'
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          $record = [ordered]@{
+            schema_version = 1
+            platform = $env:RUNNER_OS
+            input_app_sha = $env:APP_SHA
+            input_native_sha = $env:NATIVE_SHA
+            outcomes = [ordered]@{
+              validate = $env:VALIDATE_OUTCOME
+              app_checkout = $env:APP_CHECKOUT_OUTCOME
+              native_checkout = $env:NATIVE_CHECKOUT_OUTCOME
+              verify_refs = $env:VERIFY_REFS_OUTCOME
+              native_checks = $env:NATIVE_OUTCOME
+              build = $env:BUILD_OUTCOME
+              install = $env:INSTALL_OUTCOME
+              integration = $env:INTEGRATION_OUTCOME
+              audit = $env:AUDIT_OUTCOME
+              joint_audit = $env:JOINT_AUDIT_OUTCOME
+            }
+          }
+          $record.failure_layer = @($record.outcomes.Keys | Where-Object { $record.outcomes[$_] -eq 'failure' } | Select-Object -First 1)[0]
+          if (Test-Path app/.git) { $record.resolved_app_sha = git -C app rev-parse HEAD }
+          if (Test-Path native/.git) { $record.resolved_native_sha = git -C native rev-parse HEAD }
+          $manifest = Join-Path $env:GITHUB_WORKSPACE 'wheel-output/native-provenance.json'
+          if (Test-Path $manifest) {
+            try { $record.wheel_sha256 = (Get-Content $manifest -Raw | ConvertFrom-Json).wheel.sha256 }
+            catch { $record.provenance_error = 'unreadable build provenance' }
+          }
+          $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidence 'job-layer.json') -Encoding utf8
+
+      - name: Upload joint evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: joint-acceptance-${{ runner.os }}
+          path: |
+            evidence/**
+            wheel-output/native-provenance.json
+            wheel-output/native-build-input.json
+          if-no-files-found: warn

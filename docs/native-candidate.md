@@ -93,3 +93,25 @@ repeat verification and offline tests. If that artifact is unavailable,
 stop; never fall back to the equal-version PyPI package. Record native and
 application SHAs and compatibility checks in a separate dependency-upgrade
 change. No command here contacts a venue or authorizes a live order.
+
+## Joint two-repository acceptance (Issue 3)
+
+The manual workflow `.github/workflows/joint-acceptance.yml` takes full, lowercase
+`app_sha` and `native_sha` commit IDs. It resolves both immutable refs on each clean
+`windows-latest` and `ubuntu-24.04` runner, runs the native adapter checks, invokes
+the native repository's single wheel builder, installs that exact wheel, and audits
+the application suite including the installed-wheel `LiveNode` loopback test.
+Default jobs have no venue secrets or `.env`; the application test command runs
+through `scripts/offline_guard.py`, which fails closed if its loopback-only guard
+cannot be installed. Native dependency fetch and wheel build finish before that
+guarded application test stage. The native check manifest, wheel provenance,
+installed identity, pytest JUnit/collection logs, guard record, detailed joint
+audit and job-layer summary are uploaded even when a later stage fails.
+
+Only a run with both platform jobs passing, zero skipped application tests,
+at least 1188 collected items and 97 passing subtests is Issue 3 workflow
+evidence for this application candidate. The workflow records failures by
+native checks, build, install, identity, collection, pytest or network guard
+layer. The accepted pair is the two resolved SHAs plus the wheel SHA-256;
+a later floating `main` is a different pair. Venue ACK and live trade
+acceptance remain separate from this offline workflow.
