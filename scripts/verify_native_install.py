@@ -24,12 +24,23 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+SOURCE_PATHS = ("src", "scripts", "tests", "config", "pyproject.toml", "uv.lock", ".python-version")
+
+
 def git_identity(root: Path) -> dict[str, object]:
     def git(*args: str) -> bytes:
         return subprocess.check_output(["git", *args], cwd=root)
 
+    tracked = hashlib.sha256()
+    for raw_path in sorted(filter(None, git("ls-files", "-z", "--", *SOURCE_PATHS).split(b"\0"))):
+        path = root / raw_path.decode("utf-8", errors="surrogateescape")
+        tracked.update(raw_path + b"\0")
+        if path.is_file():
+            tracked.update(bytes.fromhex(digest(path)))
+        else:
+            tracked.update(b"missing")
     untracked = hashlib.sha256()
-    for raw_path in sorted(filter(None, git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"))):
+    for raw_path in sorted(filter(None, git("ls-files", "--others", "--exclude-standard", "-z", "--", *SOURCE_PATHS).split(b"\0"))):
         path = root / raw_path.decode("utf-8", errors="surrogateescape")
         if not path.is_file():
             raise ValueError("an untracked source path is unreadable")
@@ -38,9 +49,10 @@ def git_identity(root: Path) -> dict[str, object]:
     return {
         "commit": git("rev-parse", "HEAD").decode().strip(),
         "tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
-        "dirty": bool(git("status", "--porcelain", "--untracked-files=normal")),
-        "tracked_diff_sha256": hashlib.sha256(git("diff", "--binary", "HEAD")).hexdigest(),
+        "dirty": bool(git("status", "--porcelain", "--untracked-files=normal", "--", *SOURCE_PATHS)),
+        "tracked_content_sha256": tracked.hexdigest(),
         "untracked_sha256": untracked.hexdigest(),
+        "source_scope": list(SOURCE_PATHS),
     }
 
 

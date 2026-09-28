@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "app": {
+      "commit": "1af96146aefecd3d9d700a2430ebefc069ed95ae",
+      "dirty": true,
+      "source_scope": [
+        "src",
+        "scripts",
+        "tests",
+        "config",
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version"
+      ],
+      "tracked_content_sha256": "13c45f257f0194c9e8de1a0d167f709fe3a0b8bb4c2c15e64f8d6e47ac4b7a1d",
+      "tree": "d42dead28df69ad0a8256523e6ee9eaaa22849e1",
+      "untracked_sha256": "af2a21ae373b5e23b72903a147a8c654cfdbedb35c954e324dffdb346540efb1"
+    },
+    "installed": {
+      "adapter_stub_sha256": {
+        "nautilus_trader/adapters/aster/__init__.pyi": "6e92336f44b6bc530d3d7df14a1984157ebd9c71da73fbdd33addc306c11c3e8",
+        "nautilus_trader/adapters/ondo/__init__.pyi": "9251ed9a23adeb8f16f5cc7766f3c9dc2a2404bb0ec84a435edaa2cd46aa3972"
+      },
+      "direct_url": "file:///mnt/e/persarb/nautilus_trader/target/issue2-wheel-linux/nautilus_trader-2.0.0rc4-cp312-cp312-manylinux_2_39_x86_64.whl",
+      "interpreter": "/tmp/issue2-app-linux-final/bin/python",
+      "native_module": "/tmp/issue2-app-linux-final/lib/python3.12/site-packages/nautilus_trader/_libnautilus.cpython-312-x86_64-linux-gnu.so",
+      "native_module_sha256": "a5cdc94737ac9ea4149c7ba0631fcd2542c0ea5a6987c1a073436bd319b505dc",
+      "python_version": "3.12.9"
+    },
+    "native_provenance": {
+      "declared_build": {
+        "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+        "profile": "release"
+      },
+      "declared_native": {
+        "cargo_lock_sha256": "53bc4722129e781288afe62478dd5170fb56b6ce2627230199ed49254535a156",
+        "commit": "3831bda220692664df925c750507285b7424608b",
+        "dirty": [],
+        "dirty_count": 0,
+        "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tree": "139ffd9eb0949a54850253d61bd050cffbc57cc6",
+        "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "path": "/mnt/e/persarb/nautilus_trader/target/issue2-wheel-linux/native-provenance.json",
+      "sha256": "c530e794e998698cfc31bfdf71061b09859616b16e07df554e1cfa8f46c3e69b",
+      "source_binding": "verified"
+    },
+    "schema_version": 1,
+    "strict_source_binding_passed": true,
+    "wheel": {
+      "path": "/mnt/e/persarb/nautilus_trader/target/issue2-wheel-linux/nautilus_trader-2.0.0rc4-cp312-cp312-manylinux_2_39_x86_64.whl",
+      "sha256": "cd62c6f2cd440189cd772f427e9a8bd0fbb50ac50261fcf62fa9037c75a9d75f",
+      "tags": [
+        "cp312-cp312-manylinux_2_39_x86_64"
+      ]
+    }
+  },
+  "config_sha256": {
+    "config/limits.toml": "a2aa8283bb035b164538db9202528bd5cdc0ec04c09488ff090a679592bb2d21"
+  },
+  "exit_code": 0,
+  "generated_at": "2026-09-28T04:59:00.069101+00:00",
+  "run_id": "93600cc2ba724749a52a3c95e90149da",
+  "schema_version": 1,
+  "summary": [
+    "1190 passed, 97 subtests passed in 25.55s"
+  ],
+  "test_collection": [
+    "tests"
+  ],
+  "test_command": [
+    "/tmp/issue2-app-linux-final/bin/python",
+    "-m",
+    "pytest",
+    "tests",
+    "-q",
+    "-p",
+    "no:cacheprovider"
+  ]
+}
