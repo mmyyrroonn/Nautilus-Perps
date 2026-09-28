@@ -11,7 +11,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ondo_dms_diagnostics import read_dms_release_diagnostics  # noqa: E402
+from ondo_dms_diagnostics import (  # noqa: E402
+    read_dms_release_diagnostics,
+    read_shutdown_diagnostics,
+)
 
 
 def target(payload, *, run_id="current", phase="reconciled"):
@@ -82,3 +85,45 @@ def test_accessor_exception_does_not_escape_or_publish_private_text():
     )
     assert result["available"] is False
     assert "SYNTHETIC_PRIVATE_EXCEPTION" not in json.dumps(result)
+
+
+def test_shutdown_timeline_preserves_observations_without_private_values():
+    secret = "SYNTHETIC_PRIVATE_VALUE_DO_NOT_PUBLISH"
+    native = SimpleNamespace(production_shutdown_diagnostics=lambda: {
+        "attempted": True, "frame_sent": True, "acknowledged": False,
+        "outcome": "shutdown_timeout", "raw_frame": secret,
+        "trace": {
+            "shutdown_started_unix_nanos": 100,
+            "shutdown_budget_nanos": 15_000_000_000,
+            "release_sent_unix_nanos": 103,
+            "text_frames_after_release": 1,
+            "unclassified_after_release": 1,
+            "last_frame_kind": "unclassified",
+            "requests_drained": True,
+            "private": secret,
+        },
+    })
+    result = read_shutdown_diagnostics(native)
+    assert result["available"] is True
+    assert result["release"]["acknowledged"] is False
+    assert result["trace"]["release_sent_unix_nanos"] == 103
+    assert result["trace"]["unclassified_after_release"] == 1
+    assert secret not in json.dumps(result)
+
+
+def test_shutdown_timeline_rejects_unrecognized_values():
+    secret = "SYNTHETIC_PRIVATE_VALUE_DO_NOT_PUBLISH"
+    native = SimpleNamespace(production_shutdown_diagnostics=lambda: {
+        "attempted": secret, "outcome": secret,
+        "trace": {
+            "shutdown_started_unix_nanos": True,
+            "text_frames_after_release": -1,
+            "last_frame_kind": {"private": secret},
+            "requests_drained": secret,
+        },
+    })
+    result = read_shutdown_diagnostics(native)
+    assert result["available"] is True
+    assert result["release"]["attempted"] is None
+    assert result["trace"]["last_frame_kind"] is None
+    assert secret not in json.dumps(result)

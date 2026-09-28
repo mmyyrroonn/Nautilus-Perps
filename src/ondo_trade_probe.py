@@ -67,7 +67,10 @@ _SRC_DIR = Path(__file__).resolve().parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from ondo_dms_diagnostics import read_dms_release_diagnostics  # noqa: E402
+from ondo_dms_diagnostics import (  # noqa: E402
+    read_dms_release_diagnostics,
+    read_shutdown_diagnostics,
+)
 from ondo_native_diagnostics import (  # noqa: E402  (needs sys.path above)
     IDENTITY_MATCHED,
     read_native_diagnostics,
@@ -152,10 +155,9 @@ ENV_FILE_VARIABLE = "ONDO_PROBE_ENV_FILE"
 
 # ------------------------------------------------------------- native contract names
 #
-# These names are the *app's required native write contract*, recorded for the next native
-# worker in required-native-interface.md.  The capability probe below fails closed when any
-# of them is absent, so the installed R52 wheel (which has none of them) can never be
-# written through by this layer.
+# These names are the app's current native write contract (docs/native-interface.md).
+# The capability probe below fails closed when any required member is absent from the
+# installed wheel. Source implementation alone does not establish installed capability.
 
 NATIVE_ENVELOPE_CLASS = "OndoExecutionEnvelopeConfig"
 NATIVE_ENVELOPE_FIELD = "execution_envelope"
@@ -2990,6 +2992,7 @@ def trade_report_document(*, run_id: str, started: datetime, finished: datetime,
         "credentials_published": False,
         "raw_frames_published": False,
         "dms_release": read_dms_release_diagnostics(dms_release_target, run_id=run_id),
+        "shutdown_diagnostics": read_shutdown_diagnostics(dms_release_target),
         "outcome": outcome,
         "terminal_reason": sequencer.terminal_reason if sequencer is not None else None,
         "phase": sequencer.phase if sequencer is not None else PHASE_NOT_STARTED,

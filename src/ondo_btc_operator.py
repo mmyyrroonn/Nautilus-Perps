@@ -27,7 +27,15 @@ IDENTITY_SHA256 = "1a8441b650857b0d8a2972cd36def69e37d856b085c33085c580e43a93d67
 LIMITS = APP / "config/ondo_btc_test.toml"
 OUTPUT = APP / "reports/ondo-acceptance/btc-operator"
 CLAIM = OUTPUT / "MAINNET_ATTEMPT_CLAIMED.json"
-ENV_FILE = APP.parents[1] / ".env"
+
+
+def canonical_env_file(app: Path) -> Path:
+    """Resolve the credential file for a root checkout or its local worktree."""
+    root = app.parents[1] if app.parent.name == ".worktrees" else app
+    return root / ".env"
+
+
+ENV_FILE = canonical_env_file(APP)
 MAX_CAPTURE_AGE_SECS = 60
 PHRASE = "上主网"
 
