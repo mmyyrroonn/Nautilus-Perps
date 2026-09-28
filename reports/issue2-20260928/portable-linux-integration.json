@@ -1,0 +1,80 @@
+{
+  "candidate": {
+    "app": {
+      "commit": "a001e903c5cece7075354c59a7106093dfe1ba91",
+      "dirty": false,
+      "source_scope": [
+        "src",
+        "scripts",
+        "tests",
+        "config",
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version"
+      ],
+      "tracked_content_sha256": "dd0b153a0d8f8aebda06440eb7a30e0216f256044a6018bc0d06fae548a957d9",
+      "tree": "4e773f6efe3ea6c6222c9ed1bc754103a28093bb",
+      "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "installed": {
+      "adapter_stub_sha256": {
+        "nautilus_trader/adapters/aster/__init__.pyi": "6e92336f44b6bc530d3d7df14a1984157ebd9c71da73fbdd33addc306c11c3e8",
+        "nautilus_trader/adapters/ondo/__init__.pyi": "9251ed9a23adeb8f16f5cc7766f3c9dc2a2404bb0ec84a435edaa2cd46aa3972"
+      },
+      "direct_url": "file:///home/runner/work/Nautilus-Perps/Nautilus-Perps/app/.native-cache/c8a09a3e9c04e735a8b3177fe2d85925afaf56ecaa2658089a6834c66c4dfa73/nautilus_trader-2.0.0rc4-cp312-cp312-manylinux_2_39_x86_64.whl",
+      "interpreter": "/home/runner/work/Nautilus-Perps/Nautilus-Perps/app/.venv/bin/python",
+      "native_module": "/home/runner/work/Nautilus-Perps/Nautilus-Perps/app/.venv/lib/python3.12/site-packages/nautilus_trader/_libnautilus.cpython-312-x86_64-linux-gnu.so",
+      "native_module_sha256": "e190df33e65b3b4a1ee7a3049698abd9a58bdfa0433860bad3f51595fb93fb40",
+      "python_version": "3.12.9"
+    },
+    "native_provenance": {
+      "declared_build": {
+        "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+        "profile": "release"
+      },
+      "declared_native": {
+        "cargo_lock_sha256": "1607dd448a14ac63a06ae20fa9dcbb875524baa19213d21c1bf39a567b45557a",
+        "commit": "eeeb8eefc7921b7f81cb611cb3c851c665cd1ff1",
+        "dirty": [],
+        "dirty_count": 0,
+        "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tree": "348ec51bb837297ee4b706c7cc9dcbab6a9621f9",
+        "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "path": "/home/runner/work/Nautilus-Perps/Nautilus-Perps/app/.native-cache/c8a09a3e9c04e735a8b3177fe2d85925afaf56ecaa2658089a6834c66c4dfa73/native-provenance.json",
+      "sha256": "19e118f78cd5c1d8293b5e2e19be451778445667a5f33f7a2be1549855aeae03",
+      "source_binding": "verified"
+    },
+    "schema_version": 1,
+    "strict_source_binding_passed": true,
+    "wheel": {
+      "path": "/home/runner/work/Nautilus-Perps/Nautilus-Perps/app/.native-cache/c8a09a3e9c04e735a8b3177fe2d85925afaf56ecaa2658089a6834c66c4dfa73/nautilus_trader-2.0.0rc4-cp312-cp312-manylinux_2_39_x86_64.whl",
+      "sha256": "c8a09a3e9c04e735a8b3177fe2d85925afaf56ecaa2658089a6834c66c4dfa73",
+      "tags": [
+        "cp312-cp312-manylinux_2_39_x86_64"
+      ]
+    }
+  },
+  "config_sha256": {
+    "config/limits.toml": "da9e4554959fc1eaecc55a9fdc7d44197209597757d3275b646f5becb0e4426c"
+  },
+  "exit_code": 0,
+  "generated_at": "2026-09-28T07:03:52.832939+00:00",
+  "run_id": "751e2bfb72384c56a97cbd0c70191a17",
+  "schema_version": 1,
+  "summary": [
+    "1188 passed, 1 warning, 97 subtests passed in 18.83s"
+  ],
+  "test_collection": [
+    "tests"
+  ],
+  "test_command": [
+    "/home/runner/work/Nautilus-Perps/Nautilus-Perps/app/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests",
+    "-q",
+    "-p",
+    "no:cacheprovider"
+  ]
+}

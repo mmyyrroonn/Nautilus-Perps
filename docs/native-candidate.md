@@ -1,8 +1,9 @@
 # Native candidate dependency (Issue 2)
 
 The native fork is an external binary dependency. `pyproject.toml` locks the
-application's Python packages; `config/native-candidate.lock.json`, once
-generated from published artifacts, locks the fork wheel separately. Neither
+application's Python packages; `config/native-candidate.lock.json` pins the published fork wheel separately. The active candidate is
+[native-candidate-eeeb8eefc7](https://github.com/mmyyrroonn/nautilus_trader/releases/tag/native-candidate-eeeb8eefc7)
+from native commit `eeeb8eefc7921b7f81cb611cb3c851c665cd1ff1`. Neither
 `uv sync` nor an equal `2.0.0rc4` version is permission to substitute PyPI's
 upstream wheel. A missing candidate is an installation failure.
 

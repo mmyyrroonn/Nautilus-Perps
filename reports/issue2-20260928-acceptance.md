@@ -110,14 +110,8 @@ No later commit association is made without first checking the frozen source
 files. The 2026-09-28 earlier inventory with `source_binding=unknown` also
 remains an inventory, not a promoted binary.
 
-The staged GitHub Actions matrix checks a full native SHA on clean hosted
-Windows and Ubuntu runners without venue secrets. It has not run because
-the local code has not been committed or pushed. No stable, published
-Windows/Linux wheel URLs exist yet, so `config/native-candidate.lock.json`
-has not been written. Creating a lock with invented or expiring URLs would
-misrepresent a portable dependency. The installer fails closed without a
-formal lock or explicit local override. The formal promotion gate is:
-commit the builder/workflow, run the hosted matrix, publish the reviewed
-artifacts, generate and verify the two-platform URL/SHA lock, then retest the
-download installation path. Keep a previous accepted lock for rollback; no
-PyPI equal-version fallback is allowed.
+This is the local pre-publication record. The later clean-runner build, public
+release, two-platform input lock and formal download tests are tracked in
+[the Issue 2 promotion record](issue2-20260928-promotion.md). The old
+local wheel hashes above remain historical and are not the published
+candidate. No equal-version PyPI fallback is allowed.

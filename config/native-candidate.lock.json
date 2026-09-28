@@ -1,0 +1,36 @@
+{
+  "artifacts": [
+    {
+      "filename": "nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "provenance_sha256": "44d1869dbc39822ee030209edbe02dfb634a75da635c9657c50a20e21bbc9235",
+      "provenance_url": "https://github.com/mmyyrroonn/nautilus_trader/releases/download/native-candidate-eeeb8eefc7/native-provenance-windows.json",
+      "sha256": "802e8eead8ca24ca52324eade773b20ea9dd5f9c8701ccfd628c32bca42a0783",
+      "tags": [
+        "cp312-cp312-win_amd64"
+      ],
+      "url": "https://github.com/mmyyrroonn/nautilus_trader/releases/download/native-candidate-eeeb8eefc7/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl"
+    },
+    {
+      "filename": "nautilus_trader-2.0.0rc4-cp312-cp312-manylinux_2_39_x86_64.whl",
+      "provenance_sha256": "19e118f78cd5c1d8293b5e2e19be451778445667a5f33f7a2be1549855aeae03",
+      "provenance_url": "https://github.com/mmyyrroonn/nautilus_trader/releases/download/native-candidate-eeeb8eefc7/native-provenance-linux.json",
+      "sha256": "c8a09a3e9c04e735a8b3177fe2d85925afaf56ecaa2658089a6834c66c4dfa73",
+      "tags": [
+        "cp312-cp312-manylinux_2_39_x86_64"
+      ],
+      "url": "https://github.com/mmyyrroonn/nautilus_trader/releases/download/native-candidate-eeeb8eefc7/nautilus_trader-2.0.0rc4-cp312-cp312-manylinux_2_39_x86_64.whl"
+    }
+  ],
+  "build": {
+    "builder_sha256": "7f94cb247ddbc432779b03e97f87a75703df882fa39bee359413ae2e69d98b70",
+    "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+    "profile": "release"
+  },
+  "native": {
+    "commit": "eeeb8eefc7921b7f81cb611cb3c851c665cd1ff1",
+    "fingerprint_sha256": "be84be36f56808a24db03d1234a3e80b93769be15359c0329da68bd94c5f2825",
+    "repository": "https://github.com/mmyyrroonn/nautilus_trader.git",
+    "tree": "348ec51bb837297ee4b706c7cc9dcbab6a9621f9"
+  },
+  "schema_version": 1
+}
