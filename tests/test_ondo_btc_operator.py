@@ -239,6 +239,13 @@ def test_exclusive_write_never_overwrites(tmp_path):
     assert op.read_json(path) == {"original": True}
 
 
+def test_root_and_worktree_use_the_same_canonical_env_path(tmp_path):
+    root = tmp_path / "Nautilus-Perps"
+    worktree = root / ".worktrees" / "candidate"
+    assert op.canonical_env_file(root) == root / ".env"
+    assert op.canonical_env_file(worktree) == root / ".env"
+
+
 def test_child_environment_uses_canonical_credentials_only_after_confirmation(monkeypatch):
     monkeypatch.setenv("ONDO_MAINNET_API_KEY", "synthetic-do-not-inherit")
     monkeypatch.setenv("ONDO_MAINNET_ACCOUNT_ID", "synthetic-other-account")

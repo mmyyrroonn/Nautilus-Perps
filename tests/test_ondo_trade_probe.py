@@ -1438,6 +1438,16 @@ def test_dms_observations_are_reported_but_cannot_replace_final_proof(acknowledg
             "raw_frame": "SYNTHETIC_PRIVATE_FRAME",
         },
     })
+    native.production_shutdown_diagnostics = lambda: {
+        "attempted": True, "frame_sent": True, "acknowledged": acknowledged,
+        "outcome": "acknowledged" if acknowledged else "ack_timeout",
+        "raw_frame": "SYNTHETIC_PRIVATE_FRAME",
+        "trace": {
+            "release_sent_unix_nanos": 123,
+            "text_frames_after_release": 1,
+            "last_frame_kind": "unclassified",
+        },
+    }
     document = trade.trade_report_document(
         run_id="r", started=datetime.datetime.now(datetime.timezone.utc),
         finished=datetime.datetime.now(datetime.timezone.utc),
@@ -1450,6 +1460,9 @@ def test_dms_observations_are_reported_but_cannot_replace_final_proof(acknowledg
 
     assert document["dms_release"]["acknowledged"] is acknowledged
     assert document["dms_release"]["frame_sent"] is True
+    assert document["shutdown_diagnostics"]["available"] is True
+    assert document["shutdown_diagnostics"]["trace"]["release_sent_unix_nanos"] == 123
+    assert document["shutdown_diagnostics"]["release"]["acknowledged"] is acknowledged
     assert document["production_execution_verified"] is False
     assert "SYNTHETIC_PRIVATE_FRAME" not in json.dumps(document, default=trade._json_default)
 

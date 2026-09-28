@@ -406,7 +406,7 @@ class MakerUnderTest(maker_live.LighterMaker):
 SHIPPED_LIMITS = REPO / "config" / "limits.toml"
 
 
-def test_limits(**quote_overrides):
+def make_test_limits(**quote_overrides):
     """The shipped limits with the QUOTING choice pinned, for the strategy tests.
 
     A strategy test must measure the strategy, not today's configuration.  When the shipped
@@ -440,7 +440,7 @@ def build_strategy(
 ) -> MakerUnderTest:
     """A started-up strategy over stub surfaces, writing its CSVs into a temp directory."""
     out = out if out is not None else Path(tempfile.mkdtemp(prefix="maker-"))
-    limits = limits if limits is not None else test_limits()
+    limits = limits if limits is not None else make_test_limits()
     clock = clock if clock is not None else FakeClock()
     plan = maker_live.SYMBOLS["mainnet"]["PONS"]
     config = maker_live.MakerLiveConfig(
@@ -2199,7 +2199,7 @@ class TestStrategyPlacement(unittest.TestCase):
         The edge is pinned here rather than inherited from the shipped file: these tests
         assert exact prices, so they have to own the number that produces them.
         """
-        return test_limits(placement="anchor", anchor_edge_bps=edge)
+        return make_test_limits(placement="anchor", anchor_edge_bps=edge)
 
     def _quote(self, strategy, seconds: int = 40) -> None:
         """Long enough by default to clear the anchor's 30-sample basis warm-up."""
@@ -2210,7 +2210,7 @@ class TestStrategyPlacement(unittest.TestCase):
             strategy.clock.advance(1.0)
 
     def test_the_improve_fixture_quotes_a_tick_inside_the_touch(self) -> None:
-        strategy = build_strategy(limits=test_limits(placement="improve"))
+        strategy = build_strategy(limits=make_test_limits(placement="improve"))
         self.assertEqual(strategy._engine.p.placement, "improve")
         self._quote(strategy)
         # m_ask 0.73220 less one tick.
@@ -2270,7 +2270,7 @@ class TestStrategyOpeningGates(unittest.TestCase):
 
     @classmethod
     def limits(cls, **over):
-        return test_limits(**{**cls.GATES, **over})
+        return make_test_limits(**{**cls.GATES, **over})
 
     @staticmethod
     def _quote(strategy, *, seconds: int = 3, **book) -> None:
@@ -3602,7 +3602,7 @@ class TestStopSequence(unittest.TestCase):
 
     def build(self, *, mode: str = "live", q: float = 0.0, hedge_base: float = 0.0,
               **limit_overrides):
-        limits = test_limits(placement="improve", **limit_overrides)
+        limits = make_test_limits(placement="improve", **limit_overrides)
         strategy = build_strategy(mode=mode, limits=limits)
         strategy.clock.advance(maker_live.STARTUP_GRACE_SECS + 1.0)
         feed_books(strategy)

@@ -1,5 +1,9 @@
 # Ondo Perps probe runbook（`ONDO`：public / account-readonly / production-readonly / paper / sandbox）
 
+> 当前能力、候选身份和历史验收边界先看 [acceptance-status.md](acceptance-status.md)，
+> 当前应用／原生接口看 [native-interface.md](native-interface.md)。下述开篇的 R3/R5.2
+> 阶段结论属于当时的候选，不能用来判断 2026-09-23 BTC 实盘记录或当前 native main。
+
 本文件是 Ondo Perps（venue 字符串与 ClientId 都是 `ONDO`）在应用侧的操作说明。实现计划与取舍见
 [`docs/superpowers/plans/2026-09-15-ondo-perps-continuation.md`](superpowers/plans/2026-09-15-ondo-perps-continuation.md)，
 缺陷来源见 [`reports/ondo-code-review-2026-09-15.md`](../reports/ondo-code-review-2026-09-15.md)，
