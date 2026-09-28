@@ -1,8 +1,8 @@
 """Installed-wheel LiveNode acceptance against a loopback Aster venue.
 
-The test is intentionally skipped when the interpreter does not contain the wheel pinned by
-``config/native-candidate.lock.json``.  The regular application venv points at historical
-artifacts, so running this file there must not be reported as current-candidate evidence.
+The integration runner supplies the SHA-256 of its verified source-bound wheel. When run
+directly, this test instead uses ``config/native-candidate.lock.json`` and skips a different
+installed wheel. A runner-selected wheel hash mismatch fails the test.
 
 The venue is a real HTTP and WebSocket server and the node uses the real Aster factory from the
 installed wheel.  No credentials, dotenv file, external network, or order side effect is used.
@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -52,7 +53,7 @@ def _path_from_file_url(value: str) -> Path:
 
 
 def _formal_candidate_wheel() -> Path:
-    """Return the installed formal candidate or skip this test with an explicit reason."""
+    """Return the installed candidate selected by the runner or formal lock."""
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import distribution
 
@@ -71,23 +72,29 @@ def _formal_candidate_wheel() -> Path:
     if not wheel.is_file():
         pytest.skip(f"installed wheel source is unavailable: {wheel}")
 
-    lock = json.loads(LOCK.read_text(encoding="utf-8"))
-    compatible = [
-        artifact
-        for artifact in lock["artifacts"]
-        if artifact["filename"] == wheel.name
-        and set(artifact["tags"]).intersection(str(tag) for tag in sys_tags())
-    ]
-    if len(compatible) != 1:
-        pytest.skip("installed wheel is not the platform artifact in native-candidate.lock.json")
+    runner_sha = os.environ.get("NAUTILUS_ISSUE3_WHEEL_SHA256")
+    if runner_sha is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", runner_sha):
+            pytest.fail("runner candidate wheel SHA-256 is malformed")
+        expected = runner_sha
+    else:
+        lock = json.loads(LOCK.read_text(encoding="utf-8"))
+        compatible = [
+            artifact
+            for artifact in lock["artifacts"]
+            if artifact["filename"] == wheel.name
+            and set(artifact["tags"]).intersection(str(tag) for tag in sys_tags())
+        ]
+        if len(compatible) != 1:
+            pytest.skip("installed wheel is not the platform artifact in native-candidate.lock.json")
+        expected = compatible[0]["sha256"]
 
-    expected = compatible[0]["sha256"]
     actual = hashlib.sha256(wheel.read_bytes()).hexdigest()
     if actual != expected:
-        pytest.skip(
-            "installed wheel is a different candidate; "
-            f"expected {expected}, got {actual}",
-        )
+        message = f"installed wheel candidate mismatch: expected {expected}, got {actual}"
+        if runner_sha is not None:
+            pytest.fail(message)
+        pytest.skip(message)
     return wheel
 
 

@@ -46,11 +46,11 @@ even when its application tests pass, cannot fill that gap.
 
 The new [`tests/test_installed_wheel_livenode.py`](../tests/test_installed_wheel_livenode.py)
 belongs to the third level. It starts a real loopback Aster HTTP/WS server, checks the installed
-wheel against the formal lock, builds the real Aster execution client and `LiveNode`, observes a
-WS fault, and asserts stop/dispose, listen-key deletion, and zero order requests. If the formal
-wheel is absent or has the wrong origin/hash, the test skips by design so an ordinary application
-environment cannot be misreported as candidate evidence. In the candidate workflow a skip must
-be visible and must not be accepted as a passed LiveNode assertion.
+wheel against the runner's verified wheel hash, builds the real Aster execution client and
+`LiveNode`, observes a WS fault, and asserts stop/dispose, listen-key deletion, and zero order
+requests. A direct pytest run defaults to the formal lock and skips a different wheel. In the
+joint workflow the integration runner supplies its just-built wheel hash; a mismatch fails, and
+any skip is visible and rejected by the zero-skip gate.
 
 ## Native issues #2–#10 and application coverage
 
