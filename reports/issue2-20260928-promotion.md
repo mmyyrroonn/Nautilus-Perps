@@ -18,7 +18,16 @@
 
 ## Portable hosted installation
 
-The dedicated clean Windows/Ubuntu installation workflow will run against the committed formal lock. Its run IDs and separate installed/integration JSON records will be added here after completion. The first build workflow's artifact upload omitted the hidden .native-cache result files by default; its job logs establish both test summaries. The workflow upload setting has been corrected for later runs.
+The [final clean Windows/Ubuntu installation run](https://github.com/mmyyrroonn/Nautilus-Perps/actions/runs/36389550745) checked out application commit a001e903c5cece7075354c59a7106093dfe1ba91. Both runners downloaded the published wheels and provenance from HTTPS using the formal lock, installed into exact uv-managed CPython 3.12.9 environments, verified native origin/import/binary/stubs/Ondo capability and passed all offline tests. The formal lock byte SHA-256 was identical on both platforms: 324d00eaf5e26220aa32a0d39b2b9540c331e5fda2611f71d5d6ede3a7336c27.
+
+| Platform | Install run ID | Integration run ID | Native binary SHA-256 | Result | Records |
+| --- | --- | --- | --- | --- | --- |
+| Windows amd64 | a43e9a90d67c4e68b98218cf980119ef | 1a9c793601594e458a69bb544616897e | 9bff545f77f0450a7e858719394b9fe9e08b6568bcb40add13cafa319e56c600 | 1188 passed, 97 subtests, 1 warning | [installed](issue2-20260928/portable-windows-installed.json), [integration](issue2-20260928/portable-windows-integration.json) |
+| Linux x86_64 | ed276a6f1fab4a1596208777b8b15a7f | 751e2bfb72384c56a97cbd0c70191a17 | e190df33e65b3b4a1ee7a3049698abd9a58bdfa0433860bad3f51595fb93fb40 | 1188 passed, 97 subtests, 1 warning | [installed](issue2-20260928/portable-linux-installed.json), [integration](issue2-20260928/portable-linux-integration.json) |
+
+All four hosted records bind the same application and native commits and have exit code 0. The single warning is an existing PytestReturnNotNoneWarning from tests/test_maker_live.py::test_limits returning a Limits object; it is unrelated to native installation. The evidence JSON files were scanned for credential shapes with zero matches.
+
+The first build workflow's artifact upload omitted hidden .native-cache result files by default, although its job logs record both 1190-test build-stage summaries. The build workflow upload setting was corrected in the application repository. This final portable workflow uploaded its install and integration JSON files successfully.
 
 ## Historical evidence
 
