@@ -1,0 +1,60 @@
+{
+  "app": {
+    "commit": "1af96146aefecd3d9d700a2430ebefc069ed95ae",
+    "dirty": true,
+    "source_scope": [
+      "src",
+      "scripts",
+      "tests",
+      "config",
+      "pyproject.toml",
+      "uv.lock",
+      ".python-version"
+    ],
+    "tracked_content_sha256": "13c45f257f0194c9e8de1a0d167f709fe3a0b8bb4c2c15e64f8d6e47ac4b7a1d",
+    "tree": "d42dead28df69ad0a8256523e6ee9eaaa22849e1",
+    "untracked_sha256": "af2a21ae373b5e23b72903a147a8c654cfdbedb35c954e324dffdb346540efb1"
+  },
+  "candidate_lock_sha256": null,
+  "generated_at": "2026-09-28T04:57:47.439763+00:00",
+  "installed": {
+    "adapter_stub_sha256": {
+      "nautilus_trader/adapters/aster/__init__.pyi": "6e92336f44b6bc530d3d7df14a1984157ebd9c71da73fbdd33addc306c11c3e8",
+      "nautilus_trader/adapters/ondo/__init__.pyi": "9251ed9a23adeb8f16f5cc7766f3c9dc2a2404bb0ec84a435edaa2cd46aa3972"
+    },
+    "direct_url": "file:///E:/persarb/nautilus_trader/target/issue2-wheel-win-release/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "interpreter": "E:\\persarb\\nautilus_trader\\target\\issue2-app-win\\Scripts\\python.exe",
+    "native_module": "E:\\persarb\\nautilus_trader\\target\\issue2-app-win\\Lib\\site-packages\\nautilus_trader\\_libnautilus.cp312-win_amd64.pyd",
+    "native_module_sha256": "00b184088e1742d39d1b5fd6deb3bbeabe54b9bb1e710d9dbfc3553a26baec01",
+    "python_version": "3.12.9"
+  },
+  "mode": "local-override",
+  "native_provenance": {
+    "declared_build": {
+      "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+      "profile": "release"
+    },
+    "declared_native": {
+      "cargo_lock_sha256": "53bc4722129e781288afe62478dd5170fb56b6ce2627230199ed49254535a156",
+      "commit": "3831bda220692664df925c750507285b7424608b",
+      "dirty": [],
+      "dirty_count": 0,
+      "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tree": "139ffd9eb0949a54850253d61bd050cffbc57cc6",
+      "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "path": "E:\\persarb\\nautilus_trader\\target\\issue2-wheel-win-release\\native-provenance.json",
+    "sha256": "38b6f11877ee798f2eb0ae6b234d0b4f3f099f7e9d11be604d2230bf69e8fc37",
+    "source_binding": "verified"
+  },
+  "run_id": "4ad599880ca94c448c81eda0fd0f9497",
+  "schema_version": 1,
+  "strict_source_binding_passed": true,
+  "wheel": {
+    "path": "E:\\persarb\\nautilus_trader\\target\\issue2-wheel-win-release\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "sha256": "df6fa316a862e3cb21ff84913f70ffcccdefa4f3c87e9bfa4dc1b6861395967a",
+    "tags": [
+      "cp312-cp312-win_amd64"
+    ]
+  }
+}

@@ -1,0 +1,79 @@
+name: native candidate portable install
+on:
+  workflow_dispatch:
+    inputs:
+      app_sha:
+        description: Full application commit SHA containing the published native lock
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Validate application SHA
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+        run: |
+          if ($env:APP_SHA -notmatch '^[0-9a-f]{40}$') { throw 'app_sha must be a full commit SHA' }
+      - name: Checkout locked application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.app_sha }}
+          path: app
+          persist-credentials: false
+      - name: Verify application SHA
+        shell: pwsh
+        env:
+          APP_SHA: ${{ inputs.app_sha }}
+        run: |
+          $actual = git -C app rev-parse HEAD
+          if ($actual -ne $env:APP_SHA) { throw 'application ref resolved to another SHA' }
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: 0.12.6
+      - name: Install pinned Python
+        shell: pwsh
+        run: uv python install 3.12.9
+      - name: Sync application environment
+        shell: pwsh
+        run: |
+          $env:UV_PROJECT_ENVIRONMENT = Join-Path $env:GITHUB_WORKSPACE 'app/.venv'
+          Push-Location app
+          uv sync --locked --inexact --managed-python --python 3.12.9
+          if ($LASTEXITCODE -ne 0) { throw 'application uv sync failed' }
+          Pop-Location
+      - name: Download, install and test published candidate
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:GITHUB_WORKSPACE 'app'
+          if ($IsWindows) {
+            $appPython = Join-Path $app '.venv/Scripts/python.exe'
+          } else {
+            $appPython = Join-Path $app '.venv/bin/python'
+          }
+          Push-Location $app
+          & $appPython scripts/install_native.py --python $appPython --lock config/native-candidate.lock.json --output .native-cache/installed.json
+          if ($LASTEXITCODE -ne 0) { throw 'published native install failed' }
+          $record = Get-Content -LiteralPath .native-cache/installed.json -Raw | ConvertFrom-Json
+          & $appPython scripts/test_integration.py --python $appPython --wheel $record.wheel.path --provenance $record.native_provenance.path --sha256 $record.wheel.sha256 --config config/limits.toml --output .native-cache/integration.json tests
+          if ($LASTEXITCODE -ne 0) { throw 'offline integration failed' }
+          Pop-Location
+      - name: Upload install and integration records
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-portable-${{ runner.os }}
+          path: |
+            app/.native-cache/installed.json
+            app/.native-cache/integration.json
+          include-hidden-files: true
+          if-no-files-found: warn

@@ -126,4 +126,5 @@ jobs:
           path: |
             native-output/*
             app/.native-cache/*.json
+          include-hidden-files: true
           if-no-files-found: warn
