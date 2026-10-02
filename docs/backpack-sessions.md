@@ -104,3 +104,9 @@ and depth messages, stale BBO, depth gaps, socket replacement, cancellation, rep
 and failed metadata bootstrap. It checks that only public GET endpoints and public stream
 subscriptions were requested. A skipped test means the required candidate wheel is absent;
 it is not acceptance evidence and no Python client double is used as native proof.
+
+## Recorded public acceptance
+
+The [2026-10-02 public observation](../reports/backpack/2026-10-02-public/README.md) records
+a source-bound native wheel, actual public data and bounded shutdown, preserving both a failed
+bootstrap and a successful retry. Private account, paper and execution acceptance remain separate.

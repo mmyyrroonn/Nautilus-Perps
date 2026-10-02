@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "protocol_observation_date": "2026-10-02",
+  "platform": "Windows CPython 3.12.9",
+  "native_build_profile": "nextest",
+  "runs": [
+    {
+      "label": "failed-bootstrap",
+      "run_id": "7345a8df18324de898c3a7c2b04ac6ec",
+      "summary_sha256": "40d00d3b5f15e832e67fa7bb8c81be8c741076fba4cc69d1183fae0722bbd1bb",
+      "raw_events_sha256": "42ba1733f6b42993822bd257326bed5b1dc3239f5b711611b0b6754c999f6fa4",
+      "raw_events_bytes": 1189,
+      "raw_events_local_path": "E:\\persarb\\.backpack-work\\public-venue-observation\\reports\\backpack-production-820ba32e14169af117ed92404b7fd452598ea43e4c3cb6538abf69fcdefb658c\\public\\7345a8df18324de898c3a7c2b04ac6ec\\events.jsonl",
+      "raw_events_committed": false,
+      "fresh_quotes_observed": false,
+      "continuous_books_observed": false,
+      "fresh_books_observed": false,
+      "connected_observed": false
+    },
+    {
+      "label": "public-observation",
+      "run_id": "8d70e294cff448928db2baec343c2d6f",
+      "summary_sha256": "1929d54758ddcdda926507c3eaee192e9957d84ec8991eebbbd534ed9490d738",
+      "raw_events_sha256": "4b2fc228f56c94746a670f661e2bdecb471c053773cbb22e6380cce6255dbaf9",
+      "raw_events_bytes": 2607142,
+      "raw_events_local_path": "E:\\persarb\\.backpack-work\\public-venue-observation\\reports\\backpack-production-820ba32e14169af117ed92404b7fd452598ea43e4c3cb6538abf69fcdefb658c\\public\\8d70e294cff448928db2baec343c2d6f\\events.jsonl",
+      "raw_events_committed": false,
+      "fresh_quotes_observed": true,
+      "continuous_books_observed": true,
+      "fresh_books_observed": true,
+      "connected_observed": true
+    }
+  ]
+}
