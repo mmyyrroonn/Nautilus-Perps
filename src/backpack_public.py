@@ -96,7 +96,9 @@ class PublicEvidence:
         self.private_client_registered = False
         self.durable_state_opened = False
         self.extra_summary = {}
+        self.compact_summary = {}
         self.failure_check = None
+        self.final_failure_check = None
 
     def record(self, kind, fields):
         self.counts[kind] = self.counts.get(kind, 0) + 1
@@ -120,7 +122,7 @@ class PublicEvidence:
                 "status": summary["status"], "failure": summary["failure"],
                 "summary_truncated": True, "execution_ready": False,
                 "remote_writes_allowed": False, "event_count": len(self.lines),
-                "dropped_events": self.dropped})
+                "dropped_events": self.dropped, **self.compact_summary})
             summary = json.loads(payload)
         if len(payload) + self.bytes > self.plan.max_report_bytes:
             raise BackpackConfigError("report limit cannot contain minimal run evidence")
@@ -343,6 +345,8 @@ async def run_native_observation(plan, *, builder, candidate=None, extra_sources
         if config is not None:
             try:
                 final_health = json.loads(config.telemetry_snapshot_json())
+                if evidence.final_failure_check is not None:
+                    failure = failure or evidence.final_failure_check(final_health)
             except Exception:
                 failure = "native_telemetry_failed"
         if node is not None:
