@@ -172,3 +172,92 @@ socket/identity owner shutdown; no garbage collection is required for release.
 The tests use different synthetic credentials and local account/subaccount
 labels for separate namespaces. These labels do not supply an additional
 subaccount routing protocol or authenticate a venue identity.
+
+## Synthetic loopback order scenario
+
+`src/backpack_loopback.py` is a separate entry point for owned local protocol fixtures.
+It uses the installed native Backpack factories and a normal native `Strategy`; orders
+pass through native risk and execution engines. Ordinary public, readonly account,
+replay and paper routes retain their existing behavior. This entry cannot enable
+production writes, connect credentials to remote origins or attest a real account.
+
+Validate the explicit plan without native imports, credential lookup, socket creation,
+identity-state creation or report output:
+
+```powershell
+.\.venv\Scripts\python.exe src/backpack_loopback.py --config config/backpack-loopback-execution.example.toml --dry-run
+```
+
+Actual runtime also requires `--candidate-wheel`, `--candidate-sha256` and
+`--native-provenance`; the installed wheel must pass the shared source-binding check.
+Start your owned numeric-loopback HTTP and WS peers first, and set only the explicitly
+named synthetic credential environment value. This runner never falls back to `.env`.
+HTTP and WS must name the same numeric loopback address with paired schemes; separate
+local ports are supported. Every instrument economics source must be `Synthetic`.
+
+The sample grants finite new-risk Buy Limit and owned-cancel permissions, exact decimal
+quantity/price/notional/margin limits and an explicit timeout. Authority expiry is
+anchored once when the native configuration is created and never renewed. Policy flags,
+complete initial positions and the local margin model are explicit caller assertions.
+Their local assertion timestamp is neither a venue receipt timestamp nor proof of
+account identity, private subscription acknowledgement or production readiness.
+Native metadata validates products and quantity/price grids before any order bytes.
+
+The bounded scenario submits one Buy Limit. If enabled, it makes one additional native
+submission after the public BBO becomes stale while preserving metadata freshness,
+account freshness and spare reservation capacity. Before that probe it explicitly
+reasserts the fixture's current flat account facts without refreshing market admission.
+The peer must withhold every economic update until the probe has been refused. Observed
+fills, native pending fills or an open cached position contradict this assertion and
+stop the scenario. The application records the native denial reason; a generic
+`GuardedLocalRefusal` alone does not identify the cause. Acceptance tests independently
+verify the fixture ordering, fresh remaining gates, actual stale public telemetry and
+zero additional POST requests.
+
+After a true partial fill the Strategy can request one independently authorized owned
+cancel, even when public quotes are stale. The signed test peer sends HTTP 202 and no
+terminal order event. Native shutdown's `pending_cancellations` counts Unknown, Pending
+and ResponseObserved together; `cancel_unsettled_observed` therefore means unresolved
+native cancellation evidence, and does **not** prove the client received 202. Independent
+peer evidence of `202 sent` remains a separate observation. `cancel202_observed`
+is projected from the actual native current-session `CancelPending` health marker,
+which is set only after a matching HTTP 202 receipt. It is independent of the shutdown
+count and is sampled again before native disposal.
+
+`scenario_completed` describes observed finite scenario steps plus native unresolved
+cancel evidence where requested. It does not mean the execution is settled or that exit
+is safe. Full evidence retains `execution_settled=false`, `flat_verified=false`, actual
+engine/cache balances, orders, position exposure and fees, pending true fill reports and
+the native owner's authoritative sticky shutdown report. A duplicate true trade updates
+native economics once, but the fill remains pending: this entry exports no Python
+economic acknowledgement callback and implements no ledger. No cache or portfolio
+observation releases native capacity or produces a durable economic receipt.
+
+At a report limit the compact summary retains the native shutdown snapshot, actual
+pending fill report count, `execution_settled=false`, `flat_verified=false` and an explicit
+`exposure_unknown=true`. It cannot preserve every domain object or exact exposure detail;
+missing details never mean zero positions or a clean stop. Loopback plans require at least
+8 KiB of report budget.
+
+The overall observation status can be `completed` while native shutdown is dirty and a
+position remains open. Inspect `scenario_completed`, `native_health.loopback.pending_fills`,
+`native_health.loopback.shutdown_report` and the recorded `engine_account_observation`
+together. Unknown POST responses are never reported as rejected, resent with a new ID,
+or adopted from a matching numeric client ID. They fail the scenario and remain dirty.
+A report cap stops new risk before another submit; a once-only owned exit retains its
+independent native permission, and its evidence line may be dropped at the cap.
+
+The installed-wheel tests in `tests/test_backpack_loopback_native.py` use publicly known
+synthetic signing material and owned local peers. They verify real Strategy events,
+engine economics, duplicates, cancel202, Unknown POST and bounded shutdown. Without the
+explicit loopback API wheel these tests skip; static configuration checks do not claim
+transport or production validation.
+
+The bounded loopback runner explicitly disables native inflight, open-order and position reconciliation timers (`native_inflight_checks_enabled=false`, `continuous_reconciliation=false`). Continuous reconciliation is outside this scenario's accepted capability; generic reconciliation can synthesize terminal events after cancellation timeouts. This restriction does not claim that the independently tracked native Denied-order watchdog issue is repaired. The ordinary readonly account entry keeps its existing engine configuration.
+
+The source-bound synthetic loopback execution acceptance is archived in
+[`reports/backpack/2026-10-02-loopback-execution`](../reports/backpack/2026-10-02-loopback-execution/README.md).
+The final wheel passed 163 complete Backpack tests without skips and the actual
+CLI observed one true fill, duplicate suppression and matching cancel 202 while
+retaining pending economic acknowledgement, dirty shutdown and a real open position.
+Scenario completion does not establish settled execution or Flat.

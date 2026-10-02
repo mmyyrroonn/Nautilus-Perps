@@ -88,15 +88,11 @@ def account_failure(health):
     return None
 
 
-def build_account(plan, evidence, seed):
+def _account_configuration(plan, seed):
     from nautilus_trader.adapters.backpack import (
         BackpackCredential, BackpackDataClientConfig, BackpackDataClientFactory,
-        BackpackExecutionClientConfig, BackpackExecutionClientFactory,
+        BackpackExecutionClientConfig,
         BackpackInstrumentEconomics, BackpackQuota)
-    from nautilus_trader.common import Environment, LoggerConfig, LogLevel
-    from nautilus_trader.live import LiveNode
-    from nautilus_trader.model import AccountId, TraderId, Venue
-
     endpoints = ({"base_url_http": plan.http_origin, "base_url_ws": plan.ws_origin}
                  if plan.environment == "loopback" else {})
     quota = BackpackQuota()
@@ -114,12 +110,20 @@ def build_account(plan, evidence, seed):
         read_timeout_ms=plan.request_timeout_secs * 1000, input_capacity=256,
         fill_capacity=10000, page_size=1000, max_pages=10, max_items=10000, **endpoints)
     data_factory = BackpackDataClientFactory(quota=quota)
-    execution_factory = BackpackExecutionClientFactory()
     if not account.quota.shares_scope(quota) or not data_factory.quota.shares_scope(quota):
         raise BackpackConfigError("native account quota is not the shared session scope")
+    return public, account, data_factory
+
+
+def _account_node(plan, evidence, public, account, data_factory, execution_factory, *, name, exec_config=None):
+    """Share the actual native owner lifecycle across explicitly selected factories."""
+    from nautilus_trader.common import Environment, LoggerConfig, LogLevel
+    from nautilus_trader.live import LiveNode
+    from nautilus_trader.model import AccountId, TraderId, Venue
+
     evidence.private_client_registered = True
     evidence.durable_state_opened = None  # A failed native build may already have opened its directory.
-    node = (LiveNode.builder("BACKPACK-READONLY", TraderId.from_str("BACKPACK-READONLY"), Environment.LIVE)
+    builder = (LiveNode.builder(name, TraderId.from_str(name), Environment.LIVE)
         .with_logging(LoggerConfig(stdout_level=LogLevel.OFF, fileout_level=LogLevel.OFF,
                                    bypass_logging=True, print_config=False))
         .with_timeout_connection(plan.request_timeout_secs).with_reconciliation(False)
@@ -128,7 +132,10 @@ def build_account(plan, evidence, seed):
         .with_delay_post_stop_secs(0).with_delay_shutdown_secs(0)
         .with_load_state(False).with_save_state(False)
         .add_data_client(None, data_factory, public)
-        .add_exec_client(None, execution_factory, account).build())
+        .add_exec_client(None, execution_factory, account))
+    if exec_config is not None:
+        builder = builder.with_exec_engine_config(exec_config)
+    node = builder.build()
     evidence.durable_state_opened = True
     evidence.handle = node.handle()
     node.add_actor(_observer(plan, evidence))
@@ -148,6 +155,16 @@ def build_account(plan, evidence, seed):
     evidence.extra_summary = {"account_state_semantics": "wallet trading balances; incomplete coverage",
         "native_reconciliation_enabled": False, "durable_economic_acknowledgement": False,
         "flat_verified": False, "shared_native_rest_quota": True}
+    return node
+
+
+def build_account(plan, evidence, seed):
+    from nautilus_trader.adapters.backpack import BackpackExecutionClientFactory
+
+    public, account, data_factory = _account_configuration(plan, seed)
+    execution_factory = BackpackExecutionClientFactory()
+    node = _account_node(plan, evidence, public, account, data_factory, execution_factory,
+                         name="BACKPACK-READONLY")
     return node, AccountTelemetry(public, account), {
         "schema_version": 1, "public": json.loads(data_factory.capabilities_json()),
         "account": json.loads(execution_factory.capabilities_json())}

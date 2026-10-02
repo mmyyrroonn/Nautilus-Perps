@@ -1,0 +1,69 @@
+# Explicit local synthetic protocol peers only. Start your owned peers before runtime.
+schema_version = 1
+mode = "loopback-execution"
+mutation_budget_ms = 1000
+receive_window_ms = 5000
+
+[session]
+schema_version = 1
+mode = "account-readonly"
+environment = "loopback"
+symbols = ["BTC_USDC_PERP"]
+duration_secs = 10
+request_timeout_secs = 2
+stale_after_ms = 100
+max_report_events = 1000
+max_report_bytes = 1048576
+output_dir = "../reports/backpack/loopback-execution"
+state_dir = "../.native-cache/backpack-loopback-state"
+base_url_http = "http://127.0.0.1:18080"
+base_url_ws = "ws://127.0.0.1:18081"
+
+[session.account]
+account_id = "BACKPACK-SYNTHETIC"
+venue_account = "synthetic-local-peer"
+credential_env = "BACKPACK_LOOPBACK_SYNTHETIC_SEED"
+
+[session.economics.BTC_USDC_PERP]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "-0.0001"
+taker_fee = "0.0005"
+source = "Synthetic"
+source_reference = "owned local protocol fixture; no venue economics attestation"
+
+[authority]
+valid_for_ms = 10000
+max_account_age_ms = 8000
+max_market_age_ms = 8000
+max_order_notional = "0.01"
+max_reserved_notional = "0.02"
+max_reserved_margin = "1"
+max_unsettled_orders = 2
+allow_new_risk = true
+allow_reduction = false
+allow_owned_cancel = true
+
+[synthetic_account]
+available_margin = "100"
+margin_per_notional = "0.1"
+fee_buffer_per_notional = "0.001"
+economics_reference = "explicit local synthetic margin model"
+auto_borrow = false
+auto_lend = false
+auto_repay = false
+liquidating = false
+complete = true
+
+[synthetic_account.net_positions]
+"BTC_USDC_PERP.BACKPACK" = "0"
+
+[scenario]
+symbol = "BTC_USDC_PERP"
+quantity = "0.00002"
+limit_price = "100.1"
+cancel_after_fill = true
+# The owned synthetic peer must withhold every fill until the stale probe is denied.
+stale_probe = true
+reassert_flat_before_stale_probe = true
+stale_probe_delay_ms = 400
