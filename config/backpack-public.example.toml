@@ -1,0 +1,22 @@
+# Planning example: every economic value below is explicitly synthetic.
+# It does not establish live fees, margin requirements or trading readiness.
+schema_version = 1
+mode = "public"
+environment = "production"
+symbols = ["BTC_USDC_PERP"]
+duration_secs = 30
+request_timeout_secs = 15
+stale_after_ms = 3000
+max_report_events = 10000
+max_report_bytes = 16777216
+# Relative paths resolve against this configuration file's directory.
+output_dir = "../reports/backpack"
+state_dir = "../.state/backpack"
+
+[economics.BTC_USDC_PERP]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0"
+source = "Synthetic"
+source_reference = "explicit planning example; not venue economics"
