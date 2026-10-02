@@ -127,6 +127,33 @@ class AccountScope:
 
 
 @dataclass(frozen=True)
+class PaperScenario:
+    initial_balance_usdc: Decimal
+    quantities: tuple[tuple[str, Decimal], ...]
+
+    @classmethod
+    def parse(cls, value, symbols):
+        _keys(value, {"initial_balance_usdc", "quantities"},
+              {"initial_balance_usdc", "quantities"}, "paper")
+        balance = _decimal(value["initial_balance_usdc"], "paper initial balance")
+        if not 0 < balance <= 1_000_000 or balance.as_tuple().exponent < -6:
+            raise BackpackConfigError("paper balance must be positive USDC with at most six decimals")
+        quantities = value["quantities"]
+        if not isinstance(quantities, dict) or set(quantities) != set(symbols):
+            raise BackpackConfigError("paper quantities must cover exactly the allowlist")
+        parsed = tuple((symbol, _decimal(quantities[symbol], "paper quantity")) for symbol in symbols)
+        if any(quantity <= 0 for _, quantity in parsed):
+            raise BackpackConfigError("paper quantity must be positive")
+        return cls(balance, parsed)
+
+    def document(self):
+        return {"initial_balance_usdc": format(self.initial_balance_usdc, "f"),
+                "quantities": {symbol: format(quantity, "f") for symbol, quantity in self.quantities},
+                "scenario": "recorded_quote_two_market_order_roundtrip",
+                "synthetic": True, "maximum_orders": 2 * len(self.quantities)}
+
+
+@dataclass(frozen=True)
 class BackpackSessionPlan:
     mode: str
     environment: str
@@ -143,6 +170,9 @@ class BackpackSessionPlan:
     ws_origin: str | None
     replay_file: Path | None
     account: AccountScope | None = field(repr=False)
+    max_input_records: int = 10_000
+    max_input_bytes: int = 67_108_864
+    paper: PaperScenario | None = None
 
     @property
     def namespace(self):
@@ -173,6 +203,8 @@ class BackpackSessionPlan:
             "output_dir": str(self.output_dir), "journal_dir": str(self.journal_dir),
             "http_origin": self.http_origin, "ws_origin": self.ws_origin,
             "replay_file": None if self.replay_file is None else str(self.replay_file),
+            "max_input_records": self.max_input_records, "max_input_bytes": self.max_input_bytes,
+            "paper": None if self.paper is None else self.paper.document(),
             "namespace": self.namespace, "authenticated_runtime_requested": self.account is not None,
             "account_identity_verified": False, "execution_ready": False,
             "remote_writes_allowed": False, "runtime_started": False,
@@ -182,7 +214,7 @@ class BackpackSessionPlan:
 def parse_plan(document, base_dir: Path) -> BackpackSessionPlan:
     fields = {"schema_version", "mode", "environment", "symbols", "economics", "account",
               "duration_secs", "request_timeout_secs", "stale_after_ms", "max_report_events",
-              "max_report_bytes", "output_dir", "state_dir", "base_url_http", "base_url_ws", "replay_file"}
+              "max_report_bytes", "output_dir", "state_dir", "base_url_http", "base_url_ws", "replay_file", "paper", "max_input_records", "max_input_bytes"}
     required = {"schema_version", "mode", "environment", "symbols", "duration_secs", "output_dir", "state_dir"}
     _keys(document, fields, required, "session")
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
@@ -197,8 +229,9 @@ def parse_plan(document, base_dir: Path) -> BackpackSessionPlan:
         raise BackpackConfigError("symbols must be a nonempty, unique USDC perpetual allowlist")
     if environment not in ("offline", "production", "loopback"):
         raise BackpackConfigError("unsupported environment")
-    if (mode == "replay") != (environment == "offline"):
-        raise BackpackConfigError("replay requires offline environment; other modes require a live data origin")
+    offline = mode in {"replay", "paper"}
+    if offline != (environment == "offline"):
+        raise BackpackConfigError("replay/paper require offline environment; other modes require a live data origin")
     urls = (document.get("base_url_http"), document.get("base_url_ws"))
     if environment == "loopback":
         http_origin = _loopback(urls[0], {"http", "https"}, "HTTP origin")
@@ -211,8 +244,10 @@ def parse_plan(document, base_dir: Path) -> BackpackSessionPlan:
     account = AccountScope.parse(document["account"]) if "account" in document else None
     if (mode == "account-readonly") != (account is not None):
         raise BackpackConfigError("only account-readonly requires and accepts an account section")
-    if (mode == "replay") != ("replay_file" in document):
-        raise BackpackConfigError("only replay requires and accepts replay_file")
+    if offline != ("replay_file" in document):
+        raise BackpackConfigError("replay/paper require and exclusively accept replay_file")
+    if (mode == "paper") != ("paper" in document):
+        raise BackpackConfigError("only paper requires and accepts a paper scenario")
     econ = document.get("economics", {})
     if not isinstance(econ, dict) or set(econ) != set(symbols):
         raise BackpackConfigError("explicit economics must cover exactly the symbol allowlist")
@@ -229,7 +264,10 @@ def parse_plan(document, base_dir: Path) -> BackpackSessionPlan:
         _integer(document.get("max_report_events", 10_000), 1, 100_000, "max_report_events"),
         _integer(document.get("max_report_bytes", 16_777_216), 1024, 67_108_864, "max_report_bytes"),
         path("output_dir"), path("state_dir"), http_origin, ws_origin,
-        path("replay_file") if mode == "replay" else None, account)
+        path("replay_file") if offline else None, account,
+        _integer(document.get("max_input_records", 10_000), 1, 100_000, "max_input_records"),
+        _integer(document.get("max_input_bytes", 67_108_864), 1024, 67_108_864, "max_input_bytes"),
+        PaperScenario.parse(document["paper"], symbols) if mode == "paper" else None)
 
 
 def load_plan(path: Path) -> BackpackSessionPlan:

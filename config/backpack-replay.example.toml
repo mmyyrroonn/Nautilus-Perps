@@ -1,0 +1,22 @@
+# Explicit synthetic offline economics; no venue account or order acceptance.
+schema_version = 1
+mode = "replay"
+environment = "offline"
+symbols = ["BTC_USDC_PERP"]
+duration_secs = 30
+request_timeout_secs = 15
+max_input_records = 10000
+max_input_bytes = 67108864
+max_report_events = 10000
+max_report_bytes = 16777216
+replay_file = "../tests/fixtures/backpack/offline/session.json"
+output_dir = "../reports/backpack"
+state_dir = "../.state/backpack"
+
+[economics.BTC_USDC_PERP]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Synthetic"
+source_reference = "offline synthetic roundtrip; not venue economics"
