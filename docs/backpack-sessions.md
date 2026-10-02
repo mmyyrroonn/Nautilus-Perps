@@ -1,6 +1,6 @@
-# Backpack session planning
+# Backpack public sessions
 
-Run the configuration-only entry point from `E:\persarb\Nautilus-Perps`:
+Validate the credential-free session plan from `E:\persarb\Nautilus-Perps`:
 
 ```powershell
 .venv\Scripts\python.exe src/backpack_probe.py --config config/backpack-public.example.toml --dry-run
@@ -8,13 +8,15 @@ Run the configuration-only entry point from `E:\persarb\Nautilus-Perps`:
 
 This validates a bounded session and prints JSON. It reads only the named TOML file, does not
 import the native adapter, read `.env`, construct a client, open a socket or create output/state
-files. Calling it without `--dry-run` is refused. Runtime integration remains tracked in issue #5.
+files. Without `--dry-run`, only `mode = "public"` starts a bounded native LiveNode. Other
+modes refuse before native imports or runtime construction. Public runtime integration is tracked
+in issue #14; account, paper/replay and execution remain separate slices under issue #5.
 
 The exact native symbols are an explicit nonempty allowlist. Each needs four decimal-string
 margin/fee inputs and a source (`Configured`, `VenueObserved` or `Synthetic`) with a reference.
 The sample deliberately supplies synthetic economics for planning. No source label proves
 account verification or grants execution readiness. The native parser still validates market
-eligibility, currency facts, tick/size grids and economic ranges when the runtime is introduced.
+eligibility, currency facts, tick/size grids and economic ranges before streaming.
 
 Modes are `public`, `account-readonly`, `paper` and `replay`. These name a requested future
 runtime; a successful dry run only proves configuration validity. `paper` uses simulated
@@ -39,5 +41,66 @@ Relative paths resolve against the TOML directory; dry-run does not inspect or o
 
 Durations are bounded to 600 seconds, each request to 60 seconds within that duration,
 staleness to 30 seconds, report events to 100,000 and report bytes to 64 MiB. Future runtimes
-must enforce these values and publish actual observations; this planning entry point does not
-claim a session ran or that any live account state was clean.
+must enforce these values. The public runner enforces duration, event and total report-byte
+limits and records actual observations. Dry-run never claims that a session ran.
+
+## Native public runtime
+
+```powershell
+.venv\Scripts\python.exe src/backpack_probe.py --config config/backpack-public.example.toml
+```
+
+The runner constructs the public `BackpackInstrumentEconomics`, `BackpackDataClientConfig` and
+`BackpackDataClientFactory` facade and registers only that data factory on the normal LiveNode
+builder. It subscribes to exact allowlisted instruments, quotes, trades, mark prices and L2
+book deltas. It creates no execution client, reads no environment credentials or `.env`, and
+makes no private requests. Public production endpoints require no account authorization.
+
+Each run creates a unique directory under the planned output directory containing bounded
+`events.jsonl` and `summary.json`. Prices, quantities, sequences and native event/receipt
+nanoseconds remain exact strings. Counts include events omitted when a configured report cap
+is reached; reaching a cap requests a native stop. A very small byte budget produces an
+explicitly truncated summary. No durable order journal or state directory is opened.
+
+Native health records are observed from the same config used by this run's factory. Quote
+freshness, book continuity, book freshness and snapshot price coverage are independent fields.
+A repeated or stale frame cannot acquire freshness from the report timestamp. Disconnect,
+recovery and idle data remain visible in health records even when the transport is connected.
+The final summary observes health after shutdown. Subscription acknowledgements remain
+unverified, depth coverage is bounded, and the mark stream's funding-unit interpretation is
+not projected as a native fractional funding rate. Capability support and supplied economic
+provenance grant no execution readiness; every public report keeps `execution_ready = false`.
+
+The duration budget begins immediately before the native hosted run, after local module loading,
+identity checks and runtime construction. The summary separately records `preparation_ms`,
+`runtime_elapsed_ms` (including shutdown) and total `elapsed_ms`. Network bootstrap and active
+observation share the configured duration; local preparation is outside that network budget.
+
+The caller-owned asyncio run captures the native stop handle before starting. Duration limits,
+repeated stop and external cancellation use that handle and the native hosted cancellation
+path. Startup failures and cancellation still publish sanitized evidence; exception strings,
+raw network frames and request bodies are never written. Failed startup is not a successful
+observation, and a failure to finish shutdown is reported explicitly.
+
+A normal local run labels its installed native module `unverified_local_development` and records
+its binary hash, distribution version, application commit/dirty state, application source hash
+and configuration hash. To verify an explicitly pinned candidate, supply all three arguments:
+
+```powershell
+.venv\Scripts\python.exe src/backpack_probe.py --config config/backpack-public.example.toml `
+  --candidate-wheel <wheel.whl> --candidate-sha256 <sha256> --native-provenance <provenance.json>
+```
+
+This reuses `scripts/verify_native_install.py` to check the exact installed binary and wheel
+hash against explicit source-bound provenance before runtime construction. It explicitly
+requires and compares the installed Backpack adapter stub as well as the default Aster/Ondo
+stubs, and records the checked Backpack stub hash. A local import
+alone never proves source binding. Application source identity remains observational and is
+not promoted to a verified release merely by a candidate wheel check.
+
+`tests/test_backpack_public_native.py` uses the actually installed adapter and real numeric
+loopback HTTP/WS servers. It covers instrument-before-data ordering, exact quote/trade/mark
+and depth messages, stale BBO, depth gaps, socket replacement, cancellation, repeated stop
+and failed metadata bootstrap. It checks that only public GET endpoints and public stream
+subscriptions were requested. A skipped test means the required candidate wheel is absent;
+it is not acceptance evidence and no Python client double is used as native proof.

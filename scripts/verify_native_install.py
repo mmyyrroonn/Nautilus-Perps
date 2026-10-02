@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import re
 import subprocess
 import sys
 import zipfile
@@ -63,7 +64,12 @@ def verify(
     provenance: Path | None,
     require_source_binding: bool,
     require_ondo: bool,
+    additional_adapters: tuple[str, ...] = (),
 ) -> dict[str, object]:
+    if (not isinstance(additional_adapters, (tuple, list)) or len(additional_adapters) > 16
+            or any(not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name)
+                   for name in additional_adapters)):
+        raise ValueError("invalid additional adapter names")
     wheel = wheel.resolve(strict=True)
     if wheel.suffix != ".whl":
         raise ValueError("candidate is not a wheel")
@@ -92,10 +98,8 @@ def verify(
             raise ValueError("expected exactly one native module in wheel")
         native_name = native_names[0]
         native_sha256 = hashlib.sha256(archive.read(native_name)).hexdigest()
-        stub_names = (
-            "nautilus_trader/adapters/aster/__init__.pyi",
-            "nautilus_trader/adapters/ondo/__init__.pyi",
-        )
+        stub_names = tuple(f"nautilus_trader/adapters/{name}/__init__.pyi"
+                           for name in sorted({"aster", "ondo", *additional_adapters}))
         try:
             stub_hashes = {
                 name: hashlib.sha256(archive.read(name)).hexdigest()
@@ -177,6 +181,8 @@ def main() -> int:
     parser.add_argument("--native-provenance", type=Path)
     parser.add_argument("--require-source-binding", action="store_true")
     parser.add_argument("--require-ondo", action="store_true")
+    parser.add_argument("--additional-adapter", action="append", default=[],
+                        help="also compare this adapter's installed stub with the candidate wheel")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -185,6 +191,7 @@ def main() -> int:
             provenance=args.native_provenance,
             require_source_binding=args.require_source_binding,
             require_ondo=args.require_ondo,
+            additional_adapters=tuple(args.additional_adapter),
         )
     except (OSError, ValueError, KeyError, ImportError, zipfile.BadZipFile) as exc:
         parser.exit(2, f"native candidate refused: {exc}\n")

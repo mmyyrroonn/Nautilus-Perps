@@ -97,8 +97,8 @@ class Economics:
         return result
 
     def document(self):
-        return {"margin_init": str(self.margin_init), "margin_maint": str(self.margin_maint),
-                "maker_fee": str(self.maker_fee), "taker_fee": str(self.taker_fee),
+        return {"margin_init": format(self.margin_init, "f"), "margin_maint": format(self.margin_maint, "f"),
+                "maker_fee": format(self.maker_fee, "f"), "taker_fee": format(self.taker_fee, "f"),
                 "source": self.source, "source_reference": self.source_reference}
 
 
