@@ -1,0 +1,345 @@
+{
+  "schema_version": 1,
+  "source": "Synthetic",
+  "protocol_date": "2026-10-02",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "python": "3.12.9",
+  "application": {
+    "commit": "5dc9b4a9e9bf3b067ac3d2e090ad77459fc3fd6f",
+    "dirty": false,
+    "source_content_sha256": "bafe90cb848bb7c1eba3f510eb4e68dee03d556cc366ca63390fa38ef6488bd2",
+    "identity_verified": false
+  },
+  "harness_sha256": "cc7fc9e622ad1d9226b6344cff429913c4e1a4ee2c6bc1674fa02cf4f5c51edd",
+  "messages_per_cycle": 600,
+  "target_quotes_per_second": 100,
+  "cycles": [
+    {
+      "cycle": 0,
+      "report_exhaustion": false,
+      "status": "completed",
+      "failure": null,
+      "native": {
+        "status": "verified_candidate",
+        "source_binding_verified": true,
+        "distribution_version": "2.0.0rc4",
+        "native_module_sha256": "15e795cf39388925a4f49f4e95511adf91c6ece2503047f415963fdb5e826367",
+        "wheel_sha256": "7ddb1ccc4bbe780f71520c7bc134b2e1b593162c0679f1f87cbb5280ee82f9ce",
+        "native_commit": "e738cd58d31c54e79de859672af37e9002162e5a",
+        "backpack_stub_sha256": "ee2c3437fac33e65cc501ecec3a2d39d9b07866c2dd19c467499d7cb3e0eaa1c"
+      },
+      "application": {
+        "commit": "5dc9b4a9e9bf3b067ac3d2e090ad77459fc3fd6f",
+        "dirty": false,
+        "source_content_sha256": "bafe90cb848bb7c1eba3f510eb4e68dee03d556cc366ca63390fa38ef6488bd2",
+        "identity_verified": false
+      },
+      "configuration_sha256": "500aa121dbcf3d4b745ff6e1679d3fbabcaa1bc1079ab7a708dcb22d201860ca",
+      "offered_quotes": 601,
+      "observed_quotes": 601,
+      "offering_elapsed_ms": 6000.0,
+      "sender_to_native_receipt": {
+        "samples": 601,
+        "min_us": 45.3,
+        "negative_samples": 0,
+        "p50_us": 512.2,
+        "p95_us": 1040.8,
+        "p99_us": 1181.6,
+        "max_us": 1341.5
+      },
+      "signed_native_receipt_to_python_wall_delta": {
+        "samples": 601,
+        "min_us": -890.3,
+        "negative_samples": 444,
+        "p50_us": -298.0,
+        "p95_us": 384.5,
+        "p99_us": 648.5,
+        "max_us": 720.3
+      },
+      "sender_to_python_observer_monotonic": {
+        "samples": 600,
+        "min_us": 56.9,
+        "negative_samples": 0,
+        "p50_us": 317.0,
+        "p95_us": 640.1,
+        "p99_us": 755.3,
+        "max_us": 1025.5
+      },
+      "elapsed_ms_including_candidate_and_shutdown": 9906.999999991967,
+      "shutdown_after_limit_ms": null,
+      "runtime_ms_including_shutdown": 8156,
+      "http_requests": 2,
+      "ws_connections": 1,
+      "active_connections_after_stop": 0,
+      "shutdown_complete": true,
+      "resident_memory_bytes": {
+        "samples": 141,
+        "first": 71884800,
+        "last": 143175680,
+        "min": 71884800,
+        "max": 143175680
+      },
+      "summary_path": "E:\\persarb\\.backpack-work\\public-load-5dc9b4a\\cycle-0\\reports\\backpack-loopback-136b2b3985159c3d95fd3396deaff3ca3bfef9a5a21b06ed992a21d53e316a06\\public\\30e57eead1eb4a21bb261b6a3a9e8906\\summary.json",
+      "files": {
+        "events.jsonl": {
+          "bytes": 194175,
+          "sha256": "d678cd3c408bd79855093fc0a657b5093c9d5db5fbcca299b1175a1ce5ecfc9d"
+        },
+        "summary.json": {
+          "bytes": 3358,
+          "sha256": "7f1cb82e296020e87b41fba2c29b24589a1899f0bdd81e04e5f43c296b9d20af"
+        }
+      },
+      "private_client_registered": false,
+      "durable_state_opened": false,
+      "execution_ready": false
+    },
+    {
+      "cycle": 1,
+      "report_exhaustion": false,
+      "status": "completed",
+      "failure": null,
+      "native": {
+        "status": "verified_candidate",
+        "source_binding_verified": true,
+        "distribution_version": "2.0.0rc4",
+        "native_module_sha256": "15e795cf39388925a4f49f4e95511adf91c6ece2503047f415963fdb5e826367",
+        "wheel_sha256": "7ddb1ccc4bbe780f71520c7bc134b2e1b593162c0679f1f87cbb5280ee82f9ce",
+        "native_commit": "e738cd58d31c54e79de859672af37e9002162e5a",
+        "backpack_stub_sha256": "ee2c3437fac33e65cc501ecec3a2d39d9b07866c2dd19c467499d7cb3e0eaa1c"
+      },
+      "application": {
+        "commit": "5dc9b4a9e9bf3b067ac3d2e090ad77459fc3fd6f",
+        "dirty": false,
+        "source_content_sha256": "bafe90cb848bb7c1eba3f510eb4e68dee03d556cc366ca63390fa38ef6488bd2",
+        "identity_verified": false
+      },
+      "configuration_sha256": "fd90766889c5a8601441b6a6988bc251e3223af2420ce5360c3398a8dd1c0032",
+      "offered_quotes": 601,
+      "observed_quotes": 601,
+      "offering_elapsed_ms": 6000.0,
+      "sender_to_native_receipt": {
+        "samples": 601,
+        "min_us": 33.1,
+        "negative_samples": 0,
+        "p50_us": 526.4,
+        "p95_us": 1004.5,
+        "p99_us": 1183.8,
+        "max_us": 1643.0
+      },
+      "signed_native_receipt_to_python_wall_delta": {
+        "samples": 601,
+        "min_us": -919.0,
+        "negative_samples": 434,
+        "p50_us": -297.8,
+        "p95_us": 419.8,
+        "p99_us": 633.5,
+        "max_us": 836.5
+      },
+      "sender_to_python_observer_monotonic": {
+        "samples": 600,
+        "min_us": 79.8,
+        "negative_samples": 0,
+        "p50_us": 319.8,
+        "p95_us": 667.6,
+        "p99_us": 829.1,
+        "max_us": 1285.9
+      },
+      "elapsed_ms_including_candidate_and_shutdown": 9625.0,
+      "shutdown_after_limit_ms": null,
+      "runtime_ms_including_shutdown": 8172,
+      "http_requests": 2,
+      "ws_connections": 1,
+      "active_connections_after_stop": 0,
+      "shutdown_complete": true,
+      "resident_memory_bytes": {
+        "samples": 140,
+        "first": 143900672,
+        "last": 145248256,
+        "min": 143900672,
+        "max": 145248256
+      },
+      "summary_path": "E:\\persarb\\.backpack-work\\public-load-5dc9b4a\\cycle-1\\reports\\backpack-loopback-19a2442e6dbd6db461ebeebfc907f6bab99fcde73e31d412254af12f0bbdce8b\\public\\40c7640bb294423d9ab3451b586de943\\summary.json",
+      "files": {
+        "events.jsonl": {
+          "bytes": 194100,
+          "sha256": "917580e29d18e6c95dc17ebbef32c12b104cd42e4f6e408310d2a9efac024d09"
+        },
+        "summary.json": {
+          "bytes": 3358,
+          "sha256": "6c13e349d8fe8e514e66548c4835849b0e79c7a6b5be3f1307ca62ac7c7b78cc"
+        }
+      },
+      "private_client_registered": false,
+      "durable_state_opened": false,
+      "execution_ready": false
+    },
+    {
+      "cycle": 2,
+      "report_exhaustion": false,
+      "status": "completed",
+      "failure": null,
+      "native": {
+        "status": "verified_candidate",
+        "source_binding_verified": true,
+        "distribution_version": "2.0.0rc4",
+        "native_module_sha256": "15e795cf39388925a4f49f4e95511adf91c6ece2503047f415963fdb5e826367",
+        "wheel_sha256": "7ddb1ccc4bbe780f71520c7bc134b2e1b593162c0679f1f87cbb5280ee82f9ce",
+        "native_commit": "e738cd58d31c54e79de859672af37e9002162e5a",
+        "backpack_stub_sha256": "ee2c3437fac33e65cc501ecec3a2d39d9b07866c2dd19c467499d7cb3e0eaa1c"
+      },
+      "application": {
+        "commit": "5dc9b4a9e9bf3b067ac3d2e090ad77459fc3fd6f",
+        "dirty": false,
+        "source_content_sha256": "bafe90cb848bb7c1eba3f510eb4e68dee03d556cc366ca63390fa38ef6488bd2",
+        "identity_verified": false
+      },
+      "configuration_sha256": "d5e4b2fd3b677fb7812b4c8e27ba64333a84ec7914988db48d0256d9188a6b7b",
+      "offered_quotes": 601,
+      "observed_quotes": 601,
+      "offering_elapsed_ms": 6000.0,
+      "sender_to_native_receipt": {
+        "samples": 601,
+        "min_us": 52.1,
+        "negative_samples": 0,
+        "p50_us": 522.6,
+        "p95_us": 1013.8,
+        "p99_us": 1125.8,
+        "max_us": 1942.4
+      },
+      "signed_native_receipt_to_python_wall_delta": {
+        "samples": 601,
+        "min_us": -900.7,
+        "negative_samples": 422,
+        "p50_us": -224.0,
+        "p95_us": 521.4,
+        "p99_us": 650.0,
+        "max_us": 780.4
+      },
+      "sender_to_python_observer_monotonic": {
+        "samples": 600,
+        "min_us": 58.7,
+        "negative_samples": 0,
+        "p50_us": 323.0,
+        "p95_us": 690.6,
+        "p99_us": 889.7,
+        "max_us": 1517.6
+      },
+      "elapsed_ms_including_candidate_and_shutdown": 9562.000000005355,
+      "shutdown_after_limit_ms": null,
+      "runtime_ms_including_shutdown": 8141,
+      "http_requests": 2,
+      "ws_connections": 1,
+      "active_connections_after_stop": 0,
+      "shutdown_complete": true,
+      "resident_memory_bytes": {
+        "samples": 141,
+        "first": 145256448,
+        "last": 146948096,
+        "min": 145256448,
+        "max": 146956288
+      },
+      "summary_path": "E:\\persarb\\.backpack-work\\public-load-5dc9b4a\\cycle-2\\reports\\backpack-loopback-42e36c2565e638dcc3d55463ea78d74824de43086aafa3f4e4ba1ffbe78bcb55\\public\\944a93fd0f454b4f95c29418455e1285\\summary.json",
+      "files": {
+        "events.jsonl": {
+          "bytes": 194175,
+          "sha256": "b9bc4e9e94aadcf5e01120c7c257144e8816521c309c408249b643e1ba4dfa84"
+        },
+        "summary.json": {
+          "bytes": 3358,
+          "sha256": "a33ecb17a1c084eab11eb8fa3de7eb3bd307191c2980a0f0a283bf12c7149ec1"
+        }
+      },
+      "private_client_registered": false,
+      "durable_state_opened": false,
+      "execution_ready": false
+    },
+    {
+      "cycle": 3,
+      "report_exhaustion": true,
+      "status": "failed",
+      "failure": "report_limit",
+      "native": {
+        "status": "verified_candidate",
+        "source_binding_verified": true,
+        "distribution_version": "2.0.0rc4",
+        "native_module_sha256": "15e795cf39388925a4f49f4e95511adf91c6ece2503047f415963fdb5e826367",
+        "wheel_sha256": "7ddb1ccc4bbe780f71520c7bc134b2e1b593162c0679f1f87cbb5280ee82f9ce",
+        "native_commit": "e738cd58d31c54e79de859672af37e9002162e5a",
+        "backpack_stub_sha256": "ee2c3437fac33e65cc501ecec3a2d39d9b07866c2dd19c467499d7cb3e0eaa1c"
+      },
+      "application": {
+        "commit": "5dc9b4a9e9bf3b067ac3d2e090ad77459fc3fd6f",
+        "dirty": false,
+        "source_content_sha256": "bafe90cb848bb7c1eba3f510eb4e68dee03d556cc366ca63390fa38ef6488bd2",
+        "identity_verified": false
+      },
+      "configuration_sha256": "b36ab140b7c99e9f72cf9d57ea383da6b64994e506fbc8cb7902401a23b0d908",
+      "offered_quotes": 74,
+      "observed_quotes": 69,
+      "offering_elapsed_ms": 733.9999999967404,
+      "sender_to_native_receipt": {
+        "samples": 69,
+        "min_us": 41.1,
+        "negative_samples": 0,
+        "p50_us": 589.2,
+        "p95_us": 1040.9,
+        "p99_us": 1757.3,
+        "max_us": 1757.3
+      },
+      "signed_native_receipt_to_python_wall_delta": {
+        "samples": 69,
+        "min_us": -882.7,
+        "negative_samples": 46,
+        "p50_us": -188.3,
+        "p95_us": 324.2,
+        "p99_us": 722.7,
+        "max_us": 722.7
+      },
+      "sender_to_python_observer_monotonic": {
+        "samples": 68,
+        "min_us": 112.5,
+        "negative_samples": 0,
+        "p50_us": 343.3,
+        "p95_us": 714.5,
+        "p99_us": 860.8,
+        "max_us": 860.8
+      },
+      "elapsed_ms_including_candidate_and_shutdown": 2266.0000000032596,
+      "shutdown_after_limit_ms": 234.0000000112923,
+      "runtime_ms_including_shutdown": 860,
+      "http_requests": 2,
+      "ws_connections": 1,
+      "active_connections_after_stop": 0,
+      "shutdown_complete": true,
+      "resident_memory_bytes": {
+        "samples": 17,
+        "first": 147226624,
+        "last": 147550208,
+        "min": 147226624,
+        "max": 147689472
+      },
+      "summary_path": "E:\\persarb\\.backpack-work\\public-load-5dc9b4a\\cycle-3\\reports\\backpack-loopback-0e2517f937b017598f3a61af3afa52c40298b52e57829051f712c8bf1501b5c2\\public\\ec7a851b12a941e79fcad9c70a468c9d\\summary.json",
+      "files": {
+        "events.jsonl": {
+          "bytes": 21495,
+          "sha256": "21eaa82f062c9ba5f9b539c3d83be3f3efa3047c2d339a3bda7c3bfef26b3e26"
+        },
+        "summary.json": {
+          "bytes": 3355,
+          "sha256": "bee3e3bece14b1ea0a861027b597a4baf82d4adaae836440001fbbb79908404c"
+        }
+      },
+      "private_client_registered": false,
+      "durable_state_opened": false,
+      "execution_ready": false
+    }
+  ],
+  "execution_ready": false,
+  "limits": [
+    "Short numeric-loopback development-wheel sample; not a long-duration soak.",
+    "Monotonic sender-to-observer latency on one host; no private ACK or production latency measured.",
+    "Native and Python wall clocks can differ; signed clock deltas are retained without clamping and are not reliable hop durations.",
+    "Resident working-set observations include allocator retention and output buffers; no leak-free claim."
+  ]
+}
