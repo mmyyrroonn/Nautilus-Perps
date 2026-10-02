@@ -25,7 +25,7 @@ def main(argv=None):
             print(json.dumps(plan.document(), indent=2))
             return 0
         if plan.mode not in {"public", "replay", "paper"}:
-            raise BackpackConfigError("only public runtime is implemented; use --dry-run for other modes")
+            raise BackpackConfigError("account-readonly runtime is not implemented; use --dry-run for that mode")
         candidate = (args.candidate_wheel, args.candidate_sha256, args.native_provenance)
         if any(value is not None for value in candidate) and not all(value is not None for value in candidate):
             raise BackpackConfigError("candidate verification requires wheel, SHA256 and native provenance")
