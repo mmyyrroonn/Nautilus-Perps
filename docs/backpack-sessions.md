@@ -9,10 +9,9 @@ Validate the credential-free session plan from `E:\persarb\Nautilus-Perps`:
 This validates a bounded session and prints JSON. It reads only the named TOML file, does not
 import the native adapter, read `.env`, construct a client, open a socket or create output/state
 files. Without `--dry-run`, `mode = "public"` starts a bounded native LiveNode;
-`replay` and `paper` start their bounded offline native owners. Account runtime remains
-refused before native imports in this slice. Public runtime integration is tracked
+`replay` and `paper` start their bounded offline native owners. Explicit `account-readonly` starts the native readonly owner. Public runtime integration is tracked
 in issue #14. Native recorded replay and offline paper are implemented in issue #15;
-see [the offline runner](backpack-offline.md). Account and execution remain separate slices under issue #5.
+see [the offline runner](backpack-offline.md). Readonly account observation is implemented in issue #18; execution remains a separate slice under issue #5.
 
 The exact native symbols are an explicit nonempty allowlist. Each needs four decimal-string
 margin/fee inputs and a source (`Configured`, `VenueObserved` or `Synthetic`) with a reference.
@@ -113,3 +112,63 @@ it is not acceptance evidence and no Python client double is used as native proo
 The [2026-10-02 public observation](../reports/backpack/2026-10-02-public/README.md) records
 a source-bound native wheel, actual public data and bounded shutdown, preserving both a failed
 bootstrap and a successful retry. Private account, paper and execution acceptance remain separate.
+
+## Native readonly account observation
+
+`account-readonly` uses the actual native execution factory and shares one native REST quota
+with the public data factory. The account configuration requires a `BACKPACK-...` engine label,
+explicit venue account/subaccount labels and the name of one credential environment value.
+These labels remain caller claims; they do not establish authenticated venue identity.
+
+The runtime resolves that named value only when account observation is invoked. If absent from
+the process environment, it reads only this application's `.env`, with interpolation disabled.
+Dry-run, public sessions and offline modes do not load account credentials. Secrets, signature
+headers and raw private frames are not included in reports or errors.
+
+The same CLI accepts an account-readonly configuration and the three candidate-verification
+arguments shown above. Import and configuration are read-only; building the native account client
+opens its isolated identity directory. The native client rejects submission, cancellation, transfers and borrowing.
+Production account observation requires its own explicit operator invocation and authorization;
+the implementation acceptance uses only synthetic keys and numeric loopback peers.
+
+Account evidence includes sanitized public/account telemetry plus exact native engine cache
+observations. Wallet trading balances do not establish usable margin. Empty orders or positions
+are incomplete cache observations and never prove Flat. Real trade IDs, fees and rebates come
+from the native reports/engine; the application implements no signer, protocol parser or ledger.
+Native enqueue/cache updates are not a durable consumer commit, so pending fill delivery remains
+visible and `durable_economic_acknowledgement` is false.
+
+Startup mass reconciliation is disabled because Backpack cannot yet attest complete account
+coverage. Native bounded REST/private-stream recovery still operates. Generic subscription
+responses, successful transport and completed observation do not imply private subscription
+confirmation, complete history, verified identity or execution readiness. Shutdown and output
+bounds use the same native owner lifecycle as public observation.
+
+Use the owned numeric-loopback example to validate the configuration without
+credentials or sockets:
+
+```powershell
+.venv/Scripts/python.exe src/backpack_probe.py --config config/backpack-account-readonly.example.toml --dry-run
+```
+
+To run against the owned peer, supply only its explicitly configured local seed
+and invoke the same command without `--dry-run`, optionally with all three pinned
+candidate arguments. The example does not authorize production observation.
+[Source-bound synthetic acceptance](../reports/backpack/2026-10-02-account-loopback/README.md)
+records the actual CLI, native cache, signatures and bounded shutdown.
+
+The report preserves `native_health_before_stop` separately from final stopped
+health. Unresolved recovery, parse/delivery, private input or subscription
+transport failures produce fixed safe failure reasons. Expected identity/ACK /
+retention gaps stay unverified; successful recovery can finish an observation
+without promoting those gaps to readiness. A published wallet snapshot can
+precede failed fill-history pagination and therefore does not prove complete
+history. A report cap with dropped events is a failed limited observation.
+
+Cancellation explicitly releases native node, hosted task and observation
+closure references, even when an outer caller keeps its cancelled Task alive.
+Successful terminal disposal and actual same-namespace reopening demonstrate
+socket/identity owner shutdown; no garbage collection is required for release.
+The tests use different synthetic credentials and local account/subaccount
+labels for separate namespaces. These labels do not supply an additional
+subaccount routing protocol or authenticate a venue identity.

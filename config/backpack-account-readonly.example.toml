@@ -1,0 +1,28 @@
+# Owned numeric loopback example; economics and identity labels are synthetic.
+# Set only the explicitly named local peer seed at runtime, never in this file.
+schema_version = 1
+mode = "account-readonly"
+environment = "loopback"
+symbols = ["BTC_USDC_PERP"]
+duration_secs = 30
+request_timeout_secs = 5
+max_report_events = 10000
+max_report_bytes = 16777216
+base_url_http = "http://127.0.0.1:18080"
+base_url_ws = "ws://127.0.0.1:18081"
+output_dir = "../reports/backpack"
+state_dir = "../.state/backpack"
+
+[economics.BTC_USDC_PERP]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "-0.0001"
+taker_fee = "0.0005"
+source = "Synthetic"
+source_reference = "owned loopback example; not venue economics"
+
+[account]
+account_id = "BACKPACK-SYNTHETIC"
+venue_account = "synthetic-owner"
+subaccount = "0"
+credential_env = "BACKPACK_LOOPBACK_PEER_SEED"

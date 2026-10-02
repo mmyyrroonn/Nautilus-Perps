@@ -79,8 +79,9 @@ def test_native_startup_failure_is_sanitized_and_published(tmp_path, monkeypatch
 
 
 def test_cli_unsupported_mode_refuses_before_import(tmp_path, monkeypatch, capsys):
-    plan = parse_plan(private_document(), tmp_path)
+    from dataclasses import replace
+    plan = replace(parse_plan(document(), tmp_path), mode="unsupported")
     monkeypatch.setattr(backpack_probe, "load_plan", lambda _: plan)
     assert backpack_probe.main(["--config", "unused.toml"]) == 2
-    assert "account-readonly runtime is not implemented" in capsys.readouterr().err
+    assert "unsupported runtime mode" in capsys.readouterr().err
     assert not list(tmp_path.iterdir())

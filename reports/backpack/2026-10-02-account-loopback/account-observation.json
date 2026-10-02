@@ -1,0 +1,240 @@
+{
+  "account_identity_verified": false,
+  "account_state_semantics": "wallet trading balances; incomplete coverage",
+  "actor_started": true,
+  "actor_stopped": true,
+  "application": {
+    "commit": "0591ee18f65e198de5a4defb7c65e010ef87b989",
+    "dirty": false,
+    "identity_verified": false,
+    "source_content_sha256": "f57ba6f7111f07b388e2b70b2325936c3200f92ba8664f923e7c99865f4a835c"
+  },
+  "capabilities": {
+    "account": {
+      "durable_economic_ack": false,
+      "private_subscription_confirmed": false,
+      "production_writes": false,
+      "public_market_data": false,
+      "read_only_account": true,
+      "restricted_execution": false,
+      "schema_version": 1
+    },
+    "public": {
+      "full_depth_coverage": false,
+      "funding_rate_fraction": false,
+      "public_market_data": true,
+      "read_only_account": false,
+      "restricted_execution": false,
+      "schema_version": 1
+    },
+    "schema_version": 1
+  },
+  "complete_book_claimed": false,
+  "configuration": {
+    "account_identity_verified": false,
+    "authenticated_runtime_requested": true,
+    "duration_secs": 6,
+    "economics": {
+      "BTC_USDC_PERP": {
+        "maker_fee": "-0.0001",
+        "margin_init": "0.1",
+        "margin_maint": "0.05",
+        "source": "Synthetic",
+        "source_reference": "owned synthetic readonly acceptance; no venue economics",
+        "taker_fee": "0.0005"
+      }
+    },
+    "environment": "loopback",
+    "execution_ready": false,
+    "http_origin": "http://127.0.0.1:1630",
+    "instrument_ids": [
+      "BTC_USDC_PERP.BACKPACK"
+    ],
+    "journal_dir": "E:\\persarb\\.backpack-work\\app-account-verified\\state\\backpack-loopback-3c20cf091a29e71dc91b3fe354e601f76a0d93a1d6255cd71d2eaeb71b4a22bb",
+    "max_input_bytes": 67108864,
+    "max_input_records": 10000,
+    "max_report_bytes": 16777216,
+    "max_report_events": 10000,
+    "mode": "account-readonly",
+    "namespace": "backpack-loopback-3c20cf091a29e71dc91b3fe354e601f76a0d93a1d6255cd71d2eaeb71b4a22bb",
+    "output_dir": "E:\\persarb\\.backpack-work\\app-account-verified\\reports\\backpack-loopback-3c20cf091a29e71dc91b3fe354e601f76a0d93a1d6255cd71d2eaeb71b4a22bb\\account-readonly",
+    "paper": null,
+    "remote_writes_allowed": false,
+    "replay_file": null,
+    "request_timeout_secs": 5,
+    "runtime_started": false,
+    "schema_version": 1,
+    "stale_after_ms": 3000,
+    "symbols": [
+      "BTC_USDC_PERP"
+    ],
+    "venue": "BACKPACK",
+    "ws_origin": "ws://127.0.0.1:1631"
+  },
+  "configuration_sha256": "f7ec1c38b5797d94e718d652246f613c69a102d2309e7561a3b04054b4920fe1",
+  "dropped_events": 0,
+  "durable_economic_acknowledgement": false,
+  "durable_state_opened": true,
+  "economics_account_verified": false,
+  "elapsed_ms": 7952,
+  "event_bytes": 15355,
+  "event_count": 21,
+  "event_counts": {
+    "book_deltas": 1,
+    "engine_account_observation": 6,
+    "instrument": 2,
+    "mark": 1,
+    "native_health": 9,
+    "quote": 1,
+    "trade": 1
+  },
+  "execution_ready": false,
+  "failure": null,
+  "finished_at": "2026-10-02T07:11:50.956957+00:00",
+  "flat_verified": false,
+  "funding_fraction_unit_verified": false,
+  "mode": "account-readonly",
+  "native": {
+    "backpack_stub_sha256": "83e914b6a4a7a97e2a71489d0fd6e505ac3bea02851aee400d9dae2f81dcd562",
+    "distribution_version": "2.0.0rc4",
+    "native_commit": "deff8571b30afcffa6c8f26e04c8a90d0b8d9c53",
+    "native_module_sha256": "e625bb7046eacaaf2d6c641c2ac90042694f38f90a68e7671e3c1dd14a9cde87",
+    "source_binding_verified": true,
+    "status": "verified_candidate",
+    "wheel_sha256": "0ca12206c1c771921cf75beff1586a2ac21938cb3aa6fdb2f6c901c2cadb3c2e"
+  },
+  "native_health": {
+    "account": {
+      "connection_epoch": 0,
+      "evidence_gaps": [
+        "AccountIdentityUnverified",
+        "CumulativeOrderReportUnpublished",
+        "NonAtomicSnapshot",
+        "OrderTimeUnknown",
+        "PositionTimeUnknown",
+        "PrivateSubscriptionUnconfirmed",
+        "RetentionOrReplicationUnknown"
+      ],
+      "generation": 1,
+      "last_observed_ns": 1790925105442445100,
+      "observed_topics": [],
+      "parse_failures": 0,
+      "pending_fills": 2,
+      "private_subscription_confirmed": false,
+      "recovery_count": 1,
+      "rest_snapshot_observed": true,
+      "run_id": 1,
+      "schema_version": 1,
+      "state": "Stopped",
+      "transport_connected": false
+    },
+    "account_identity_verified": false,
+    "durable_economic_acknowledgement": false,
+    "execution_ready": false,
+    "public": {
+      "books": {
+        "BTC_USDC_PERP": null
+      },
+      "books_continuous": {
+        "BTC_USDC_PERP": false
+      },
+      "books_fresh": {
+        "BTC_USDC_PERP": false
+      },
+      "connected": false,
+      "connection_epoch": 0,
+      "execution_ready": false,
+      "generation": 1,
+      "metadata_ready": false,
+      "quote_event_ns": {},
+      "quote_received_ns": {},
+      "quotes_fresh": {},
+      "run_id": 1,
+      "schema_version": 1,
+      "stale_reason": "stopped",
+      "subscription_acknowledgements_verified": false
+    },
+    "schema_version": 1
+  },
+  "native_health_before_stop": {
+    "account": {
+      "connection_epoch": 0,
+      "evidence_gaps": [
+        "AccountIdentityUnverified",
+        "CumulativeOrderReportUnpublished",
+        "NonAtomicSnapshot",
+        "OrderTimeUnknown",
+        "PositionTimeUnknown",
+        "PrivateSubscriptionUnconfirmed",
+        "RetentionOrReplicationUnknown"
+      ],
+      "generation": 1,
+      "last_observed_ns": 1790925105442445100,
+      "observed_topics": [
+        "account.balanceUpdate",
+        "account.orderUpdate.BTC_USDC_PERP"
+      ],
+      "parse_failures": 0,
+      "pending_fills": 2,
+      "private_subscription_confirmed": false,
+      "recovery_count": 1,
+      "rest_snapshot_observed": true,
+      "run_id": 1,
+      "schema_version": 1,
+      "state": "Degraded",
+      "transport_connected": true
+    },
+    "account_identity_verified": false,
+    "durable_economic_acknowledgement": false,
+    "execution_ready": false,
+    "public": {
+      "books": {
+        "BTC_USDC_PERP": {
+          "initial_ask_ceiling": "101.0",
+          "initial_bid_floor": "100.0",
+          "snapshot_limit": 1000
+        }
+      },
+      "books_continuous": {
+        "BTC_USDC_PERP": true
+      },
+      "books_fresh": {
+        "BTC_USDC_PERP": true
+      },
+      "connected": true,
+      "connection_epoch": 0,
+      "execution_ready": false,
+      "generation": 1,
+      "metadata_ready": true,
+      "quote_event_ns": {
+        "BTC_USDC_PERP": "1790925105000627000"
+      },
+      "quote_received_ns": {
+        "BTC_USDC_PERP": "1790925105002682600"
+      },
+      "quotes_fresh": {
+        "BTC_USDC_PERP": false
+      },
+      "run_id": 1,
+      "schema_version": 1,
+      "stale_reason": null,
+      "subscription_acknowledgements_verified": false
+    },
+    "schema_version": 1
+  },
+  "native_reconciliation_enabled": false,
+  "preparation_ms": 1750,
+  "private_client_registered": true,
+  "remote_writes_allowed": false,
+  "report_limit_reached": false,
+  "run_id": "61e5b181b7424cd299371bbc23d3b2fb",
+  "runtime_elapsed_ms": 6202,
+  "runtime_started": true,
+  "schema_version": 1,
+  "shared_native_rest_quota": true,
+  "shutdown_complete": true,
+  "started_at": "2026-10-02T07:11:43.008011+00:00",
+  "status": "completed",
+  "stop_reason": "duration_limit",
+  "venue": "BACKPACK"
+}

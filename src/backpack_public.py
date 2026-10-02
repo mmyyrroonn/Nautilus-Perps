@@ -78,7 +78,7 @@ def native_identity(candidate=None):
 
 
 class PublicEvidence:
-    """Bound encoded public events and aggregate counts without retaining raw frames."""
+    """Bound encoded session observations without retaining raw protocol frames."""
 
     def __init__(self, plan):
         self.plan = plan
@@ -92,6 +92,11 @@ class PublicEvidence:
         self.actor_stopped = False
         self.actor_failure = None
         self.handle = None
+        self.poll = None
+        self.private_client_registered = False
+        self.durable_state_opened = False
+        self.extra_summary = {}
+        self.failure_check = None
 
     def record(self, kind, fields):
         self.counts[kind] = self.counts.get(kind, 0) + 1
@@ -253,6 +258,11 @@ async def run_public(plan: BackpackSessionPlan, *, candidate=None):
     """Run one native public session; cancellation publishes evidence and propagates."""
     if plan.mode != "public" or plan.account is not None or plan.environment == "offline":
         raise BackpackConfigError("only public runtime is implemented; use --dry-run for other modes")
+    return await run_native_observation(plan, builder=_build, candidate=candidate)
+
+
+async def run_native_observation(plan, *, builder, candidate=None, extra_sources=()):
+    """Own bounded native node observation and shutdown for a validated caller mode."""
     started = datetime.now(UTC).isoformat()
     began = time.monotonic()
     run_began = None
@@ -268,9 +278,10 @@ async def run_public(plan: BackpackSessionPlan, *, candidate=None):
     shutdown_complete = False
     last_health = None
     final_health = None
+    observed_health_before_stop = None
     try:
         identity = native_identity(candidate)
-        node, config, capabilities = _build(plan, evidence)
+        node, config, capabilities = builder(plan, evidence)
         run_began = time.monotonic()
         deadline = run_began + plan.duration_secs
         task = asyncio.ensure_future(node.run_async())
@@ -281,12 +292,19 @@ async def run_public(plan: BackpackSessionPlan, *, candidate=None):
             if health != last_health:
                 evidence.record("native_health", {"observed_at_ns": str(time.time_ns()), "health": health})
                 last_health = health
+            if evidence.poll is not None:
+                evidence.poll(node, evidence)
             await asyncio.sleep(min(POLL_SECS, max(0, deadline - time.monotonic())))
         if evidence.limit_reached:
             failure = "report_limit"
             stop_reason = "report_limit"
         elif task.done():
             stop_reason = "native_run_returned"
+        observed_health_before_stop = json.loads(config.telemetry_snapshot_json())
+        if evidence.failure_check is not None:
+            failure = failure or evidence.failure_check(observed_health_before_stop)
+        if evidence.limit_reached:
+            failure = failure or "report_limit"
         evidence.handle.stop()
         await asyncio.wait_for(asyncio.shield(task), SHUTDOWN_SECS * 2 + 1)
         shutdown_complete = True
@@ -299,6 +317,11 @@ async def run_public(plan: BackpackSessionPlan, *, candidate=None):
         failure = "native_runtime_failed" if runtime_started else "startup_failed"
         stop_reason = "failed"
     finally:
+        if config is not None and observed_health_before_stop is None:
+            try:
+                observed_health_before_stop = json.loads(config.telemetry_snapshot_json())
+            except Exception:
+                failure = failure or "native_telemetry_failed"
         if evidence.handle is not None:
             evidence.handle.stop()
             evidence.handle.stop()  # Repeated stop uses the supported idempotent control handle.
@@ -325,29 +348,40 @@ async def run_public(plan: BackpackSessionPlan, *, candidate=None):
         if node is not None:
             try:
                 node.dispose()
+                if (task is None or task.done()) and not evidence.handle.is_running:
+                    shutdown_complete = True
             except Exception:
                 failure = "dispose_failed"
+        # A cancelled Task retains traceback frames. Release native owner references explicitly
+        # so its identity lock is not held until that external Task is garbage-collected.
+        node = None
+        task = None
+        evidence.poll = None
+        evidence.handle = None
         failure = failure or evidence.actor_failure
         if runtime_started and not evidence.actor_started:
-            failure = failure or "public_observer_not_started"
-        summary = {"schema_version": 1, "run_id": run_id, "venue": "BACKPACK", "mode": "public",
+            failure = failure or f"{plan.mode}_observer_not_started"
+        summary = {"schema_version": 1, "run_id": run_id, "venue": "BACKPACK", "mode": plan.mode,
             "started_at": started, "finished_at": datetime.now(UTC).isoformat(),
             "elapsed_ms": int((time.monotonic() - began) * 1000),
             "preparation_ms": None if run_began is None else int((run_began - began) * 1000),
             "runtime_elapsed_ms": None if run_began is None else int((time.monotonic() - run_began) * 1000),
             "configuration_sha256": configuration_hash(plan), "configuration": plan.document(),
-            "application": application_identity(), "native": identity, "capabilities": capabilities,
+            "application": application_identity(extra_sources=extra_sources), "native": identity, "capabilities": capabilities,
             "status": "failed" if failure else "completed", "failure": failure,
             "stop_reason": stop_reason, "runtime_started": runtime_started,
             "actor_started": evidence.actor_started, "actor_stopped": evidence.actor_stopped,
             "shutdown_complete": shutdown_complete, "native_health": final_health,
+            "native_health_before_stop": observed_health_before_stop,
             "event_count": len(evidence.lines), "event_bytes": evidence.bytes,
             "event_counts": evidence.counts, "dropped_events": evidence.dropped,
             "report_limit_reached": evidence.limit_reached,
             "account_identity_verified": False, "economics_account_verified": False,
             "execution_ready": False, "remote_writes_allowed": False,
-            "private_client_registered": False, "durable_state_opened": False,
+            "private_client_registered": evidence.private_client_registered,
+            "durable_state_opened": evidence.durable_state_opened,
             "complete_book_claimed": False, "funding_fraction_unit_verified": False}
+        summary.update(evidence.extra_summary)
         result = evidence.publish(summary)
     if cancelled:
         raise asyncio.CancelledError

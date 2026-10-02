@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a Backpack plan or run bounded credential-free native public observations."""
+"""Validate a Backpack plan or run bounded native public, offline or readonly observations."""
 from __future__ import annotations
 
 import argparse
@@ -24,13 +24,15 @@ def main(argv=None):
         if args.dry_run:
             print(json.dumps(plan.document(), indent=2))
             return 0
-        if plan.mode not in {"public", "replay", "paper"}:
-            raise BackpackConfigError("account-readonly runtime is not implemented; use --dry-run for that mode")
+        if plan.mode not in {"public", "replay", "paper", "account-readonly"}:
+            raise BackpackConfigError("unsupported runtime mode")
         candidate = (args.candidate_wheel, args.candidate_sha256, args.native_provenance)
         if any(value is not None for value in candidate) and not all(value is not None for value in candidate):
             raise BackpackConfigError("candidate verification requires wheel, SHA256 and native provenance")
         if plan.mode == "public":
             from backpack_public import run_public as run_session
+        elif plan.mode == "account-readonly":
+            from backpack_account import run_account as run_session
         else:
             from backpack_replay import run_offline as run_session
         summary, path = asyncio.run(run_session(plan, candidate=candidate if candidate[0] else None))
@@ -42,7 +44,7 @@ def main(argv=None):
         print(f"Backpack configuration refused: {message}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        print("Backpack public session interrupted; inspect bounded run evidence", file=sys.stderr)
+        print("Backpack session interrupted; inspect bounded run evidence", file=sys.stderr)
         return 130
 
 
