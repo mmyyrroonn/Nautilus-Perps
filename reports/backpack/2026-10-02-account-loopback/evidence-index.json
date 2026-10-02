@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "scope": "synthetic signed numeric-loopback only",
+  "artifacts": [
+    {
+      "path": "account-observation.json",
+      "sha256": "84570d19bd3736f0bd71f1e60e66c41c5a21c0b889e6a3ca086e8b6f199b93cc"
+    },
+    {
+      "path": "peer-evidence.json",
+      "sha256": "9e94247a1d1606c20e7f84d86b59b07127acc7503eced8bb91aba4f706bcc351"
+    },
+    {
+      "path": "engine-cache-observation.json",
+      "sha256": "2825c7504391718a77cfb4c428e3363bc6b049baa9a7eeeba07af5a333a78c84"
+    }
+  ],
+  "original_summary_sha256": "65f89b3522b2fa91b95aabebaf55a6a762140475123865934a1f44ffcacd7c35",
+  "original_events_sha256": "a86b92818f9bcca8ff93b87e245ebe41df6ccc27be801799d9ba2ccf1ab554c1"
+}

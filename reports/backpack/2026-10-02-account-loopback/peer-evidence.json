@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "scope": "synthetic numeric-loopback only",
+  "cli_returncode": 0,
+  "summary_path": "E:\\persarb\\.backpack-work\\app-account-verified\\reports\\backpack-loopback-3c20cf091a29e71dc91b3fe354e601f76a0d93a1d6255cd71d2eaeb71b4a22bb\\account-readonly\\61e5b181b7424cd299371bbc23d3b2fb\\summary.json",
+  "active_peer_sockets_after_cli": 0,
+  "verified_authenticated_gets": 6,
+  "all_requests_get": true,
+  "fixture_sent": true,
+  "native_candidate_verified": true,
+  "durable_economic_acknowledgement": false,
+  "venue_account_observed": false,
+  "flat_verified": false,
+  "shutdown_complete": true,
+  "verified_private_subscription_signatures": 1
+}

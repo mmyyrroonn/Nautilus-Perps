@@ -143,3 +143,32 @@ coverage. Native bounded REST/private-stream recovery still operates. Generic su
 responses, successful transport and completed observation do not imply private subscription
 confirmation, complete history, verified identity or execution readiness. Shutdown and output
 bounds use the same native owner lifecycle as public observation.
+
+Use the owned numeric-loopback example to validate the configuration without
+credentials or sockets:
+
+```powershell
+.venv/Scripts/python.exe src/backpack_probe.py --config config/backpack-account-readonly.example.toml --dry-run
+```
+
+To run against the owned peer, supply only its explicitly configured local seed
+and invoke the same command without `--dry-run`, optionally with all three pinned
+candidate arguments. The example does not authorize production observation.
+[Source-bound synthetic acceptance](../reports/backpack/2026-10-02-account-loopback/README.md)
+records the actual CLI, native cache, signatures and bounded shutdown.
+
+The report preserves `native_health_before_stop` separately from final stopped
+health. Unresolved recovery, parse/delivery, private input or subscription
+transport failures produce fixed safe failure reasons. Expected identity/ACK /
+retention gaps stay unverified; successful recovery can finish an observation
+without promoting those gaps to readiness. A published wallet snapshot can
+precede failed fill-history pagination and therefore does not prove complete
+history. A report cap with dropped events is a failed limited observation.
+
+Cancellation explicitly releases native node, hosted task and observation
+closure references, even when an outer caller keeps its cancelled Task alive.
+Successful terminal disposal and actual same-namespace reopening demonstrate
+socket/identity owner shutdown; no garbage collection is required for release.
+The tests use different synthetic credentials and local account/subaccount
+labels for separate namespaces. These labels do not supply an additional
+subaccount routing protocol or authenticate a venue identity.

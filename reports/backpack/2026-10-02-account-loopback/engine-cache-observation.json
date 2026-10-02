@@ -1,0 +1,46 @@
+{
+  "account_observed": true,
+  "complete_account_coverage": false,
+  "durable_economic_acknowledgement": false,
+  "flat_verified": false,
+  "kind": "engine_account_observation",
+  "margin_coverage_verified": false,
+  "orders": [
+    {
+      "client_order_id": "synthetic-order-A",
+      "commissions": [
+        "-0.00000200 USDC"
+      ],
+      "filled_quantity": "0.00002",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "quantity": "0.00002",
+      "status": "FILLED",
+      "trade_ids": [
+        "77",
+        "78"
+      ]
+    }
+  ],
+  "positions": [
+    {
+      "commissions": [
+        "-0.00000200 USDC"
+      ],
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "is_open": true,
+      "last_trade_id": "78",
+      "position_id": "BTC_USDC_PERP.BACKPACK-EXTERNAL",
+      "quantity": "0.00002",
+      "realized_pnl": "0.00000200 USDC",
+      "side": "LONG"
+    }
+  ],
+  "wallet_trading_balances": [
+    {
+      "currency": "USDC",
+      "free": "111.00000000 USDC",
+      "locked": "10.00000000 USDC",
+      "total": "121.00000000 USDC"
+    }
+  ]
+}
