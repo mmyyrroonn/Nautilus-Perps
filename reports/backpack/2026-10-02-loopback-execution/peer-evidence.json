@@ -1,0 +1,172 @@
+{
+  "actual_engine_observation": {
+    "account_observed": true,
+    "complete_account_coverage": false,
+    "durable_economic_acknowledgement": false,
+    "flat_verified": false,
+    "kind": "engine_account_observation",
+    "margin_coverage_verified": false,
+    "orders": [
+      {
+        "client_order_id": "O-20261002-085620-LOOPBACK-000-1",
+        "commissions": [
+          "-0.00000100 USDC"
+        ],
+        "filled_quantity": "0.00001",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "quantity": "0.00002",
+        "status": "PENDING_CANCEL",
+        "trade_ids": [
+          "701"
+        ]
+      }
+    ],
+    "positions": [
+      {
+        "commissions": [
+          "-0.00000100 USDC"
+        ],
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "is_open": true,
+        "last_trade_id": "701",
+        "position_id": "BTC_USDC_PERP.BACKPACK-LoopbackScenario-000",
+        "quantity": "0.00001",
+        "realized_pnl": "0.00000100 USDC",
+        "side": "LONG"
+      }
+    ],
+    "wallet_trading_balances": [
+      {
+        "currency": "USDC",
+        "free": "100.00000000 USDC",
+        "locked": "10.00000000 USDC",
+        "total": "110.00000000 USDC"
+      }
+    ]
+  },
+  "app_commit": "587c67cd27d9435545ec4147e0f952df07976993",
+  "authoritative_shutdown": {
+    "dirty": true,
+    "observed_unreconciled": 1,
+    "pending_cancellations": 1,
+    "positions_unknown_or_nonzero": true,
+    "schema_version": 1,
+    "unknown": 0,
+    "unsent": 0
+  },
+  "configuration_file_sha256": "c823766e2e8ec8c5982800b5048b82fe9a499ef44d02d84b3ca7eae6c4c27d45",
+  "continuous_reconciliation": false,
+  "durable_economic_acknowledgement": false,
+  "elapsed_ms": 12108,
+  "events_sha256": "e03bdd13b01ad49ff42690d6316bf250511d669792d27b48a37bc4f59d7531b9",
+  "execution_settled": false,
+  "fill_release": "peer-only fixed 3s after POST; not a realtime Denied signal",
+  "flat_verified": false,
+  "harness_sha256": "08bc43803da37d88690a1012e90ba7e8893f4f44206874b0a1a190f0571fb2d7",
+  "native_inflight_checks_enabled": false,
+  "native_provenance_sha256": "4694b2e5e90a9b9cdb58e0b72ae1c11a2b762ec0eecf2a4c17300cd61d407173",
+  "peer": {
+    "active_after_close": 0,
+    "authenticated_read_count": 6,
+    "delete_signature_and_owned_selector_verified_count": 1,
+    "deletes": [
+      {
+        "orderId": "local-owned-A",
+        "symbol": "BTC_USDC_PERP"
+      }
+    ],
+    "fill_frames": [
+      {
+        "data": {
+          "E": 1790931383399231,
+          "L": "100.1",
+          "N": "USDC",
+          "O": "USER",
+          "S": "Bid",
+          "T": 1790931383399231,
+          "V": "RejectTaker",
+          "X": "PartiallyFilled",
+          "Z": "0.001001",
+          "c": 1,
+          "e": "orderFill",
+          "f": "GTC",
+          "i": "local-owned-A",
+          "l": "0.00001",
+          "m": true,
+          "n": "-0.000001",
+          "o": "LIMIT",
+          "p": "100.1",
+          "q": "0.00002",
+          "r": false,
+          "s": "BTC_USDC_PERP",
+          "t": 701,
+          "y": false,
+          "z": "0.00001"
+        },
+        "stream": "account.orderUpdate.BTC_USDC_PERP"
+      },
+      {
+        "data": {
+          "E": 1790931383399231,
+          "L": "100.1",
+          "N": "USDC",
+          "O": "USER",
+          "S": "Bid",
+          "T": 1790931383399231,
+          "V": "RejectTaker",
+          "X": "PartiallyFilled",
+          "Z": "0.001001",
+          "c": 1,
+          "e": "orderFill",
+          "f": "GTC",
+          "i": "local-owned-A",
+          "l": "0.00001",
+          "m": true,
+          "n": "-0.000001",
+          "o": "LIMIT",
+          "p": "100.1",
+          "q": "0.00002",
+          "r": false,
+          "s": "BTC_USDC_PERP",
+          "t": 701,
+          "y": false,
+          "z": "0.00001"
+        },
+        "stream": "account.orderUpdate.BTC_USDC_PERP"
+      }
+    ],
+    "http_origin": "http://127.0.0.1:7084",
+    "metadata_started_at_ns": 1790931380118286500,
+    "order_query_count": 0,
+    "post_at_ns": 1790931380390050300,
+    "post_signature_and_immutable_intent_verified_count": 1,
+    "posts": [
+      {
+        "clientId": 1,
+        "orderType": "Limit",
+        "postOnly": false,
+        "price": "100.1",
+        "quantity": "0.00002",
+        "reduceOnly": false,
+        "side": "Bid",
+        "symbol": "BTC_USDC_PERP",
+        "timeInForce": "GTC"
+      }
+    ],
+    "private_subscription_signature_verified_count": 1,
+    "responses": [
+      "200 OK",
+      "202 Accepted"
+    ],
+    "worker_failures": [],
+    "ws_origin": "ws://127.0.0.1:7085"
+  },
+  "pending_fill_count": 1,
+  "returncode": 0,
+  "runtime_configuration_sha256": "6bde16a55c42c0f3c8ce7c51cc858c7eec7db5ea040e40e0c897efdf154aac33",
+  "schema_version": 1,
+  "scope": "owned signed numeric-loopback synthetic peer; no real account or production request",
+  "summary_sha256": "659783ce3316080002ae47f288a678e5f67521b859ada9450ca17ae1a4e97e45",
+  "validation_passed": true,
+  "wheel_sha256": "e978feb6c6d0962a329ae94710ed42fe4c85c2fa3afd53019656b9149e73ea20"
+}

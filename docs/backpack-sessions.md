@@ -173,7 +173,6 @@ The tests use different synthetic credentials and local account/subaccount
 labels for separate namespaces. These labels do not supply an additional
 subaccount routing protocol or authenticate a venue identity.
 
-
 ## Synthetic loopback order scenario
 
 `src/backpack_loopback.py` is a separate entry point for owned local protocol fixtures.
@@ -255,3 +254,10 @@ explicit loopback API wheel these tests skip; static configuration checks do not
 transport or production validation.
 
 The bounded loopback runner explicitly disables native inflight, open-order and position reconciliation timers (`native_inflight_checks_enabled=false`, `continuous_reconciliation=false`). Continuous reconciliation is outside this scenario's accepted capability; generic reconciliation can synthesize terminal events after cancellation timeouts. This restriction does not claim that the independently tracked native Denied-order watchdog issue is repaired. The ordinary readonly account entry keeps its existing engine configuration.
+
+The source-bound synthetic loopback execution acceptance is archived in
+[`reports/backpack/2026-10-02-loopback-execution`](../reports/backpack/2026-10-02-loopback-execution/README.md).
+The final wheel passed 163 complete Backpack tests without skips and the actual
+CLI observed one true fill, duplicate suppression and matching cancel 202 while
+retaining pending economic acknowledgement, dirty shutdown and a real open position.
+Scenario completion does not establish settled execution or Flat.
