@@ -8,9 +8,11 @@ Validate the credential-free session plan from `E:\persarb\Nautilus-Perps`:
 
 This validates a bounded session and prints JSON. It reads only the named TOML file, does not
 import the native adapter, read `.env`, construct a client, open a socket or create output/state
-files. Without `--dry-run`, only `mode = "public"` starts a bounded native LiveNode. Other
-modes refuse before native imports or runtime construction. Public runtime integration is tracked
-in issue #14; account, paper/replay and execution remain separate slices under issue #5.
+files. Without `--dry-run`, `mode = "public"` starts a bounded native LiveNode;
+`replay` and `paper` start their bounded offline native owners. Account runtime remains
+refused before native imports in this slice. Public runtime integration is tracked
+in issue #14. Native recorded replay and offline paper are implemented in issue #15;
+see [the offline runner](backpack-offline.md). Account and execution remain separate slices under issue #5.
 
 The exact native symbols are an explicit nonempty allowlist. Each needs four decimal-string
 margin/fee inputs and a source (`Configured`, `VenueObserved` or `Synthetic`) with a reference.
@@ -18,9 +20,10 @@ The sample deliberately supplies synthetic economics for planning. No source lab
 account verification or grants execution readiness. The native parser still validates market
 eligibility, currency facts, tick/size grids and economic ranges before streaming.
 
-Modes are `public`, `account-readonly`, `paper` and `replay`. These name a requested future
-runtime; a successful dry run only proves configuration validity. `paper` uses simulated
-execution; `replay` requires `environment = "offline"` and an explicit `replay_file`.
+Modes are `public`, `account-readonly`, `paper` and `replay`. A successful dry run only
+proves configuration validity. Both `paper` and `replay` require `environment = "offline"`
+and an explicit recorded-session manifest in `replay_file`; `paper` additionally requires
+an explicit synthetic starting balance and per-symbol quantities.
 No real-order mode, sandbox assumption, DMS or account mutation is exposed.
 
 Only `account-readonly` accepts and requires an `[account]` section containing `account_id`

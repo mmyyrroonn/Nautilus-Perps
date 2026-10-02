@@ -32,7 +32,7 @@ def _file_hash(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def application_identity():
+def application_identity(*, extra_sources=()):
     """Record source identity without reading environment or arbitrary report files."""
     try:
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=APP_ROOT,
@@ -43,7 +43,7 @@ def application_identity():
     except (OSError, subprocess.SubprocessError):
         return {"commit": None, "dirty": None, "identity_verified": False}
     content = hashlib.sha256()
-    for name in ("backpack_config.py", "backpack_probe.py", "backpack_public.py"):
+    for name in ("backpack_config.py", "backpack_probe.py", "backpack_public.py", *extra_sources):
         content.update(name.encode() + b"\0")
         content.update(bytes.fromhex(_file_hash(APP_ROOT / "src" / name)))
     return {"commit": commit, "dirty": dirty, "source_content_sha256": content.hexdigest(),

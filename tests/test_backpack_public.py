@@ -49,8 +49,10 @@ def test_configuration_hash_tracks_exact_economics_and_bounds(tmp_path):
 def test_unsupported_mode_refused_before_native_import_and_output(tmp_path, monkeypatch, mode):
     data = private_document() if mode == "account-readonly" else document()
     data["mode"] = mode
-    if mode == "replay":
+    if mode in {"replay", "paper"}:
         data.update(environment="offline", replay_file="not-opened.jsonl")
+    if mode == "paper":
+        data["paper"] = {"initial_balance_usdc": "10000", "quantities": {"BTC_USDC_PERP": "0.01"}}
     plan = parse_plan(data, tmp_path)
     class NoNative(importlib.abc.MetaPathFinder):
         def find_spec(self, fullname, path=None, target=None):

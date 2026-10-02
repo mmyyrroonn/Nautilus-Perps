@@ -24,13 +24,16 @@ def main(argv=None):
         if args.dry_run:
             print(json.dumps(plan.document(), indent=2))
             return 0
-        if plan.mode != "public":
+        if plan.mode not in {"public", "replay", "paper"}:
             raise BackpackConfigError("only public runtime is implemented; use --dry-run for other modes")
         candidate = (args.candidate_wheel, args.candidate_sha256, args.native_provenance)
         if any(value is not None for value in candidate) and not all(value is not None for value in candidate):
             raise BackpackConfigError("candidate verification requires wheel, SHA256 and native provenance")
-        from backpack_public import run_public
-        summary, path = asyncio.run(run_public(plan, candidate=candidate if candidate[0] else None))
+        if plan.mode == "public":
+            from backpack_public import run_public as run_session
+        else:
+            from backpack_replay import run_offline as run_session
+        summary, path = asyncio.run(run_session(plan, candidate=candidate if candidate[0] else None))
         print(json.dumps({"status": summary["status"], "failure": summary["failure"],
                           "summary_path": str(path), "execution_ready": False}))
         return 0 if summary["status"] == "completed" else 1
