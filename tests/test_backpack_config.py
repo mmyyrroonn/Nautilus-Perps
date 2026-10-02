@@ -66,11 +66,11 @@ def test_sample_dry_run_without_native_import_credentials_or_socket(tmp_path, mo
     assert list(tmp_path.iterdir()) == [config]
 
 
-def test_cli_refuses_runtime_before_even_reading_configuration(tmp_path):
+def test_cli_refuses_missing_config_without_starting_runtime(tmp_path):
     result = subprocess.run([sys.executable, str(ROOT / "src/backpack_probe.py"),
         "--config", str(tmp_path / "missing.toml")], capture_output=True, text=True, check=False)
     assert result.returncode == 2
-    assert "runtime execution is unavailable" in result.stderr
+    assert "cannot read or publish session files" in result.stderr
     assert not list(tmp_path.iterdir())
 
 
@@ -184,3 +184,9 @@ def test_dotenv_refused_without_open(name, tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "open", forbidden)
     with pytest.raises(BackpackConfigError, match="dotenv"):
         load_plan(tmp_path / name)
+
+
+def test_exact_small_economics_never_use_scientific_notation(tmp_path):
+    data = document()
+    data["economics"][SYMBOL]["maker_fee"] = "0.0000000000000000000000000001"
+    assert parse_plan(data, tmp_path).document()["economics"][SYMBOL]["maker_fee"] == data["economics"][SYMBOL]["maker_fee"]

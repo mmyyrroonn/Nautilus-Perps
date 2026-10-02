@@ -108,3 +108,50 @@ def test_result_file_does_not_change_app_source_identity(tmp_path: Path) -> None
     assert git_identity(tmp_path) == before
     source.write_text("VALUE = 2\n", encoding="utf-8")
     assert git_identity(tmp_path)["tracked_content_sha256"] != before["tracked_content_sha256"]
+
+
+@pytest.mark.parametrize("names", [("../backpack",), ("Backpack",), "backpack", ("",)])
+def test_additional_adapter_names_reject_ambiguous_paths(tmp_path, names):
+    from verify_native_install import verify
+    with pytest.raises(ValueError, match="additional adapter"):
+        verify(tmp_path / "missing.whl", "0" * 64, provenance=None,
+               require_source_binding=False, require_ondo=False, additional_adapters=names)
+
+
+def test_optional_backpack_stub_gate_is_backward_compatible_and_detects_tampering(tmp_path, monkeypatch):
+    """Synthetic file verification only; the real installed LiveNode tests prove runtime behavior."""
+    from types import SimpleNamespace
+    from packaging.tags import sys_tags
+    import verify_native_install as verifier
+    wheel = tmp_path / "candidate.whl"
+    environment = tmp_path / "isolated"
+    binaries = {"nautilus_trader/_libnautilus.pyd": b"synthetic-native",
+                **{f"nautilus_trader/adapters/{name}/__init__.pyi": name.encode()
+                   for name in ("aster", "ondo", "backpack")}}
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, payload in binaries.items():
+            archive.writestr(name, payload)
+            installed = environment / name
+            installed.parent.mkdir(parents=True, exist_ok=True)
+            installed.write_bytes(payload)
+        archive.writestr("nautilus_trader.dist-info/WHEEL", f"Tag: {next(sys_tags())}\n")
+    class Distribution:
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return json.dumps({"url": wheel.as_uri()})
+        def locate_file(self, name):
+            return environment / name
+    monkeypatch.setattr(verifier.metadata, "distribution", lambda _: Distribution())
+    monkeypatch.setattr(verifier.importlib, "import_module", lambda _: SimpleNamespace(
+        __file__=str(environment / "nautilus_trader/_libnautilus.pyd")))
+    monkeypatch.setattr(sys, "prefix", str(environment))
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    def check(additional=()):
+        return verifier.verify(wheel, digest, provenance=None, require_source_binding=False,
+                               require_ondo=False, additional_adapters=additional)
+    assert len(check()["installed"]["adapter_stub_sha256"]) == 2
+    assert len(check(("backpack",))["installed"]["adapter_stub_sha256"]) == 3
+    (environment / "nautilus_trader/adapters/backpack/__init__.pyi").write_bytes(b"tampered")
+    assert len(check()["installed"]["adapter_stub_sha256"]) == 2
+    with pytest.raises(ValueError, match="installed adapter stub"):
+        check(("backpack",))
