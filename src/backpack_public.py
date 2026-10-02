@@ -283,6 +283,7 @@ async def run_public(plan: BackpackSessionPlan, *, candidate=None):
                 last_health = health
             await asyncio.sleep(min(POLL_SECS, max(0, deadline - time.monotonic())))
         if evidence.limit_reached:
+            failure = "report_limit"
             stop_reason = "report_limit"
         elif task.done():
             stop_reason = "native_run_returned"

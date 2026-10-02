@@ -220,3 +220,23 @@ def test_installed_native_failed_startup_publishes_failure_without_private_reque
                        for method, target, _ in peer.requests)
             assert path.is_file()
     asyncio.run(scenario())
+
+
+def test_installed_native_report_exhaustion_is_failed_and_closes_transport(tmp_path):
+    from dataclasses import replace
+
+    require_native()
+
+    async def scenario():
+        async with PublicPeer() as peer:
+            plan = replace(plan_for(peer, tmp_path), max_report_events=4)
+            summary, path = await asyncio.wait_for(run_public(plan), 12)
+            assert summary["status"] == "failed"
+            assert summary["failure"] == summary["stop_reason"] == "report_limit"
+            assert summary["report_limit_reached"] and summary["dropped_events"] > 0
+            assert summary["shutdown_complete"] and peer.active == 0
+            assert len(records(path)) <= plan.max_report_events
+            assert sum(p.stat().st_size for p in path.parent.iterdir()) <= plan.max_report_bytes
+            peer.assert_public_only()
+
+    asyncio.run(scenario())
