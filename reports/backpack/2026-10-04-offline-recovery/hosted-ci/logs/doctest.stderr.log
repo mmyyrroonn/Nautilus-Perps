@@ -1,0 +1,17 @@
+[1m[92m   Compiling[0m nautilus-common v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/common)
+[1m[92m   Compiling[0m nautilus-execution v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/execution)
+[1m[92m   Compiling[0m nautilus-portfolio v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/portfolio)
+[1m[92m   Compiling[0m nautilus-data v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/data)
+[1m[92m   Compiling[0m nautilus-trading v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/trading)
+[1m[92m   Compiling[0m nautilus-risk v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/risk)
+[1m[92m   Compiling[0m nautilus-system v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/system)
+[1m[92m   Compiling[0m nautilus-testkit v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/testkit)
+[1m[92m   Compiling[0m nautilus-live v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/live)
+[1m[92m   Compiling[0m nautilus-binance v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/binance)
+[1m[92m   Compiling[0m nautilus-backpack v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/backpack)
+[1m[92m   Compiling[0m nautilus-ondo v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/ondo)
+[1m[92m   Compiling[0m nautilus-aster v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/aster)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 47.82s
+[1m[92m   Doc-tests[0m nautilus_aster
+[1m[92m   Doc-tests[0m nautilus_backpack
+[1m[92m   Doc-tests[0m nautilus_ondo
