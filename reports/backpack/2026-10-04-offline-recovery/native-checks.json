@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-03T17:40:00.767836+00:00",
+  "purpose": "native adapter checks and the checkout they ran against (issue #11)",
+  "native": {
+    "commit": "9569b9b3ff633a049babc763996fa4ae2bcd0c2c",
+    "tree": "83c1745b0a48486c2483173ecd7955805a9d9592",
+    "dirty": [],
+    "dirty_count": 0,
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c"
+  },
+  "identity_before_fingerprint": "b54800d44f9e8931cf09cee954f78f724f6184a9351ca1a30c81adf6c345f7fe",
+  "identity_after_fingerprint": "b54800d44f9e8931cf09cee954f78f724f6184a9351ca1a30c81adf6c345f7fe",
+  "identity_changed_during_checks": false,
+  "toolchain": {
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-pc-windows-msvc\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "python": "3.12.9 (main, Mar 17 2025, 21:06:20) [MSC v.1943 64 bit (AMD64)]",
+    "python_executable": "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+    "os": "Windows",
+    "release": "11",
+    "machine": "AMD64"
+  },
+  "crates": [
+    "nautilus-backpack"
+  ],
+  "logs_dir": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs",
+  "checks": [
+    {
+      "name": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "-p",
+        "nautilus-backpack",
+        "--",
+        "--check"
+      ],
+      "blocking": true,
+      "environment": {
+        "CARGO_BUILD_WARNINGS": "allow"
+      },
+      "environment_exceptions": [
+        "MSVC import-library linker notice; Clippy -D warnings retained"
+      ],
+      "exit_code": 0,
+      "duration_ms": 484,
+      "stdout": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\fmt.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\fmt.stderr.log",
+        "sha256": "7c2477fddfc37cce268a8df2fee7f408348cae965cdaa04f513380fabd83b654",
+        "bytes": 7040,
+        "tail": "...[5040 chars omitted]...\n in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\n"
+      }
+    },
+    {
+      "name": "test",
+      "command": [
+        "cargo",
+        "nextest",
+        "run",
+        "-p",
+        "nautilus-backpack",
+        "--profile",
+        "ci",
+        "--retries",
+        "3",
+        "--no-fail-fast"
+      ],
+      "blocking": true,
+      "environment": {
+        "CARGO_BUILD_WARNINGS": "allow"
+      },
+      "environment_exceptions": [
+        "MSVC import-library linker notice; Clippy -D warnings retained"
+      ],
+      "exit_code": 0,
+      "duration_ms": 63750,
+      "stdout": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\test.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\test.stderr.log",
+        "sha256": "ad1d7eab4e616e39a646c50b0004e314fe8342a74efe21bd58482e888e351d8a",
+        "bytes": 63812,
+        "tail": "...[61764 chars omitted]...\n) nautilus-backpack::public test_synthetic_malformed_quote_cannot_hide_behind_duplicate_watermark\n        PASS [   0.008s] (464/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_1\n        PASS [   0.008s] (465/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_2\n        PASS [   0.008s] (466/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_3\n        PASS [   0.008s] (467/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_4\n        PASS [   0.008s] (468/478) nautilus-backpack::public test_synthetic_non_power_of_ten_price_and_size_grids\n        PASS [   0.008s] (469/478) nautilus-backpack::public test_synthetic_snapshot_invalid_fields_fail_closed_and_publish_nothing\n        PASS [   0.008s] (470/478) nautilus-backpack::public test_synthetic_storage_overflow_crossed_book_invalid_snapshot_and_bad_frame_stale\n        PASS [   0.008s] (471/478) nautilus-backpack::public test_synthetic_theoretical_mark_is_exact_without_executable_tick_rounding\n        PASS [   0.008s] (472/478) nautilus-backpack::public test_synthetic_topic_payload_mismatch::case_1\n        PASS [   0.008s] (473/478) nautilus-backpack::public test_synthetic_topic_payload_mismatch::case_2\n        PASS [   0.008s] (474/478) nautilus-backpack::public test_synthetic_topic_payload_mismatch::case_3\n        PASS [   0.008s] (475/478) nautilus-backpack::replay replay_duplicate_known_field_invalidates_book_until_restart\n        PASS [   0.008s] (476/478) nautilus-backpack::replay replay_preserves_original_times_and_discards_old_before_parser\n        PASS [   0.009s] (477/478) nautilus-backpack::replay replay_reader_bounds_lines_records_and_streams_outputs\n        PASS [   5.133s] (478/478) nautilus-backpack::http_client test_shared_quota_longer_than_window_signs_after_admission\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n     Summary [  39.151s] 478 tests run: 478 passed, 1 skipped\n"
+      }
+    },
+    {
+      "name": "doctest",
+      "command": [
+        "cargo",
+        "test",
+        "--doc",
+        "-p",
+        "nautilus-backpack"
+      ],
+      "blocking": true,
+      "environment": {
+        "CARGO_BUILD_WARNINGS": "allow"
+      },
+      "environment_exceptions": [
+        "MSVC import-library linker notice; Clippy -D warnings retained"
+      ],
+      "exit_code": 0,
+      "duration_ms": 812,
+      "stdout": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\doctest.stdout.log",
+        "sha256": "df166913f47ff1f04202cae9b31df67ed272d692d99a0023a8117dc3029100dd",
+        "bytes": 113,
+        "tail": "\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+      },
+      "stderr": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\doctest.stderr.log",
+        "sha256": "dd44f24605f815ad44c4ccb0c43f5152ffb0c1b846d0563aaf327ad790676069",
+        "bytes": 104,
+        "tail": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s\n   Doc-tests nautilus_backpack\n"
+      }
+    },
+    {
+      "name": "python",
+      "command": [
+        "cargo",
+        "check",
+        "-p",
+        "nautilus-backpack",
+        "--features",
+        "python"
+      ],
+      "blocking": true,
+      "environment": {
+        "PYO3_PYTHON": "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+        "CARGO_BUILD_WARNINGS": "allow"
+      },
+      "environment_exceptions": [
+        "MSVC import-library linker notice; Clippy -D warnings retained"
+      ],
+      "exit_code": 0,
+      "duration_ms": 13657,
+      "stdout": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\python.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\python.stderr.log",
+        "sha256": "f58b614427393cfe2e258b417b490bb0d5b45d0f384fd125b362435c9dba9660",
+        "bytes": 1881,
+        "tail": "   Compiling pyo3-ffi v0.29.2\n   Compiling pyo3 v0.29.2\n   Compiling nautilus-core v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\core)\n   Compiling nautilus-common v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\common)\n   Compiling nautilus-serialization v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\serialization)\n    Checking pyo3-stub-gen v0.20.0 (E:\\persarb\\worktrees\\backpack-offline-native\\patches\\pyo3-stub-gen)\n    Checking pyo3-async-runtimes v0.29.0\n    Checking nautilus-model v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\model)\n    Checking nautilus-cryptography v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\cryptography)\n    Checking nautilus-network v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\network)\n    Checking nautilus-analysis v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\analysis)\n    Checking nautilus-execution v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\execution)\n    Checking nautilus-portfolio v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\portfolio)\n    Checking nautilus-persistence v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\persistence)\n    Checking nautilus-trading v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\trading)\n    Checking nautilus-risk v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\risk)\n    Checking nautilus-live v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\live)\n    Checking nautilus-data v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\data)\n    Checking nautilus-system v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\system)\n    Checking nautilus-backpack v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\adapters\\backpack)\n    Finished `dev` profile [unoptimized] target(s) in 13.57s\n"
+      }
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "nautilus-backpack",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "blocking": false,
+      "environment": {
+        "CARGO_BUILD_WARNINGS": "allow"
+      },
+      "environment_exceptions": [
+        "MSVC import-library linker notice; Clippy -D warnings retained"
+      ],
+      "exit_code": 0,
+      "duration_ms": 8062,
+      "stdout": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\clippy.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\native-checks-9569b9b3ff-logs\\clippy.stderr.log",
+        "sha256": "fa45ad36d7fc744f7afc9d5b8bcd4fe3aae5268d633ccf4bad4d2df7011acbd4",
+        "bytes": 957,
+        "tail": "   Compiling nautilus-common v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\common)\n    Checking nautilus-portfolio v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\portfolio)\n    Checking nautilus-execution v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\execution)\n    Checking nautilus-data v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\data)\n    Checking nautilus-risk v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\risk)\n    Checking nautilus-trading v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\trading)\n    Checking nautilus-system v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\system)\n    Checking nautilus-live v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\live)\n    Checking nautilus-backpack v0.63.0 (E:\\persarb\\worktrees\\backpack-offline-native\\crates\\adapters\\backpack)\n    Finished `dev` profile [unoptimized] target(s) in 7.90s\n"
+      }
+    }
+  ]
+}
