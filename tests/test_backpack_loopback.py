@@ -199,3 +199,54 @@ def test_invalid_durable_recovery_plan_is_refused(tmp_path, extra):
     value.update(extra)
     with pytest.raises(BackpackConfigError):
         parse_loopback_plan(value, tmp_path)
+
+
+def test_initial_admission_waits_for_actual_cache_quote_matching_native_telemetry(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    class FakeCache:
+        current_quote = None
+        def orders(self, **kwargs):
+            return []
+        def quote(self, instrument):
+            return self.current_quote
+
+    class FakeStrategy:
+        def __init__(self):
+            self.cache = FakeCache()
+            self.order_factory = SimpleNamespace(limit=lambda instrument, side, quantity, price, **kwargs:
+                SimpleNamespace(client_order_id="one-original-order", quantity=quantity, price=price))
+        def submit_order(self, order):
+            calls.append("submit")
+
+    calls = []
+    scalar = SimpleNamespace(from_str=lambda value: value)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.trading", SimpleNamespace(Strategy=FakeStrategy))
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model", SimpleNamespace(
+        InstrumentId=scalar, OrderSide=SimpleNamespace(BUY="BUY"), Price=scalar, Quantity=scalar,
+        TimeInForce=SimpleNamespace(GTC="GTC")))
+    monkeypatch.setitem(sys.modules, "nautilus_trader.adapters.backpack", SimpleNamespace(
+        BackpackLoopbackAccountFacts=lambda **kwargs: kwargs))
+    plan = parse_loopback_plan(loopback_document(), tmp_path)
+    evidence = SimpleNamespace(limit_reached=False, actor_failure=None, extra_summary={},
+                               record=lambda *args: None)
+    control = SimpleNamespace(
+        begin_session=lambda: calls.append("begin") or "session",
+        accept_account=lambda *args: calls.append("account"),
+        refresh_market=lambda *args: calls.append("market"))
+    strategy = backpack_loopback._strategy(plan, evidence, control)
+    strategy.on_start()
+    health = {"public": {"quotes_fresh": {plan.scenario.symbol: True}, "connected": True,
+                         "quote_event_ns": {plan.scenario.symbol: "200"}},
+              "account": {"rest_snapshot_observed": True, "transport_connected": True,
+                          "evidence_gaps": []}}
+    strategy.advance(health)
+    assert calls == [] and strategy.primary is None
+    strategy.cache.current_quote = SimpleNamespace(ts_event=100)
+    strategy.advance(health)
+    assert calls == [] and strategy.primary is None
+    strategy.cache.current_quote = SimpleNamespace(ts_event=200)
+    strategy.advance(health)
+    assert calls == ["begin", "account", "market", "submit"]
+    strategy.advance(health)
+    assert calls == ["begin", "account", "market", "submit"]

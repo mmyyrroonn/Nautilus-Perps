@@ -71,6 +71,12 @@ def _strategy(plan, evidence, control):
                         or not health["account"]["transport_connected"]
                         or not health["public"]["connected"]):
                     return
+                # Adapter telemetry can precede the engine applying the emitted quote.
+                # Begin admission only when the actual cache holds that same observation.
+                quote = self.cache.quote(self.instrument)
+                quote_event_ns = health["public"].get("quote_event_ns", {}).get(plan.scenario.symbol)
+                if quote is None or str(quote.ts_event) != quote_event_ns:
+                    return
                 try:
                     self.session = control.begin_session()
                     observed_at_ms = time.time_ns() // 1_000_000

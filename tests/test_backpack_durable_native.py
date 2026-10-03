@@ -146,8 +146,31 @@ asyncio.run(run_loopback(parse_loopback_plan(json.loads(path.read_text()),path.p
                         if len(stored["state"]["fills"]) == 1:
                             break
                     await asyncio.sleep(0.02)
-                assert stored and len(stored["state"]["fills"]) == 1
-                assert process.returncode is None
+                if not stored or len(stored["state"]["fills"]) != 1 or process.returncode is not None:
+                    diagnostics = {
+                        "durable_receipts": len(stored["state"]["fills"]) if stored else None,
+                        "post_count": len(peer.posts), "process_returncode": process.returncode,
+                        "child_reports": [], "child_event_kinds": [],
+                    }
+                    for path in plan.output_dir.glob("*/summary.json"):
+                        try:
+                            summary = json.loads(path.read_text())
+                        except (OSError, json.JSONDecodeError):
+                            continue
+                        diagnostics["child_reports"].append({
+                            "status": summary.get("status"), "failure": summary.get("failure")})
+                    for path in plan.output_dir.glob("*/events.jsonl"):
+                        try:
+                            lines = path.read_text().splitlines()
+                        except OSError:
+                            continue
+                        for line in lines:
+                            try:
+                                row = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue  # A live child can still be writing its final line.
+                            diagnostics["child_event_kinds"].append(row.get("kind"))
+                    assert False, diagnostics
                 process.kill()
                 await asyncio.wait_for(process.wait(), 5)
             finally:
