@@ -224,20 +224,25 @@ is projected from the actual native current-session `CancelPending` health marke
 which is set only after a matching HTTP 202 receipt. It is independent of the shutdown
 count and is sampled again before native disposal.
 
-`scenario_completed` describes observed finite scenario steps plus native unresolved
-cancel evidence where requested. It does not mean the execution is settled or that exit
-is safe. Full evidence retains `execution_settled=false`, `flat_verified=false`, actual
-engine/cache balances, orders, position exposure and fees, pending true fill reports and
-the native owner's authoritative sticky shutdown report. A duplicate true trade updates
-native economics once, but the fill remains pending: this entry exports no Python
-economic acknowledgement callback and implements no ledger. No cache or portfolio
-observation releases native capacity or produces a durable economic receipt.
+`scenario_completed` describes observed finite steps plus requested pending-cancel or
+native reconciled-terminal evidence. It is independent of settled execution and flatness.
+With the default `durable_economics=false`, true fills stay pending after engine delivery.
+With the opt-in enabled, `economic_consumer` reports actual native checkpoint revisions,
+receipt counts and pending fills. Only committed native receipts can authorize the native
+fill acknowledgement; Python supplies neither a receipt payload nor a parallel ledger.
 
-At a report limit the compact summary retains the native shutdown snapshot, actual
-pending fill report count, `execution_settled=false`, `flat_verified=false` and an explicit
-`exposure_unknown=true`. It cannot preserve every domain object or exact exposure detail;
-missing details never mean zero positions or a clean stop. Loopback plans require at least
-8 KiB of report budget.
+The summary derives `execution_settled`, `flat_verified` and `exposure_unknown` from the
+actual native shutdown report and pending fills. A matched terminal order, a durable
+receipt and a current complete synthetic account-flat snapshot are separate evidence.
+The native terminal reconciler invalidates pre-reconciliation account facts. Cache or
+Portfolio zero alone never supplies flat authority; a late true fill invalidates the
+previous conclusion. Clean is possible with complete fresh evidence in an owned peer;
+missing/expired account evidence or remaining exposure keeps shutdown dirty.
+
+At a report limit the compact summary retains authoritative native shutdown and pending
+counts, including their independent economic and exposure conclusions. Missing domain
+objects or dropped records are never interpreted as zero positions. Loopback plans require
+at least 8 KiB of report budget.
 
 The overall observation status can be `completed` while native shutdown is dirty and a
 position remains open. Inspect `scenario_completed`, `native_health.loopback.pending_fills`,
@@ -261,3 +266,39 @@ The final wheel passed 163 complete Backpack tests without skips and the actual
 CLI observed one true fill, duplicate suppression and matching cancel 202 while
 retaining pending economic acknowledgement, dirty shutdown and a real open position.
 Scenario completion does not establish settled execution or Flat.
+
+## Opt-in native economic recovery
+
+Set root-level `durable_economics=true` in the explicit loopback plan. The native consumer
+stores exact account, order and position state together with true-trade receipts under
+`journal_dir/economic-consumer`; it verifies both native order and position fill events,
+including exact commission amount and currency, before committing an acknowledgement.
+The checkpoint is locked, checksummed and atomically replaced. Directory, paired peer
+origins, account, trader, execution client and complete symbol allowlist bind its scope.
+A corrupt, missing-after-initialization or mismatched checkpoint fails closed.
+
+Restart using the same peer origins, scope and journal with `recovery_only=true`.
+The native LiveNode builder restores typed cache state and rebuilds Portfolio/indexes
+before event delivery; the runner submits no fresh scenario order in this mode. Replaying
+a true trade cannot apply its quantity or fee twice. A saved initialized order whose
+original POST was actually acknowledged can replay that genuine acknowledgement before
+its recovered fill. An uncertain POST is never resent or adopted by numeric clientId.
+The normal submit mode rejects an existing recovered order to prevent a new scenario
+from silently trading against an old journal.
+
+`persist_economics()` and `reconcile_terminal_evidence(opaque_session)` accept no caller
+provided economic receipt, fill or terminal report. Pending evidence stays pending when
+actual native consumption is missing. A failed checkpoint stops progress and poisons the
+store until reopening. Snapshots are bounded to 64 MiB and the configured receipt budget;
+there is no journal pruning or long-running storage acceptance in this finite runner.
+
+Windows evidence covers abrupt process termination and restart, not power-loss durability.
+The account recovery reader has a finite lookback (default one hour), row/page caps and
+unknown venue replication/retention guarantees. A prolonged outage or incomplete history
+cannot establish completeness or current flatness. Continuous reconciliation remains
+explicitly disabled exactly as in the historical finite runner; this option does not
+establish production account readiness, production mutations or continuous operation.
+
+Regression coverage lives in `test_backpack_durable_native.py` and
+`test_backpack_terminal_native.py`, alongside the unchanged historical pending/dirty cases.
+The old PR #25 report remains an immutable record of its earlier candidate.

@@ -3,6 +3,10 @@ schema_version = 1
 mode = "loopback-execution"
 mutation_budget_ms = 1000
 receive_window_ms = 5000
+# Opt in to the native consumer snapshot in the same identity journal.
+durable_economics = false
+# Reopen an existing snapshot without submitting another scenario order.
+recovery_only = false
 
 [session]
 schema_version = 1

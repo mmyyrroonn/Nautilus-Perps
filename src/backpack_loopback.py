@@ -55,7 +55,17 @@ def _strategy(plan, evidence, control):
         def advance(self, health):
             if not self.started or evidence.limit_reached or evidence.actor_failure:
                 return
+            if plan.recovery_only:
+                consumer = health["loopback"].get("economic_consumer")
+                evidence.extra_summary["scenario_steps_observed"] = bool(
+                    consumer and consumer["durable_receipts"] > 0
+                    and health["account"]["rest_snapshot_observed"])
+                return
             if self.primary is None:
+                if plan.durable_economics and self.cache.orders(venue=self.instrument.venue):
+                    evidence.actor_failure = "loopback_existing_state_requires_recovery_only"
+                    evidence.handle.stop()
+                    return
                 if (not health["public"]["quotes_fresh"].get(plan.scenario.symbol, False)
                         or not health["account"]["rest_snapshot_observed"]
                         or not health["account"]["transport_connected"]
@@ -159,6 +169,9 @@ def _strategy(plan, evidence, control):
 
         def on_order_filled(self, event):
             self.event("order_filled", event)
+            if plan.recovery_only:
+                self.fills += 1
+                return
             if self.primary is None or event.client_order_id != self.primary.client_order_id:
                 evidence.actor_failure = "loopback_unexpected_fill"
                 evidence.handle.stop()
@@ -183,24 +196,39 @@ class LoopbackTelemetry:
         shutdown = self.control.shutdown_report_json()
         report = None if shutdown is None else json.loads(shutdown)
         pending_fills = json.loads(self.control.pending_fills_json())
-        self.evidence.compact_summary.update(pending_fill_count=len(pending_fills),
+        consumer = self.evidence.extra_summary.get("economic_consumer")
+        acknowledged = bool(consumer and consumer["durable_receipts"] > 0 and not pending_fills)
+        self.evidence.extra_summary["durable_economic_acknowledgement"] = acknowledged
+        self.evidence.compact_summary.update(durable_economic_acknowledgement=acknowledged,
+            economic_consumer=consumer, pending_fill_count=len(pending_fills),
             native_shutdown_report=report,
             dirty_shutdown=None if report is None else report["dirty"], cancel202_observed=cancel202)
         if report is not None:
+            settled = not report["dirty"] and not pending_fills
+            flat = not report["positions_unknown_or_nonzero"]
+            self.evidence.extra_summary.update(execution_settled=settled, flat_verified=flat)
+            self.evidence.compact_summary.update(execution_settled=settled, flat_verified=flat,
+                                                 exposure_unknown=not flat)
+            terminal = self.evidence.extra_summary.get("terminal_evidence") or {}
+            reconciled = any(row["reconciled"] for row in terminal.get("orders", []))
             pending = report["pending_cancellations"] > 0
             self.evidence.extra_summary["cancel_unsettled_observed"] = pending
             self.evidence.extra_summary["scenario_completed"] = (
                 self.evidence.extra_summary.get("scenario_steps_observed", False)
-                and (not self.evidence.plan.scenario.cancel_after_fill or pending))
+                and (self.evidence.plan.recovery_only
+                     or not self.evidence.plan.scenario.cancel_after_fill
+                     or pending or settled or reconciled))
             self.evidence.compact_summary.update(
                 scenario_completed=self.evidence.extra_summary["scenario_completed"],
                 cancel_unsettled_observed=pending)
             if not self.evidence.extra_summary["scenario_completed"]:
                 self.evidence.actor_failure = self.evidence.actor_failure or "loopback_scenario_incomplete"
+        snapshot["durable_economic_acknowledgement"] = acknowledged
         snapshot["loopback"] = {"health": json.loads(self.control.telemetry_snapshot_json()),
             "pending_fills": pending_fills,
             "shutdown_report": report,
-            "durable_economic_acknowledgement": False}
+            "durable_economic_acknowledgement": acknowledged,
+            "economic_consumer": consumer}
         return json.dumps(snapshot)
 
 
@@ -233,7 +261,9 @@ def build_loopback(plan, evidence, seed):
     evidence.extra_summary["authority_expires_at_ms"] = authority["expires_at_ms"]
     restricted = BackpackLoopbackExecutionClientConfig(account, public,
         authority=BackpackLoopbackExecutionAuthority(**authority),
-        mutation_budget_ms=plan.mutation_budget_ms, receive_window_ms=plan.receive_window_ms)
+        mutation_budget_ms=plan.mutation_budget_ms, receive_window_ms=plan.receive_window_ms,
+        **({"economic_state_directory": str(plan.economic_state_directory)}
+           if plan.durable_economics else {}))
     factory = BackpackLoopbackExecutionClientFactory()
     node = _account_node(plan, evidence, public, restricted, data_factory, factory,
                          name="BACKPACK-LOOPBACK", exec_config=LiveExecutionEngineConfig(
@@ -247,7 +277,30 @@ def build_loopback(plan, evidence, seed):
         account_poll(owner, writer)
         if writer.limit_reached or writer.actor_failure:
             return
-        strategy.advance(json.loads(LoopbackTelemetry(public, account, control, evidence).telemetry_snapshot_json()))
+        telemetry = LoopbackTelemetry(public, account, control, evidence)
+        health = json.loads(telemetry.telemetry_snapshot_json())
+        if (plan.durable_economics and health["account"]["rest_snapshot_observed"]
+                and health["account"]["transport_connected"]):
+            try:
+                consumer = json.loads(control.persist_economics())
+            except RuntimeError:
+                writer.actor_failure = "loopback_economic_checkpoint_failed"
+                writer.handle.stop()
+                return
+            if consumer != writer.extra_summary.get("economic_consumer"):
+                writer.record("native_economic_checkpoint", consumer)
+            writer.extra_summary["economic_consumer"] = consumer
+            health = json.loads(telemetry.telemetry_snapshot_json())
+        strategy.advance(health)
+        if plan.durable_economics and strategy.session is not None:
+            try:
+                terminal = json.loads(control.reconcile_terminal_evidence(strategy.session))
+            except RuntimeError:
+                # A disconnected/replaced session carries no current terminal proof.
+                terminal = None
+            if terminal != writer.extra_summary.get("terminal_evidence"):
+                writer.record("native_terminal_evidence", {"evidence": terminal})
+            writer.extra_summary["terminal_evidence"] = terminal
     evidence.poll = poll
     evidence.final_failure_check = loopback_final_failure
     previous_failure = evidence.failure_check
@@ -259,6 +312,8 @@ def build_loopback(plan, evidence, seed):
         local_synthetic_mutations=True, production_writes_supported=False,
         native_inflight_checks_enabled=False, continuous_reconciliation=False,
         durable_economic_acknowledgement=False, flat_verified=False,
+        durable_economics_enabled=plan.durable_economics, recovery_only=plan.recovery_only,
+        economic_consumer=None,
         shutdown_semantics="native owner report is authoritative; scenario completion is not clean settlement",
         cancel_observation_semantics="native unsettled count combines Unknown/Pending/ResponseObserved; does not prove 202 receipt")
     return node, LoopbackTelemetry(public, account, control, evidence), {
@@ -294,8 +349,9 @@ def main(argv=None):
             raise BackpackConfigError("loopback execution CLI requires a source-bound candidate wheel, SHA256 and provenance")
         summary, path = asyncio.run(run_loopback(plan, candidate=candidate))
         print(json.dumps({"status": summary["status"], "failure": summary["failure"],
-            "scenario_completed": summary.get("scenario_completed", False), "execution_settled": False,
-            "flat_verified": False, "summary_path": str(path)}))
+            "scenario_completed": summary.get("scenario_completed", False),
+            "execution_settled": summary.get("execution_settled", False),
+            "flat_verified": summary.get("flat_verified", False), "summary_path": str(path)}))
         return 0 if summary["status"] == "completed" else 1
     except (BackpackConfigError, OSError) as error:
         reason = str(error) if isinstance(error, BackpackConfigError) else "cannot read or publish session files"

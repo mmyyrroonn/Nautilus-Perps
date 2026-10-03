@@ -162,6 +162,8 @@ class BackpackLoopbackPlan:
     scenario: LoopbackScenario
     mutation_budget_ms: int
     receive_window_ms: int
+    durable_economics: bool = False
+    recovery_only: bool = False
 
     def __getattr__(self, name):
         return getattr(self.session, name)
@@ -174,11 +176,18 @@ class BackpackLoopbackPlan:
     def output_dir(self):
         return self.session.output_root / self.namespace / self.mode
 
+    @property
+    def economic_state_directory(self):
+        return self.journal_dir / "economic-consumer" if self.durable_economics else None
+
     def document(self):
         return {**self.session.document(), "mode": self.mode, "output_dir": str(self.output_dir),
             "authority": self.authority.document(), "synthetic_account": self.facts.document(),
             "scenario": self.scenario.document(), "mutation_budget_ms": self.mutation_budget_ms,
             "receive_window_ms": self.receive_window_ms,
+            "durable_economics": self.durable_economics, "recovery_only": self.recovery_only,
+            "economic_state_directory": (str(self.economic_state_directory)
+                if self.economic_state_directory is not None else None),
             "synthetic_assertion_timestamp": "local time at first admitted session; not venue evidence",
             "authority_expiry": "anchored once at runtime construction; never renewed",
             "loopback_mutations_requested": True, "production_writes_supported": False,
@@ -188,7 +197,7 @@ class BackpackLoopbackPlan:
 def parse_loopback_plan(document, base_dir):
     fields = {"schema_version", "mode", "session", "authority", "synthetic_account", "scenario",
               "mutation_budget_ms", "receive_window_ms"}
-    _keys(document, fields, fields, "loopback execution plan")
+    _keys(document, fields | {"durable_economics", "recovery_only"}, fields, "loopback execution plan")
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise BackpackConfigError("unsupported loopback schema_version")
     if document["mode"] != "loopback-execution":
@@ -208,7 +217,11 @@ def parse_loopback_plan(document, base_dir):
     scenario = LoopbackScenario.parse(document["scenario"], session, authority, facts)
     mutation = _integer(document["mutation_budget_ms"], 1, session.request_timeout_secs * 1000, "mutation_budget_ms")
     window = _integer(document["receive_window_ms"], 1, 60_000, "receive_window_ms")
-    return BackpackLoopbackPlan(session, authority, facts, scenario, mutation, window)
+    durable = _flag(document.get("durable_economics", False), "durable_economics")
+    recovery = _flag(document.get("recovery_only", False), "recovery_only")
+    if recovery and not durable:
+        raise BackpackConfigError("recovery_only requires durable_economics")
+    return BackpackLoopbackPlan(session, authority, facts, scenario, mutation, window, durable, recovery)
 
 
 def load_loopback_plan(path):

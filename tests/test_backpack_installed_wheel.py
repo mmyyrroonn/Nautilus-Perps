@@ -29,6 +29,7 @@ BACKPACK_EXPORTS = {
     "BackpackLoopbackControl": (
         "begin_session", "accept_account", "refresh_market", "invalidate",
         "pending_fills_json", "telemetry_snapshot_json", "shutdown_report_json",
+        "persist_economics", "reconcile_terminal_evidence",
     ),
     "BackpackLoopbackExecutionAuthority": (),
     "BackpackLoopbackExecutionClientConfig": ("control",),

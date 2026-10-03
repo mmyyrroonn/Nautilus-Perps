@@ -177,3 +177,25 @@ def test_compact_publish_preserves_native_unknown_dirty_counts_within_budget(tmp
 def test_post_stop_requires_authoritative_native_shutdown_report():
     assert backpack_loopback.loopback_final_failure({"loopback": {"shutdown_report": None}}) == "loopback_shutdown_report_unavailable"
     assert backpack_loopback.loopback_final_failure({"loopback": {"shutdown_report": {"dirty": True}}}) is None
+
+
+def test_durable_recovery_plan_is_explicit_and_scoped_to_journal(tmp_path):
+    value = loopback_document()
+    value.update(durable_economics=True, recovery_only=True)
+    plan = parse_loopback_plan(value, tmp_path)
+    assert plan.economic_state_directory == plan.journal_dir / "economic-consumer"
+    assert plan.document()["recovery_only"]
+    assert not plan.document()["durable_economic_acknowledgement"]
+    assert not plan.document()["production_writes_supported"]
+    assert not plan.economic_state_directory.exists()
+
+
+@pytest.mark.parametrize("extra", [
+    {"recovery_only": True}, {"durable_economics": 1},
+    {"durable_economics": True, "recovery_only": "yes"},
+])
+def test_invalid_durable_recovery_plan_is_refused(tmp_path, extra):
+    value = loopback_document()
+    value.update(extra)
+    with pytest.raises(BackpackConfigError):
+        parse_loopback_plan(value, tmp_path)
