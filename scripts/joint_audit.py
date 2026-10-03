@@ -256,6 +256,52 @@ def _absolute_program(value: Any) -> Path | None:
         return None
 
 
+
+def _guard_binding_ok(
+    guard: dict[str, Any], integration: Any, installed: Any,
+    *, app_root: Path, native_root: Path, guard_path: Path | None,
+) -> bool:
+    integration = _object(integration)
+    command = guard.get("command")
+    runner_command = integration.get("runner_command")
+    if (
+        not isinstance(command, list) or len(command) < 2
+        or any(not isinstance(argument, str) or not argument or "\0" in argument for argument in command)
+        or not isinstance(runner_command, list) or command != runner_command
+    ):
+        return False
+    interpreter = _absolute_program(command[0])
+    candidate = _object(integration.get("candidate"))
+    if (
+        interpreter is None
+        or interpreter != _absolute_program(_object(_object(installed).get("installed")).get("interpreter"))
+        or interpreter != _absolute_program(_object(candidate.get("installed")).get("interpreter"))
+        or _absolute_program(command[1]) != (app_root / "scripts" / "test_integration.py").resolve()
+    ):
+        return False
+    network = _object(integration.get("network"))
+    raw_guard = network.get("guard_record")
+    if (
+        network.get("policy") != "loopback-only"
+        or network.get("enforcement") != "offline_guard.py"
+        or guard_path is None or not isinstance(raw_guard, str) or not raw_guard or "\0" in raw_guard
+    ):
+        return False
+    try:
+        recorded_guard = Path(raw_guard)
+        if not recorded_guard.is_absolute():
+            recorded_guard = app_root / recorded_guard
+        if recorded_guard.resolve() != guard_path.resolve():
+            return False
+    except (OSError, ValueError, RuntimeError):
+        return False
+    workspaces = guard.get("workspaces")
+    if not isinstance(workspaces, list) or len(workspaces) != 2:
+        return False
+    roots = {_absolute_program(workspace) for workspace in workspaces}
+    return roots == {app_root.resolve(), native_root.resolve()}
+
+
 def _program_firewall_ok(guard: dict[str, Any], installed: Any, integration_candidate: Any) -> bool:
     enforcement = _object(guard.get("enforcement"))
     discovery = _object(guard.get("interpreter_discovery"))
@@ -515,6 +561,8 @@ def main() -> int:
         and guard.get("status") == "passed"
         and _zero(guard.get("exit_code"))
         and guard.get("policy") == "loopback-only"
+        and _guard_binding_ok(guard, integration, installed, app_root=app_root, native_root=native_root,
+                              guard_path=args.offline_guard.resolve() if args.offline_guard else None)
         and enforcement.get("kind") in ("network-namespace", "program-firewall")
         and (
             (enforcement.get("kind") == "network-namespace" and _zero(enforcement.get("probe_exit_code")))

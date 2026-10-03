@@ -101,6 +101,7 @@ def acceptance(tmp_path, monkeypatch):
         "wheel": provenance["wheel"],
         "installed": {
             "direct_url": wheel.as_uri(), "native_module_sha256": binaries[binary],
+            "interpreter": str(app / ".venv" / "python.exe"),
             "adapter_stub_sha256": stubs,
             "adapter_exports": {"backpack": {name: True for name in audit.BACKPACK_EXPORTS}},
         },
@@ -134,6 +135,27 @@ def acceptance(tmp_path, monkeypatch):
                        "item_passed": 1188, "subtests_passed": 97, "skipped": 0},
         },
     }
+
+    interpreter = candidate["installed"]["interpreter"]
+    runner_command = [
+        interpreter, str(app / "scripts" / "test_integration.py"),
+        "--additional-adapter", "backpack", "--python", interpreter,
+        "--wheel", str(wheel), "--provenance", str(provenance_path),
+        "--sha256", provenance["wheel"]["sha256"], "--native-root", str(native),
+        "--expected-app-sha", app_sha, "--expected-native-sha", native_sha,
+        "--offline-guard", str(tmp_path / "offline-guard.json"),
+        "--require-clean", "--fail-on-skip",
+        *[argument for node in audit.REQUIRED_TESTS for argument in ("--required-test", node)],
+        "--config", str(app / "config" / "limits.toml"),
+        "--output", str(tmp_path / "integration.json"), "tests",
+    ]
+    records["integration"]["runner_command"] = list(runner_command)
+    records["integration"]["network"] = {
+        "policy": "loopback-only", "enforcement": "offline_guard.py",
+        "guard_record": str(tmp_path / "offline-guard.json"),
+    }
+    records["offline-guard"]["command"] = list(runner_command)
+    records["offline-guard"]["workspaces"] = [str(app), str(native)]
 
     def run():
         args = ["joint_audit.py", "--output", str(tmp_path / "audit.json"),
@@ -320,11 +342,18 @@ def _program_firewall_record(records):
         "status": "verified", "exit_code": 0, "launcher": launcher,
         "executable": launcher, "base_executable": host, "process_executable": host,
     }
+    original_interpreter = records["installed"]["installed"]["interpreter"]
+    runner_command = [
+        launcher if argument == original_interpreter else argument
+        for argument in records["integration"]["runner_command"]
+    ]
+    workspaces = records["offline-guard"]["workspaces"]
+    records["integration"]["runner_command"] = runner_command
     records["installed"]["installed"]["interpreter"] = launcher
     records["integration"]["candidate"]["installed"]["interpreter"] = launcher
     records["offline-guard"] = {
         "status": "passed", "exit_code": 0, "policy": "loopback-only",
-        "command": [launcher, "scripts/test_integration.py"],
+        "command": list(runner_command), "workspaces": list(workspaces),
         "firewall_cleanup": True, "interpreter_discovery": discovery,
         "enforcement": {
             "kind": "program-firewall", "install_exit_code": 0,
@@ -378,3 +407,50 @@ def test_program_firewall_requires_verified_and_fully_blocked_interpreter(accept
     if change not in ("missing_discovery", "different_discovery"):
         guard["enforcement"]["interpreter_discovery"] = copy.deepcopy(discovery)
     assert "offline_network" in run()["failure_layers"]
+
+
+
+@pytest.mark.parametrize("kind", ["network-namespace", "program-firewall"])
+@pytest.mark.parametrize("change", [
+    "unrelated_guard_command", "missing_runner_command", "changed_wheel_argument",
+    "missing_fail_on_skip", "wrong_guard_file", "missing_guard_file",
+    "unenforced_network", "missing_workspace", "different_workspace",
+    "different_interpreter", "different_runner_script",
+])
+def test_guard_evidence_must_belong_to_the_recorded_integration(acceptance, kind, change):
+    records, run = acceptance
+    if kind == "program-firewall":
+        _program_firewall_record(records)
+    guard = records["offline-guard"]
+    integration = records["integration"]
+    if change == "unrelated_guard_command":
+        guard["command"] = [guard["command"][0], "-c", "pass"]
+    elif change == "missing_runner_command":
+        del integration["runner_command"]
+    elif change == "changed_wheel_argument":
+        guard["command"][guard["command"].index("--wheel") + 1] += ".other.whl"
+    elif change == "missing_fail_on_skip":
+        guard["command"].remove("--fail-on-skip")
+    elif change == "wrong_guard_file":
+        integration["network"]["guard_record"] += ".other.json"
+    elif change == "missing_guard_file":
+        del integration["network"]["guard_record"]
+    elif change == "unenforced_network":
+        integration["network"]["policy"] = "not-enforced"
+    elif change == "missing_workspace":
+        guard["workspaces"].pop()
+    elif change == "different_workspace":
+        guard["workspaces"][1] = str(Path(guard["workspaces"][1]) / "other")
+    elif change == "different_interpreter":
+        integration["candidate"]["installed"]["interpreter"] = str(Path(guard["command"][0]).with_name("other-python.exe"))
+    else:
+        # Even matching full argv must name this checkout's integration runner.
+        guard["command"][1] = str(Path(guard["command"][1]).with_name("other-runner.py"))
+        integration["runner_command"] = list(guard["command"])
+    assert "offline_network" in run()["failure_layers"]
+
+
+def test_guard_record_path_can_be_relative_to_application_root(acceptance):
+    records, run = acceptance
+    records["integration"]["network"]["guard_record"] = "../offline-guard.json"
+    assert run()["status"] == "passed"

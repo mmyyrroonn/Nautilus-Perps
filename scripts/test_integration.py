@@ -166,6 +166,7 @@ def main() -> int:
         "run_id": uuid.uuid4().hex,
         "generated_at": datetime.now(UTC).isoformat(),
         "status": "not_started",
+        "runner_command": [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
         "failure_layer": "preflight",
         "source_refs": {
             "app": {"expected": args.expected_app_sha},
