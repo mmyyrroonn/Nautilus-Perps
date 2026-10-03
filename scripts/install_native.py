@@ -108,6 +108,8 @@ def main() -> int:
     parser.add_argument("--provenance", type=Path, help="explicit local experiment provenance")
     parser.add_argument("--sha256", help="explicit local experiment expected wheel SHA-256")
     parser.add_argument("--local-override", action="store_true")
+    parser.add_argument("--additional-adapter", action="append", default=[],
+                        help="require this adapter's installed stub and exports")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -189,6 +191,7 @@ def main() -> int:
         installed = verify(
             wheel, expected_sha, provenance=provenance,
             require_source_binding=True, require_ondo=True,
+            additional_adapters=tuple(args.additional_adapter),
         )
         installed["run_id"] = uuid.uuid4().hex
         installed["generated_at"] = datetime.now(UTC).isoformat()

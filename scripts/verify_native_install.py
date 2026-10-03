@@ -25,7 +25,44 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-SOURCE_PATHS = ("src", "scripts", "tests", "config", "pyproject.toml", "uv.lock", ".python-version")
+SOURCE_PATHS = ("src", "scripts", "tests", "config", ".github", "pyproject.toml", "uv.lock", ".python-version")
+
+BACKPACK_EXPORTS = (
+    "BackpackCredential",
+    "BackpackInstrumentEconomics",
+    "BackpackLoopbackAccountFacts",
+    "BackpackLoopbackExecutionAuthority",
+    "BackpackDataClientConfig",
+    "BackpackDataClientConfig.telemetry_snapshot_json",
+    "BackpackDataClientFactory",
+    "BackpackDataClientFactory.name",
+    "BackpackDataClientFactory.capabilities_json",
+    "BackpackExecutionClientConfig",
+    "BackpackExecutionClientConfig.telemetry_snapshot_json",
+    "BackpackExecutionClientFactory",
+    "BackpackExecutionClientFactory.name",
+    "BackpackExecutionClientFactory.capabilities_json",
+    "BackpackLoopbackExecutionClientConfig",
+    "BackpackLoopbackExecutionClientConfig.control",
+    "BackpackLoopbackExecutionClientFactory",
+    "BackpackLoopbackExecutionClientFactory.name",
+    "BackpackLoopbackExecutionClientFactory.capabilities_json",
+    "BackpackLoopbackControl",
+    "BackpackLoopbackControl.begin_session",
+    "BackpackLoopbackControl.accept_account",
+    "BackpackLoopbackControl.refresh_market",
+    "BackpackLoopbackControl.invalidate",
+    "BackpackLoopbackControl.pending_fills_json",
+    "BackpackLoopbackControl.telemetry_snapshot_json",
+    "BackpackLoopbackControl.shutdown_report_json",
+    "BackpackLoopbackSession",
+    "BackpackLoopbackSession.generation",
+    "BackpackQuota",
+    "BackpackQuota.shares_scope",
+    "BackpackPublicReplay",
+    "BackpackPublicReplay.instrument",
+    "BackpackPublicReplay.apply_record",
+)
 
 
 def git_identity(root: Path) -> dict[str, object]:
@@ -33,20 +70,26 @@ def git_identity(root: Path) -> dict[str, object]:
         return subprocess.check_output(["git", *args], cwd=root)
 
     tracked = hashlib.sha256()
+    source_files: dict[str, str | None] = {}
     for raw_path in sorted(filter(None, git("ls-files", "-z", "--", *SOURCE_PATHS).split(b"\0"))):
         path = root / raw_path.decode("utf-8", errors="surrogateescape")
         tracked.update(raw_path + b"\0")
         if path.is_file():
-            tracked.update(bytes.fromhex(digest(path)))
+            file_digest = digest(path)
+            tracked.update(bytes.fromhex(file_digest))
+            source_files[raw_path.decode("utf-8", errors="surrogateescape")] = file_digest
         else:
             tracked.update(b"missing")
+            source_files[raw_path.decode("utf-8", errors="surrogateescape")] = None
     untracked = hashlib.sha256()
     for raw_path in sorted(filter(None, git("ls-files", "--others", "--exclude-standard", "-z", "--", *SOURCE_PATHS).split(b"\0"))):
         path = root / raw_path.decode("utf-8", errors="surrogateescape")
         if not path.is_file():
             raise ValueError("an untracked source path is unreadable")
         untracked.update(raw_path + b"\0")
-        untracked.update(bytes.fromhex(digest(path)))
+        file_digest = digest(path)
+        untracked.update(bytes.fromhex(file_digest))
+        source_files[raw_path.decode("utf-8", errors="surrogateescape")] = file_digest
     return {
         "commit": git("rev-parse", "HEAD").decode().strip(),
         "tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
@@ -54,6 +97,7 @@ def git_identity(root: Path) -> dict[str, object]:
         "tracked_content_sha256": tracked.hexdigest(),
         "untracked_sha256": untracked.hexdigest(),
         "source_scope": list(SOURCE_PATHS),
+        "source_files_sha256": source_files,
     }
 
 
@@ -135,6 +179,18 @@ def verify(
         installed_stub = Path(distribution.locate_file(name)).resolve()
         if not installed_stub.is_relative_to(environment) or digest(installed_stub) != expected:
             raise ValueError("installed adapter stub differs from wheel")
+    adapter_exports: dict[str, dict[str, bool]] = {}
+    if "backpack" in additional_adapters:
+        backpack = importlib.import_module("nautilus_trader.adapters.backpack")
+        exports = {}
+        for symbol in BACKPACK_EXPORTS:
+            value = backpack
+            for part in symbol.split("."):
+                value = getattr(value, part, None)
+            if value is None:
+                raise ValueError(f"installed Backpack export is absent: {symbol}")
+            exports[symbol] = True
+        adapter_exports["backpack"] = exports
     if require_ondo:
         from nautilus_trader.adapters.ondo import OndoExecutionClientFactory
 
@@ -158,6 +214,7 @@ def verify(
             "native_module": str(imported),
             "native_module_sha256": native_sha256,
             "adapter_stub_sha256": stub_hashes,
+            "adapter_exports": adapter_exports,
             "direct_url": direct_url,
         },
         "native_provenance": {
@@ -166,6 +223,8 @@ def verify(
             "source_binding": native_provenance.get("source_binding") if native_provenance else None,
             "declared_native": native_provenance.get("declared_native") if native_provenance else None,
             "declared_build": native_provenance.get("declared_build") if native_provenance else None,
+            "source_fingerprint_sha256": native_provenance.get("source_fingerprint_sha256") if native_provenance else None,
+            "build": native_provenance.get("build") if native_provenance else None,
         },
         "strict_source_binding_passed": (
             native_provenance is not None

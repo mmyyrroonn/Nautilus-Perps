@@ -55,6 +55,47 @@ def _ps_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _windows_python_programs(launcher: Path) -> tuple[list[Path], dict[str, object]]:
+    """Discover the selected interpreter's host process without executing test code."""
+    code = (
+        "import ctypes,json,sys; "
+        "image=ctypes.create_unicode_buffer(32768); "
+        "length=ctypes.windll.kernel32.GetModuleFileNameW(None,image,len(image)); "
+        "assert 0 < length < len(image); "
+        "print(json.dumps(dict(executable=sys.executable, "
+        "base_executable=sys._base_executable, process_executable=image.value)))"
+    )
+    discovery: dict[str, object] = {"status": "failed", "launcher": _display(launcher)}
+    try:
+        result = subprocess.run(
+            [str(launcher), "-I", "-S", "-c", code], capture_output=True, text=True,
+            check=False, timeout=15,
+        )
+        discovery["exit_code"] = result.returncode
+        if result.returncode != 0:
+            raise ValueError("selected Python process image discovery failed")
+        value = json.loads(result.stdout)
+        if not isinstance(value, dict):
+            raise TypeError("selected Python process image discovery is not an object")
+        paths = {}
+        for field in ("executable", "base_executable", "process_executable"):
+            raw = value.get(field)
+            if not isinstance(raw, str) or not raw:
+                raise ValueError("selected Python process image discovery is incomplete")
+            path = Path(raw)
+            if not path.is_absolute() or not path.is_file() or path.suffix.lower() != ".exe":
+                raise ValueError("selected Python process image executable is unavailable")
+            paths[field] = path.resolve()
+        if paths["executable"] != launcher.resolve():
+            raise ValueError("selected Python process image names another interpreter")
+        discovery.update({field: _display(path) for field, path in paths.items()})
+        discovery["status"] = "verified"
+        return list(dict.fromkeys([launcher.resolve(), *paths.values()])), discovery
+    except (OSError, TypeError, ValueError, subprocess.SubprocessError) as exc:
+        discovery["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        return [], discovery
+
+
 def _install_windows_rules(programs: list[Path], run_id: str) -> tuple[list[str], dict[str, object]]:
     names = [
         name
@@ -84,6 +125,7 @@ for ($index = 0; $index -lt $programs.Count; $index++) {{
     return names, {
         "kind": "program-firewall",
         "install_exit_code": result.returncode,
+        "install_stderr": result.stderr[-4000:],
         "programs": [_display(program) for program in programs],
         "rules": names,
         "ipv4_remote_ranges": "all IPv4 /8 ranges except 127.0.0.0/8",
@@ -188,7 +230,14 @@ def main() -> int:
         if system == "Linux":
             wrapped, enforcement = _linux_command(command)
         elif system == "Windows":
+            discovered, discovery = _windows_python_programs(programs[0])
+            record["interpreter_discovery"] = discovery
+            if discovery["status"] != "verified":
+                raise RuntimeError("could not confirm the selected Windows Python process image")
+            programs = list(dict.fromkeys([*discovered, *programs]))
             firewall_rules, enforcement = _install_windows_rules(programs, run_id)
+            enforcement["interpreter_discovery"] = discovery
+            record["enforcement"] = enforcement
             if enforcement["install_exit_code"] != 0:
                 raise RuntimeError("could not install temporary Windows firewall rules")
             wrapped = command
@@ -200,13 +249,17 @@ def main() -> int:
         result_code = result.returncode
         record["exit_code"] = result_code
         record["status"] = "passed" if result.returncode == 0 else "command_failed"
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         record["status"] = "guard_failed"
         record["error"] = {"type": type(exc).__name__, "message": str(exc)}
         result_code = 2
+        record["exit_code"] = result_code
     finally:
         if firewall_rules:
-            record["firewall_cleanup"] = _remove_windows_rules(firewall_rules)
+            try:
+                record["firewall_cleanup"] = _remove_windows_rules(firewall_rules)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                record["firewall_cleanup"] = False
             if not record["firewall_cleanup"]:
                 record["status"] = "guard_failed"
                 record["error"] = {

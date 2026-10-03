@@ -121,8 +121,9 @@ def test_additional_adapter_names_reject_ambiguous_paths(tmp_path, names):
 def test_optional_backpack_stub_gate_is_backward_compatible_and_detects_tampering(tmp_path, monkeypatch):
     """Synthetic file verification only; the real installed LiveNode tests prove runtime behavior."""
     from types import SimpleNamespace
-    from packaging.tags import sys_tags
+
     import verify_native_install as verifier
+    from packaging.tags import sys_tags
     wheel = tmp_path / "candidate.whl"
     environment = tmp_path / "isolated"
     binaries = {"nautilus_trader/_libnautilus.pyd": b"synthetic-native",
@@ -142,16 +143,50 @@ def test_optional_backpack_stub_gate_is_backward_compatible_and_detects_tamperin
         def locate_file(self, name):
             return environment / name
     monkeypatch.setattr(verifier.metadata, "distribution", lambda _: Distribution())
-    monkeypatch.setattr(verifier.importlib, "import_module", lambda _: SimpleNamespace(
-        __file__=str(environment / "nautilus_trader/_libnautilus.pyd")))
+    backpack = SimpleNamespace()
+    for symbol in verifier.BACKPACK_EXPORTS:
+        parts = symbol.split(".")
+        if len(parts) == 1:
+            setattr(backpack, symbol, type(symbol, (), {}))
+        else:
+            setattr(getattr(backpack, parts[0]), parts[1], object())
+    monkeypatch.setattr(verifier.importlib, "import_module", lambda name: backpack
+        if name == "nautilus_trader.adapters.backpack" else SimpleNamespace(
+            __file__=str(environment / "nautilus_trader/_libnautilus.pyd")))
     monkeypatch.setattr(sys, "prefix", str(environment))
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     def check(additional=()):
         return verifier.verify(wheel, digest, provenance=None, require_source_binding=False,
                                require_ondo=False, additional_adapters=additional)
     assert len(check()["installed"]["adapter_stub_sha256"]) == 2
-    assert len(check(("backpack",))["installed"]["adapter_stub_sha256"]) == 3
+    verified = check(("backpack",))
+    assert len(verified["installed"]["adapter_stub_sha256"]) == 3
+    assert all(verified["installed"]["adapter_exports"]["backpack"].values())
+    control = backpack.BackpackLoopbackControl
+    del backpack.BackpackLoopbackControl
+    with pytest.raises(ValueError, match="Backpack export is absent"):
+        check(("backpack",))
+    backpack.BackpackLoopbackControl = control
     (environment / "nautilus_trader/adapters/backpack/__init__.pyi").write_bytes(b"tampered")
     assert len(check()["installed"]["adapter_stub_sha256"]) == 2
     with pytest.raises(ValueError, match="installed adapter stub"):
         check(("backpack",))
+
+
+def test_workflow_content_is_part_of_application_source_manifest(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    workflow = tmp_path / ".github" / "workflows" / "joint.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: original\n", encoding="utf-8")
+    subprocess.run(["git", "config", "user.name", "test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", ".github"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "baseline"], cwd=tmp_path, check=True)
+    before = git_identity(tmp_path)
+    key = ".github/workflows/joint.yml"
+    assert before["source_files_sha256"][key] == hashlib.sha256(workflow.read_bytes()).hexdigest()
+    workflow.write_text("name: changed\n", encoding="utf-8")
+    after = git_identity(tmp_path)
+    assert after["dirty"] is True
+    assert after["tracked_content_sha256"] != before["tracked_content_sha256"]
+    assert after["source_files_sha256"][key] != before["source_files_sha256"][key]

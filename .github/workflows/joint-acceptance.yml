@@ -12,9 +12,15 @@ on:
         description: Full nautilus_trader fork commit SHA
         required: true
         type: string
+      native_wheel_run_id:
+        description: Optional trusted joint run whose platform wheel may be reused
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   joint:
@@ -31,7 +37,9 @@ jobs:
         env:
           APP_SHA: ${{ inputs.app_sha }}
           NATIVE_SHA: ${{ inputs.native_sha }}
+          NATIVE_WHEEL_RUN_ID: ${{ inputs.native_wheel_run_id }}
         run: |
+          if ($env:NATIVE_WHEEL_RUN_ID -and $env:NATIVE_WHEEL_RUN_ID -cnotmatch '^[1-9][0-9]*$') { throw 'native_wheel_run_id must be empty or positive decimal digits' }
           if ($env:APP_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'app_sha must be a lowercase full commit SHA' }
           if ($env:NATIVE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'native_sha must be a lowercase full commit SHA' }
 
@@ -41,6 +49,7 @@ jobs:
         with:
           ref: ${{ inputs.app_sha }}
           path: app
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout native fork
@@ -128,13 +137,19 @@ jobs:
           Push-Location native
           & $nativePython scripts/adapter-evidence/test_native_checks.py
           if ($LASTEXITCODE -ne 0) { throw 'native check tooling regression failed' }
-          & $nativePython scripts/adapter-evidence/native_checks.py --crates nautilus-aster nautilus-ondo nautilus-portfolio --output (Join-Path $evidence 'native-checks.json')
+          & $nativePython scripts/adapter-evidence/native_checks.py --crates nautilus-aster nautilus-ondo nautilus-backpack nautilus-portfolio --output (Join-Path $evidence 'native-checks.json') --logs (Join-Path $evidence 'native-checks-logs')
           if ($LASTEXITCODE -ne 0) { throw 'native adapter checks failed' }
           Pop-Location
 
       - name: Build one source-bound wheel
         id: build
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_SHA: ${{ inputs.app_sha }}
+          NATIVE_SHA: ${{ inputs.native_sha }}
+          NATIVE_WHEEL_RUN_ID: ${{ inputs.native_wheel_run_id }}
+          MATRIX_OS: ${{ matrix.os }}
         run: |
           $native = Join-Path $env:GITHUB_WORKSPACE 'native'
           $app = Join-Path $env:GITHUB_WORKSPACE 'app'
@@ -146,8 +161,130 @@ jobs:
             $nativePython = Join-Path $native '.venv/bin/python'
             $appPython = Join-Path $app '.venv/bin/python'
           }
-          & $appPython (Join-Path $app 'scripts/build_native.py') --native-root $native --native-python $nativePython --output-dir $output --profile release --online
-          if ($LASTEXITCODE -ne 0) { throw 'source-bound wheel build failed' }
+          if (-not $env:NATIVE_WHEEL_RUN_ID) {
+            & $appPython (Join-Path $app 'scripts/build_native.py') --native-root $native --native-python $nativePython --output-dir $output --profile release --online
+            if ($LASTEXITCODE -ne 0) { throw 'source-bound wheel build failed' }
+          } else {
+            if ($env:NATIVE_WHEEL_RUN_ID -cnotmatch '^[1-9][0-9]*$') { throw 'invalid donor run ID' }
+            function Read-GitHubRecord([string] $endpoint) {
+              for ($attempt = 1; $attempt -le 3; $attempt++) {
+                $payload = gh api $endpoint 2>$null
+                if ($LASTEXITCODE -eq 0) { return ($payload | ConvertFrom-Json) }
+                if ($attempt -lt 3) { Start-Sleep -Seconds (2 * $attempt) }
+              }
+              throw 'GitHub donor metadata request failed after three attempts'
+            }
+            $endpoint = "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:NATIVE_WHEEL_RUN_ID"
+            $donor = Read-GitHubRecord $endpoint
+            if ($donor.event -cne 'workflow_dispatch' -or $donor.path -cne '.github/workflows/joint-acceptance.yml' -or $donor.repository.full_name -cne $env:GITHUB_REPOSITORY -or $donor.head_repository.full_name -cne $env:GITHUB_REPOSITORY) {
+              throw 'donor must be a same-repository manual joint acceptance run'
+            }
+            if ($donor.head_sha -cnotmatch '^[0-9a-f]{40}$') { throw 'invalid donor app SHA' }
+            git -C $app merge-base --is-ancestor $donor.head_sha $env:APP_SHA
+            if ($LASTEXITCODE -ne 0) { throw 'donor app SHA must be an ancestor of the selected app SHA' }
+            $deadline = [DateTime]::UtcNow.AddMinutes(30)
+            $artifactName = "joint-acceptance-$env:RUNNER_OS"
+            while ($true) {
+              $jobs = Read-GitHubRecord "$endpoint/jobs?filter=latest&per_page=100"
+              $artifacts = Read-GitHubRecord "$endpoint/artifacts?per_page=100"
+              if ($jobs.total_count -gt 100 -or $artifacts.total_count -gt 100) { throw 'ambiguous donor pagination' }
+              $platformJobs = @($jobs.jobs | Where-Object { $_.name -ceq "joint ($env:MATRIX_OS)" })
+              $platformArtifacts = @($artifacts.artifacts | Where-Object { $_.name -ceq $artifactName })
+              if ($platformJobs.Count -gt 1 -or $platformArtifacts.Count -gt 1) { throw 'ambiguous donor platform job or artifact' }
+              $platformJob = $platformJobs[0]
+              $buildStep = @($platformJob.steps | Where-Object { $_.name -ceq 'Build one source-bound wheel' })
+              $installStep = @($platformJob.steps | Where-Object { $_.name -ceq 'Install and verify the built wheel' })
+              $builtAndInstalled = $buildStep.Count -eq 1 -and $installStep.Count -eq 1 -and $buildStep[0].conclusion -ceq 'success' -and $installStep[0].conclusion -ceq 'success'
+              if ($platformJob.status -ceq 'completed' -and -not $builtAndInstalled) { throw 'donor platform build or install failed' }
+              if ($platformArtifacts.Count -eq 1 -and $builtAndInstalled) {
+                $artifact = $platformArtifacts[0]
+                break
+              }
+              if ([DateTime]::UtcNow -ge $deadline) { throw 'donor platform artifact was unavailable after 30 minutes' }
+              Write-Output "Waiting for donor $env:NATIVE_WHEEL_RUN_ID platform artifact ($env:RUNNER_OS)"
+              Start-Sleep -Seconds 20
+            }
+            if ($artifact.expired -ne $false -or $artifact.digest -cnotmatch '^sha256:[0-9a-f]{64}$' -or $artifact.workflow_run.id -ne $donor.id -or $artifact.workflow_run.head_sha -cne $donor.head_sha -or $artifact.workflow_run.repository_id -ne $donor.repository.id -or $artifact.workflow_run.head_repository_id -ne $donor.head_repository.id) {
+              throw 'donor artifact identity, expiration or digest is invalid'
+            }
+            $zipPath = Join-Path $env:RUNNER_TEMP "native-wheel-donor-$($artifact.id).zip"
+            $handler = [System.Net.Http.HttpClientHandler]::new()
+            $handler.AllowAutoRedirect = $false
+            $client = [System.Net.Http.HttpClient]::new($handler)
+            try {
+              $client.DefaultRequestHeaders.UserAgent.ParseAdd('joint-native-wheel-reuse')
+              $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $env:GH_TOKEN)
+              $response = $client.GetAsync("https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/artifacts/$($artifact.id)/zip").GetAwaiter().GetResult()
+              try {
+                if ([int]$response.StatusCode -ne 302) { throw 'donor archive redirect was unavailable' }
+                $downloadUri = $response.Headers.Location
+                if (-not $downloadUri.IsAbsoluteUri -or $downloadUri.Scheme -cne 'https' -or $downloadUri.UserInfo) { throw 'donor archive redirect was invalid' }
+              } finally { $response.Dispose() }
+            } finally { $client.Dispose() }
+            try {
+              # A separate storage request carries no token; never print its signed URL.
+              Invoke-WebRequest -Uri $downloadUri -OutFile $zipPath -TimeoutSec 600
+            } catch { throw 'donor archive download failed' }
+            $archiveDigest = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ("sha256:$archiveDigest" -cne $artifact.digest) { throw 'donor archive digest mismatch' }
+            $extract = @'
+          import hashlib, json, re, shutil, sys, zipfile
+          from pathlib import Path
+          archive_path, output_path, native_sha = sys.argv[1:]
+          output = Path(output_path)
+          if output.exists():
+              raise SystemExit("wheel output already exists")
+          with zipfile.ZipFile(archive_path) as archive:
+              names = archive.namelist()
+              if len(names) != len(set(names)):
+                  raise SystemExit("duplicate archive members")
+              manifest_name = "wheel-output/native-provenance.json"
+              input_name = "wheel-output/native-build-input.json"
+              manifest = json.loads(archive.read(manifest_name))
+              build_input = json.loads(archive.read(input_name))
+              declared = manifest.get("declared_native", {})
+              if (manifest.get("source_binding") != "verified"
+                  or declared.get("commit") != native_sha or declared.get("dirty") != []
+                  or type(declared.get("dirty_count")) is not int or declared["dirty_count"] != 0
+                  or build_input.get("native") != declared
+                  or manifest.get("declared_build", {}).get("profile") != "release"):
+                  raise SystemExit("donor source-bound release identity mismatch")
+              filename = manifest.get("wheel", {}).get("filename", "")
+              if (not isinstance(filename, str) or not filename.startswith("nautilus_trader-")
+                  or not filename.endswith(".whl") or "/" in filename or "\\" in filename):
+                  raise SystemExit("invalid donor wheel filename")
+              wheel_name = "wheel-output/" + filename
+              wheel_names = [name for name in names if name.startswith("wheel-output/") and name.endswith(".whl")]
+              expected = manifest["wheel"].get("sha256", "")
+              if wheel_names != [wheel_name] or not re.fullmatch(r"[0-9a-f]{64}", expected):
+                  raise SystemExit("donor must contain one named wheel with a SHA-256")
+              output.mkdir()
+              for source in (manifest_name, input_name, wheel_name):
+                  with archive.open(source) as reader, (output / source.split("/")[-1]).open("wb") as writer:
+                      shutil.copyfileobj(reader, writer)
+              with (output / filename).open("rb") as wheel:
+                  if hashlib.file_digest(wheel, "sha256").hexdigest() != expected:
+                      raise SystemExit("donor wheel digest mismatch")
+          '@
+            & $appPython -c $extract $zipPath $output $env:NATIVE_SHA
+            if ($LASTEXITCODE -ne 0) { throw 'donor wheel extraction or identity check failed' }
+            $manifest = Get-Content -LiteralPath (Join-Path $output 'native-provenance.json') -Raw | ConvertFrom-Json
+            $reuse = [ordered]@{
+              donor_run_id = $donor.id
+              donor_run_attempt = $donor.run_attempt
+              donor_app_sha = $donor.head_sha
+              donor_job_id = $platformJob.id
+              donor_job_name = $platformJob.name
+              artifact_id = $artifact.id
+              artifact_name = $artifact.name
+              artifact_digest = $artifact.digest
+              archive_sha256 = $archiveDigest
+              native_sha = $env:NATIVE_SHA
+              wheel_sha256 = $manifest.wheel.sha256
+            }
+            "wheel_reuse=$($reuse | ConvertTo-Json -Depth 8 -Compress)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Output "Reused verified platform wheel from donor run $($donor.id), artifact $($artifact.id)"
+          }
 
       - name: Install and verify the built wheel
         id: install
@@ -163,7 +300,7 @@ jobs:
           $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
           $wheel = Join-Path $output $provenance.wheel.filename
           Push-Location $app
-          & $appPython scripts/install_native.py --python $appPython --local-override --native-root $native --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --output (Join-Path $evidence 'installed.json')
+          & $appPython scripts/install_native.py --additional-adapter backpack --python $appPython --local-override --native-root $native --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --output (Join-Path $evidence 'installed.json')
           if ($LASTEXITCODE -ne 0) { throw 'wheel install/identity failed' }
           Pop-Location
 
@@ -185,7 +322,7 @@ jobs:
           $wheel = Join-Path $output $provenance.wheel.filename
           $guardRecord = Join-Path $evidence 'offline-guard.json'
           $integrationRecord = Join-Path $evidence 'integration.json'
-          & $appPython (Join-Path $app 'scripts/offline_guard.py') --output $guardRecord --workspace $app --workspace $native -- $appPython (Join-Path $app 'scripts/test_integration.py') --python $appPython --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --native-root $native --expected-app-sha $env:APP_SHA --expected-native-sha $env:NATIVE_SHA --offline-guard $guardRecord --require-clean --fail-on-skip --required-test tests/test_installed_wheel_livenode.py::test_installed_wheel_livenode_loopback_lifecycle --config (Join-Path $app 'config/limits.toml') --output $integrationRecord tests
+          & $appPython (Join-Path $app 'scripts/offline_guard.py') --output $guardRecord --workspace $app --workspace $native -- $appPython (Join-Path $app 'scripts/test_integration.py') --additional-adapter backpack --python $appPython --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --native-root $native --expected-app-sha $env:APP_SHA --expected-native-sha $env:NATIVE_SHA --offline-guard $guardRecord --require-clean --fail-on-skip --required-test tests/test_installed_wheel_livenode.py::test_installed_wheel_livenode_loopback_lifecycle --required-test tests/test_backpack_installed_wheel.py::test_installed_backpack_extension_matches_verified_wheel --required-test tests/test_backpack_installed_wheel.py::test_installed_restricted_authority_denies_new_risk_without_http_write --required-test tests/test_backpack_public_native.py::test_installed_native_messages_stale_gap_reconnect_and_bounded_stop --required-test tests/test_backpack_account_native.py::test_actual_readonly_node_balances_true_fills_and_no_writes --required-test tests/test_backpack_loopback_native.py::test_actual_strategy_ack_quote_stale_denial_fill_duplicate_cancel202_and_dirty_stop --required-test tests/test_backpack_loopback_native.py::test_unknown_post_is_not_rejected_retried_or_adopted_from_numeric_client_id --config (Join-Path $app 'config/limits.toml') --output $integrationRecord tests
           if ($LASTEXITCODE -ne 0) { throw 'loopback-only application tests failed' }
 
       - name: Write detailed joint audit
@@ -276,6 +413,8 @@ jobs:
           INTEGRATION_OUTCOME: ${{ steps.integration.outcome }}
           AUDIT_OUTCOME: ${{ steps.audit.outcome }}
           JOINT_AUDIT_OUTCOME: ${{ steps.joint_audit.outcome }}
+          NATIVE_WHEEL_RUN_ID: ${{ inputs.native_wheel_run_id }}
+          WHEEL_REUSE: ${{ steps.build.outputs.wheel_reuse }}
         run: |
           $evidence = Join-Path $env:GITHUB_WORKSPACE 'evidence'
           New-Item -ItemType Directory -Force -Path $evidence | Out-Null
@@ -284,6 +423,7 @@ jobs:
             platform = $env:RUNNER_OS
             input_app_sha = $env:APP_SHA
             input_native_sha = $env:NATIVE_SHA
+            input_native_wheel_run_id = $env:NATIVE_WHEEL_RUN_ID
             outcomes = [ordered]@{
               validate = $env:VALIDATE_OUTCOME
               app_checkout = $env:APP_CHECKOUT_OUTCOME
@@ -297,6 +437,7 @@ jobs:
               joint_audit = $env:JOINT_AUDIT_OUTCOME
             }
           }
+          if ($env:WHEEL_REUSE) { $record.wheel_reuse = $env:WHEEL_REUSE | ConvertFrom-Json }
           $record.failure_layer = @($record.outcomes.Keys | Where-Object { $record.outcomes[$_] -eq 'failure' } | Select-Object -First 1)[0]
           if (Test-Path app/.git) { $record.resolved_app_sha = git -C app rev-parse HEAD }
           if (Test-Path native/.git) { $record.resolved_native_sha = git -C native rev-parse HEAD }
@@ -316,4 +457,5 @@ jobs:
             evidence/**
             wheel-output/native-provenance.json
             wheel-output/native-build-input.json
+            wheel-output/*.whl
           if-no-files-found: warn
