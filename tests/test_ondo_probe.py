@@ -3171,6 +3171,8 @@ def test_a_named_env_file_is_read_from_its_canonical_path(tmp_path, monkeypatch)
     environment is used deliberately, but only to name a temporary file - the repository's
     own .env is never touched.
     """
+    # Opt in only to this explicit synthetic tempfile; the harness keeps dotenv disabled.
+    monkeypatch.delenv("PYTHON_DOTENV_DISABLED", raising=False)
     env_file = tmp_path / "canonical.env"
     lines = [f"{name}={value}" for name, value in mainnet_credentials().items()]
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")

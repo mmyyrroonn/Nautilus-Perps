@@ -145,3 +145,21 @@ Windows/Linux workflow with the new full SHA pair, then link its artifacts to
 An unavailable platform or network guard is recorded as a failure, and earlier
 wheel hashes or test counts cannot stand in for that run. This CI evidence does
 not authorize venue accounts or production writes.
+
+The optional `native_wheel_run_id` dispatch input reuses only the platform wheel,
+unchanged native provenance and native build input from an earlier joint run.
+Leave it empty for the normal controlled build. A donor must be a same-repository
+`workflow_dispatch` run of this workflow whose app SHA is an ancestor of the
+selected app SHA. Its matching platform build and install must have succeeded;
+a later application test failure does not invalidate that built artifact.
+The workflow waits up to 30 minutes for the platform artifact, checks its GitHub
+archive digest, and refuses missing, expired, ambiguous or mismatched artifacts
+without rebuilding as a fallback.
+
+Reused wheels still pass the current native checkout fingerprint, wheel/binary/stub
+checks and source manifest audit. Native checks, installation and the complete
+guarded application suite run afresh for the selected full SHA pair. Donor test
+records and counts are never imported. The existing `evidence/job-layer.json`
+records the donor run/job, artifact identity and archive/wheel digests. The automatic
+GitHub token is available only to the build step for repository artifact access;
+no venue credentials are used.
