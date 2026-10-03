@@ -31,6 +31,8 @@ class TerminalPeer(AccountPeer):
         self.posts = []
         self.deletes = []
         self.responses = []
+        self.fill_frames = []
+        self.recovery_replayed = asyncio.Event()
         self.post_received = [asyncio.Event(), asyncio.Event()]
         self.accepted = [asyncio.Event(), asyncio.Event()]
         self.delete_received = asyncio.Event()
@@ -130,11 +132,19 @@ class TerminalPeer(AccountPeer):
             Z=format(Decimal(cumulative) * Decimal("100.1"), "f"), X="Filled" if terminal else "PartiallyFilled")
         self.last_order[f"terminal-owned-{index}"] = {**body, "id": f"terminal-owned-{index}",
             "executedQuantity": cumulative, "status": frame["data"]["X"]}
+        self.fill_frames.append(frame)
         return frame
 
     async def send_private(self, ws, connection):
-        assert connection == 1
         await self.ready.wait()
+        if connection > 1:
+            # Re-send only the genuine fills from this peer's completed first run.
+            await asyncio.sleep(0.25)
+            for frame in self.fill_frames:
+                await ws.send(json.dumps(frame))
+                await asyncio.sleep(0.1)
+            self.recovery_replayed.set()
+            return
         await self.post_received[0].wait()
         await self.accepted[0].wait()
         entry_quantity = "0.00001" if self.late_fill else "0.00002"
@@ -171,6 +181,48 @@ def terminal_plan(peer, tmp_path, monkeypatch):
     return replace(plan, session=replace(plan.session, duration_secs=5))
 
 
+def archived_cycles(cache):
+    return [{"position_id": str(position.id), "side": str(position.side),
+             "quantity": str(position.quantity), "is_open": position.is_open,
+             "commissions": [str(value) for value in position.commissions()],
+             "realized_pnl": str(position.realized_pnl),
+             "fills": [{"trade_id": str(fill.trade_id), "quantity": str(fill.last_qty),
+                        "price": str(fill.last_px), "commission": str(fill.commission),
+                        "side": str(fill.order_side)} for fill in position.events()]}
+            for position in cache.position_snapshots()]
+
+
+def observe_recovery(original_builder):
+    def build(plan, evidence, seed):
+        from nautilus_trader.model import InstrumentId
+        from nautilus_trader.trading import Strategy
+
+        class RecoveryObserver(Strategy):
+            """Observes real recovered economics and never submits orders or authority facts."""
+
+        node, telemetry, capabilities = original_builder(plan, evidence, seed)
+        observer = RecoveryObserver()
+        node.add_strategy(observer)
+        previous = None
+        original_poll = evidence.poll
+        instrument = InstrumentId.from_str(f"{SYMBOL}.BACKPACK")
+
+        def poll(owner, writer):
+            nonlocal previous
+            original_poll(owner, writer)
+            if not node.cache.positions():
+                return
+            snapshot = {"net_quantity": str(observer.portfolio.net_position(instrument)),
+                        "archives": archived_cycles(node.cache)}
+            if snapshot != previous:
+                writer.record("native_recovered_economic_cycles", snapshot)
+                previous = snapshot
+
+        evidence.poll = poll
+        return node, telemetry, capabilities
+    return build
+
+
 def terminal_strategy(peer, mode, observations):
     def factory(plan, evidence, control):
         from nautilus_trader.adapters.backpack import BackpackLoopbackAccountFacts
@@ -186,6 +238,7 @@ def terminal_strategy(peer, mode, observations):
                 self.cancel_sent = False
                 self.reconciled = False
                 self.old_flat_refused = False
+                self.archives_observed = False
                 self.instrument = InstrumentId.from_str(f"{SYMBOL}.BACKPACK")
 
             def on_start(self):
@@ -272,6 +325,9 @@ def terminal_strategy(peer, mode, observations):
                     if mode != "late_fill" or (self.fills == 3 and consumer.get("durable_receipts", 0) == 3):
                         evidence.extra_summary["scenario_steps_observed"] = True
                     evidence.extra_summary["cancel_requested"] = self.cancel_sent
+                    if mode == "late_fill" and self.fills == 3 and not self.archives_observed:
+                        evidence.record("native_original_archived_cycles", {"archives": archived_cycles(self.cache)})
+                        self.archives_observed = True
                     evidence.record("actual_portfolio_position", {
                         "net_quantity": str(self.portfolio.net_position(self.instrument)),
                         "source": "actual native Portfolio observation; not flat authority"})
@@ -304,6 +360,8 @@ def test_installed_terminal_receipts_and_explicit_flat_authority(tmp_path, monke
 
     async def scenario():
         async with TerminalPeer(late_fill=mode == "late_fill") as peer:
+            original_strategy = backpack_loopback._strategy
+            original_builder = backpack_loopback.build_loopback
             reconciliations = []
             monkeypatch.setattr(backpack_loopback, "_strategy", terminal_strategy(peer, mode, reconciliations))
             plan = terminal_plan(peer, tmp_path, monkeypatch)
@@ -346,4 +404,38 @@ def test_installed_terminal_receipts_and_explicit_flat_authority(tmp_path, monke
             assert any(row["terminal_observed"] and row["durable_economic_complete"]
                        for snapshot in reconciliations for row in snapshot["orders"])
             assert SEED not in path.read_text()
+            if mode == "late_fill":
+                originals = [row["archives"] for row in rows
+                             if row["kind"] == "native_original_archived_cycles" and row["archives"]]
+                assert originals and len(originals[-1]) == 1
+                closed = originals[-1][0]
+                assert not closed["is_open"] and closed["side"] == "FLAT"
+                assert Decimal(closed["quantity"]) == 0
+                assert closed["realized_pnl"] == "0.00000200 USDC"
+                assert closed["commissions"] == ["-0.00000200 USDC"]
+                assert [fill["trade_id"] for fill in closed["fills"]] == ["901", "902"]
+                assert [fill["commission"] for fill in closed["fills"]] == ["-0.00000100 USDC"] * 2
+                monkeypatch.setattr(backpack_loopback, "_strategy", original_strategy)
+                monkeypatch.setattr(backpack_loopback, "build_loopback", observe_recovery(original_builder))
+                recovery = replace(plan, recovery_only=True,
+                                   session=replace(plan.session, duration_secs=3))
+                resumed, resumed_path = await asyncio.wait_for(backpack_loopback.run_loopback(recovery), 16)
+                assert resumed["status"] == "completed", resumed["failure"]
+                assert resumed["economic_consumer"]["durable_receipts"] == 3
+                assert resumed["economic_consumer"]["pending_fills"] == 0
+                assert resumed["durable_economic_acknowledgement"]
+                assert resumed["native_health"]["loopback"]["shutdown_report"]["dirty"]
+                assert not resumed["flat_verified"] and not resumed["execution_settled"]
+                recovered_rows = event_records(resumed_path)
+                recovered = [row for row in recovered_rows if row["kind"] == "native_recovered_economic_cycles"]
+                assert recovered and Decimal(recovered[-1]["net_quantity"]) == Decimal("0.00001")
+                assert recovered[-1]["archives"] == originals[-1]
+                restored = [row for row in recovered_rows
+                            if row["kind"] == "engine_account_observation" and len(row["orders"]) == 2]
+                assert restored and restored[-1]["orders"] == actual[-1]["orders"]
+                assert restored[-1]["positions"] == actual[-1]["positions"]
+                assert peer.recovery_replayed.is_set()
+                assert len(peer.posts) == 2 and len(peer.deletes) == 1 and peer.active == 0
+                assert not any(row["kind"] == "scenario_submit" for row in recovered_rows)
+                assert SEED not in resumed_path.read_text()
     asyncio.run(scenario())
