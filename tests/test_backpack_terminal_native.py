@@ -200,6 +200,16 @@ def observe_recovery(original_builder):
         class RecoveryObserver(Strategy):
             """Observes real recovered economics and never submits orders or authority facts."""
 
+            def __init__(self):
+                super().__init__()
+                self.started = False
+
+            def on_start(self):
+                self.started = True
+
+            def on_stop(self):
+                self.started = False
+
         node, telemetry, capabilities = original_builder(plan, evidence, seed)
         observer = RecoveryObserver()
         node.add_strategy(observer)
@@ -210,10 +220,10 @@ def observe_recovery(original_builder):
         def poll(owner, writer):
             nonlocal previous
             original_poll(owner, writer)
-            if not node.cache.positions():
+            if not observer.started or not observer.cache.positions():
                 return
             snapshot = {"net_quantity": str(observer.portfolio.net_position(instrument)),
-                        "archives": archived_cycles(node.cache)}
+                        "archives": archived_cycles(observer.cache)}
             if snapshot != previous:
                 writer.record("native_recovered_economic_cycles", snapshot)
                 previous = snapshot
