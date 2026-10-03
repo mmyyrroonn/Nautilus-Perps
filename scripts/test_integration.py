@@ -61,7 +61,7 @@ def _forbidden_env_files(root: Path) -> list[str]:
 
 def _test_environment() -> dict[str, str]:
     env = os.environ.copy()
-    prefixes = ("ASTER_", "HYPERLIQUID_", "LIGHTER_", "ONDO_", "FUTU_", "BINANCE_")
+    prefixes = ("ASTER_", "HYPERLIQUID_", "LIGHTER_", "ONDO_", "BACKPACK_", "FUTU_", "BINANCE_")
     suffixes = ("_API_KEY", "_API_SECRET", "_PRIVATE_KEY", "_PASSWORD", "_TOKEN")
     for name in tuple(env):
         if name.startswith(prefixes) or name.endswith(suffixes):
@@ -69,6 +69,7 @@ def _test_environment() -> dict[str, str]:
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
     env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHON_DOTENV_DISABLED"] = "1"
     return env
 
 
@@ -145,6 +146,8 @@ def main() -> int:
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--provenance", type=Path, required=True)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--additional-adapter", action="append", default=[],
+                        help="require this adapter's installed stub and exports")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--config", type=Path, action="append", default=[])
     parser.add_argument("--native-root", type=Path)
@@ -203,6 +206,7 @@ def main() -> int:
         identity = verify(
             args.wheel, args.sha256.lower(), provenance=args.provenance,
             require_source_binding=True, require_ondo=True,
+            additional_adapters=tuple(args.additional_adapter),
         )
         record["candidate"] = identity
         app_identity = identity["app"]

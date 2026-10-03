@@ -115,3 +115,33 @@ native checks, build, install, identity, collection, pytest or network guard
 layer. The accepted pair is the two resolved SHAs plus the wheel SHA-256;
 a later floating `main` is a different pair. Venue ACK and live trade
 acceptance remain separate from this offline workflow.
+## Backpack candidate checks (native issue 84)
+
+The joint workflow uses the native repository's single `native_checks.py` entry
+for Aster, Ondo, Backpack and Portfolio. Format, nextest, doctest and Python-feature
+checks are independent blocking rows; the existing Clippy debt remains visible
+as a nonblocking row. Native stdout/stderr files are uploaded with their hashes.
+
+Both the installer and integration runner pass `--additional-adapter backpack`.
+They compare the installed Backpack stub with the actual wheel and require its
+public, readonly-account and restricted-loopback exports. The application source
+manifest includes `.github` and a per-file SHA-256 map in addition to its full
+commit/tree and aggregate content identity. Native provenance retains the full
+commit/tree, Cargo/Python locks, build inputs and unchanged pre/post fingerprints.
+The final audit independently reads the wheel to compare the native binary and
+Aster/Ondo/Backpack stubs across build, install and integration evidence.
+
+Required application tests include the installed Backpack extension identity,
+public reconnect/stale-book behavior, readonly balances and fills, restricted
+order ACK/fill/cancel behavior, unknown-submit ownership, and native refusal of
+new risk without an HTTP write. The existing Aster LiveNode test is also required.
+Missing tests or skipped tests fail the joint audit; no fixture substitutes for
+the installed extension. All transport peers use owned numeric loopback addresses.
+
+A local dirty experiment is useful for review but cannot pass the formal joint
+checkout/source gates. After explicitly authorized commits, run the existing
+Windows/Linux workflow with the new full SHA pair, then link its artifacts to
+[native issue 84](https://github.com/mmyyrroonn/nautilus_trader/issues/84).
+An unavailable platform or network guard is recorded as a failure, and earlier
+wheel hashes or test counts cannot stand in for that run. This CI evidence does
+not authorize venue accounts or production writes.

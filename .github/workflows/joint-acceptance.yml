@@ -128,7 +128,7 @@ jobs:
           Push-Location native
           & $nativePython scripts/adapter-evidence/test_native_checks.py
           if ($LASTEXITCODE -ne 0) { throw 'native check tooling regression failed' }
-          & $nativePython scripts/adapter-evidence/native_checks.py --crates nautilus-aster nautilus-ondo nautilus-portfolio --output (Join-Path $evidence 'native-checks.json')
+          & $nativePython scripts/adapter-evidence/native_checks.py --crates nautilus-aster nautilus-ondo nautilus-backpack nautilus-portfolio --output (Join-Path $evidence 'native-checks.json') --logs (Join-Path $evidence 'native-checks-logs')
           if ($LASTEXITCODE -ne 0) { throw 'native adapter checks failed' }
           Pop-Location
 
@@ -163,7 +163,7 @@ jobs:
           $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
           $wheel = Join-Path $output $provenance.wheel.filename
           Push-Location $app
-          & $appPython scripts/install_native.py --python $appPython --local-override --native-root $native --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --output (Join-Path $evidence 'installed.json')
+          & $appPython scripts/install_native.py --additional-adapter backpack --python $appPython --local-override --native-root $native --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --output (Join-Path $evidence 'installed.json')
           if ($LASTEXITCODE -ne 0) { throw 'wheel install/identity failed' }
           Pop-Location
 
@@ -185,7 +185,7 @@ jobs:
           $wheel = Join-Path $output $provenance.wheel.filename
           $guardRecord = Join-Path $evidence 'offline-guard.json'
           $integrationRecord = Join-Path $evidence 'integration.json'
-          & $appPython (Join-Path $app 'scripts/offline_guard.py') --output $guardRecord --workspace $app --workspace $native -- $appPython (Join-Path $app 'scripts/test_integration.py') --python $appPython --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --native-root $native --expected-app-sha $env:APP_SHA --expected-native-sha $env:NATIVE_SHA --offline-guard $guardRecord --require-clean --fail-on-skip --required-test tests/test_installed_wheel_livenode.py::test_installed_wheel_livenode_loopback_lifecycle --config (Join-Path $app 'config/limits.toml') --output $integrationRecord tests
+          & $appPython (Join-Path $app 'scripts/offline_guard.py') --output $guardRecord --workspace $app --workspace $native -- $appPython (Join-Path $app 'scripts/test_integration.py') --additional-adapter backpack --python $appPython --wheel $wheel --provenance $provenancePath --sha256 $provenance.wheel.sha256 --native-root $native --expected-app-sha $env:APP_SHA --expected-native-sha $env:NATIVE_SHA --offline-guard $guardRecord --require-clean --fail-on-skip --required-test tests/test_installed_wheel_livenode.py::test_installed_wheel_livenode_loopback_lifecycle --required-test tests/test_backpack_installed_wheel.py::test_installed_backpack_extension_matches_verified_wheel --required-test tests/test_backpack_installed_wheel.py::test_installed_restricted_authority_denies_new_risk_without_http_write --required-test tests/test_backpack_public_native.py::test_installed_native_messages_stale_gap_reconnect_and_bounded_stop --required-test tests/test_backpack_account_native.py::test_actual_readonly_node_balances_true_fills_and_no_writes --required-test tests/test_backpack_loopback_native.py::test_actual_strategy_ack_quote_stale_denial_fill_duplicate_cancel202_and_dirty_stop --required-test tests/test_backpack_loopback_native.py::test_unknown_post_is_not_rejected_retried_or_adopted_from_numeric_client_id --config (Join-Path $app 'config/limits.toml') --output $integrationRecord tests
           if ($LASTEXITCODE -ne 0) { throw 'loopback-only application tests failed' }
 
       - name: Write detailed joint audit
@@ -316,4 +316,5 @@ jobs:
             evidence/**
             wheel-output/native-provenance.json
             wheel-output/native-build-input.json
+            wheel-output/*.whl
           if-no-files-found: warn
