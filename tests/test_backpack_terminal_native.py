@@ -38,6 +38,8 @@ class TerminalPeer(AccountPeer):
         self.late_sent = asyncio.Event()
         self.position = Decimal("0")
         self.last_order = {}
+        self.refresh_quote = asyncio.Event()
+        self.refreshed_event_ns = None
 
     def account_snapshot(self):
         # These facts come from this explicitly synthetic protocol scenario, never the cache.
@@ -46,14 +48,14 @@ class TerminalPeer(AccountPeer):
 
     async def send_frames(self, ws, connection):
         await super().send_frames(ws, connection)
-        sequence = 2
-        while True:
-            await asyncio.sleep(0.1)
-            micros = time.time_ns() // 1000
-            await ws.send(json.dumps({"stream": f"bookTicker.{SYMBOL}", "data": {
-                "e": "bookTicker", "s": SYMBOL, "E": micros, "T": micros - 1000,
-                "u": sequence, "b": "100.0", "B": "1.00000", "a": "101.0", "A": "2.00000"}}))
-            sequence += 1
+        await self.refresh_quote.wait()
+        micros = time.time_ns() // 1000
+        self.refreshed_event_ns = (micros - 1000) * 1000
+        await ws.send(json.dumps({"stream": f"bookTicker.{SYMBOL}", "data": {
+            "e": "bookTicker", "s": SYMBOL, "E": micros, "T": micros - 1000,
+            "u": 2, "b": "100.0", "B": "1.00000", "a": "101.0", "A": "2.00000"}}))
+        # Keep the admitted market immutable throughout the only reduction attempt.
+        await asyncio.Event().wait()
 
     async def request(self, reader, writer):
         raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 3)
@@ -165,7 +167,8 @@ def terminal_plan(peer, tmp_path, monkeypatch):
     data["scenario"].update(cancel_after_fill=peer.late_fill, stale_probe_delay_ms=1500)
     plan = replace(parse_loopback_plan(data, tmp_path), durable_economics=True)
     monkeypatch.setenv(plan.account.credential_env, SEED)
-    return plan
+    # Shorten the finite run after validating the original authority; never renew it.
+    return replace(plan, session=replace(plan.session, duration_secs=5))
 
 
 def terminal_strategy(peer, mode, observations):
@@ -229,6 +232,10 @@ def terminal_strategy(peer, mode, observations):
                     self.cancel_order(self.entry.client_order_id)
                     self.cancel_sent = True
                 if (self.reduction is None and entry.is_closed and consumer.get("durable_receipts", 0) >= 1):
+                    peer.refresh_quote.set()
+                    current_quote = health["public"].get("quote_event_ns", {}).get(SYMBOL)
+                    if peer.refreshed_event_ns is None or current_quote != str(peer.refreshed_event_ns):
+                        return
                     assert self.reconcile()["orders"][0]["reconciled"]
                     snapshot = peer.account_snapshot()
                     assert Decimal(snapshot["net_positions"][str(self.instrument)]) > 0
@@ -262,7 +269,7 @@ def terminal_strategy(peer, mode, observations):
                         evidence.record("old_peer_flat_snapshot_refused", {"observed_at_ms": self.initial_flat["observed_at_ms"]})
                     elif mode == "fresh":
                         self.facts(peer.account_snapshot())
-                    if mode != "late_fill" or self.fills == 3:
+                    if mode != "late_fill" or (self.fills == 3 and consumer.get("durable_receipts", 0) == 3):
                         evidence.extra_summary["scenario_steps_observed"] = True
                     evidence.extra_summary["cancel_requested"] = self.cancel_sent
                     evidence.record("actual_portfolio_position", {
@@ -318,7 +325,7 @@ def test_installed_terminal_receipts_and_explicit_flat_authority(tmp_path, monke
             if mode == "fresh":
                 assert not report["dirty"] and not report["positions_unknown_or_nonzero"]
                 assert summary["execution_settled"] and summary["flat_verified"]
-                assert not summary["exposure_unknown"]
+                assert summary["durable_economic_acknowledgement"]
             else:
                 assert report["dirty"] and report["positions_unknown_or_nonzero"]
                 assert not summary["flat_verified"]

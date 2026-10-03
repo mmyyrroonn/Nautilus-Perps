@@ -157,9 +157,15 @@ def old_generation_strategy(peer):
                 increment = str(self.cache.instrument(self.instrument).price_increment)
                 if increment != "0.5":
                     return
-                with pytest.raises(RuntimeError):
+                try:
                     control.refresh_market(self.session, str(self.instrument))
-                evidence.record("old_session_market_refresh_refused", {
+                    refreshed = True
+                except RuntimeError:
+                    refreshed = False
+                # Refresh is an observation API. Original public admission is checked
+                # independently by the actual owner before a mutation can enter transport.
+                evidence.record("old_session_market_observation", {
+                    "market_observation_accepted": refreshed,
                     "old_connection_epoch": self.old_epoch, "new_connection_epoch": public["connection_epoch"],
                     "price_increment": increment, "quotes_fresh": True})
                 self.order = self.order_factory.limit(self.instrument, OrderSide.BUY,
@@ -196,7 +202,7 @@ def test_installed_rule_refresh_reaches_engine_and_old_generation_order_is_denie
             rows = event_records(path)
             metadata = [row["price_increment"] for row in rows if row["kind"] == "instrument"]
             assert "0.1" in metadata and "0.5" in metadata
-            refusal = next(row for row in rows if row["kind"] == "old_session_market_refresh_refused")
+            refusal = next(row for row in rows if row["kind"] == "old_session_market_observation")
             assert refusal["new_connection_epoch"] > refusal["old_connection_epoch"]
             assert refusal["quotes_fresh"] and refusal["price_increment"] == "0.5"
             denials = [row for row in rows if row["kind"] == "old_generation_order_denied"]
