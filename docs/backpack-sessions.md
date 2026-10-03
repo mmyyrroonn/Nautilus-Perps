@@ -279,7 +279,9 @@ A corrupt, missing-after-initialization or mismatched checkpoint fails closed.
 
 Restart using the same peer origins, scope and journal with `recovery_only=true`.
 The native LiveNode builder restores typed cache state and rebuilds Portfolio/indexes
-before event delivery; the runner submits no fresh scenario order in this mode. Replaying
+before event delivery; exact restoration is verified before Portfolio derives fresh margin
+state. Native closed-position cycle archives preserve realized PnL when a NETTING position
+reopens after a late fill. The runner submits no fresh scenario order in this mode. Replaying
 a true trade cannot apply its quantity or fee twice. A saved initialized order whose
 original POST was actually acknowledged can replay that genuine acknowledgement before
 its recovered fill. An uncertain POST is never resent or adopted by numeric clientId.
