@@ -1,0 +1,10 @@
+   Compiling nautilus-common v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\common)
+    Checking nautilus-portfolio v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\portfolio)
+    Checking nautilus-execution v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\execution)
+    Checking nautilus-data v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\data)
+    Checking nautilus-risk v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\risk)
+    Checking nautilus-trading v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\trading)
+    Checking nautilus-system v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\system)
+    Checking nautilus-live v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\live)
+    Checking nautilus-backpack v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\adapters\backpack)
+    Finished `dev` profile [unoptimized] target(s) in 7.90s

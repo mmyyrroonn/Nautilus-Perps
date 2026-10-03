@@ -1,0 +1,593 @@
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m    Checking[0m arrow-schema v59.2.0
+[1m[92m   Compiling[0m nautilus-core v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/core)
+[1m[92m   Compiling[0m nautilus-common v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/common)
+[1m[92m    Checking[0m tower-http v0.6.11
+[1m[92m   Compiling[0m nautilus-serialization v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/serialization)
+[1m[92m    Checking[0m arrow-data v59.2.0
+[1m[92m    Checking[0m reqwest v0.13.4
+[1m[92m    Checking[0m axum v0.8.9
+[1m[92m    Checking[0m arrow-array v59.2.0
+[1m[92m    Checking[0m nautilus-cryptography v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/cryptography)
+[1m[92m    Checking[0m alloy-serde v2.4.1
+[1m[92m    Checking[0m nautilus-network v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/network)
+[1m[92m    Checking[0m alloy-eips v2.4.1
+[1m[92m    Checking[0m alloy-consensus v2.4.1
+[1m[92m    Checking[0m arrow-select v59.2.0
+[1m[92m    Checking[0m arrow-ord v59.2.0
+[1m[92m    Checking[0m arrow-string v59.2.0
+[1m[92m    Checking[0m arrow-ipc v59.2.0
+[1m[92m    Checking[0m arrow-cast v59.2.0
+[1m[92m    Checking[0m arrow-row v59.2.0
+[1m[92m    Checking[0m arrow-arith v59.2.0
+[1m[92m    Checking[0m alloy-json-rpc v2.4.1
+[1m[92m    Checking[0m alloy-network-primitives v2.4.1
+[1m[92m    Checking[0m alloy-consensus-any v2.4.1
+[1m[92m    Checking[0m alloy-transport v2.4.1
+[1m[92m    Checking[0m arrow-csv v59.2.0
+[1m[92m    Checking[0m arrow-json v59.2.0
+[1m[92m    Checking[0m alloy-rpc-types-eth v2.4.1
+[1m[92m    Checking[0m alloy-rpc-client v2.4.1
+[1m[92m    Checking[0m alloy-transport-http v2.4.1
+[1m[92m    Checking[0m arrow v59.2.0
+[1m[92m    Checking[0m nautilus-model v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/model)
+[1m[92m    Checking[0m alloy-rpc-types-any v2.4.1
+[1m[92m    Checking[0m alloy-network v2.4.1
+[1m[92m    Checking[0m alloy-provider v2.4.1
+[1m[92m    Checking[0m alloy-signer-local v2.4.1
+[1m[92m    Checking[0m alloy-contract v2.4.1
+[1m[92m    Checking[0m alloy v2.4.1
+[1m[92m    Checking[0m nautilus-analysis v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/analysis)
+[1m[92m    Checking[0m nautilus-portfolio v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/portfolio)
+[1m[92m    Checking[0m nautilus-execution v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/execution)
+[1m[92m    Checking[0m nautilus-data v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/data)
+[1m[92m    Checking[0m nautilus-trading v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/trading)
+[1m[92m    Checking[0m nautilus-risk v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/risk)
+[1m[92m    Checking[0m nautilus-system v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/system)
+[1m[92m    Checking[0m nautilus-testkit v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/testkit)
+[1m[92m    Checking[0m nautilus-live v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/live)
+[1m[92m    Checking[0m nautilus-backpack v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/backpack)
+[1m[92m    Checking[0m nautilus-ondo v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/ondo)
+[1m[92m    Checking[0m nautilus-binance v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/binance)
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/common/credential.rs:314:9
+    [1m[94m|[0m
+[1m[94m314[0m [1m[94m|[0m [1m[91m/[0m         if let Ok(secret) = std::str::from_utf8(&self.api_secret) {
+[1m[94m315[0m [1m[94m|[0m [1m[91m|[0m             if !secret.is_empty() {
+[1m[94m316[0m [1m[94m|[0m [1m[91m|[0m                 redacted = redacted.replace(secret, REDACTED);
+[1m[94m317[0m [1m[94m|[0m [1m[91m|[0m             }
+[1m[94m318[0m [1m[94m|[0m [1m[91m|[0m         }
+    [1m[94m|[0m [1m[91m|_________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+    [1m[94m= [0m[1mnote[0m: `-D clippy::collapsible-if` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m314[0m [92m~ [0m        if let Ok(secret) = std::str::from_utf8(&self.api_secret)
+[1m[94m315[0m [92m~ [0m            [92m&&[0m !secret.is_empty() {
+[1m[94m316[0m [1m[94m|[0m                 redacted = redacted.replace(secret, REDACTED);
+[1m[94m317[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[91merror[0m[1m: consider adding a `;` to the last statement for consistent formatting[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/execution.rs:873:17
+    [1m[94m|[0m
+[1m[94m873[0m [1m[94m|[0m                 self.emit_status_report(&advance.snapshot, payload, event_time(payload, self.now()))
+    [1m[94m|[0m                 [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: add a `;` here: `self.emit_status_report(&advance.snapshot, payload, event_time(payload, self.now()));`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#semicolon_if_nothing_returned
+    [1m[94m= [0m[1mnote[0m: `-D clippy::semicolon-if-nothing-returned` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::semicolon_if_nothing_returned)]`
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/execution.rs:4658:9
+     [1m[94m|[0m
+[1m[94m4658[0m [1m[94m|[0m [1m[91m/[0m         if matches!(result, OndoOrderApplication::Applied) {
+[1m[94m4659[0m [1m[94m|[0m [1m[91m|[0m             if let Some(guard) = &self.production {
+[1m[94m4660[0m [1m[94m|[0m [1m[91m|[0m                 guard.activity();
+[1m[94m4661[0m [1m[94m|[0m [1m[91m|[0m             }
+[1m[94m4662[0m [1m[94m|[0m [1m[91m|[0m         }
+     [1m[94m|[0m [1m[91m|_________^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m4658[0m [92m~ [0m        if matches!(result, OndoOrderApplication::Applied)
+[1m[94m4659[0m [92m~ [0m            [92m&&[0m let Some(guard) = &self.production {
+[1m[94m4660[0m [1m[94m|[0m                 guard.activity();
+[1m[94m4661[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/execution.rs:4673:9
+     [1m[94m|[0m
+[1m[94m4673[0m [1m[94m|[0m [1m[91m/[0m         if matches!(result, Ok(OndoFillApplication::Applied)) || result.is_err() {
+[1m[94m4674[0m [1m[94m|[0m [1m[91m|[0m             if let Some(guard) = &self.production {
+[1m[94m4675[0m [1m[94m|[0m [1m[91m|[0m                 guard.activity();
+[1m[94m4676[0m [1m[94m|[0m [1m[91m|[0m             }
+[1m[94m4677[0m [1m[94m|[0m [1m[91m|[0m         }
+     [1m[94m|[0m [1m[91m|_________^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m4673[0m [92m~ [0m        if [92m([0mmatches!(result, Ok(OndoFillApplication::Applied)) || result.is_err[92m([0m)) {
+[1m[94m4674[0m [92m~ [0m            [92m&&[0m let Some(guard) = &self.production {
+[1m[94m4675[0m [1m[94m|[0m                 guard.activity();
+[1m[94m4676[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[91merror[0m[1m: this argument is passed by value, but not consumed in the function body[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/http/client.rs:395:19
+    [1m[94m|[0m
+[1m[94m395[0m [1m[94m|[0m         base_url: String,
+    [1m[94m|[0m                   [1m[91m^^^^^^[0m [1m[91mhelp: consider changing the type to: `&str`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+    [1m[94m= [0m[1mnote[0m: `-D clippy::needless-pass-by-value` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
+
+[1m[91merror[0m[1m: this argument is passed by value, but not consumed in the function body[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/http/client.rs:1471:15
+     [1m[94m|[0m
+[1m[94m1471[0m [1m[94m|[0m     response: HttpResponse,
+     [1m[94m|[0m               [1m[91m^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+[1m[96mhelp[0m: consider taking a reference instead
+     [1m[94m|[0m
+[1m[94m1471[0m [1m[94m| [0m    response: [92m&[0mHttpResponse,
+     [1m[94m|[0m               [92m+[0m
+
+[1m[91merror[0m[1m: adding items after statements is confusing, since items exist from the start of the scope[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/http/error.rs:354:5
+    [1m[94m|[0m
+[1m[94m354[0m [1m[94m|[0m     const MARKER: &str = "error code:";
+    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+    [1m[94m= [0m[1mnote[0m: `-D clippy::items-after-statements` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::items_after_statements)]`
+
+[1m[91merror[0m[1m: this `continue` expression is redundant[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/http/error.rs:349:22
+    [1m[94m|[0m
+[1m[94m349[0m [1m[94m|[0m                 _ => continue,
+    [1m[94m|[0m                      [1m[91m^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: consider dropping the `continue` expression
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_continue
+    [1m[94m= [0m[1mnote[0m: `-D clippy::needless-continue` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::needless_continue)]`
+
+[1m[91merror[0m[1m: docs for function which may panic missing `# Panics` section[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/http/orders.rs:580:1
+    [1m[94m|[0m
+[1m[94m580[0m [1m[94m|[0m pub fn batch_body(commands: &[OndoOrderCommand]) -> Result<Vec<u8>, OndoBatchError> {
+    [1m[94m|[0m [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: first possible panic found here
+   [1m[94m--> [0mcrates/adapters/ondo/src/http/orders.rs:614:9
+    [1m[94m|[0m
+[1m[94m614[0m [1m[94m|[0m [1m[92m/[0m         serde_json::to_vec(&RawBatchAddOrderRequest { orders: &raw })
+[1m[94m615[0m [1m[94m|[0m [1m[92m|[0m             .expect("the batch shape of strings and booleans always serializes"),
+    [1m[94m|[0m [1m[92m|________________________________________________________________________________^[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#missing_panics_doc
+[1m[92mnote[0m: the lint level is defined here
+   [1m[94m--> [0mcrates/adapters/ondo/src/lib.rs:99:9
+    [1m[94m|[0m
+[1m[94m 99[0m [1m[94m|[0m #![deny(clippy::missing_panics_doc)]
+    [1m[94m|[0m         [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[91merror[0m[1m: this argument is passed by value, but not consumed in the function body[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/production.rs:505:50
+    [1m[94m|[0m
+[1m[94m505[0m [1m[94m|[0m     pub(crate) fn verify_identity(&self, actual: Option<String>) -> Result<(), String> {
+    [1m[94m|[0m                                                  [1m[91m^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+[1m[96mhelp[0m: consider taking a reference instead
+    [1m[94m|[0m
+[1m[94m505[0m [1m[94m| [0m    pub(crate) fn verify_identity(&self, actual: Option<[92m&[0mString>) -> Result<(), String> {
+    [1m[94m|[0m                                                         [92m+[0m
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/production.rs:1046:9
+     [1m[94m|[0m
+[1m[94m1046[0m [1m[94m|[0m [1m[91m/[0m         if state.dms_release.attempted && !state.dms_release.acknowledged {
+[1m[94m1047[0m [1m[94m|[0m [1m[91m|[0m             if matches!(state.dms_release.outcome, "checking" | "awaiting_ack") {
+[1m[94m1048[0m [1m[94m|[0m [1m[91m|[0m                 state.dms_release.outcome = "shutdown_timeout";
+[1m[94m1049[0m [1m[94m|[0m [1m[91m|[0m             }
+[1m[94m1050[0m [1m[94m|[0m [1m[91m|[0m         }
+     [1m[94m|[0m [1m[91m|_________^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1046[0m [92m~ [0m        if state.dms_release.attempted && !state.dms_release.acknowledged
+[1m[94m1047[0m [92m~ [0m            [92m&&[0m matches!(state.dms_release.outcome, "checking" | "awaiting_ack") {
+[1m[94m1048[0m [1m[94m|[0m                 state.dms_release.outcome = "shutdown_timeout";
+[1m[94m1049[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[91merror[0m[1m: this argument is passed by value, but not consumed in the function body[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/reconciliation.rs:728:49
+    [1m[94m|[0m
+[1m[94m728[0m [1m[94m|[0m     pub fn note_renew_failed(&mut self, reason: String) {
+    [1m[94m|[0m                                                 [1m[91m^^^^^^[0m [1m[91mhelp: consider changing the type to: `&str`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+
+[1m[91merror[0m[1m: this function has a `#[must_use]` attribute with no message, but returns a type already marked as `#[must_use]`[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:752:5
+    [1m[94m|[0m
+[1m[94m752[0m [1m[94m|[0m     pub fn record_inbound(&self, raw: &str, received_at_ns: UnixNanos) -> RecordOutcome {
+    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: remove `must_use`
+   [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:751:5
+    [1m[94m|[0m
+[1m[94m751[0m [1m[94m|[0m     #[must_use]
+    [1m[94m|[0m     [1m[96m^^^^^^^^^^^[0m
+    [1m[94m= [0m[1mnote[0m: alternatively, you may add an explicit reason to the `must_use` attribute
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#double_must_use
+    [1m[94m= [0m[1mnote[0m: `-D clippy::double-must-use` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::double_must_use)]`
+
+[1m[91merror[0m[1m: this function has a `#[must_use]` attribute with no message, but returns a type already marked as `#[must_use]`[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:766:5
+    [1m[94m|[0m
+[1m[94m766[0m [1m[94m|[0m     pub fn record_outbound(&self, body: &str, sent_at_ns: UnixNanos) -> RecordOutcome {
+    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: remove `must_use`
+   [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:765:5
+    [1m[94m|[0m
+[1m[94m765[0m [1m[94m|[0m     #[must_use]
+    [1m[94m|[0m     [1m[96m^^^^^^^^^^^[0m
+    [1m[94m= [0m[1mnote[0m: alternatively, you may add an explicit reason to the `must_use` attribute
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#double_must_use
+
+[1m[91merror[0m[1m: this function has a `#[must_use]` attribute with no message, but returns a type already marked as `#[must_use]`[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:783:5
+    [1m[94m|[0m
+[1m[94m783[0m [1m[94m|[0m     pub fn record_metadata_snapshot(&self, snapshot: &MetadataSnapshot) -> RecordOutcome {
+    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+[1m[96mhelp[0m: remove `must_use`
+   [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:782:5
+    [1m[94m|[0m
+[1m[94m782[0m [1m[94m|[0m     #[must_use]
+    [1m[94m|[0m     [1m[96m^^^^^^^^^^^[0m
+    [1m[94m= [0m[1mnote[0m: alternatively, you may add an explicit reason to the `must_use` attribute
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#double_must_use
+
+[1m[91merror[0m[1m: this argument is passed by value, but not consumed in the function body[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:890:26
+    [1m[94m|[0m
+[1m[94m890[0m [1m[94m|[0m     pub fn start(config: RawMdRecorderConfig) -> anyhow::Result<Self> {
+    [1m[94m|[0m                          [1m[91m^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+[1m[96mhelp[0m: consider taking a reference instead
+    [1m[94m|[0m
+[1m[94m890[0m [1m[94m| [0m    pub fn start(config: [92m&[0mRawMdRecorderConfig) -> anyhow::Result<Self> {
+    [1m[94m|[0m                          [92m+[0m
+
+[1m[91merror[0m[1m: docs for function which may panic missing `# Panics` section[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:138:1
+    [1m[94m|[0m
+[1m[94m138[0m [1m[94m|[0m pub fn request_quota() -> Quota {
+    [1m[94m|[0m [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: first possible panic found here
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:139:22
+    [1m[94m|[0m
+[1m[94m139[0m [1m[94m|[0m     let per_second = NonZeroU32::new(ONDO_WS_REQUEST_RATE_PER_SECOND).expect("non-zero rate");
+    [1m[94m|[0m                      [1m[92m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#missing_panics_doc
+
+[1m[91merror[0m[1m: this argument is passed by value, but not consumed in the function body[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:930:41
+    [1m[94m|[0m
+[1m[94m930[0m [1m[94m|[0m     fn protocol_error(&mut self, error: anyhow::Error, raw: &str) -> Vec<WsOutcome> {
+    [1m[94m|[0m                                         [1m[91m^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+[1m[96mhelp[0m: consider taking a reference instead
+    [1m[94m|[0m
+[1m[94m930[0m [1m[94m| [0m    fn protocol_error(&mut self, error: [92m&[0manyhow::Error, raw: &str) -> Vec<WsOutcome> {
+    [1m[94m|[0m                                         [92m+[0m
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:999:17
+     [1m[94m|[0m
+[1m[94m 999[0m [1m[94m|[0m [1m[91m/[0m                 if is_valid && self.depth10.contains(&instrument_id) {
+[1m[94m1000[0m [1m[94m|[0m [1m[91m|[0m                     if let Some(wire) = wire {
+[1m[94m1001[0m [1m[94m|[0m [1m[91m|[0m                         match parse_depth10(&wire, instrument, ts_event, ts_init) {
+[1m[94m1002[0m [1m[94m|[0m [1m[91m|[0m                             Ok(depth) => {
+[1m[94m...[0m    [1m[91m|[0m
+[1m[94m1008[0m [1m[94m|[0m [1m[91m|[0m                 }
+     [1m[94m|[0m [1m[91m|_________________^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m 999[0m [92m~ [0m                if is_valid && self.depth10.contains(&instrument_id)
+[1m[94m1000[0m [92m~ [0m                    [92m&&[0m let Some(wire) = wire {
+[1m[94m1001[0m [1m[94m|[0m                         match parse_depth10(&wire, instrument, ts_event, ts_init) {
+ [1m[94m...[0m
+[1m[94m1006[0m [1m[94m|[0m                         }
+[1m[94m1007[0m [92m~ [0m                    }
+     [1m[94m|[0m
+
+[1m[91merror[0m[1m: this argument is passed by value, but not consumed in the function body[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:1231:23
+     [1m[94m|[0m
+[1m[94m1231[0m [1m[94m|[0m         depth_levels: Option<String>,
+     [1m[94m|[0m                       [1m[91m^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+[1m[96mhelp[0m: consider taking a reference instead
+     [1m[94m|[0m
+[1m[94m1231[0m [1m[94m| [0m        depth_levels: Option<[92m&[0mString>,
+     [1m[94m|[0m                              [92m+[0m
+
+[1m[91merror[0m[1m: redundant clone[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:1245:39
+     [1m[94m|[0m
+[1m[94m1245[0m [1m[94m|[0m             depth_levels: depth_levels.clone(),
+     [1m[94m|[0m                                       [1m[91m^^^^^^^^[0m [1m[91mhelp: remove this[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: this value is dropped without further use
+    [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:1245:27
+     [1m[94m|[0m
+[1m[94m1245[0m [1m[94m|[0m             depth_levels: depth_levels.clone(),
+     [1m[94m|[0m                           [1m[92m^^^^^^^^^^^^[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+     [1m[94m= [0m[1mnote[0m: `-D clippy::redundant-clone` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::redundant_clone)]`
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/private/stream.rs:440:9
+    [1m[94m|[0m
+[1m[94m440[0m [1m[94m|[0m [1m[91m/[0m         if let Some(guard) = &self.production {
+[1m[94m441[0m [1m[94m|[0m [1m[91m|[0m             if guard.validate_direct_switch(frame).is_err() {
+[1m[94m442[0m [1m[94m|[0m [1m[91m|[0m                 guard.note_release_validation_refused();
+[1m[94m443[0m [1m[94m|[0m [1m[91m|[0m                 anyhow::bail!("production DMS release validation refused");
+[1m[94m444[0m [1m[94m|[0m [1m[91m|[0m             }
+[1m[94m445[0m [1m[94m|[0m [1m[91m|[0m         }
+    [1m[94m|[0m [1m[91m|_________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m440[0m [92m~ [0m        if let Some(guard) = &self.production
+[1m[94m441[0m [92m~ [0m            [92m&&[0m guard.validate_direct_switch(frame).is_err() {
+[1m[94m442[0m [1m[94m|[0m                 guard.note_release_validation_refused();
+[1m[94m443[0m [1m[94m|[0m                 anyhow::bail!("production DMS release validation refused");
+[1m[94m444[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/private/stream.rs:446:9
+    [1m[94m|[0m
+[1m[94m446[0m [1m[94m|[0m [1m[91m/[0m         if let Some(guard) = &self.production {
+[1m[94m447[0m [1m[94m|[0m [1m[91m|[0m             if guard.begin_release().is_err() {
+[1m[94m448[0m [1m[94m|[0m [1m[91m|[0m                 guard.note_release_validation_refused();
+[1m[94m449[0m [1m[94m|[0m [1m[91m|[0m                 anyhow::bail!("production DMS release validation refused");
+[1m[94m450[0m [1m[94m|[0m [1m[91m|[0m             }
+[1m[94m451[0m [1m[94m|[0m [1m[91m|[0m         }
+    [1m[94m|[0m [1m[91m|_________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m446[0m [92m~ [0m        if let Some(guard) = &self.production
+[1m[94m447[0m [92m~ [0m            [92m&&[0m guard.begin_release().is_err() {
+[1m[94m448[0m [1m[94m|[0m                 guard.note_release_validation_refused();
+[1m[94m449[0m [1m[94m|[0m                 anyhow::bail!("production DMS release validation refused");
+[1m[94m450[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/private/stream.rs:829:17
+    [1m[94m|[0m
+[1m[94m829[0m [1m[94m|[0m [1m[91m/[0m                 if channel == PrivateChannel::CancelAllOrdersAfterPerps {
+[1m[94m830[0m [1m[94m|[0m [1m[91m|[0m                     if let Some(guard) = self.account.production_authority() {
+[1m[94m831[0m [1m[94m|[0m [1m[91m|[0m                         guard.confirm_release();
+[1m[94m832[0m [1m[94m|[0m [1m[91m|[0m                     }
+[1m[94m833[0m [1m[94m|[0m [1m[91m|[0m                 }
+    [1m[94m|[0m [1m[91m|_________________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m829[0m [92m~ [0m                if channel == PrivateChannel::CancelAllOrdersAfterPerps
+[1m[94m830[0m [92m~ [0m                    [92m&&[0m let Some(guard) = self.account.production_authority() {
+[1m[94m831[0m [1m[94m|[0m                         guard.confirm_release();
+[1m[94m832[0m [92m~ [0m                    }
+    [1m[94m|[0m
+
+[1m[91merror[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/private/stream.rs:908:9
+    [1m[94m|[0m
+[1m[94m908[0m [1m[94m|[0m [1m[91m/[0m         if action == PrivateAction::ArmSwitch && self.account.production_authority().is_some() {
+[1m[94m909[0m [1m[94m|[0m [1m[91m|[0m             if let Err(e) = self.account.verify_production_dms_baseline().await {
+[1m[94m910[0m [1m[94m|[0m [1m[91m|[0m                 self.note_switch_failed(e.to_string());
+[1m[94m911[0m [1m[94m|[0m [1m[91m|[0m                 return false;
+[1m[94m912[0m [1m[94m|[0m [1m[91m|[0m             }
+[1m[94m913[0m [1m[94m|[0m [1m[91m|[0m         }
+    [1m[94m|[0m [1m[91m|_________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m908[0m [92m~ [0m        if action == PrivateAction::ArmSwitch && self.account.production_authority().is_some()
+[1m[94m909[0m [92m~ [0m            [92m&&[0m let Err(e) = self.account.verify_production_dms_baseline().await {
+[1m[94m910[0m [1m[94m|[0m                 self.note_switch_failed(e.to_string());
+[1m[94m911[0m [1m[94m|[0m                 return false;
+[1m[94m912[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[91merror[0m[1m: this parameter is a mutable reference but is not used mutably[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:1037:9
+     [1m[94m|[0m
+[1m[94m1037[0m [1m[94m|[0m         &mut self,
+     [1m[94m|[0m         [1m[91m^[0m[1m[94m----[0m[1m[91m^^^^[0m
+     [1m[94m|[0m          [1m[94m|[0m
+     [1m[94m|[0m          [1m[94mhelp: consider removing this `mut`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_ref_mut
+     [1m[94m= [0m[1mnote[0m: `-D clippy::needless-pass-by-ref-mut` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::needless_pass_by_ref_mut)]`
+
+[1m[91merror[0m[1m: this parameter is a mutable reference but is not used mutably[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/private/stream.rs:517:25
+    [1m[94m|[0m
+[1m[94m517[0m [1m[94m|[0m     pub(crate) fn abort(&mut self) {
+    [1m[94m|[0m                         [1m[91m^[0m[1m[94m----[0m[1m[91m^^^^[0m
+    [1m[94m|[0m                          [1m[94m|[0m
+    [1m[94m|[0m                          [1m[94mhelp: consider removing this `mut`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_ref_mut
+
+[1m[91merror[0m: could not compile `nautilus-ondo` (lib) due to 27 previous errors
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m[1m: this assertion has a constant value[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/http/query.rs:260:9
+    [1m[94m|[0m
+[1m[94m260[0m [1m[94m|[0m         assert!(ONDO_MAX_PAGES > 0);
+    [1m[94m|[0m         [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: consider moving this into a const block: `const { assert!(..) }`
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#assertions_on_constants
+    [1m[94m= [0m[1mnote[0m: `-D clippy::assertions-on-constants` implied by `-D warnings`
+    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::assertions_on_constants)]`
+
+[1m[91merror[0m[1m: single-character string constant used as pattern[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:1931:66
+     [1m[94m|[0m
+[1m[94m1931[0m [1m[94m|[0m             end[0]["reason"].as_str().is_some_and(|r| r.contains("3")),
+     [1m[94m|[0m                                                                  [1m[91m^^^[0m [1m[91mhelp: consider using a `char`: `'3'`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#single_char_pattern
+     [1m[94m= [0m[1mnote[0m: `-D clippy::single-char-pattern` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::single_char_pattern)]`
+
+[1m[91merror[0m[1m: redundant clone[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2212:28
+     [1m[94m|[0m
+[1m[94m2212[0m [1m[94m|[0m             segment_name(3).to_string(),
+     [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^[0m [1m[91mhelp: remove this[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: this value is dropped without further use
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2212:13
+     [1m[94m|[0m
+[1m[94m2212[0m [1m[94m|[0m             segment_name(3).to_string(),
+     [1m[94m|[0m             [1m[92m^^^^^^^^^^^^^^^[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+     [1m[94m= [0m[1mnote[0m: `-D clippy::redundant-clone` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::redundant_clone)]`
+
+[1m[91merror[0m[1m: redundant clone[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2213:28
+     [1m[94m|[0m
+[1m[94m2213[0m [1m[94m|[0m             segment_name(1).to_string(),
+     [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^[0m [1m[91mhelp: remove this[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: this value is dropped without further use
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2213:13
+     [1m[94m|[0m
+[1m[94m2213[0m [1m[94m|[0m             segment_name(1).to_string(),
+     [1m[94m|[0m             [1m[92m^^^^^^^^^^^^^^^[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+[1m[91merror[0m[1m: redundant clone[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2214:28
+     [1m[94m|[0m
+[1m[94m2214[0m [1m[94m|[0m             segment_name(2).to_string(),
+     [1m[94m|[0m                            [1m[91m^^^^^^^^^^^^[0m [1m[91mhelp: remove this[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: this value is dropped without further use
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2214:13
+     [1m[94m|[0m
+[1m[94m2214[0m [1m[94m|[0m             segment_name(2).to_string(),
+     [1m[94m|[0m             [1m[92m^^^^^^^^^^^^^^^[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+[1m[91merror[0m[1m: redundant clone[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2215:29
+     [1m[94m|[0m
+[1m[94m2215[0m [1m[94m|[0m             segment_name(10).to_string(),
+     [1m[94m|[0m                             [1m[91m^^^^^^^^^^^^[0m [1m[91mhelp: remove this[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: this value is dropped without further use
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2215:13
+     [1m[94m|[0m
+[1m[94m2215[0m [1m[94m|[0m             segment_name(10).to_string(),
+     [1m[94m|[0m             [1m[92m^^^^^^^^^^^^^^^^[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+[1m[91merror[0m[1m: implicitly cloning a `String` by calling `to_string` on its dereferenced type[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2212:13
+     [1m[94m|[0m
+[1m[94m2212[0m [1m[94m|[0m             segment_name(3).to_string(),
+     [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: consider using: `segment_name(3).clone()`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+     [1m[94m= [0m[1mnote[0m: `-D clippy::implicit-clone` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::implicit_clone)]`
+
+[1m[91merror[0m[1m: implicitly cloning a `String` by calling `to_string` on its dereferenced type[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2213:13
+     [1m[94m|[0m
+[1m[94m2213[0m [1m[94m|[0m             segment_name(1).to_string(),
+     [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: consider using: `segment_name(1).clone()`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+
+[1m[91merror[0m[1m: implicitly cloning a `String` by calling `to_string` on its dereferenced type[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2214:13
+     [1m[94m|[0m
+[1m[94m2214[0m [1m[94m|[0m             segment_name(2).to_string(),
+     [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: consider using: `segment_name(2).clone()`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+
+[1m[91merror[0m[1m: implicitly cloning a `String` by calling `to_string` on its dereferenced type[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/recording.rs:2215:13
+     [1m[94m|[0m
+[1m[94m2215[0m [1m[94m|[0m             segment_name(10).to_string(),
+     [1m[94m|[0m             [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[91mhelp: consider using: `segment_name(10).clone()`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone
+
+[1m[91merror[0m[1m: redundant clone[0m
+    [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:1245:39
+     [1m[94m|[0m
+[1m[94m1245[0m [1m[94m|[0m             depth_levels: depth_levels.clone(),
+     [1m[94m|[0m                                       [1m[91m^^^^^^^^[0m [1m[91mhelp: remove this[0m
+     [1m[94m|[0m
+[1m[92mnote[0m: this value is dropped without further use
+    [1m[94m--> [0mcrates/adapters/ondo/src/websocket/client.rs:1245:27
+     [1m[94m|[0m
+[1m[94m1245[0m [1m[94m|[0m             depth_levels: depth_levels.clone(),
+     [1m[94m|[0m                           [1m[92m^^^^^^^^^^^^[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+[1m[91merror[0m[1m: redundant clone[0m
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/parse.rs:994:33
+    [1m[94m|[0m
+[1m[94m994[0m [1m[94m|[0m             bids: two_sided.bids.clone(),
+    [1m[94m|[0m                                 [1m[91m^^^^^^^^[0m [1m[91mhelp: remove this[0m
+    [1m[94m|[0m
+[1m[92mnote[0m: this value is dropped without further use
+   [1m[94m--> [0mcrates/adapters/ondo/src/websocket/parse.rs:994:19
+    [1m[94m|[0m
+[1m[94m994[0m [1m[94m|[0m             bids: two_sided.bids.clone(),
+    [1m[94m|[0m                   [1m[92m^^^^^^^^^^^^^^[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone
+
+[1m[91merror[0m: could not compile `nautilus-ondo` (lib test) due to 38 previous errors

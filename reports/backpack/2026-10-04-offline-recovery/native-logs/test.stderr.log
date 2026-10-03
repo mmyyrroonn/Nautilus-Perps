@@ -1,0 +1,495 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling nautilus-common v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\common)
+   Compiling nautilus-execution v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\execution)
+   Compiling nautilus-portfolio v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\portfolio)
+   Compiling nautilus-data v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\data)
+   Compiling nautilus-trading v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\trading)
+   Compiling nautilus-risk v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\risk)
+   Compiling nautilus-system v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\system)
+   Compiling nautilus-live v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\live)
+   Compiling nautilus-backpack v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\adapters\backpack)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.82s
+────────────
+ Nextest run ID 91b37ab3-88c9-42ae-b9b5-89376e217a53 with nextest profile: ci
+    Starting 478 tests across 12 binaries (1 test skipped)
+        PASS [   0.009s] (  1/478) nautilus-backpack common::capabilities::tests::test_guarded_implementation_does_not_claim_production_readiness
+        PASS [   0.011s] (  2/478) nautilus-backpack common::capabilities::tests::test_read_only_implementation_does_not_claim_live_readiness
+        PASS [   0.008s] (  3/478) nautilus-backpack common::credential::tests::test_audience_and_websocket_payload
+        PASS [   0.009s] (  4/478) nautilus-backpack common::credential::tests::test_malformed_keys_never_appear_in_errors
+        PASS [   0.008s] (  5/478) nautilus-backpack common::credential::tests::test_rfc8032_independent_signature_vector
+        PASS [   0.008s] (  6/478) nautilus-backpack common::endpoints::tests::test_explicit_loopback_override::case_1
+        PASS [   0.007s] (  7/478) nautilus-backpack common::endpoints::tests::test_explicit_loopback_override::case_2
+        PASS [   0.008s] (  8/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_01
+        PASS [   0.008s] (  9/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_02
+        PASS [   0.008s] ( 10/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_03
+        PASS [   0.008s] ( 11/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_04
+        PASS [   0.008s] ( 12/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_05
+        PASS [   0.008s] ( 13/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_06
+        PASS [   0.008s] ( 14/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_07
+        PASS [   0.008s] ( 15/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_08
+        PASS [   0.008s] ( 16/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_09
+        PASS [   0.008s] ( 17/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_10
+        PASS [   0.008s] ( 18/478) nautilus-backpack common::endpoints::tests::test_invalid_rest_override::case_11
+        PASS [   0.008s] ( 19/478) nautilus-backpack common::endpoints::tests::test_invalid_websocket_override::case_1
+        PASS [   0.008s] ( 20/478) nautilus-backpack common::endpoints::tests::test_invalid_websocket_override::case_2
+        PASS [   0.008s] ( 21/478) nautilus-backpack common::endpoints::tests::test_invalid_websocket_override::case_3
+        PASS [   0.008s] ( 22/478) nautilus-backpack common::endpoints::tests::test_invalid_websocket_override::case_4
+        PASS [   0.007s] ( 23/478) nautilus-backpack common::endpoints::tests::test_invalid_websocket_override::case_5
+        PASS [   0.008s] ( 24/478) nautilus-backpack common::endpoints::tests::test_production_endpoints
+        PASS [   0.007s] ( 25/478) nautilus-backpack config::tests::test_config_preserves_explicit_loopback_selection
+        PASS [   0.008s] ( 26/478) nautilus-backpack config::tests::test_duplicate_allowlist
+        PASS [   0.008s] ( 27/478) nautilus-backpack config::tests::test_empty_allowlist
+        PASS [   0.007s] ( 28/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_01
+        PASS [   0.007s] ( 29/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_02
+        PASS [   0.007s] ( 30/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_03
+        PASS [   0.008s] ( 31/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_04
+        PASS [   0.008s] ( 32/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_05
+        PASS [   0.008s] ( 33/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_06
+        PASS [   0.008s] ( 34/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_07
+        PASS [   0.008s] ( 35/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_08
+        PASS [   0.007s] ( 36/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_09
+        PASS [   0.007s] ( 37/478) nautilus-backpack config::tests::test_invalid_allowlist_symbol::case_10
+        PASS [   0.008s] ( 38/478) nautilus-backpack config::tests::test_market_outside_allowlist
+        PASS [   0.007s] ( 39/478) nautilus-backpack config::tests::test_non_empty_allowlist_and_production_defaults
+        PASS [   0.007s] ( 40/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_1
+        PASS [   0.008s] ( 41/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_2
+        PASS [   0.008s] ( 42/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_3
+        PASS [   0.009s] ( 43/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_4
+        PASS [   0.009s] ( 44/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_5
+        PASS [   0.008s] ( 45/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_6
+        PASS [   0.008s] ( 46/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_7
+        PASS [   0.008s] ( 47/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_8
+        PASS [   0.008s] ( 48/478) nautilus-backpack config::tests::test_suffix_does_not_establish_product_eligibility::case_9
+        PASS [   0.007s] ( 49/478) nautilus-backpack execution::guard::fence_tests::test_overlapping_control_changes_never_admit_between_updates
+        PASS [   0.008s] ( 50/478) nautilus-backpack execution::guard::fence_tests::test_revision_exhaustion_cannot_reauthorize_an_old_snapshot
+        PASS [   0.149s] ( 51/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_01::checkpoint_call_2_2
+        PASS [   0.154s] ( 52/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_01::checkpoint_call_1_1
+        PASS [   0.679s] ( 53/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_02::checkpoint_call_1_1
+        PASS [   0.696s] ( 54/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_02::checkpoint_call_2_2
+        PASS [   0.146s] ( 55/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_03::checkpoint_call_1_1
+        PASS [   0.154s] ( 56/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_03::checkpoint_call_2_2
+        PASS [   0.059s] ( 57/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_04::checkpoint_call_1_1
+        PASS [   0.075s] ( 58/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_04::checkpoint_call_2_2
+        PASS [   0.049s] ( 59/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_05::checkpoint_call_1_1
+        PASS [   0.064s] ( 60/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_06::checkpoint_call_1_1
+        PASS [   0.071s] ( 61/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_05::checkpoint_call_2_2
+        PASS [   0.100s] ( 62/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_07::checkpoint_call_1_1
+        PASS [   0.132s] ( 63/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_06::checkpoint_call_2_2
+        PASS [   0.109s] ( 64/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_07::checkpoint_call_2_2
+        PASS [   0.089s] ( 65/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_08::checkpoint_call_1_1
+        PASS [   0.118s] ( 66/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_09::checkpoint_call_1_1
+        PASS [   0.137s] ( 67/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_08::checkpoint_call_2_2
+        PASS [   0.136s] ( 68/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_10::checkpoint_call_1_1
+        PASS [   0.147s] ( 69/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_09::checkpoint_call_2_2
+        PASS [   0.013s] ( 70/478) nautilus-backpack execution_client::config::tests::test_native_readonly_account_issuer_is_checked_before_identity_io
+        PASS [   0.056s] ( 71/478) nautilus-backpack execution_client::economics::tests::economic_checkpoint_binds_complete_allowlist_and_client
+        PASS [   0.126s] ( 72/478) nautilus-backpack execution::owner::checkpoint_tests::test_checkpoint_block_cannot_hide_deadline_or_admission_revocation::case_10::checkpoint_call_2_2
+        PASS [   0.056s] ( 73/478) nautilus-backpack execution_client::economics::tests::initialized_economic_checkpoints_fail_closed::case_1
+        PASS [   0.057s] ( 74/478) nautilus-backpack execution_client::economics::tests::initialized_economic_checkpoints_fail_closed::case_3
+        PASS [   0.060s] ( 75/478) nautilus-backpack execution_client::economics::tests::initialized_economic_checkpoints_fail_closed::case_2
+        PASS [   0.081s] ( 76/478) nautilus-backpack execution_client::restricted::tests::retained_fill_allows_only_missing_to_known_candidate_upgrade
+        PASS [   0.084s] ( 77/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_01
+        PASS [   0.090s] ( 78/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_02
+        PASS [   0.090s] ( 79/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_03
+        PASS [   0.082s] ( 80/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_04
+        PASS [   0.081s] ( 81/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_05
+        PASS [   0.097s] ( 82/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_06
+        PASS [   0.097s] ( 83/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_07
+        PASS [   0.084s] ( 84/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_08
+        PASS [   0.085s] ( 85/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_09
+        PASS [   0.086s] ( 86/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_10
+        PASS [   0.085s] ( 87/478) nautilus-backpack execution_client::restricted::tests::retained_fill_rejects_conflicting_economics_before_any_command_ack::case_11
+        PASS [   0.009s] ( 88/478) nautilus-backpack http::request::tests::test_array_market_filter_not_accepted_as_scalar::case_1
+        PASS [   0.008s] ( 89/478) nautilus-backpack http::request::tests::test_array_market_filter_not_accepted_as_scalar::case_2
+        PASS [   0.008s] ( 90/478) nautilus-backpack http::request::tests::test_array_market_filter_not_accepted_as_scalar::case_3
+        PASS [   0.008s] ( 91/478) nautilus-backpack http::request::tests::test_exclusive_identifier_and_u32_bound
+        PASS [   0.008s] ( 92/478) nautilus-backpack http::request::tests::test_mutation_key_and_ambiguous_scope_refused
+        PASS [   0.060s] ( 93/478) nautilus-backpack execution_client::restricted::tests::retained_order_preserves_high_cumulative_terminal_and_known_candidate
+        PASS [   0.091s] ( 94/478) nautilus-backpack identity::tests::a_valid_but_changed_checkpoint_cannot_be_overwritten_by_stale_memory
+        PASS [   0.011s] ( 95/478) nautilus-backpack identity::tests::external_identity_empty_payload_and_private_debug_are_refused_or_hidden
+        PASS [   0.101s] ( 96/478) nautilus-backpack identity::tests::committed_intents_survive_restart_and_never_release_their_ids
+        PASS [   0.062s] ( 97/478) nautilus-backpack identity::tests::failed_windows_replacement_returns_no_id_and_poisons_the_owner
+        PASS [   0.051s] ( 98/478) nautilus-backpack identity::tests::initialized_missing_checkpoint_and_interrupted_initialization_fail_closed
+        PASS [   0.042s] ( 99/478) nautilus-backpack identity::tests::invalid_high_water_is_refused::case_1
+        PASS [   0.140s] (100/478) nautilus-backpack identity::tests::independent_namespaces_keep_independent_mapping
+        PASS [   0.048s] (101/478) nautilus-backpack identity::tests::invalid_high_water_is_refused::case_2
+        PASS [   0.049s] (102/478) nautilus-backpack identity::tests::invalid_mapping_is_refused_even_with_a_valid_checksum::case_1
+        PASS [   0.043s] (103/478) nautilus-backpack identity::tests::invalid_mapping_is_refused_even_with_a_valid_checksum::case_2
+        PASS [   0.041s] (104/478) nautilus-backpack identity::tests::invalid_mapping_is_refused_even_with_a_valid_checksum::case_3
+        PASS [   0.042s] (105/478) nautilus-backpack identity::tests::invalid_mapping_is_refused_even_with_a_valid_checksum::case_4
+        PASS [   0.042s] (106/478) nautilus-backpack identity::tests::invalid_mapping_is_refused_even_with_a_valid_checksum::case_5
+        PASS [   0.014s] (107/478) nautilus-backpack identity::tests::invalid_namespaces_are_refused::case_1
+        PASS [   0.008s] (108/478) nautilus-backpack identity::tests::invalid_namespaces_are_refused::case_2
+        PASS [   0.008s] (109/478) nautilus-backpack identity::tests::invalid_namespaces_are_refused::case_3
+        PASS [   0.010s] (110/478) nautilus-backpack identity::tests::invalid_namespaces_are_refused::case_4
+        PASS [   0.041s] (111/478) nautilus-backpack identity::tests::invalid_mapping_is_refused_even_with_a_valid_checksum::case_6
+        PASS [   0.008s] (112/478) nautilus-backpack identity::tests::invalid_namespaces_are_refused::case_5
+        PASS [   0.009s] (113/478) nautilus-backpack identity::tests::invalid_namespaces_are_refused::case_6
+        PASS [   0.055s] (114/478) nautilus-backpack identity::tests::malformed_checkpoints_are_never_reinitialized::case_1
+        PASS [   0.091s] (115/478) nautilus-backpack identity::tests::last_uint32_is_committed_once_then_exhaustion_survives_restart
+        PASS [   0.051s] (116/478) nautilus-backpack identity::tests::malformed_checkpoints_are_never_reinitialized::case_2
+        PASS [   0.047s] (117/478) nautilus-backpack identity::tests::malformed_checkpoints_are_never_reinitialized::case_3
+        PASS [   0.038s] (118/478) nautilus-backpack identity::tests::malformed_checkpoints_are_never_reinitialized::case_4
+        PASS [   0.059s] (119/478) nautilus-backpack identity::tests::missing_or_corrupt_marker_never_recreates_initialization
+        PASS [   0.050s] (120/478) nautilus-backpack identity::tests::multiple_handles_contend_and_drop_releases_ownership
+        PASS [   0.116s] (121/478) nautilus-backpack identity::tests::orphan_pre_replace_temporary_is_never_adopted::case_1
+        PASS [   0.119s] (122/478) nautilus-backpack identity::tests::orphan_pre_replace_temporary_is_never_adopted::case_2
+        PASS [   0.082s] (123/478) nautilus-backpack identity::tests::scope_mismatch_never_restores_or_resets::case_1
+        PASS [   0.081s] (124/478) nautilus-backpack identity::tests::scope_mismatch_never_restores_or_resets::case_2
+        PASS [   0.084s] (125/478) nautilus-backpack identity::tests::scope_mismatch_never_restores_or_resets::case_3
+        PASS [   0.085s] (126/478) nautilus-backpack identity::tests::scope_mismatch_never_restores_or_resets::case_4
+        PASS [   0.009s] (127/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_1
+        PASS [   0.008s] (128/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_2
+        PASS [   0.008s] (129/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_3
+        PASS [   0.009s] (130/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_4
+        PASS [   0.008s] (131/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_5
+        PASS [   0.008s] (132/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_6
+        PASS [   0.057s] (133/478) nautilus-backpack identity::tests::storage_failure_poisoning_prevents_a_second_reservation
+        PASS [   0.008s] (134/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_7
+        PASS [   0.008s] (135/478) nautilus-backpack signing::tests::test_ambiguous_tokens_refused::case_8
+        PASS [   0.008s] (136/478) nautilus-backpack signing::tests::test_duplicate_and_reserved_keys_refused
+        PASS [   0.008s] (137/478) nautilus-backpack signing::tests::test_invalid_window::case_1
+        PASS [   0.007s] (138/478) nautilus-backpack signing::tests::test_invalid_window::case_2
+        PASS [   0.008s] (139/478) nautilus-backpack signing::tests::test_invalid_window::case_3
+        PASS [   0.008s] (140/478) nautilus-backpack signing::tests::test_official_cancel_canonical_example
+        PASS [   0.007s] (141/478) nautilus-backpack signing::tests::test_scalar_wire_and_canonical_share_values
+        PASS [   0.007s] (142/478) nautilus-backpack signing::tests::test_window_boundaries::case_1
+        PASS [   0.008s] (143/478) nautilus-backpack signing::tests::test_window_boundaries::case_2
+        PASS [   0.007s] (144/478) nautilus-backpack signing::tests::test_window_boundaries::case_3
+        PASS [   0.010s] (145/478) nautilus-backpack telemetry::tests::actual_native_scope_requires_claimed_exact_origin_and_same_limiter
+        PASS [   0.010s] (146/478) nautilus-backpack telemetry::tests::fresh_claim_cannot_inherit_old_gate_or_future_receipts
+        PASS [   0.010s] (147/478) nautilus-backpack telemetry::tests::same_epoch_recovery_cannot_reuse_pre_fault_admission
+        PASS [   0.007s] (148/478) nautilus-backpack::account test_budget_and_window_boundaries_rejected_before_transport
+        PASS [   0.055s] (149/478) nautilus-backpack::account test_colliding_external_client_id_never_attaches_a_native_order_without_binding
+        PASS [   0.053s] (150/478) nautilus-backpack::account test_command_binding_rejects_unreserved_and_conflicting_venue_native_links
+        PASS [   0.165s] (151/478) nautilus-backpack::account test_actual_signed_snapshot_with_explicit_unknown_identity_and_non_atomic_coverage
+        PASS [   0.056s] (152/478) nautilus-backpack::account test_conditional_and_contradictory_orders_are_not_simplified
+        PASS [   0.008s] (153/478) nautilus-backpack::account test_decimal_numeric_compatibility_is_exact_not_f64
+        PASS [   0.026s] (154/478) nautilus-backpack::account test_empty_history_requires_all_headers_and_remains_replication_unknown
+        PASS [   0.171s] (155/478) nautilus-backpack::account test_empty_snapshots_are_observed_empty_not_missing_or_flat
+        PASS [   0.264s] (156/478) nautilus-backpack::account test_deadline_is_total_across_pages_and_cancellation_sends_no_request
+        PASS [   0.070s] (157/478) nautilus-backpack::account test_external_and_system_fills_are_not_adopted::case_1
+        PASS [   0.076s] (158/478) nautilus-backpack::account test_external_and_system_fills_are_not_adopted::case_2
+        PASS [   0.078s] (159/478) nautilus-backpack::account test_external_and_system_fills_are_not_adopted::case_3
+        PASS [   0.026s] (160/478) nautilus-backpack::account test_finite_page_budget_stops_before_extra_request
+        PASS [   0.060s] (161/478) nautilus-backpack::account test_external_and_system_fills_are_not_adopted::case_4
+        PASS [   0.082s] (162/478) nautilus-backpack::account test_first_fill_pending_attribution_can_be_qualified_by_later_command_ack
+        PASS [   0.077s] (163/478) nautilus-backpack::account test_first_fill_pending_retry_failed_ack_restart_and_rest_ws_dedup
+        PASS [   0.009s] (164/478) nautilus-backpack::account test_funding_sign_retained_but_currency_and_timezone_are_unknown
+        PASS [   0.047s] (165/478) nautilus-backpack::account test_history_faults_fail_closed_instead_of_partial_success::case_1
+        PASS [   0.075s] (166/478) nautilus-backpack::account test_full_fill_pagination_has_fixed_cutoff_exact_headers_and_no_first_page_completion
+        PASS [   0.063s] (167/478) nautilus-backpack::account test_history_faults_fail_closed_instead_of_partial_success::case_2
+        PASS [   0.063s] (168/478) nautilus-backpack::account test_history_faults_fail_closed_instead_of_partial_success::case_3
+        PASS [   0.079s] (169/478) nautilus-backpack::account test_history_faults_fail_closed_instead_of_partial_success::case_4
+        PASS [   0.064s] (170/478) nautilus-backpack::account test_history_faults_fail_closed_instead_of_partial_success::case_5
+        PASS [   0.031s] (171/478) nautilus-backpack::account test_history_symbol_scope_cannot_silently_expand::case_1
+        PASS [   0.031s] (172/478) nautilus-backpack::account test_history_symbol_scope_cannot_silently_expand::case_2
+        PASS [   0.031s] (173/478) nautilus-backpack::account test_history_symbol_scope_cannot_silently_expand::case_3
+        PASS [   0.057s] (174/478) nautilus-backpack::account test_invalid_fill_client_id_not_truncated_or_hashed::case_1
+        PASS [   0.087s] (175/478) nautilus-backpack::account test_invalid_fill_client_id_not_truncated_or_hashed::case_2
+        PASS [   0.071s] (176/478) nautilus-backpack::account test_invalid_fill_client_id_not_truncated_or_hashed::case_3
+        PASS [   0.008s] (177/478) nautilus-backpack::account test_invalid_or_unrepresentable_decimal_is_rejected::case_1
+        PASS [   0.008s] (178/478) nautilus-backpack::account test_invalid_or_unrepresentable_decimal_is_rejected::case_2
+        PASS [   0.007s] (179/478) nautilus-backpack::account test_invalid_or_unrepresentable_decimal_is_rejected::case_3
+        PASS [   0.008s] (180/478) nautilus-backpack::account test_invalid_or_unrepresentable_decimal_is_rejected::case_4
+        PASS [   0.049s] (181/478) nautilus-backpack::account test_invalid_fill_client_id_not_truncated_or_hashed::case_4
+        PASS [   0.008s] (182/478) nautilus-backpack::account test_invalid_or_unrepresentable_decimal_is_rejected::case_5
+        PASS [   0.008s] (183/478) nautilus-backpack::account test_invalid_or_unrepresentable_decimal_is_rejected::case_6
+        PASS [   0.010s] (184/478) nautilus-backpack::account test_invalid_or_unrepresentable_decimal_is_rejected::case_7
+        PASS [   0.083s] (185/478) nautilus-backpack::account test_known_order_status_and_filled_quantity_must_agree::case_1
+        PASS [   0.082s] (186/478) nautilus-backpack::account test_known_order_status_and_filled_quantity_must_agree::case_2
+        PASS [   0.024s] (187/478) nautilus-backpack::account test_missing_response_is_failure_never_successful_empty::case_1
+        PASS [   0.059s] (188/478) nautilus-backpack::account test_known_order_status_and_filled_quantity_must_agree::case_3
+        PASS [   0.063s] (189/478) nautilus-backpack::account test_missing_response_is_failure_never_successful_empty::case_2
+        PASS [   0.093s] (190/478) nautilus-backpack::account test_missing_response_is_failure_never_successful_empty::case_3
+        PASS [   0.141s] (191/478) nautilus-backpack::account test_missing_response_is_failure_never_successful_empty::case_4
+        PASS [   0.052s] (192/478) nautilus-backpack::account test_missing_trade_id_preserves_economics_without_fabricating_a_report
+        PASS [   0.157s] (193/478) nautilus-backpack::account test_missing_response_is_failure_never_successful_empty::case_5
+        PASS [   0.028s] (194/478) nautilus-backpack::account test_missing_trade_identity_history_preserves_raw_and_explicit_gap
+        PASS [   0.106s] (195/478) nautilus-backpack::account test_native_order_attribution_requires_independent_matching_command_binding
+        PASS [   0.110s] (196/478) nautilus-backpack::account test_money_quantity_price_precision_loss_is_not_rounded
+        PASS [   0.031s] (197/478) nautilus-backpack::account test_order_funding_history_has_no_invented_cutoff_wire_filter::case_1
+        PASS [   0.053s] (198/478) nautilus-backpack::account test_order_and_explicit_signed_position_domain_reports_have_unknown_event_time
+        PASS [   0.031s] (199/478) nautilus-backpack::account test_order_funding_history_has_no_invented_cutoff_wire_filter::case_2
+        PASS [   0.016s] (200/478) nautilus-backpack::account test_outside_fixed_fill_window_rejected
+        PASS [   0.051s] (201/478) nautilus-backpack::account test_out_of_order_and_terminal_late_fills_sorted_by_event_time_without_loss
+        PASS [   0.031s] (202/478) nautilus-backpack::account test_resting_404_never_proves_never_executed_and_selector_is_exclusive
+        PASS [   0.016s] (203/478) nautilus-backpack::account test_resting_response_must_match_requested_selector::case_1
+        PASS [   0.016s] (204/478) nautilus-backpack::account test_resting_response_must_match_requested_selector::case_2
+        PASS [   0.016s] (205/478) nautilus-backpack::account test_resting_response_must_match_requested_selector::case_3
+        PASS [   0.064s] (206/478) nautilus-backpack::account test_resting_observed_uses_actual_original_client_id
+        PASS [   0.009s] (207/478) nautilus-backpack::account test_synthetic_fixture_required_fields_match_recorded_official_schema::case_1
+        PASS [   0.008s] (208/478) nautilus-backpack::account test_synthetic_fixture_required_fields_match_recorded_official_schema::case_2
+        PASS [   0.009s] (209/478) nautilus-backpack::account test_synthetic_fixture_required_fields_match_recorded_official_schema::case_3
+        PASS [   0.007s] (210/478) nautilus-backpack::account test_synthetic_fixture_required_fields_match_recorded_official_schema::case_4
+        PASS [   0.008s] (211/478) nautilus-backpack::account test_synthetic_fixture_required_fields_match_recorded_official_schema::case_5
+        PASS [   0.007s] (212/478) nautilus-backpack::account test_synthetic_fixture_required_fields_match_recorded_official_schema::case_6
+        PASS [   0.008s] (213/478) nautilus-backpack::account test_synthetic_fixture_required_fields_match_recorded_official_schema::case_7
+        PASS [   0.078s] (214/478) nautilus-backpack::account test_true_fill_exact_trade_id_fee_rebate_and_original_durable_ownership
+        PASS [   0.078s] (215/478) nautilus-backpack::account test_unknown_order_state_missing_economics_and_reduce_policy_are_not_defaulted
+        PASS [   0.010s] (216/478) nautilus-backpack::account test_wallet_staked_equity_and_liability_not_conflated
+        PASS [   0.011s] (217/478) nautilus-backpack::data_client factory_rejects_foreign_config_without_network
+        PASS [   0.158s] (218/478) nautilus-backpack::account test_unsupported_policy_liability_and_collateral_degrade_without_mutation
+        PASS [   0.150s] (219/478) nautilus-backpack::data_client loopback_closed_data_sink_closes_owning_public_socket
+        PASS [   1.260s] (220/478) nautilus-backpack::data_client loopback_drop_inflight_old_run_cannot_pollute_reclaimed_telemetry
+        PASS [   0.500s] (221/478) nautilus-backpack::data_client loopback_factory_instruments_before_data_receive_before_snapshot_and_unsubscribe
+        PASS [   0.673s] (222/478) nautilus-backpack::data_client loopback_gap_bootstraps_new_book_and_reconnect_republishes_instruments
+        PASS [   2.525s] (223/478) nautilus-backpack::data_client loopback_duplicate_depth_does_not_extend_book_freshness_but_empty_progress_does
+        PASS [   0.434s] (224/478) nautilus-backpack::data_client loopback_old_depth_event_cannot_become_fresh_by_arriving_now
+        PASS [   0.327s] (225/478) nautilus-backpack::data_client loopback_partial_connect_cancellation_and_invalid_complete_metadata_roll_back
+        PASS [   0.062s] (226/478) nautilus-backpack::data_client loopback_provider_complete_allowlist_and_strict_ids_filters
+        PASS [   1.205s] (227/478) nautilus-backpack::data_client loopback_queue_overflow_during_metadata_bootstrap_cannot_reopen_that_epoch
+        PASS [   2.403s] (228/478) nautilus-backpack::data_client loopback_idle_feed_recovery_does_not_reuse_previous_quote_freshness
+        PASS [   0.425s] (229/478) nautilus-backpack::data_client loopback_reconnect_new_tick_reaches_engine_and_instrument_response
+        PASS [   0.929s] (230/478) nautilus-backpack::data_client loopback_quote_freshness_null_side_old_event_and_malformed_duplicate
+        PASS [   0.441s] (231/478) nautilus-backpack::data_client loopback_snapshot_failure_reconnects_without_publishing_invalid_book
+        PASS [   2.269s] (232/478) nautilus-backpack::data_client loopback_recovery_deadline_covers_slow_metadata_and_owned_teardown
+        PASS [   0.178s] (233/478) nautilus-backpack::execution test_accept_then_response_loss_keeps_one_post_and_unknown_capacity
+        PASS [   0.011s] (234/478) nautilus-backpack::execution test_advanced_flags_have_no_native_wire_path
+        PASS [   0.155s] (235/478) nautilus-backpack::execution test_cancel_202_pending_owned_only_and_true_fills_required_to_release
+        PASS [   1.953s] (236/478) nautilus-backpack::data_client loopback_unsubscribe_cancels_old_snapshot_and_telemetry_exclusive_owner
+        PASS [   0.166s] (237/478) nautilus-backpack::execution test_cancel_attempt_survives_restart_without_resend
+        PASS [   0.170s] (238/478) nautilus-backpack::execution test_cancel_permission_is_distinct_from_new_risk_and_data_freshness
+        PASS [   0.050s] (239/478) nautilus-backpack::execution test_config_and_durable_namespace_cannot_use_another_origin::case_1
+        PASS [   0.096s] (240/478) nautilus-backpack::execution test_checkpoint_failure_after_identity_commit_sends_zero_and_restores_unknown
+        PASS [   0.042s] (241/478) nautilus-backpack::execution test_config_and_durable_namespace_cannot_use_another_origin::case_2
+        PASS [   0.073s] (242/478) nautilus-backpack::execution test_exact_authority_expiry_millisecond_has_zero_dispatch
+        PASS [   0.065s] (243/478) nautilus-backpack::execution test_exact_grid_and_bounds_refuse_before_intent::case_1
+        PASS [   0.179s] (244/478) nautilus-backpack::execution test_definitive_rejection_releases_capacity_but_identity_is_permanent
+        PASS [   0.068s] (245/478) nautilus-backpack::execution test_exact_grid_and_bounds_refuse_before_intent::case_2
+        PASS [   0.067s] (246/478) nautilus-backpack::execution test_exact_grid_and_bounds_refuse_before_intent::case_3
+        PASS [   0.066s] (247/478) nautilus-backpack::execution test_exact_grid_and_bounds_refuse_before_intent::case_4
+        PASS [   0.067s] (248/478) nautilus-backpack::execution test_exact_grid_and_bounds_refuse_before_intent::case_5
+        PASS [   0.074s] (249/478) nautilus-backpack::execution test_freshness_future_unknown_policy_and_exact_capacity_have_no_defaults
+        PASS [   0.049s] (250/478) nautilus-backpack::execution test_intent_storage_failure_sends_zero_and_poison_is_sticky
+        PASS [   0.051s] (251/478) nautilus-backpack::execution test_native_quote_container_does_not_bypass_executable_grid_checks
+        PASS [   0.059s] (252/478) nautilus-backpack::execution test_new_risk_sell_limit_cannot_claim_limit_price_notional_upper_bound
+        PASS [   0.331s] (253/478) nautilus-backpack::execution test_final_quota_check_uses_engine_age_even_with_fresh_receipt
+        PASS [   0.122s] (254/478) nautilus-backpack::execution test_nonstandard_post_ack_never_binds_or_cancels::case_1
+        PASS [   0.128s] (255/478) nautilus-backpack::execution test_nonstandard_post_ack_never_binds_or_cancels::case_2
+        PASS [   0.137s] (256/478) nautilus-backpack::execution test_nonstandard_post_ack_never_binds_or_cancels::case_3
+        PASS [   0.122s] (257/478) nautilus-backpack::execution test_nonstandard_post_ack_never_binds_or_cancels::case_4
+        PASS [   0.126s] (258/478) nautilus-backpack::execution test_nonstandard_post_ack_never_binds_or_cancels::case_5
+        PASS [   0.062s] (259/478) nautilus-backpack::execution test_old_engine_event_with_fresh_receipt_and_future_event_send_zero::case_1
+        PASS [   0.075s] (260/478) nautilus-backpack::execution test_old_engine_event_with_fresh_receipt_and_future_event_send_zero::case_2
+        PASS [   0.116s] (261/478) nautilus-backpack::execution test_old_flat_snapshot_does_not_make_shutdown_clean
+        PASS [   0.047s] (262/478) nautilus-backpack::execution test_production_write_and_wrong_credential_audience_are_explicitly_refused
+        PASS [   0.338s] (263/478) nautilus-backpack::execution test_queued_request_rechecks_session_stop_freshness_and_authority::case_2
+        PASS [   0.344s] (264/478) nautilus-backpack::execution test_queued_request_rechecks_session_stop_freshness_and_authority::case_1
+        PASS [   0.329s] (265/478) nautilus-backpack::execution test_queued_request_rechecks_session_stop_freshness_and_authority::case_3
+        PASS [   0.329s] (266/478) nautilus-backpack::execution test_queued_request_rechecks_session_stop_freshness_and_authority::case_4
+        PASS [   0.140s] (267/478) nautilus-backpack::execution test_reduce_only_market_requires_direction_and_unreserved_position
+        PASS [   0.092s] (268/478) nautilus-backpack::execution test_supported_limit_matrix::case_1
+        PASS [   0.158s] (269/478) nautilus-backpack::execution test_supported_limit_matrix::case_2
+        PASS [   0.118s] (270/478) nautilus-backpack::execution test_supported_limit_matrix::case_3
+        PASS [   0.089s] (271/478) nautilus-backpack::execution test_supported_limit_matrix::case_4
+        PASS [   0.099s] (272/478) nautilus-backpack::execution test_true_post_ack_is_bound_signed_and_intent_precedes_first_byte
+        PASS [   0.256s] (273/478) nautilus-backpack::execution test_true_terminal_fill_ack_wins_over_late_202_cancel_response
+        PASS [   0.162s] (274/478) nautilus-backpack::execution test_unknown_response_never_retries_or_changes_original_id::case_1
+        PASS [   0.159s] (275/478) nautilus-backpack::execution test_unknown_response_never_retries_or_changes_original_id::case_2
+        PASS [   0.126s] (276/478) nautilus-backpack::execution test_unknown_response_never_retries_or_changes_original_id::case_3
+        PASS [   0.166s] (277/478) nautilus-backpack::execution test_unknown_response_never_retries_or_changes_original_id::case_4
+        PASS [   0.124s] (278/478) nautilus-backpack::execution test_unrelated_future_ack_field_is_preserved_without_rejecting_binding
+        PASS [   0.056s] (279/478) nautilus-backpack::execution test_unsupported_matrix_sends_zero::case_1
+        PASS [   0.049s] (280/478) nautilus-backpack::execution test_unsupported_matrix_sends_zero::case_2
+        PASS [   0.064s] (281/478) nautilus-backpack::execution test_unsupported_matrix_sends_zero::case_3
+        PASS [   0.065s] (282/478) nautilus-backpack::execution test_unsupported_matrix_sends_zero::case_4
+        PASS [   0.055s] (283/478) nautilus-backpack::execution test_unsupported_matrix_sends_zero::case_5
+        PASS [   0.568s] (284/478) nautilus-backpack::execution_client guarded::test_attached_control_recovers_after_private_first_public_admission_failure
+        PASS [   1.003s] (285/478) nautilus-backpack::execution_client guarded::test_attached_owned_query_correlation_conflict_invalidates_session
+        PASS [   1.085s] (286/478) nautilus-backpack::execution_client guarded::test_attached_owned_query_cumulative_never_infers_fill_or_acknowledges
+        PASS [   5.149s] (287/478) nautilus-backpack::execution test_shared_quota_longer_than_receive_window_signs_fresh_after_wait
+        PASS [   1.055s] (288/478) nautilus-backpack::execution_client guarded::test_attached_owned_query_static_gaps_preserve_session_and_cancel_202
+        PASS [   0.951s] (289/478) nautilus-backpack::execution_client guarded::test_attached_owned_query_unknown_field_invalidates_session
+        PASS [   0.650s] (290/478) nautilus-backpack::execution_client guarded::test_durable_consumer_persists_terminal_lifecycle_without_new_fill
+        PASS [   3.219s] (291/478) nautilus-backpack::execution_client guarded::test_durable_consumer_preserves_zero_fee_rebate_and_fee_currency
+        PASS [   0.286s] (292/478) nautilus-backpack::execution_client guarded::test_durable_consumer_seed_isolated_from_other_native_client_and_denied_order
+        PASS [   0.656s] (293/478) nautilus-backpack::execution_client guarded::test_durable_consumption_storage_failure_retains_pending_and_poison
+        PASS [   4.290s] (294/478) nautilus-backpack::execution_client guarded::test_durable_consumer_restart_at_every_economic_boundary
+        PASS [   0.661s] (295/478) nautilus-backpack::execution_client guarded::test_durable_seed_storage_failure_prevents_native_dispatch
+        PASS [   1.266s] (296/478) nautilus-backpack::execution_client guarded::test_durable_late_fill_reopens_netting_cycle_and_restores_archived_pnl
+        PASS [   0.724s] (297/478) nautilus-backpack::execution_client guarded::test_guarded_cancel_202_terminal_waits_for_durable_true_fill_ack_and_late_fill_reopens_risk
+        PASS [   0.821s] (298/478) nautilus-backpack::execution_client guarded::test_guarded_exact_reference_roundtrip_native_positions_fees_and_portfolio_pnl
+        PASS [   0.571s] (299/478) nautilus-backpack::execution_client guarded::test_guarded_lost_post_ack_rest_collision_remains_unbound_and_never_retried
+        PASS [   0.562s] (300/478) nautilus-backpack::execution_client guarded::test_guarded_old_config_and_telemetry_cannot_hold_owner_after_client_drop
+        PASS [   0.654s] (301/478) nautilus-backpack::execution_client guarded::test_guarded_pre_ack_conflicting_fill_economics_fault_without_attribution
+        PASS [   0.628s] (302/478) nautilus-backpack::execution_client guarded::test_guarded_public_generation_fault_refuses_new_post_but_owned_cancel_uses_exit_authority
+        PASS [   0.692s] (303/478) nautilus-backpack::execution_client guarded::test_guarded_true_first_fill_waits_for_post_ack_then_real_engine_and_portfolio
+        PASS [   1.011s] (304/478) nautilus-backpack::execution_client guarded::test_guarded_restart_rest_true_fill_dedup_couples_native_state_and_consumer_receipt
+        PASS [   0.397s] (305/478) nautilus-backpack::execution_client test_ack_callback_reentry_health_and_recovery_never_hold_adapter_locks
+        PASS [   0.408s] (306/478) nautilus-backpack::execution_client test_ack_lease_concurrency_counts_new_pending_evidence
+        PASS [   0.232s] (307/478) nautilus-backpack::execution_client test_invalid_history_prevents_successful_connect_and_stop_is_still_bounded
+        PASS [   0.401s] (308/478) nautilus-backpack::execution_client test_ack_lease_reentry_error_panic_and_duplicate_do_not_commit_twice
+        PASS [   0.039s] (309/478) nautilus-backpack::execution_client test_native_factory_configuration_claims_and_no_constructor_network
+        PASS [   0.787s] (310/478) nautilus-backpack::execution_client test_native_connect_rest_reports_signed_private_stream_and_bounded_repeated_stop
+        PASS [   0.051s] (311/478) nautilus-backpack::execution_client test_private_conditional_order_and_absent_post_only_are_not_invented_as_plain_limit
+        PASS [   0.051s] (312/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_1
+        PASS [   0.766s] (313/478) nautilus-backpack::execution_client test_parse_fault_fences_late_rest_bootstrap_and_query_is_owned
+        PASS [   0.057s] (314/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_2
+        PASS [   0.078s] (315/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_3
+        PASS [   0.079s] (316/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_4
+        PASS [   0.081s] (317/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_5
+        PASS [   0.080s] (318/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_6
+        PASS [   0.077s] (319/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_7
+        PASS [   0.077s] (320/478) nautilus-backpack::execution_client test_private_duplicate_economic_or_identity_keys_are_rejected::case_8
+        PASS [   0.075s] (321/478) nautilus-backpack::execution_client test_private_duplicate_unknown_nested_keys_cannot_hide_conditional_fields
+        PASS [   0.075s] (322/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_01
+        PASS [   0.085s] (323/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_02
+        PASS [   0.084s] (324/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_03
+        PASS [   0.078s] (325/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_04
+        PASS [   0.079s] (326/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_05
+        PASS [   0.080s] (327/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_06
+        PASS [   0.080s] (328/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_07
+        PASS [   0.078s] (329/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_08
+        PASS [   0.077s] (330/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_09
+        PASS [   0.077s] (331/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_10
+        PASS [   0.078s] (332/478) nautilus-backpack::execution_client test_private_fill_internal_contradictions_never_produce_native_facts::case_11
+        PASS [   0.078s] (333/478) nautilus-backpack::execution_client test_private_generic_ack_and_valid_empty_control_never_establish_success_or_flat
+        PASS [   0.047s] (334/478) nautilus-backpack::execution_client test_private_system_late_fill_is_exact_and_never_owned_by_colliding_client_id
+        PASS [   0.458s] (335/478) nautilus-backpack::execution_client test_private_initial_explicit_positions_and_order_transitions
+        PASS [   0.010s] (336/478) nautilus-backpack::execution_client test_production_read_only_configuration_is_explicit_and_performs_no_io
+        PASS [   0.036s] (337/478) nautilus-backpack::execution_client test_read_only_cancel_modify_and_empty_batch_methods_refuse_without_io
+        PASS [   0.555s] (338/478) nautilus-backpack::execution_client test_private_true_fills_replay_until_consumer_ack_and_shared_rest_dedup
+        PASS [   0.512s] (339/478) nautilus-backpack::execution_client test_real_execution_engine_cache_receives_only_true_trade_ids_and_fees
+        PASS [   0.359s] (340/478) nautilus-backpack::execution_client test_wrong_venue_and_unsupported_instrument_read_requests_are_rejected_before_io
+        PASS [   0.170s] (341/478) nautilus-backpack::http_client test_429_read_retry_and_total_budget
+        PASS [   0.933s] (342/478) nautilus-backpack::execution_client test_reconnect_resigns_replays_pending_and_new_run_does_not_inherit_observed_coverage
+        PASS [   0.011s] (343/478) nautilus-backpack::http_client test_cancellation_before_and_after_dispatch
+        PASS [   0.124s] (344/478) nautilus-backpack::http_client test_caller_deadline_includes_retry_after_sleep
+        PASS [   0.010s] (345/478) nautilus-backpack::http_client test_expired_deadline_and_missing_credentials_send_nothing
+        PASS [   0.010s] (346/478) nautilus-backpack::http_client test_invalid_clock_is_not_sent
+        PASS [   0.070s] (347/478) nautilus-backpack::http_client test_deadline_expiring_during_preparation_is_not_sent
+        PASS [   0.009s] (348/478) nautilus-backpack::http_client test_production_credentials_refuse_local_peer
+        PASS [   0.042s] (349/478) nautilus-backpack::http_client test_no_retries_when_disabled_and_uncertain_success
+        PASS [   0.016s] (350/478) nautilus-backpack::http_client test_public_get_never_contains_credentials
+        PASS [   0.187s] (351/478) nautilus-backpack::http_client test_public_and_private_reads_share_quota_and_queued_cancellation_is_not_sent
+        PASS [   0.127s] (352/478) nautilus-backpack::http_client test_quota_diagnostics_measure_refused_wait_without_dispatch
+        PASS [   0.267s] (353/478) nautilus-backpack::http_client test_quota_diagnostics_exclude_slow_signing_and_transport_unknown
+        PASS [   0.015s] (354/478) nautilus-backpack::http_client test_redirect_does_not_forward_authentication
+        PASS [   0.124s] (355/478) nautilus-backpack::http_client test_read_retry_preserves_unknown_on_later_not_found
+        PASS [   0.015s] (356/478) nautilus-backpack::http_client test_signed_get_query_empty_body_and_pagination_headers
+        PASS [   0.171s] (357/478) nautilus-backpack::http_client test_stale_admission_after_shared_quota_sends_nothing
+        PASS [   0.155s] (358/478) nautilus-backpack::http_client test_structured_rejection_preserves_prior_unknown
+        PASS [   0.124s] (359/478) nautilus-backpack::http_client test_transport_timeout_is_unknown_and_budget_is_bounded
+        PASS [   0.059s] (360/478) nautilus-backpack::identity_process another_process_cannot_allocate_in_an_owned_namespace
+        PASS [   0.109s] (361/478) nautilus-backpack::identity_process killing_an_owner_releases_the_os_lock_without_deleting_the_lock_file
+        PASS [   0.074s] (362/478) nautilus-backpack::identity_process process_death_after_commit_recovers_original_id_without_creating_another_intent
+        PASS [   0.009s] (363/478) nautilus-backpack::instruments test_all_economic_provenance_classes_remain_not_execution_ready::case_1
+        PASS [   0.009s] (364/478) nautilus-backpack::instruments test_all_economic_provenance_classes_remain_not_execution_ready::case_2
+        PASS [   0.008s] (365/478) nautilus-backpack::instruments test_all_economic_provenance_classes_remain_not_execution_ready::case_3
+        PASS [   0.008s] (366/478) nautilus-backpack::instruments test_distinct_official_observations_and_every_instrument_field::case_1
+        PASS [   0.008s] (367/478) nautilus-backpack::instruments test_distinct_official_observations_and_every_instrument_field::case_2
+        PASS [   0.006s] (368/478) nautilus-backpack::instruments test_documented_microsecond_conversion_and_overflow
+        PASS [   0.008s] (369/478) nautilus-backpack::instruments test_invalid_economic_inputs_and_unknown_currency
+        PASS [   0.006s] (370/478) nautilus-backpack::instruments test_official_response_round_trip::case_1
+        PASS [   0.005s] (371/478) nautilus-backpack::instruments test_official_response_round_trip::case_2
+        PASS [   0.008s] (372/478) nautilus-backpack::instruments test_provider_explicit_invalidation_after_transport_or_decode_failure
+        PASS [   0.008s] (373/478) nautilus-backpack::instruments test_provider_filters_unlisted_markets_and_refreshes_latest_metadata
+        PASS [   0.008s] (374/478) nautilus-backpack::instruments test_synthetic_failed_refresh_invalidates_old_snapshot::case_1
+        PASS [   0.008s] (375/478) nautilus-backpack::instruments test_synthetic_failed_refresh_invalidates_old_snapshot::case_2
+        PASS [   0.008s] (376/478) nautilus-backpack::instruments test_synthetic_failed_refresh_invalidates_old_snapshot::case_3
+        PASS [   0.008s] (377/478) nautilus-backpack::instruments test_synthetic_finite_max_quantity_and_exact_increment_precision
+        PASS [   0.008s] (378/478) nautilus-backpack::instruments test_synthetic_funding_units_signs_and_validation
+        PASS [   0.008s] (379/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_01
+        PASS [   0.008s] (380/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_02
+        PASS [   0.007s] (381/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_03
+        PASS [   0.008s] (382/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_04
+        PASS [   0.008s] (383/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_05
+        PASS [   0.008s] (384/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_06
+        PASS [   0.008s] (385/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_07
+        PASS [   0.008s] (386/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_08
+        PASS [   0.008s] (387/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_09
+        PASS [   0.012s] (388/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_10
+        PASS [   0.008s] (389/478) nautilus-backpack::instruments test_synthetic_invalid_price_increment::case_11
+        PASS [   0.008s] (390/478) nautilus-backpack::instruments test_synthetic_invalid_quantity_bounds::case_1
+        PASS [   0.008s] (391/478) nautilus-backpack::instruments test_synthetic_invalid_quantity_bounds::case_2
+        PASS [   0.008s] (392/478) nautilus-backpack::instruments test_synthetic_invalid_quantity_bounds::case_3
+        PASS [   0.008s] (393/478) nautilus-backpack::instruments test_synthetic_invalid_quantity_bounds::case_4
+        PASS [   0.008s] (394/478) nautilus-backpack::instruments test_synthetic_invalid_quantity_bounds::case_5
+        PASS [   0.008s] (395/478) nautilus-backpack::instruments test_synthetic_invalid_quantity_bounds::case_6
+        PASS [   0.005s] (396/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_01
+        PASS [   0.006s] (397/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_02
+        PASS [   0.005s] (398/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_03
+        PASS [   0.005s] (399/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_04
+        PASS [   0.005s] (400/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_05
+        PASS [   0.005s] (401/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_06
+        PASS [   0.005s] (402/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_07
+        PASS [   0.005s] (403/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_08
+        PASS [   0.005s] (404/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_09
+        PASS [   0.005s] (405/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_10
+        PASS [   0.006s] (406/478) nautilus-backpack::instruments test_synthetic_missing_required_fields_are_not_defaulted::case_11
+        PASS [   0.005s] (407/478) nautilus-backpack::instruments test_synthetic_non_open_markets_are_refused::case_1
+        PASS [   0.005s] (408/478) nautilus-backpack::instruments test_synthetic_non_open_markets_are_refused::case_2
+        PASS [   0.005s] (409/478) nautilus-backpack::instruments test_synthetic_non_open_markets_are_refused::case_3
+        PASS [   0.005s] (410/478) nautilus-backpack::instruments test_synthetic_non_open_markets_are_refused::case_4
+        PASS [   0.005s] (411/478) nautilus-backpack::instruments test_synthetic_non_open_markets_are_refused::case_5
+        PASS [   0.008s] (412/478) nautilus-backpack::instruments test_synthetic_nullable_bounds_and_unknown_funding_remain_unknown
+        PASS [   0.006s] (413/478) nautilus-backpack::instruments test_synthetic_numeric_decimal_field_is_refused
+        PASS [   0.008s] (414/478) nautilus-backpack::instruments test_synthetic_precision_boundary
+        PASS [   0.006s] (415/478) nautilus-backpack::instruments test_synthetic_unsupported_market_types_are_not_inferred_from_suffix::case_1
+        PASS [   0.006s] (416/478) nautilus-backpack::instruments test_synthetic_unsupported_market_types_are_not_inferred_from_suffix::case_2
+        PASS [   0.006s] (417/478) nautilus-backpack::instruments test_synthetic_unsupported_market_types_are_not_inferred_from_suffix::case_3
+        PASS [   0.005s] (418/478) nautilus-backpack::instruments test_synthetic_unsupported_market_types_are_not_inferred_from_suffix::case_4
+        PASS [   0.005s] (419/478) nautilus-backpack::instruments test_synthetic_unsupported_market_types_are_not_inferred_from_suffix::case_5
+        PASS [   0.005s] (420/478) nautilus-backpack::instruments test_synthetic_unsupported_market_types_are_not_inferred_from_suffix::case_6
+        PASS [   0.006s] (421/478) nautilus-backpack::instruments test_synthetic_visibility_identity_quote_and_allowlist_failures
+        PASS [   0.008s] (422/478) nautilus-backpack::instruments test_unknown_numeric_and_nested_metadata_are_preserved_exactly
+        PASS [   0.045s] (423/478) nautilus-backpack::protocol_evidence observed_estimate_preserves_raw_rate_separately_from_synthetic_settled_cashflow
+        PASS [   0.047s] (424/478) nautilus-backpack::protocol_evidence official_balance_example_is_absolute_with_unverified_identity
+        PASS [   0.044s] (425/478) nautilus-backpack::protocol_evidence synthetic_basis_point_policy_and_negative_cash_fee_are_not_conflated
+        PASS [   0.044s] (426/478) nautilus-backpack::protocol_evidence synthetic_client_id_boundaries_match_order_uint32_and_fill_decimal_string
+        PASS [   0.006s] (427/478) nautilus-backpack::protocol_evidence synthetic_pagination_headers_and_window_fail_closed_without_missing_defaults
+        PASS [   0.049s] (428/478) nautilus-backpack::protocol_evidence synthetic_success_controls_never_attest_private_subscription_or_identity
+        PASS [   0.044s] (429/478) nautilus-backpack::protocol_evidence synthetic_system_fill_cannot_adopt_independently_bound_numeric_client_id::case_1
+        PASS [   0.042s] (430/478) nautilus-backpack::protocol_evidence synthetic_system_fill_cannot_adopt_independently_bound_numeric_client_id::case_2
+        PASS [   0.009s] (431/478) nautilus-backpack::public test_documented_depth_topics_are_accepted::case_1
+        PASS [   0.009s] (432/478) nautilus-backpack::public test_documented_depth_topics_are_accepted::case_2
+        PASS [   0.009s] (433/478) nautilus-backpack::public test_documented_depth_topics_are_accepted::case_3
+        PASS [   0.009s] (434/478) nautilus-backpack::public test_documented_depth_topics_are_accepted::case_4
+        PASS [   0.008s] (435/478) nautilus-backpack::public test_generation_frame_bound_timestamp_overflow_and_duplicate_json_fields
+        PASS [   0.008s] (436/478) nautilus-backpack::public test_official_documentation_spot_examples_are_not_relabelled_as_perpetuals::case_1
+        PASS [   0.008s] (437/478) nautilus-backpack::public test_official_documentation_spot_examples_are_not_relabelled_as_perpetuals::case_2
+        PASS [   0.008s] (438/478) nautilus-backpack::public test_official_documentation_spot_examples_are_not_relabelled_as_perpetuals::case_3
+        PASS [   0.008s] (439/478) nautilus-backpack::public test_official_documentation_spot_examples_are_not_relabelled_as_perpetuals::case_4
+        PASS [   0.008s] (440/478) nautilus-backpack::public test_real_depth_capture_is_decoded_but_cannot_bridge_unrelated_snapshot
+        PASS [   0.008s] (441/478) nautilus-backpack::public test_real_mark_capture_preserves_raw_rate_and_millisecond_next_funding
+        PASS [   0.008s] (442/478) nautilus-backpack::public test_real_quote_capture_and_exact_integer_sequence_compatibility
+        PASS [   0.008s] (443/478) nautilus-backpack::public test_real_snapshot_is_sorted_clear_snapshot_flagged_and_truncated
+        PASS [   0.008s] (444/478) nautilus-backpack::public test_real_trade_capture_and_synthetic_buyer_maker_mapping
+        PASS [   0.008s] (445/478) nautilus-backpack::public test_snapshot_and_storage_bounds_are_explicit::case_1
+        PASS [   0.008s] (446/478) nautilus-backpack::public test_snapshot_and_storage_bounds_are_explicit::case_2
+        PASS [   0.008s] (447/478) nautilus-backpack::public test_snapshot_and_storage_bounds_are_explicit::case_3
+        PASS [   0.008s] (448/478) nautilus-backpack::public test_synthetic_buffer_overflow_generation_failure_and_explicit_restart
+        PASS [   0.008s] (449/478) nautilus-backpack::public test_synthetic_buffer_overlap_bridge_absolute_updates_zero_delete_and_native_batch
+        PASS [   0.008s] (450/478) nautilus-backpack::public test_synthetic_buffered_later_gap_does_not_publish_partial_snapshot
+        PASS [   0.008s] (451/478) nautilus-backpack::public test_synthetic_deleting_snapshot_edge_does_not_invent_top_n_coverage
+        PASS [   0.008s] (452/478) nautilus-backpack::public test_synthetic_empty_side_is_unusable_without_zero_quote::case_1
+        PASS [   0.008s] (453/478) nautilus-backpack::public test_synthetic_empty_side_is_unusable_without_zero_quote::case_2
+        PASS [   0.008s] (454/478) nautilus-backpack::public test_synthetic_empty_snapshot_has_clear_last_and_no_bbo_coverage
+        PASS [   0.009s] (455/478) nautilus-backpack::public test_synthetic_invalid_depth_ranges_duplicate_prices_and_level_bound
+        PASS [   0.008s] (456/478) nautilus-backpack::public test_synthetic_invalid_quote_sequence_is_rejected::case_1
+        PASS [   0.008s] (457/478) nautilus-backpack::public test_synthetic_invalid_quote_sequence_is_rejected::case_2
+        PASS [   0.008s] (458/478) nautilus-backpack::public test_synthetic_invalid_quote_sequence_is_rejected::case_3
+        PASS [   0.008s] (459/478) nautilus-backpack::public test_synthetic_invalid_quote_sequence_is_rejected::case_4
+        PASS [   0.008s] (460/478) nautilus-backpack::public test_synthetic_invalid_quote_sequence_is_rejected::case_5
+        PASS [   0.008s] (461/478) nautilus-backpack::public test_synthetic_live_gap_or_partial_overlap_invalidates_before_return::case_1
+        PASS [   0.008s] (462/478) nautilus-backpack::public test_synthetic_live_gap_or_partial_overlap_invalidates_before_return::case_2
+        PASS [   0.008s] (463/478) nautilus-backpack::public test_synthetic_malformed_quote_cannot_hide_behind_duplicate_watermark
+        PASS [   0.008s] (464/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_1
+        PASS [   0.008s] (465/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_2
+        PASS [   0.008s] (466/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_3
+        PASS [   0.008s] (467/478) nautilus-backpack::public test_synthetic_missing_side_field_is_not_assumed_empty::case_4
+        PASS [   0.008s] (468/478) nautilus-backpack::public test_synthetic_non_power_of_ten_price_and_size_grids
+        PASS [   0.008s] (469/478) nautilus-backpack::public test_synthetic_snapshot_invalid_fields_fail_closed_and_publish_nothing
+        PASS [   0.008s] (470/478) nautilus-backpack::public test_synthetic_storage_overflow_crossed_book_invalid_snapshot_and_bad_frame_stale
+        PASS [   0.008s] (471/478) nautilus-backpack::public test_synthetic_theoretical_mark_is_exact_without_executable_tick_rounding
+        PASS [   0.008s] (472/478) nautilus-backpack::public test_synthetic_topic_payload_mismatch::case_1
+        PASS [   0.008s] (473/478) nautilus-backpack::public test_synthetic_topic_payload_mismatch::case_2
+        PASS [   0.008s] (474/478) nautilus-backpack::public test_synthetic_topic_payload_mismatch::case_3
+        PASS [   0.008s] (475/478) nautilus-backpack::replay replay_duplicate_known_field_invalidates_book_until_restart
+        PASS [   0.008s] (476/478) nautilus-backpack::replay replay_preserves_original_times_and_discards_old_before_parser
+        PASS [   0.009s] (477/478) nautilus-backpack::replay replay_reader_bounds_lines_records_and_streams_outputs
+        PASS [   5.133s] (478/478) nautilus-backpack::http_client test_shared_quota_longer_than_window_signs_after_admission
+────────────
+     Summary [  39.151s] 478 tests run: 478 passed, 1 skipped

@@ -1,0 +1,494 @@
+{
+  "candidate": {
+    "app": {
+      "commit": "f0abd5b09a41406a3446106ce3e9fed1c86be31c",
+      "dirty": false,
+      "source_files_sha256": {
+        ".github/workflows/joint-acceptance.yml": "5df4b0733f98a299fde4aed223a49d76da3ce95b6549873aafee5fa7191dfb59",
+        ".github/workflows/native-candidate-install.yml": "a01902f3214dcdbf00df2a3c56e25c0e0cd4a7555145d05442bd8cb38f6187f4",
+        ".github/workflows/native-candidate.yml": "a36efc33b8373219b184408166403842354e349e8d3092a8286a34a6f08a2ade",
+        ".python-version": "20f39a96a949f1df3f64fbbbcd3fe6da634b0c05e8eaf4f6cc36ca491ea0b08e",
+        "config/backpack-account-readonly.example.toml": "480ad988fcb24330379d50af7fc7af8997e463c527b4de9204f1e53874b53112",
+        "config/backpack-loopback-execution.example.toml": "c477049a989ad62f197e5dacfb477420e5bc8b48a6ffba45e4661de6761c0b95",
+        "config/backpack-paper.example.toml": "118ff9aab89d6163bb55fce93f22f428d4e07dfaa48f4a7cff0610946ed53cbb",
+        "config/backpack-public.example.toml": "86a7c29b4a5752526520029c3c8619de684c14bf0bc5e6a45fcb7260eda9acac",
+        "config/backpack-replay.example.toml": "24987100d437bf4f0faf742c8b98972a889fd8a19a02464808d435e4ec19bf47",
+        "config/limits.toml": "a2aa8283bb035b164538db9202528bd5cdc0ec04c09488ff090a679592bb2d21",
+        "config/native-candidate.lock.json": "324d00eaf5e26220aa32a0d39b2b9540c331e5fda2611f71d5d6ede3a7336c27",
+        "config/ondo_btc_test.toml": "0931df03fe2b6882a96a5a3fdbc9b4538aba6b18cc89f832737d644134d3fbd9",
+        "pyproject.toml": "398121ffe743271ad13da6c25b90322b2fbe70bb9b39e0b9229b976d4172c9bb",
+        "scripts/backpack_public_load.py": "9b14a9331a45cd8b9f62b2f1786363be841b836aaa848bb83774dd9ec1d83026",
+        "scripts/build_native.py": "f7cf7a1664afaefc2904e02e7a0053fb985e1aee62dc34b8574ba7ed7fe3d3a7",
+        "scripts/install_native.py": "c2d473e5f5dea8c8931ef4350471b2dfa4e1877fcf8168fb7f816f3351d48adf",
+        "scripts/joint_audit.py": "f8c5d21b1bf5b719a11f7f3a82d1b37373b4779976dce110d26eacefce3815ff",
+        "scripts/lock_native_candidate.py": "0de66b86aeb791fb703d1253e88f014538b3b8f8842b21fb489e558dbe43b89e",
+        "scripts/offline_guard.py": "34b5d37b1e91dbc2c220716f69c61ef93b075ac559448a5e68f7250f8c2b10aa",
+        "scripts/run_ondo_btc_test.ps1": "a5e80c2981c016be03af7396f6109e7c3e840f4a92e4b7eccb91946dc4548b96",
+        "scripts/run_watch.ps1": "2a34eb3504444f6f1e69c1e5709bb83a28662494a982aecfe2d0759ae9df21f0",
+        "scripts/test_integration.py": "aebd373968856acbb8f2f02995cf32abd27052e1123848aebc692d229a83e974",
+        "scripts/verify_native_install.py": "8b177547f5be52a5f737d7d8c3e0ccfbdf392df326eb37badddecfdded56a9f9",
+        "src/analysis/aster_vs_ref.py": "ef47716ce088f20d30eadfddd36aefe8464a7b3085d2497f319c19f2a12370aa",
+        "src/analysis/basis_reversion.py": "7f82123744c60ac3b6cc031f57ceded7da2ff1767723a0b448bfdc54f544a190",
+        "src/analysis/funding_history.py": "ce7076758555383dc935de34ec627b278d0ec0459df67da98e3592ec10ab7059",
+        "src/analysis/leadlag.py": "6d665f2a28c068b9f5276803977526d4c1b12c25e75670dd162b6d9c66df2ab5",
+        "src/analysis/lighter_screen.py": "f3193b822f89e655d97be41b58164f79e7035687dfd61dc82202b0de8a53084f",
+        "src/analysis/maker_fill.py": "adaae76464be73a8e94f9fa695abd57809dcade4f02e4bae34f44ceccc002eea",
+        "src/analysis/maker_inventory.py": "aa22764d528df90342183f5e58346fdd52d30c27989759a08b33aa175bdf1fb1",
+        "src/analysis/mean_reversion.py": "1eccc8dab834767ae48d3f668da04f30a2310c33f287b12a7e61010e2e530a36",
+        "src/analysis/ondo_depth.py": "deaf8bae2c842f20902313a28dc51c06d2beb01f665ac0bd5d537821bd05c1e4",
+        "src/analysis/opportunities.py": "71b43efa62824414ebc3daa3e55fba5a3ee8e427f2733674b1cd2c471bf62547",
+        "src/analysis/round_trip.py": "54be340ddf2a41073a0cbcadcecac97515133cd332a7c50cdb2468c55a228fcc",
+        "src/analysis/size_check.py": "32a1f5cdb909a0793725392e69a7c57e7d8bcf9ec46fb6209dc0e62d0c09d889",
+        "src/backpack_account.py": "d536afd8add5badeb15d218b93e17db3d977e6f1d2f94d59eb3050503849ce8c",
+        "src/backpack_config.py": "7ef04f901fa9041c5ef7949692696c92f71cc278d4fee8874c9324e57c81c327",
+        "src/backpack_loopback.py": "9416fba15a89173cd76d9b5f05118874d662a0d7da457602277ba45e959ca623",
+        "src/backpack_loopback_config.py": "d5811bfe677fc40db4146ffbdc215ecc8c754ea893f776e9be4c033da04e5174",
+        "src/backpack_paper.py": "9861d450897c15702412eb94b3832ba81dd98106352ed8317b26deb8103fd987",
+        "src/backpack_probe.py": "ef3b26e772b25b2eec5033e20ffcc050bc1bfe0b82b19009ba638a1c33e726b0",
+        "src/backpack_public.py": "7f1eaf65faa40f23990bc808250573c8ec4471c4a8cabb9ae4f1d38adeb3ed31",
+        "src/backpack_replay.py": "740117ea692bc2cae5fa8a71d2385e076f7f82d6cf685e4d563d40bb783752dc",
+        "src/exec_probe.py": "1a7f64c233d4b90d65f0d09eb0ac9ab273b61e3d9bc5927efb50e89e445ca0a9",
+        "src/live_limits.py": "f842b10fd34f94b11d51ff3032fc0a1524e48def036cc813eb05f9ecdcff8cc4",
+        "src/maker_live.py": "60c8b33af9df502170779e93e5ff332ed0045ee806b6700fa0287d69f5a29eaf",
+        "src/market_tape.py": "1fb0287004def40e7b3e938e66f23e5380f0fad0e7c0286fe07199a9e44b4716",
+        "src/ondo_btc_operator.py": "dc618e9a5e268d3e8fbde34f448af0af34d3d3c2ff7cbadf174b74e92d871b93",
+        "src/ondo_dms_diagnostics.py": "d4e19268528a01292b3e8d490dfa554404fc9cc1f3046bf22bdedf7bb1109a01",
+        "src/ondo_native_diagnostics.py": "c784a710a44f38878ca83c2221bfcda8805e02f4dc5cc2b80acf44e18a3b8d9e",
+        "src/ondo_preflight.py": "27076d4cce0acb32b8adbbd8a36c047ec67c2ba6e58b3c2f6e2adcb74fceefbe",
+        "src/ondo_probe.py": "c4aa08fa0aae072f74be5380a63352097050d4cee550a3a31614cf8d132bd436",
+        "src/ondo_trade_limits.py": "39f888986b4153834496fcf17da68fb4998aa1f169d72797e8f08f50973d1cf5",
+        "src/ondo_trade_probe.py": "ce22b386a5916af30b5305d367edf2cc320c00edb5a64fa95f73cf2587131b62",
+        "src/quote_gates.py": "e93e546b41e7229d40e64afc123540f70a1147c85f5e4448c4d81876766373be",
+        "src/quote_placement.py": "a1d2069df2e2514f373873e1f22d5424ed6da26369302514d513789aa3b4c6ec",
+        "src/ref_feed.py": "39a0fe298ebdd343e876303d64038750f9cc74764e3ff4910bde4f594080ef35",
+        "src/spread_watch.py": "1e3158b21fb3260eaefc77c54f85fa4ab37ab810b0ec89ef21b0664f3bf479a3",
+        "tests/fixtures/backpack/README.md": "cd3ce9cec043e55bfe6b78843456babf3fe9839b5da57f98cc0575c08646b00b",
+        "tests/fixtures/backpack/account_synthetic.json": "ede35b027659c3d3c670730cd45ba5170bb503561816fff684d2d67e25d55b93",
+        "tests/fixtures/backpack/btc_market.json": "7c7e93522ac17e94e894631ce3d494bd7b19077c68ea31550551174ed101f593",
+        "tests/fixtures/backpack/offline/README.md": "7f871ce2469eddb465cc2ced544e17181a36bf5c66c59881eddab20721ec2804",
+        "tests/fixtures/backpack/offline/btc.jsonl": "896742e3928fb1c0625f8dd7859205d6208b40cf7ce8f4f9cb2a1218b30d8f97",
+        "tests/fixtures/backpack/offline/session.json": "82bc30cacdf68c9e53d1cffe983f3592b4e92c0935706f2a76cc3ec4b3149126",
+        "tests/fixtures/futu_ws_frames.jsonl": "c803f785b4febecf3fcd4132af158c476f7e2eabd68996862c7de1cb7b5bbad3",
+        "tests/test_backpack_account.py": "0eece5554212563723e3c22443c46e8688bf6a70dad88fbf5729ee85c174e5cb",
+        "tests/test_backpack_account_native.py": "0eed2cf800f8cd19e86ca051ac82ce0f1fdb944f3260a1d0f9d5268e1857e577",
+        "tests/test_backpack_config.py": "a929ed1d27c57dea6205b29d71813a30658ae044714f26af174f6796dafb97b0",
+        "tests/test_backpack_durable_native.py": "feb10a235a939e4544e64a665ed9ff9d7e21e5868289f06cbac661958e920ea0",
+        "tests/test_backpack_installed_wheel.py": "5880c09625081873db71ed93d5d968a72d9495225a265fb3d16a76f9ceb96949",
+        "tests/test_backpack_loopback.py": "b8cb1af9395e51103783307eab9cfb7b79d8e916ac70b13cf2d79ebf38b90d9c",
+        "tests/test_backpack_loopback_native.py": "4a69a43c119d75e6a9b0120327675894b00a961a5fc91cecc2c371de61d5e0ea",
+        "tests/test_backpack_metadata_native.py": "76a33fcbf1ddd6ab1454985f7fa14b09c77c6ac882aeafdd012c6f34b7b44a3e",
+        "tests/test_backpack_public.py": "525c614ac50931a033580a4c34edb6895e22ec05caa1b2f280676815bcee5e93",
+        "tests/test_backpack_public_native.py": "7d3cf652ab89126feb54f626f1e0a14e79e12e3d01b0763d1248b5f713ec1394",
+        "tests/test_backpack_replay.py": "54441a2977063758d1fdc701b3d678e797bfa806894ea2d5dcdc42b01af39de3",
+        "tests/test_backpack_terminal_native.py": "98dfa9b2ae653216690acb58b4b053ac17c4c3768804b34df64a4062393226df",
+        "tests/test_exec_probe.py": "5673543ebbf5c4f4e82a346ae81e1e8aaf7d4ba776e648eabcf8d71518aeb1ad",
+        "tests/test_funding_history.py": "5d7a15512c4d5cabaf119e3af9a70619ee6210668ad080662ab64ea19e786f51",
+        "tests/test_installed_wheel_livenode.py": "2a1cc09d55754e9b4d86e62d39a61c89a750c6c9dadbe34f5d8bb107d603e786",
+        "tests/test_joint_audit.py": "0b5963ce883aab43929de7f6bfd3a0db3a85d8812ab29d2467e5dc571dd5d5c4",
+        "tests/test_leadlag.py": "da27e7f7a795fc8594fbde673554c14aad48d22dbb858f00519735126116f4ae",
+        "tests/test_live_limits.py": "238b3f5085c7985d5d359b0cc78e6789cc49cf2457b2d51ac36a0b5a1bba62bd",
+        "tests/test_maker_live.py": "f1e994db6ff762c059630e65c1e43714202e8ad623f549e1d46e9cfeff089e01",
+        "tests/test_market_tape.py": "b542457768ff5a022a9ff5160d12060d0c07f76c644a09ac70d72767080c4540",
+        "tests/test_native_candidate.py": "7d2e2deed229dd8f039a26f7ca0e0861115f24599c2ca1a6c1a3311f7eecc627",
+        "tests/test_offline_guard.py": "ec79cd51049331b29afd870f8c23ee5265fc0d1d18442f80e7a4f819c05bb4a7",
+        "tests/test_ondo_btc_operator.py": "b74bd76b33059d19f811e0003681dd2204e02c1659b9bd7dd0085961975d3990",
+        "tests/test_ondo_btc_trade.py": "d54fb374d12a80dbe202086a2c65921e49d8bf87fb06108cd6a9b6dc5a7abf8f",
+        "tests/test_ondo_depth.py": "c02a60b9810e5872fd9853164b7e771637053379c1525c30c5a200b54c1cec79",
+        "tests/test_ondo_dms_diagnostics.py": "0e0dc4839422e792970c43c636a9d775a552a5fc6c68a211d0d6482e3b565fd5",
+        "tests/test_ondo_preflight.py": "36ecc9f07b9b557c72da2bcfd0d46d356e839991771e6b900e6365c479eb7655",
+        "tests/test_ondo_probe.py": "2533327a14650757dc1defcef94a8f9c023a3ed4502cf9e3576dc024de9470f4",
+        "tests/test_ondo_trade_probe.py": "fc79dac10cacec2706be8c16baf386d5378d6d386dd815e02026c7a53d80b1d9",
+        "tests/test_opportunities.py": "cc34efb9c6f199afa471307ed2fb7f498d097d680db81962d8261b967633bcc4",
+        "tests/test_ref_feed.py": "162f49e504f82e202383a4e029b71b2503ece3c86c0f208c6ffb64197dae3477",
+        "tests/test_spread_watch.py": "4b887469410853fac3fae63be2a6a5295db35fe4d731359016524dd34cc506bd",
+        "uv.lock": "b8d53b8754f95bf00a3cafe4019fb3d36f6156e37396900d3e43f288c02c2c16"
+      },
+      "source_scope": [
+        "src",
+        "scripts",
+        "tests",
+        "config",
+        ".github",
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version"
+      ],
+      "tracked_content_sha256": "f0109e518e02c627e7b6a0ee48cae963a78a0ae7a0afaf0b41cc006087c75ebe",
+      "tree": "cc66b8a0b5284922975aef11f8930d6215cec9b1",
+      "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "installed": {
+      "adapter_exports": {
+        "backpack": {
+          "BackpackCredential": true,
+          "BackpackDataClientConfig": true,
+          "BackpackDataClientConfig.telemetry_snapshot_json": true,
+          "BackpackDataClientFactory": true,
+          "BackpackDataClientFactory.capabilities_json": true,
+          "BackpackDataClientFactory.name": true,
+          "BackpackExecutionClientConfig": true,
+          "BackpackExecutionClientConfig.telemetry_snapshot_json": true,
+          "BackpackExecutionClientFactory": true,
+          "BackpackExecutionClientFactory.capabilities_json": true,
+          "BackpackExecutionClientFactory.name": true,
+          "BackpackInstrumentEconomics": true,
+          "BackpackLoopbackAccountFacts": true,
+          "BackpackLoopbackControl": true,
+          "BackpackLoopbackControl.accept_account": true,
+          "BackpackLoopbackControl.begin_session": true,
+          "BackpackLoopbackControl.invalidate": true,
+          "BackpackLoopbackControl.pending_fills_json": true,
+          "BackpackLoopbackControl.refresh_market": true,
+          "BackpackLoopbackControl.shutdown_report_json": true,
+          "BackpackLoopbackControl.telemetry_snapshot_json": true,
+          "BackpackLoopbackExecutionAuthority": true,
+          "BackpackLoopbackExecutionClientConfig": true,
+          "BackpackLoopbackExecutionClientConfig.control": true,
+          "BackpackLoopbackExecutionClientFactory": true,
+          "BackpackLoopbackExecutionClientFactory.capabilities_json": true,
+          "BackpackLoopbackExecutionClientFactory.name": true,
+          "BackpackLoopbackSession": true,
+          "BackpackLoopbackSession.generation": true,
+          "BackpackPublicReplay": true,
+          "BackpackPublicReplay.apply_record": true,
+          "BackpackPublicReplay.instrument": true,
+          "BackpackQuota": true,
+          "BackpackQuota.shares_scope": true
+        }
+      },
+      "adapter_stub_sha256": {
+        "nautilus_trader/adapters/aster/__init__.pyi": "6e92336f44b6bc530d3d7df14a1984157ebd9c71da73fbdd33addc306c11c3e8",
+        "nautilus_trader/adapters/backpack/__init__.pyi": "bd46436f71b6986604b72c74041c78c2e3062015c6cf90e337cda059b4a96170",
+        "nautilus_trader/adapters/ondo/__init__.pyi": "9251ed9a23adeb8f16f5cc7766f3c9dc2a2404bb0ec84a435edaa2cd46aa3972"
+      },
+      "direct_url": "file:///E:/persarb/.backpack-artifacts/offline-20261004/wheel-9569b9b3ff/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "interpreter": "E:\\persarb\\worktrees\\backpack-offline-app\\.venv\\Scripts\\python.exe",
+      "native_module": "E:\\persarb\\worktrees\\backpack-offline-app\\.venv\\Lib\\site-packages\\nautilus_trader\\_libnautilus.cp312-win_amd64.pyd",
+      "native_module_sha256": "5c7805f23ed3159613c48c41d080b75b9471f13a1e78e2d387f7b0c709105df4",
+      "python_version": "3.12.9"
+    },
+    "native_provenance": {
+      "build": {
+        "build_warnings_override": "allow",
+        "builder_sha256": "7f94cb247ddbc432779b03e97f87a75703df882fa39bee359413ae2e69d98b70",
+        "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+        "cargo_target_dir": "E:\\persarb\\nautilus_trader\\target",
+        "command": [
+          "build",
+          "--profile",
+          "nextest",
+          "--locked",
+          "--interpreter",
+          "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+          "--out",
+          "E:\\persarb\\.backpack-artifacts\\offline-20261004\\wheel-9569b9b3ff",
+          "--offline"
+        ],
+        "completed_at": "2026-10-03T17:39:21.922318+00:00",
+        "conda_path_entries_removed": true,
+        "finished_source": {
+          "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+          "commit": "9569b9b3ff633a049babc763996fa4ae2bcd0c2c",
+          "dirty": [],
+          "dirty_count": 0,
+          "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tree": "83c1745b0a48486c2483173ecd7955805a9d9592",
+          "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "interpreter": "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+        "machine": "AMD64",
+        "maturin_config_sha256": "51288a9b821361cdfa6a915ca3048c2e5daf92e9793edd1b8514c0767e666018",
+        "platform": "Windows-11-10.0.26300-SP0",
+        "python_uv_lock_sha256": "5bf016c9fa06ee5ecad7d3d346e148793a205bb186e56bfb5d30106a57be7a55",
+        "started_source": {
+          "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+          "commit": "9569b9b3ff633a049babc763996fa4ae2bcd0c2c",
+          "dirty": [],
+          "dirty_count": 0,
+          "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tree": "83c1745b0a48486c2483173ecd7955805a9d9592",
+          "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "tools": {
+          "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+          "maturin": "maturin 1.15.0",
+          "python": "Python 3.12.9",
+          "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+          "uv": "uv 0.12.6 (7938ca5d5 2026-08-25 x86_64-pc-windows-msvc)"
+        }
+      },
+      "declared_build": {
+        "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+        "profile": "nextest"
+      },
+      "declared_native": {
+        "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+        "commit": "9569b9b3ff633a049babc763996fa4ae2bcd0c2c",
+        "dirty": [],
+        "dirty_count": 0,
+        "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tree": "83c1745b0a48486c2483173ecd7955805a9d9592",
+        "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\wheel-9569b9b3ff\\native-provenance.json",
+      "sha256": "7bf0d2264106cd1906f23c73f0e18f4fe6d3d8a0c1c7ff411a73e760286a6267",
+      "source_binding": "verified",
+      "source_fingerprint_sha256": "b54800d44f9e8931cf09cee954f78f724f6184a9351ca1a30c81adf6c345f7fe"
+    },
+    "schema_version": 1,
+    "strict_source_binding_passed": true,
+    "wheel": {
+      "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\wheel-9569b9b3ff\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "sha256": "145fde79ea7e9da0dc139d5ff7e9c8b22f931ad7dde3feed17b7eff1d7705423",
+      "tags": [
+        "cp312-cp312-win_amd64"
+      ]
+    }
+  },
+  "collection": {
+    "command": [
+      "E:\\persarb\\worktrees\\backpack-offline-app\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "tests/test_backpack_account.py",
+      "tests/test_backpack_account_native.py",
+      "tests/test_backpack_config.py",
+      "tests/test_backpack_durable_native.py",
+      "tests/test_backpack_installed_wheel.py",
+      "tests/test_backpack_loopback.py",
+      "tests/test_backpack_loopback_native.py",
+      "tests/test_backpack_metadata_native.py",
+      "tests/test_backpack_public.py",
+      "tests/test_backpack_public_native.py",
+      "tests/test_backpack_replay.py",
+      "tests/test_backpack_terminal_native.py",
+      "--collect-only",
+      "-q",
+      "-p",
+      "no:cacheprovider"
+    ],
+    "exit_code": 0,
+    "items": 179,
+    "logs": {
+      "stderr": {
+        "bytes": 0,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\collection.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout": {
+        "bytes": 22992,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\collection.stdout.log",
+        "sha256": "c86417edf6af46b69dbd357ede67966c96d32ae62ffec4d6ea693ee2d79d9d57"
+      }
+    },
+    "required_tests": {
+      "tests/test_backpack_durable_native.py::test_terminated_process_releases_journal_and_recovers_real_engine_once": true,
+      "tests/test_backpack_terminal_native.py::test_installed_terminal_receipts_and_explicit_flat_authority[late_fill]": true
+    },
+    "summary": [
+      "tests/test_backpack_replay.py::test_paper_config_exact_economics_and_allowlist_fail_closed[quantities-value6]",
+      "tests/test_backpack_replay.py::test_paper_config_exact_economics_and_allowlist_fail_closed[unknown-synthetic-private-sentinel]",
+      "tests/test_backpack_replay.py::test_actual_native_malformed_line_failure_never_echoes_raw_contents",
+      "tests/test_backpack_replay.py::test_timestamp_group_limit_is_checked_before_native_engine_run",
+      "tests/test_backpack_terminal_native.py::test_installed_terminal_receipts_and_explicit_flat_authority[fresh]",
+      "tests/test_backpack_terminal_native.py::test_installed_terminal_receipts_and_explicit_flat_authority[old_flat]",
+      "tests/test_backpack_terminal_native.py::test_installed_terminal_receipts_and_explicit_flat_authority[late_fill]",
+      "179 tests collected in 0.11s"
+    ]
+  },
+  "config_sha256": {
+    "config/backpack-loopback-execution.example.toml": "c477049a989ad62f197e5dacfb477420e5bc8b48a6ffba45e4661de6761c0b95"
+  },
+  "exit_code": 0,
+  "failure_layer": null,
+  "finished_at": "2026-10-03T17:58:09.684100+00:00",
+  "generated_at": "2026-10-03T17:55:39.113637+00:00",
+  "logs": {
+    "collection": {
+      "stderr": {
+        "bytes": 0,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\collection.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout": {
+        "bytes": 22992,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\collection.stdout.log",
+        "sha256": "c86417edf6af46b69dbd357ede67966c96d32ae62ffec4d6ea693ee2d79d9d57"
+      }
+    },
+    "pytest": {
+      "stderr": {
+        "bytes": 0,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\pytest.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout": {
+        "bytes": 276,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\pytest.stdout.log",
+        "sha256": "6f2b9ea31f3285e06e1a61b89a121705a2d848e21fc3731d26e5d974e20d098d"
+      }
+    }
+  },
+  "network": {
+    "enforcement": "unknown",
+    "guard_record": null,
+    "policy": "not-enforced",
+    "verification": "deferred-to-final-audit"
+  },
+  "pytest": {
+    "collected_items": 179,
+    "command": [
+      "E:\\persarb\\worktrees\\backpack-offline-app\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "tests/test_backpack_account.py",
+      "tests/test_backpack_account_native.py",
+      "tests/test_backpack_config.py",
+      "tests/test_backpack_durable_native.py",
+      "tests/test_backpack_installed_wheel.py",
+      "tests/test_backpack_loopback.py",
+      "tests/test_backpack_loopback_native.py",
+      "tests/test_backpack_metadata_native.py",
+      "tests/test_backpack_public.py",
+      "tests/test_backpack_public_native.py",
+      "tests/test_backpack_replay.py",
+      "tests/test_backpack_terminal_native.py",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--junitxml=E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\pytest.junit.xml"
+    ],
+    "counts": {
+      "errors": 0,
+      "failed": 0,
+      "passed": 179,
+      "skipped": 0,
+      "tests": 179,
+      "warnings": 0
+    },
+    "counts_source": "junitxml",
+    "exit_code": 0,
+    "item_passed": 179,
+    "junit": {
+      "bytes": 30199,
+      "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\pytest.junit.xml",
+      "sha256": "85c0fc6ef8bc266d2a7072bf833a2f8c849c575dd2622fe60ad01a9cd777844b"
+    },
+    "logs": {
+      "stderr": {
+        "bytes": 0,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\pytest.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout": {
+        "bytes": 276,
+        "path": "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\pytest.stdout.log",
+        "sha256": "6f2b9ea31f3285e06e1a61b89a121705a2d848e21fc3731d26e5d974e20d098d"
+      }
+    },
+    "skipped": 0,
+    "subtests_passed": null,
+    "summary": [
+      "........................................................................ [ 40%]",
+      "........................................................................ [ 80%]",
+      "...................................                                      [100%]",
+      "179 passed in 148.43s (0:02:28)"
+    ]
+  },
+  "required_tests": [
+    "tests/test_backpack_durable_native.py::test_terminated_process_releases_journal_and_recovers_real_engine_once",
+    "tests/test_backpack_terminal_native.py::test_installed_terminal_receipts_and_explicit_flat_authority[late_fill]"
+  ],
+  "run_id": "1a85ef23f6bc40acaa3736441cdbd2bc",
+  "runner_command": [
+    "E:\\persarb\\worktrees\\backpack-offline-app\\.venv\\Scripts\\python.exe",
+    "E:\\persarb\\worktrees\\backpack-offline-app\\scripts\\test_integration.py",
+    "--python",
+    "E:\\persarb\\worktrees\\backpack-offline-app\\.venv\\Scripts\\python.exe",
+    "--wheel",
+    "E:\\persarb\\.backpack-artifacts\\offline-20261004\\wheel-9569b9b3ff\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "--provenance",
+    "E:\\persarb\\.backpack-artifacts\\offline-20261004\\wheel-9569b9b3ff\\native-provenance.json",
+    "--sha256",
+    "145fde79ea7e9da0dc139d5ff7e9c8b22f931ad7dde3feed17b7eff1d7705423",
+    "--additional-adapter",
+    "backpack",
+    "--native-root",
+    "E:\\persarb\\worktrees\\backpack-offline-native",
+    "--expected-app-sha",
+    "f0abd5b09a41406a3446106ce3e9fed1c86be31c",
+    "--expected-native-sha",
+    "9569b9b3ff633a049babc763996fa4ae2bcd0c2c",
+    "--require-clean",
+    "--fail-on-skip",
+    "--required-test",
+    "tests/test_backpack_durable_native.py::test_terminated_process_releases_journal_and_recovers_real_engine_once",
+    "--required-test",
+    "tests/test_backpack_terminal_native.py::test_installed_terminal_receipts_and_explicit_flat_authority[late_fill]",
+    "--config",
+    "config/backpack-loopback-execution.example.toml",
+    "--output",
+    "E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.json",
+    "tests/test_backpack_account.py",
+    "tests/test_backpack_account_native.py",
+    "tests/test_backpack_config.py",
+    "tests/test_backpack_durable_native.py",
+    "tests/test_backpack_installed_wheel.py",
+    "tests/test_backpack_loopback.py",
+    "tests/test_backpack_loopback_native.py",
+    "tests/test_backpack_metadata_native.py",
+    "tests/test_backpack_public.py",
+    "tests/test_backpack_public_native.py",
+    "tests/test_backpack_replay.py",
+    "tests/test_backpack_terminal_native.py"
+  ],
+  "schema_version": 2,
+  "source_refs": {
+    "app": {
+      "expected": "f0abd5b09a41406a3446106ce3e9fed1c86be31c",
+      "match": true,
+      "resolved": "f0abd5b09a41406a3446106ce3e9fed1c86be31c"
+    },
+    "native": {
+      "expected": "9569b9b3ff633a049babc763996fa4ae2bcd0c2c",
+      "match": true,
+      "resolved": "9569b9b3ff633a049babc763996fa4ae2bcd0c2c"
+    }
+  },
+  "status": "passed",
+  "test_collection": [
+    "tests/test_backpack_account.py",
+    "tests/test_backpack_account_native.py",
+    "tests/test_backpack_config.py",
+    "tests/test_backpack_durable_native.py",
+    "tests/test_backpack_installed_wheel.py",
+    "tests/test_backpack_loopback.py",
+    "tests/test_backpack_loopback_native.py",
+    "tests/test_backpack_metadata_native.py",
+    "tests/test_backpack_public.py",
+    "tests/test_backpack_public_native.py",
+    "tests/test_backpack_replay.py",
+    "tests/test_backpack_terminal_native.py"
+  ],
+  "test_command": [
+    "E:\\persarb\\worktrees\\backpack-offline-app\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "tests/test_backpack_account.py",
+    "tests/test_backpack_account_native.py",
+    "tests/test_backpack_config.py",
+    "tests/test_backpack_durable_native.py",
+    "tests/test_backpack_installed_wheel.py",
+    "tests/test_backpack_loopback.py",
+    "tests/test_backpack_loopback_native.py",
+    "tests/test_backpack_metadata_native.py",
+    "tests/test_backpack_public.py",
+    "tests/test_backpack_public_native.py",
+    "tests/test_backpack_replay.py",
+    "tests/test_backpack_terminal_native.py",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--junitxml=E:\\persarb\\.backpack-artifacts\\offline-20261004\\integration-final-179.logs\\pytest.junit.xml"
+  ]
+}

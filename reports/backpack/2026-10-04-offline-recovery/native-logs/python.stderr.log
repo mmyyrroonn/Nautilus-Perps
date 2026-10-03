@@ -1,0 +1,21 @@
+   Compiling pyo3-ffi v0.29.2
+   Compiling pyo3 v0.29.2
+   Compiling nautilus-core v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\core)
+   Compiling nautilus-common v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\common)
+   Compiling nautilus-serialization v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\serialization)
+    Checking pyo3-stub-gen v0.20.0 (E:\persarb\worktrees\backpack-offline-native\patches\pyo3-stub-gen)
+    Checking pyo3-async-runtimes v0.29.0
+    Checking nautilus-model v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\model)
+    Checking nautilus-cryptography v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\cryptography)
+    Checking nautilus-network v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\network)
+    Checking nautilus-analysis v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\analysis)
+    Checking nautilus-execution v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\execution)
+    Checking nautilus-portfolio v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\portfolio)
+    Checking nautilus-persistence v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\persistence)
+    Checking nautilus-trading v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\trading)
+    Checking nautilus-risk v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\risk)
+    Checking nautilus-live v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\live)
+    Checking nautilus-data v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\data)
+    Checking nautilus-system v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\system)
+    Checking nautilus-backpack v0.63.0 (E:\persarb\worktrees\backpack-offline-native\crates\adapters\backpack)
+    Finished `dev` profile [unoptimized] target(s) in 13.57s

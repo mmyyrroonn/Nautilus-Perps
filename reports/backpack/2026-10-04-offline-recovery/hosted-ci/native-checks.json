@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-03T17:53:37.445247+00:00",
+  "purpose": "native adapter checks and the checkout they ran against (issue #11)",
+  "native": {
+    "commit": "d43ee1692dee6f5f3bbaf3fa137ffea6df55731c",
+    "tree": "83c1745b0a48486c2483173ecd7955805a9d9592",
+    "dirty": [],
+    "dirty_count": 0,
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c"
+  },
+  "identity_before_fingerprint": "12f3bd34f13d498114720ed494a4248f4233a4f2914128ab0b7bdcaed8c03817",
+  "identity_after_fingerprint": "12f3bd34f13d498114720ed494a4248f4233a4f2914128ab0b7bdcaed8c03817",
+  "identity_changed_during_checks": false,
+  "toolchain": {
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "python": "3.12.9 (main, Mar 17 2025, 21:01:58) [Clang 20.1.0 ]",
+    "python_executable": "/home/runner/work/_temp/uv-python-dir/cpython-3.12.9-linux-x86_64-gnu/bin/python3.12",
+    "os": "Linux",
+    "release": "6.17.0-1022-azure",
+    "machine": "x86_64"
+  },
+  "crates": [
+    "nautilus-aster",
+    "nautilus-ondo",
+    "nautilus-backpack"
+  ],
+  "logs_dir": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs",
+  "checks": [
+    {
+      "name": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "-p",
+        "nautilus-aster",
+        "-p",
+        "nautilus-ondo",
+        "-p",
+        "nautilus-backpack",
+        "--",
+        "--check"
+      ],
+      "blocking": true,
+      "environment": {},
+      "environment_exceptions": [],
+      "exit_code": 0,
+      "duration_ms": 1211,
+      "stdout": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/fmt.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/fmt.stderr.log",
+        "sha256": "c01300ad53aecafb647638db3885290aa86467299ea0a7c8cbd95ff174d044f6",
+        "bytes": 12320,
+        "tail": "...[10320 chars omitted]...\n in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\nWarning: can't set `format_code_in_doc_comments = true`, unstable features are only available in nightly channel.\nWarning: can't set `imports_granularity = Crate`, unstable features are only available in nightly channel.\nWarning: can't set `group_imports = StdExternalCrate`, unstable features are only available in nightly channel.\nWarning: can't set `error_on_unformatted = true`, unstable features are only available in nightly channel.\n"
+      }
+    },
+    {
+      "name": "test",
+      "command": [
+        "cargo",
+        "nextest",
+        "run",
+        "-p",
+        "nautilus-aster",
+        "-p",
+        "nautilus-ondo",
+        "-p",
+        "nautilus-backpack",
+        "--profile",
+        "ci",
+        "--retries",
+        "3",
+        "--no-fail-fast"
+      ],
+      "blocking": true,
+      "environment": {},
+      "environment_exceptions": [],
+      "exit_code": 0,
+      "duration_ms": 524821,
+      "stdout": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/test.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/test.stderr.log",
+        "sha256": "a3f0ff572c0e6b80d0b7f59b0bb4a511e0309772d9f77f5385a5113e07c59188",
+        "bytes": 362409,
+        "tail": "...[360361 chars omitted]...\n::\u001b[0m\u001b[34;1mcase_10_userinfo_in_front_of_an_unrelated_host\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2001/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[36mtest_the_endpoint_gate_refuses_every_authority_outside_the_allowlist\u001b[0m\u001b[36m::\u001b[0m\u001b[34;1mcase_11_a_homoglyph_of_the_sandbox_host\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2002/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[36mtest_the_endpoint_gate_refuses_every_authority_outside_the_allowlist\u001b[0m\u001b[36m::\u001b[0m\u001b[34;1mcase_13_a_bare_word\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2003/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[36mtest_the_endpoint_gate_refuses_every_authority_outside_the_allowlist\u001b[0m\u001b[36m::\u001b[0m\u001b[34;1mcase_12_an_empty_url\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2004/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[36mtest_the_endpoint_gate_refuses_every_authority_outside_the_allowlist\u001b[0m\u001b[36m::\u001b[0m\u001b[34;1mcase_15_a_scheme_relative_url\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2005/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[36mtest_the_endpoint_gate_refuses_every_authority_outside_the_allowlist\u001b[0m\u001b[36m::\u001b[0m\u001b[34;1mcase_14_a_scheme_less_host\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2006/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[34;1mtest_the_sandbox_credential_variables_are_the_documented_names\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2007/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[34;1mtest_the_reference_fixture_is_the_python_generated_one\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2008/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[34;1mtest_the_sandbox_gate_refuses_production_in_every_form\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2009/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[34;1mtest_the_secret_wrapper_never_renders_the_secret\u001b[0m\n\u001b[32;1m        PASS\u001b[0m [   0.004s] (2010/2010) \u001b[35;1mnautilus-ondo::signing\u001b[0m \u001b[34;1mtest_the_ws_login_digest_is_the_timestamp_first_order_and_not_the_other\u001b[0m\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\u001b[32;1m     Summary\u001b[0m [ 300.630s] \u001b[1m2010\u001b[0m tests run: \u001b[1m2010\u001b[0m \u001b[32;1mpassed\u001b[0m, \u001b[1m1\u001b[0m \u001b[33;1mskipped\u001b[0m\n"
+      }
+    },
+    {
+      "name": "doctest",
+      "command": [
+        "cargo",
+        "test",
+        "--doc",
+        "-p",
+        "nautilus-aster",
+        "-p",
+        "nautilus-ondo",
+        "-p",
+        "nautilus-backpack"
+      ],
+      "blocking": true,
+      "environment": {},
+      "environment_exceptions": [],
+      "exit_code": 0,
+      "duration_ms": 48990,
+      "stdout": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/doctest.stdout.log",
+        "sha256": "79c6b6abb02614a74b92943dfa784635e7a65b2b364f1d568bf3bcd03eb84450",
+        "bytes": 439,
+        "tail": "\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest crates/adapters/ondo/src/recording.rs - recording::PublicFrame (line 228) - compile fail ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s\n\n"
+      },
+      "stderr": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/doctest.stderr.log",
+        "sha256": "ad85a703c96b4b27aa3aba752a40ff0c40aa415ea7d7331791ecb0322d478b49",
+        "bytes": 1760,
+        "tail": "\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-common v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/common)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-execution v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/execution)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-portfolio v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/portfolio)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-data v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/data)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-trading v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/trading)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-risk v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/risk)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-system v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/system)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-testkit v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/testkit)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-live v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/live)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-binance v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/binance)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-backpack v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/backpack)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-ondo v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/ondo)\n\u001b[1m\u001b[92m   Compiling\u001b[0m nautilus-aster v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/aster)\n\u001b[1m\u001b[92m    Finished\u001b[0m `test` profile [unoptimized + debuginfo] target(s) in 47.82s\n\u001b[1m\u001b[92m   Doc-tests\u001b[0m nautilus_aster\n\u001b[1m\u001b[92m   Doc-tests\u001b[0m nautilus_backpack\n\u001b[1m\u001b[92m   Doc-tests\u001b[0m nautilus_ondo\n"
+      }
+    },
+    {
+      "name": "python",
+      "command": [
+        "cargo",
+        "check",
+        "-p",
+        "nautilus-aster",
+        "-p",
+        "nautilus-ondo",
+        "-p",
+        "nautilus-backpack",
+        "--features",
+        "python"
+      ],
+      "blocking": true,
+      "environment": {
+        "PYO3_PYTHON": "/home/runner/work/_temp/uv-python-dir/cpython-3.12.9-linux-x86_64-gnu/bin/python3.12"
+      },
+      "environment_exceptions": [],
+      "exit_code": 0,
+      "duration_ms": 220080,
+      "stdout": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/python.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/python.stderr.log",
+        "sha256": "3524daaba4ae34d37d4f2340c76e2155a1abe84b3761555ac864c8a6be944c3e",
+        "bytes": 12927,
+        "tail": "...[10927 chars omitted]...\n1.7.1\n\u001b[1m\u001b[92m    Checking\u001b[0m alloy-signer-local v2.4.1\n\u001b[1m\u001b[92m    Checking\u001b[0m alloy-transport-http v2.4.1\n\u001b[1m\u001b[92m    Checking\u001b[0m alloy-contract v2.4.1\n\u001b[1m\u001b[92m    Checking\u001b[0m alloy v2.4.1\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-analysis v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/analysis)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-portfolio v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/portfolio)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-execution v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/execution)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-trading v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/trading)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-risk v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/risk)\n\u001b[1m\u001b[92m    Checking\u001b[0m datafusion-catalog-listing v55.0.0\n\u001b[1m\u001b[92m    Checking\u001b[0m datafusion-functions-table v55.0.0\n\u001b[1m\u001b[92m    Checking\u001b[0m datafusion v55.0.0\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-persistence v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/persistence)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-data v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/data)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-system v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/system)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-live v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/live)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-binance v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/binance)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-ondo v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/ondo)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-backpack v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/backpack)\n\u001b[1m\u001b[92m    Checking\u001b[0m nautilus-aster v0.63.0 (/home/runner/work/nautilus_trader/nautilus_trader/crates/adapters/aster)\n\u001b[1m\u001b[92m    Finished\u001b[0m `dev` profile [unoptimized] target(s) in 3m 40s\n"
+      }
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "nautilus-aster",
+        "-p",
+        "nautilus-ondo",
+        "-p",
+        "nautilus-backpack",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "blocking": false,
+      "environment": {},
+      "environment_exceptions": [],
+      "exit_code": 101,
+      "duration_ms": 39421,
+      "stdout": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/clippy.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "tail": ""
+      },
+      "stderr": {
+        "path": "/home/runner/work/nautilus_trader/nautilus_trader/adapter-native-evidence-logs/clippy.stderr.log",
+        "sha256": "3aee61b2a9f0253cbb5c6b41bc84a114591efe5e59066b44e342e8bd83c5b802",
+        "bytes": 39946,
+        "tail": "...[37946 chars omitted]...\nm             segment_name(10).to_string(),\n     \u001b[1m\u001b[94m|\u001b[0m             \u001b[1m\u001b[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^\u001b[0m \u001b[1m\u001b[91mhelp: consider using: `segment_name(10).clone()`\u001b[0m\n     \u001b[1m\u001b[94m|\u001b[0m\n     \u001b[1m\u001b[94m= \u001b[0m\u001b[1mhelp\u001b[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#implicit_clone\n\n\u001b[1m\u001b[91merror\u001b[0m\u001b[1m: redundant clone\u001b[0m\n    \u001b[1m\u001b[94m--> \u001b[0mcrates/adapters/ondo/src/websocket/client.rs:1245:39\n     \u001b[1m\u001b[94m|\u001b[0m\n\u001b[1m\u001b[94m1245\u001b[0m \u001b[1m\u001b[94m|\u001b[0m             depth_levels: depth_levels.clone(),\n     \u001b[1m\u001b[94m|\u001b[0m                                       \u001b[1m\u001b[91m^^^^^^^^\u001b[0m \u001b[1m\u001b[91mhelp: remove this\u001b[0m\n     \u001b[1m\u001b[94m|\u001b[0m\n\u001b[1m\u001b[92mnote\u001b[0m: this value is dropped without further use\n    \u001b[1m\u001b[94m--> \u001b[0mcrates/adapters/ondo/src/websocket/client.rs:1245:27\n     \u001b[1m\u001b[94m|\u001b[0m\n\u001b[1m\u001b[94m1245\u001b[0m \u001b[1m\u001b[94m|\u001b[0m             depth_levels: depth_levels.clone(),\n     \u001b[1m\u001b[94m|\u001b[0m                           \u001b[1m\u001b[92m^^^^^^^^^^^^\u001b[0m\n     \u001b[1m\u001b[94m= \u001b[0m\u001b[1mhelp\u001b[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone\n\n\u001b[1m\u001b[91merror\u001b[0m\u001b[1m: redundant clone\u001b[0m\n   \u001b[1m\u001b[94m--> \u001b[0mcrates/adapters/ondo/src/websocket/parse.rs:994:33\n    \u001b[1m\u001b[94m|\u001b[0m\n\u001b[1m\u001b[94m994\u001b[0m \u001b[1m\u001b[94m|\u001b[0m             bids: two_sided.bids.clone(),\n    \u001b[1m\u001b[94m|\u001b[0m                                 \u001b[1m\u001b[91m^^^^^^^^\u001b[0m \u001b[1m\u001b[91mhelp: remove this\u001b[0m\n    \u001b[1m\u001b[94m|\u001b[0m\n\u001b[1m\u001b[92mnote\u001b[0m: this value is dropped without further use\n   \u001b[1m\u001b[94m--> \u001b[0mcrates/adapters/ondo/src/websocket/parse.rs:994:19\n    \u001b[1m\u001b[94m|\u001b[0m\n\u001b[1m\u001b[94m994\u001b[0m \u001b[1m\u001b[94m|\u001b[0m             bids: two_sided.bids.clone(),\n    \u001b[1m\u001b[94m|\u001b[0m                   \u001b[1m\u001b[92m^^^^^^^^^^^^^^\u001b[0m\n    \u001b[1m\u001b[94m= \u001b[0m\u001b[1mhelp\u001b[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_clone\n\n\u001b[1m\u001b[91merror\u001b[0m: could not compile `nautilus-ondo` (lib test) due to 38 previous errors\n"
+      }
+    }
+  ]
+}
