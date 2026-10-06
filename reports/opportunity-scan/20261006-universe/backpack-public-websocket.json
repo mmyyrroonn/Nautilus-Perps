@@ -1,0 +1,15 @@
+{
+  "venue": "BACKPACK",
+  "transport": "public_websocket_depth",
+  "endpoint": "wss://ws.backpack.exchange",
+  "configured_markets": 70,
+  "markets_with_depth_messages": 70,
+  "depth_messages": 225150,
+  "subscription_acknowledgements": 0,
+  "error_messages": 0,
+  "missing_markets": [],
+  "elapsed_secs": 70.73,
+  "native_runtime_verified": false,
+  "historical_book_samples_retained": 0,
+  "private_endpoints_called": 0
+}

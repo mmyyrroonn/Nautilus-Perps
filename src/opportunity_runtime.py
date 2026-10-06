@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections import deque
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 import json
@@ -10,7 +11,8 @@ import threading
 import time
 from datetime import timedelta
 
-from opportunity_core import BookSnapshot, EventRecorder, MarketMetadata, evaluate_opportunity, exact_decimal
+from opportunity_core import (BookSnapshot, EventRecorder, MarketMetadata, evaluate_opportunity,
+                              exact_decimal, _book_valid, _metadata_valid)
 from opportunity_scan import ScanConfigError, ScanPlan
 
 
@@ -59,6 +61,8 @@ def market_metadata(market, instrument) -> MarketMetadata:
 
 def normalized_levels(market, levels):
     """Map native base prices without cancelling the native contract exposure."""
+    if market.quote_to_usd == market.canonical_multiplier:
+        return tuple(levels)
     factor = Fraction(market.quote_to_usd) / Fraction(market.canonical_multiplier)
     return tuple((exact_decimal(Fraction(price) * factor), size) for price, size in levels)
 
@@ -80,11 +84,12 @@ class ScanState:
                                      plan.quantity_change_fraction, plan.max_interval_ms)
         self.saved = 0
 
-    def update_metadata(self, instrument_id: str, metadata: MarketMetadata, now_ns: int):
+    def update_metadata(self, instrument_id: str, metadata: MarketMetadata, now_ns: int, *, evaluate=True):
         if instrument_id not in self.markets:
             raise ValueError("unconfigured instrument")
         self.metadata[instrument_id] = metadata
-        self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
+        if evaluate:
+            self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
 
     def invalidate(self, instrument_id: str, now_ns: int, *, metadata=False):
         self.books.pop(instrument_id, None)
@@ -93,7 +98,7 @@ class ScanState:
             self.metadata.pop(instrument_id, None)
         self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
 
-    def update_book(self, instrument_id: str, book: BookSnapshot, now_ns: int, *, raw_book=None):
+    def update_book(self, instrument_id: str, book: BookSnapshot, now_ns: int, *, raw_book=None, evaluate=True):
         market = self.markets.get(instrument_id)
         if market is None or book.symbol != market.symbol or book.venue != market.venue:
             raise ValueError("book does not match configured market")
@@ -102,7 +107,8 @@ class ScanState:
             self.raw_books[instrument_id] = deepcopy(raw_book)
         else:
             self.raw_books.pop(instrument_id, None)
-        self.evaluate_symbol(market.symbol, now_ns, changed_id=instrument_id)
+        if evaluate:
+            self.evaluate_symbol(market.symbol, now_ns, changed_id=instrument_id)
 
     def evaluate_symbol(self, symbol: str, now_ns: int, *, changed_id: str | None = None):
         for buy_id in self.groups[symbol]:
@@ -141,6 +147,23 @@ class ScanState:
     def expire(self, now_ns: int):
         for symbol in self.groups:
             self.evaluate_symbol(symbol, now_ns)
+
+    def prune(self, now_ns: int, blocked_symbols=()):
+        """Remove superseded/stale display rows without discovering or recording."""
+        for key in set(self.current) | set(self.recorder.active_keys()):
+            symbol, buy_venue, sell_venue = key
+            ids = [i for i in self.groups[symbol]
+                   if self.markets[i].venue in {buy_venue, sell_venue}]
+            usable = (len(ids) == 2 and all(i in self.books and i in self.metadata
+                and _metadata_valid(self.metadata[i])
+                and _book_valid(self.books[i], self.plan.settings, now_ns) for i in ids))
+            if usable:
+                usable = abs(self.books[ids[0]].ts_event_ns - self.books[ids[1]].ts_event_ns) <= self.plan.settings.max_skew_ms * 1_000_000
+            if not usable:
+                self.current.pop(key, None)
+                self.recorder.observe(key, None, now_ns)
+            elif symbol in blocked_symbols:
+                self.current.pop(key, None)
 
     def display(self, stream=sys.stdout):
         rows = sorted(self.current.values(), key=lambda r: Decimal(r["entry_edge_bps"]), reverse=True)
@@ -195,6 +218,7 @@ def create_observer(plan, state, stop, client_configs):
             super().__init__(DataActorConfig(log_events=False, log_commands=False))
             self.markets = {InstrumentId.from_str(m.instrument_id): m for m in plan.markets}
             self.local_books = {i: OrderBook(i, BookType.L2_MBP) for i in self.markets}
+            self.level_prices = {i: {"BUY": set(), "SELL": set()} for i in self.markets}
             self.snapshot_seen = set()
             self.pending_snapshot = set()
             self.halted = set()
@@ -206,6 +230,12 @@ def create_observer(plan, state, stop, client_configs):
             self.started = False
             self.running = False
             self.subscribed = set()
+            self.pending_aster = deque()
+            self.next_aster_ns = 0
+            self.dirty = {}
+            self.last_display_ns = 0
+            self.last_evaluation_ns = 0
+            self.pending_symbols = set()
 
         def fail(self, message):
             self.failure = message
@@ -222,19 +252,41 @@ def create_observer(plan, state, stop, client_configs):
                     if instrument is None:
                         raise ScanConfigError(f"instrument unavailable: {market.instrument_id}")
                     state.update_metadata(market.instrument_id, market_metadata(market, instrument), time.time_ns())
-                    client = ClientId.from_str(market.client_id)
-                    self.subscribe_instrument(instrument_id, client_id=client)
-                    self.subscribe_book_deltas(instrument_id, BookType.L2_MBP, client_id=client, managed=False)
-                    if market.venue == "ONDO":
-                        self.subscribe_instrument_status(instrument_id, client_id=client)
-                    self.subscribed.add(instrument_id)
-                self.clock.set_timer("scan-display", timedelta(milliseconds=plan.refresh_ms))
+                    if market.venue == "ASTER":
+                        self.pending_aster.append(instrument_id)
+                    else:
+                        self.subscribe_market(instrument_id)
+                self.advance_subscriptions(time.time_ns())
+                self.last_display_ns = time.time_ns()
+                self.last_evaluation_ns = self.last_display_ns
+                tick_ms = min(plan.refresh_ms, plan.aster_subscription_interval_ms,
+                              plan.evaluation_interval_ms or plan.refresh_ms)
+                self.clock.set_timer("scan-display", timedelta(milliseconds=tick_ms))
                 self.started = True
             except Exception as exc:
                 self.fail(f"startup: {type(exc).__name__}: {exc}")
 
+        def subscribe_market(self, instrument_id):
+            market = self.markets[instrument_id]
+            client = ClientId.from_str(market.client_id)
+            self.subscribe_instrument(instrument_id, client_id=client)
+            kwargs = {"depth": plan.aster_snapshot_depth} if market.venue == "ASTER" else {}
+            self.subscribe_book_deltas(instrument_id, BookType.L2_MBP,
+                                       client_id=client, managed=False, **kwargs)
+            if market.venue == "ONDO":
+                self.subscribe_instrument_status(instrument_id, client_id=client)
+            self.subscribed.add(instrument_id)
+
+        def advance_subscriptions(self, now_ns):
+            if self.pending_aster and now_ns >= self.next_aster_ns:
+                self.subscribe_market(self.pending_aster.popleft())
+                self.next_aster_ns = now_ns + plan.aster_subscription_interval_ms * 1_000_000
+
         def on_stop(self):
             self.running = False
+            self.pending_aster.clear()
+            self.dirty.clear()
+            self.pending_symbols.clear()
             state.current.clear()
             if self.started:
                 self.clock.cancel_timer("scan-display")
@@ -248,8 +300,11 @@ def create_observer(plan, state, stop, client_configs):
 
         def invalidate(self, instrument_id, *, metadata=False):
             self.local_books[instrument_id].reset()
+            for prices in self.level_prices[instrument_id].values():
+                prices.clear()
             self.snapshot_seen.discard(instrument_id)
             self.pending_snapshot.discard(instrument_id)
+            self.dirty.pop(instrument_id, None)
             state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata)
 
         def check_backpack(self):
@@ -277,53 +332,87 @@ def create_observer(plan, state, stop, client_configs):
             if not self.running or batch.instrument_id not in self.markets:
                 return
             try:
-                self.check_backpack()
+                if not plan.evaluation_interval_ms:
+                    self.check_backpack()
                 instrument_id = batch.instrument_id
                 market = self.markets[instrument_id]
-                clear = any(d.action.name == "CLEAR" for d in batch.deltas)
+                deltas = batch.deltas
+                clear = any(d.action.name == "CLEAR" for d in deltas)
                 snapshot_part = any(
-                    RecordFlag.F_SNAPSHOT.matches(d.flags) for d in batch.deltas)
+                    RecordFlag.F_SNAPSHOT.matches(d.flags) for d in deltas)
                 if clear or (snapshot_part and instrument_id not in self.pending_snapshot):
                     self.local_books[instrument_id].reset()
+                    for prices in self.level_prices[instrument_id].values():
+                        prices.clear()
                     self.snapshot_seen.discard(instrument_id)
                     self.pending_snapshot.add(instrument_id)
+                    self.dirty.pop(instrument_id, None)
                     state.invalidate(market.instrument_id, time.time_ns())
                 if instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
                     return
                 book = self.local_books[instrument_id]
+                # L2_MBP has one order per price. Track only current price keys
+                # to enforce the bound without cloning full ladders every tick.
+                sides = self.level_prices[instrument_id]
+                for delta in deltas:
+                    action = delta.action.name
+                    if action == "CLEAR":
+                        for prices in sides.values():
+                            prices.clear()
+                        continue
+                    order = delta.order
+                    prices = sides[order.side.name]
+                    if action == "DELETE" or order.size.is_zero():
+                        prices.discard(order.price.raw)
+                    else:
+                        prices.add(order.price.raw)
+                    if len(prices) > plan.max_levels_per_side:
+                        self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
+                        return
                 book.apply_deltas(batch)
-                if (len(book.bids(plan.max_levels_per_side + 1)) > plan.max_levels_per_side or
-                        len(book.asks(plan.max_levels_per_side + 1)) > plan.max_levels_per_side):
-                    self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
-                    return
                 if not RecordFlag.F_LAST.matches(batch.flags):
+                    self.dirty.pop(instrument_id, None)
                     state.invalidate(market.instrument_id, time.time_ns())
                     return
                 if instrument_id in self.pending_snapshot:
                     self.pending_snapshot.discard(instrument_id)
                     self.snapshot_seen.add(instrument_id)
-                metadata = state.metadata.get(market.instrument_id)
-                if metadata is None:
-                    return
-                def raw_levels(side):
-                    return tuple((Decimal(str(level.price)),
-                                  exact_decimal(sum((Fraction(Decimal(str(order.size)))
-                                                     for order in level.get_orders()), Fraction(0))))
-                                 for level in side)
-                raw_bids, raw_asks = raw_levels(book.bids(plan.depth_levels)), raw_levels(book.asks(plan.depth_levels))
-                valid = instrument_id not in (self.halted | self.metadata_stale | self.disconnected | self.backpack_unhealthy)
-                snapshot = BookSnapshot(market.venue, market.symbol,
-                    normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
-                    batch.ts_event, batch.ts_init, valid=valid, coverage_limit=plan.depth_levels)
-                raw = {"instrument_id": market.instrument_id,
-                       "bids": [[str(p), str(q)] for p, q in raw_bids],
-                       "asks": [[str(p), str(q)] for p, q in raw_asks],
-                       "ts_event_ns": batch.ts_event, "ts_received_ns": batch.ts_init,
-                       "coverage_limit": plan.depth_levels, "complete_book_claimed": False,
-                       "sequence": batch.sequence}
-                state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw)
+                stamp = (batch.ts_event, batch.ts_init, batch.sequence)
+                if plan.evaluation_interval_ms:
+                    self.dirty[instrument_id] = stamp
+                else:
+                    self.publish_book(instrument_id, stamp)
             except Exception as exc:
                 self.fail(f"book processing: {type(exc).__name__}: {exc}")
+
+        def publish_book(self, instrument_id, stamp, *, evaluate=True):
+            market = self.markets[instrument_id]
+            if market.instrument_id not in state.metadata:
+                return
+            book = self.local_books[instrument_id]
+            raw_bids = tuple(book.bids_to_dict(plan.depth_levels).items())
+            raw_asks = tuple(book.asks_to_dict(plan.depth_levels).items())
+            ts_event, ts_received, sequence = stamp
+            valid = instrument_id not in (self.halted | self.metadata_stale | self.disconnected | self.backpack_unhealthy)
+            snapshot = BookSnapshot(market.venue, market.symbol,
+                normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
+                ts_event, ts_received, valid=valid, coverage_limit=plan.depth_levels)
+            raw = None
+            if plan.output_path is not None:
+                def rows(levels):
+                    result = []
+                    for price, size in levels:
+                        quantity = format(size, "f")
+                        if "." in quantity:
+                            quantity = quantity.rstrip("0").rstrip(".")
+                        result.append([str(price), quantity])
+                    return result
+                raw = {"instrument_id": market.instrument_id,
+                       "bids": rows(raw_bids), "asks": rows(raw_asks),
+                       "ts_event_ns": ts_event, "ts_received_ns": ts_received,
+                       "coverage_limit": plan.depth_levels, "complete_book_claimed": False,
+                       "sequence": sequence}
+            state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw, evaluate=evaluate)
 
         def on_instrument(self, instrument):
             if not self.running or instrument.id not in self.markets:
@@ -337,7 +426,10 @@ def create_observer(plan, state, stop, client_configs):
                 old = state.metadata.get(market.instrument_id)
                 if old and (old.multiplier, old.size_increment) != (metadata.multiplier, metadata.size_increment):
                     self.invalidate(instrument.id)
-                state.update_metadata(market.instrument_id, metadata, time.time_ns())
+                state.update_metadata(market.instrument_id, metadata, time.time_ns(),
+                                      evaluate=not plan.evaluation_interval_ms)
+                if plan.evaluation_interval_ms:
+                    self.pending_symbols.add(market.symbol)
             except Exception as exc:
                 self.fail(f"metadata: {type(exc).__name__}: {exc}")
 
@@ -366,7 +458,10 @@ def create_observer(plan, state, stop, client_configs):
                         state.invalidate(str(instrument_id), time.time_ns())
                     elif getattr(status, "is_trading", None) is True or action == "TRADING":
                         self.halted.discard(instrument_id)
-                state.expire(time.time_ns())
+                if plan.evaluation_interval_ms:
+                    self.pending_symbols.add(self.markets[instrument_id].symbol)
+                else:
+                    state.expire(time.time_ns())
             except Exception as exc:
                 self.fail(f"instrument status: {type(exc).__name__}: {exc}")
 
@@ -375,8 +470,27 @@ def create_observer(plan, state, stop, client_configs):
                 return
             try:
                 self.check_backpack()
-                state.expire(time.time_ns())
-                state.display()
+                now_ns = time.time_ns()
+                self.advance_subscriptions(now_ns)
+                if now_ns - self.last_evaluation_ns >= plan.evaluation_interval_ms * 1_000_000:
+                    changed = set(self.pending_symbols)
+                    self.pending_symbols.clear()
+                    for instrument_id, stamp in tuple(self.dirty.items()):
+                        self.dirty.pop(instrument_id, None)
+                        self.publish_book(instrument_id, stamp, evaluate=False)
+                        changed.add(self.markets[instrument_id].symbol)
+                    # Every changed leg is current before evaluating any pair.
+                    for symbol in changed:
+                        state.evaluate_symbol(symbol, time.time_ns())
+                    self.last_evaluation_ns = time.time_ns()
+                if time.time_ns() - self.last_display_ns >= plan.refresh_ms * 1_000_000:
+                    if plan.evaluation_interval_ms:
+                        blocked = self.pending_symbols | {self.markets[i].symbol for i in self.dirty}
+                        state.prune(time.time_ns(), blocked)
+                    else:
+                        state.expire(time.time_ns())
+                    state.display()
+                    self.last_display_ns = time.time_ns()
             except Exception as exc:
                 self.fail(f"refresh/recording: {type(exc).__name__}: {exc}")
 

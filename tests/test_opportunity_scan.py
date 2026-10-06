@@ -337,6 +337,35 @@ def test_native_depth_overflow_stops_without_publishing_incomplete_book(tmp_path
     assert not observer.running and "stop" in calls and not state.current
 
 
+def test_native_ladder_cap_releases_deleted_prices_and_resets_with_snapshots(tmp_path, monkeypatch):
+    pytest.importorskip("nautilus_trader.model")
+    from nautilus_trader.model import BookAction, BookOrder, OrderBookDelta, OrderBookDeltas, OrderSide, Price, Quantity, RecordFlag
+    _, state, observer, ids, _, _ = native_observer(
+        tmp_path, monkeypatch, depth_levels=2, max_levels_per_side=2)
+    instrument_id = ids[0]
+    observer.on_book_deltas(batch(instrument_id, "99.00", "100.00"))
+    def change(action, price, size):
+        return OrderBookDelta(instrument_id, action,
+            BookOrder(OrderSide.BUY, Price.from_str(price), Quantity.from_str(size), 0),
+            RecordFlag.F_LAST.value, 1, NS, NS)
+    for action, price, size in [(BookAction.UPDATE, "98.00", "2.00"),
+                                (BookAction.UPDATE, "98.00", "3.00"),
+                                (BookAction.DELETE, "99.00", "0.00"),
+                                (BookAction.UPDATE, "97.00", "4.00"),
+                                (BookAction.DELETE, "98.00", "0.00")]:
+        observer.on_book_deltas(OrderBookDeltas(instrument_id, [change(action, price, size)]))
+        assert observer.failure is None
+        book = observer.local_books[instrument_id]
+        assert observer.level_prices[instrument_id]["BUY"] == {level.price.raw for level in book.bids()}
+    assert len(observer.level_prices[instrument_id]["BUY"]) == 1
+    observer.invalidate(instrument_id)
+    assert not observer.level_prices[instrument_id]["BUY"]
+    assert str(instrument_id) not in state.books
+    observer.on_book_deltas(batch(instrument_id, "95.00", "96.00"))
+    assert len(observer.level_prices[instrument_id]["BUY"]) == 1
+    assert state.books[str(instrument_id)].bids[0][0] == Decimal("95")
+
+
 def test_native_halt_is_not_lifted_by_feed_snapshot_ready(tmp_path, monkeypatch):
     _, state, observer, ids, _, _ = native_observer(tmp_path, monkeypatch)
     for i, b, a in [(ids[0], "99.00", "100.00"), (ids[1], "102.00", "103.00")]:

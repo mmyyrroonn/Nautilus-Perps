@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-06T15:17:13.363077+00:00",
+  "symbol_count": 167,
+  "market_count": 498,
+  "selected_venues": [
+    "HL",
+    "LIGHTER",
+    "ASTER",
+    "ONDO",
+    "BACKPACK"
+  ],
+  "requested_symbols": null,
+  "per_venue_counts": {
+    "HL": 149,
+    "LIGHTER": 109,
+    "ASTER": 161,
+    "ONDO": 9,
+    "BACKPACK": 70
+  },
+  "input_counts": {
+    "HL": 234,
+    "LIGHTER": 246,
+    "ASTER": 618,
+    "ONDO": 81,
+    "BACKPACK": 191
+  },
+  "exclusions": {
+    "HL": {
+      "fewer_than_two_venues": 29,
+      "inactive_or_unknown_status": 56
+    },
+    "LIGHTER": {
+      "inactive_spot_or_frozen": 35,
+      "unanchored_or_ambiguous_asset": 102
+    },
+    "ASTER": {
+      "fewer_than_two_venues": 285,
+      "inactive_or_nonperpetual": 22,
+      "inconsistent_identity": 5,
+      "noncrypto_or_unknown_classification": 140,
+      "unsupported_quote_or_margin": 5
+    },
+    "ONDO": {
+      "inactive_or_unknown_status": 2,
+      "noncrypto_or_unknown_classification": 70
+    },
+    "BACKPACK": {
+      "fewer_than_two_venues": 1,
+      "inactive_or_hidden": 11,
+      "rwa_or_unknown_classification": 18,
+      "unsupported_native_case": 3,
+      "unsupported_product_or_quote": 88
+    }
+  },
+  "alias_policy": "exact native base units only; k/1000 aliases not merged or independently verified",
+  "capacity_policy": "reserve two legs per alphabetically ordered symbol, then favor underrepresented optional venues; Backpack cap100, total cap1000",
+  "lighter_identity_policy": "trusted crypto anchor intersection; known RWA collisions excluded; operator index is not a classifier",
+  "lighter_public_operator_counts": {
+    "0": 21,
+    "1": 225
+  },
+  "inputs": {
+    "HL": {
+      "url": "https://api.hyperliquid.xyz/info",
+      "input_path": "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\universe\\hl-metadata.json",
+      "sha256": "94b613eff41a87ab188cde5ae6d813f85399e7ae3963f00cfb576f59c925deab",
+      "source_capture_time": "unknown",
+      "input_mtime_utc": "2026-10-06T14:34:34.585539+00:00"
+    },
+    "LIGHTER": {
+      "url": "https://mainnet.zklighter.elliot.ai/api/v1/orderBooks",
+      "input_path": "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\universe\\lighter-metadata.json",
+      "sha256": "21c58af7ad1d7a132ebbb3d5307489835146ee3c6c338c6b3aaa03ee42f7a10a",
+      "source_capture_time": "unknown",
+      "input_mtime_utc": "2026-10-06T14:34:36.682371+00:00"
+    },
+    "ASTER": {
+      "url": "https://fapi.asterdex.com/fapi/v1/exchangeInfo",
+      "input_path": "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\universe\\aster-metadata.json",
+      "sha256": "896acc76d3edb362dc8e5453c1bb1fd58c0f7b1ddfc54de23fe1069351d5b4a6",
+      "source_capture_time": "unknown",
+      "input_mtime_utc": "2026-10-06T14:34:31.007517+00:00"
+    },
+    "ONDO": {
+      "url": "https://api.ondoperps.xyz/v1/markets",
+      "input_path": "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\universe\\ondo-metadata.json",
+      "sha256": "98977276bf8603bfe633416a580ac082edf00a07e12055e756eb691c49f67781",
+      "source_capture_time": "unknown",
+      "input_mtime_utc": "2026-10-06T14:34:38.775728+00:00"
+    },
+    "BACKPACK": {
+      "url": "https://api.backpack.exchange/api/v1/markets",
+      "input_path": "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\universe\\backpack-metadata.json",
+      "sha256": "618e66c3c408e142ed6b05add303539c8729f5d4f2bdcdb6892993f7fe4b8473",
+      "source_capture_time": "unknown",
+      "input_mtime_utc": "2026-10-06T14:34:33.111229+00:00"
+    }
+  },
+  "historical_samples_retained": 0,
+  "live_connections_verified": false,
+  "fees_and_fx_are_assumptions": true
+}

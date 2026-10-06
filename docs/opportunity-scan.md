@@ -1,6 +1,7 @@
 # 仅记录机会的跨所扫描
 
-关联 [issue #32](https://github.com/mmyyrroonn/Nautilus-Perps/issues/32)。入口是
+关联 [issue #32](https://github.com/mmyyrroonn/Nautilus-Perps/issues/32) 与
+[扩容 issue #34](https://github.com/mmyyrroonn/Nautilus-Perps/issues/34)。入口是
 `src/opportunity_scan.py`，独立于持续写 CSV 的 `spread_watch.py`。一个配置可以包含多个标的、多个所；
 同一 `symbol` 必须代表同一经济标的。程序只注册公共数据客户端，不读取 `.env` 或注册执行客户端。
 离线与原生本地模拟行情的验收结果见 [2026-10-06 验收记录](../reports/opportunity-scan/20261006/acceptance.md)。
@@ -21,13 +22,62 @@
 
 示例包含 BTC/ETH × HL/Lighter/Aster/Ondo/Backpack。市场 ID 在启动时必须由真实 instrument metadata
 确认；示例不表示这些场所当下都可用。删除不需要的 `[[markets]]`，每个标的仍至少保留两个所。
-添加更多标的时加入明确的映射；未知品种不会仅凭代码拼接就被认为已上市。第一版不自动发现/热加载全市场。
+添加更多标的可以从公开市场目录生成明确的映射；未知品种不会仅凭代码拼接就被认为已上市。
+目录发现是独立命令，运行中的扫描器不热加载新市场。
 `HL` 和 `ENTROPY` 共享一个 HYPERLIQUID 客户端，Lighter RH 使用独立客户端。
+
+### 多币种目录与连接检查
+
+`config/opportunity-scan.universe.toml` 是 2026-10-06 的五所公开目录快照，包含 167 个币种、498 个市场：
+HL 149、Lighter 109、Aster 161、Ondo 9、Backpack 70。每个币种至少覆盖两个所。
+`config/opportunity-scan.dg-us.toml` 是现有 Linux 安装包可用的四所配置，包含 164 个币种、425 个市场。
+目录快照不是持续行情历史，也不代表每条盘口始终新鲜。新上市、停牌或退市后应重新生成。
+
+```powershell
+.\.venv\Scripts\python.exe src\opportunity_universe.py --output config\opportunity-scan.universe.toml
+.\.venv\Scripts\python.exe src\opportunity_universe.py --venues HL,LIGHTER,ASTER,ONDO --output config\opportunity-scan.dg-us.toml
+.\.venv\Scripts\python.exe src\opportunity_connections.py --config config\opportunity-scan.universe.toml --duration-secs 240
+.\.venv\Scripts\python.exe src\opportunity_scan.py --config config\opportunity-scan.universe.toml --duration-secs 0
+```
+
+发现命令仅调用固定的公开市场目录 API，不保存盘口；可加 `--symbols BTC,ETH,SOL` 或 `--dry-run`。
+离线重建可用 `--metadata-dir <目录>`，读取 `<venue>-metadata.json`。可选 `--summary <路径>`
+保存目录来源和哈希；默认仅输出摘要。股票、商品、现货、停用品种及身份冲突会排除。
+`k` / `1000` 前缀不会自动去除：未经逐个确认的数量单位不能互相配对。HL 原生 ID 的大小写会保留。
+Lighter 的 operator index 无法区分股票和币种，因此还须与其他所明确标为 crypto 的目录交叉核对。
+Backpack 原生客户端最多配置 100 个市场；生成器同时遵守总计 1000 个映射的应用上限。
+
+连接检查入口运行同一个原生扫描器，强制关闭机会录制，只保留计数与当前覆盖率。
+返回 0 表示配置中的每个市场都曾收到通过时间、盘口、费用元数据检查的数据；缺失则返回 1。
+摘要同时报告最后一次刷新时的新鲜盘口、同时可比较的币种峰值、CPU 和 Linux 内存峰值。
+`--venues HL,LIGHTER` 可隔离场所问题；`--report <路径>` 仅保存聚合诊断，不含盘口价格或历史采样。
+Lighter 大批订阅须等待节流，扩容配置预留 120 秒连接超时。
+大配置使用 `evaluation_interval_ms = 100`：每条增量都进入当前 native L2，
+只保存每个市场最新完整批次的时间与序列；到评估时先更新全部变化的腿，再计算受影响币种。
+因此不会将本轮新盘口与已知变化、尚未发布的旧盘口混合录制。该模式可能略过两次评估之间的短暂机会。
+`evaluation_interval_ms = 0` 保留每批即时计算。显示刷新只移除失效机会，不提前触发录制。
+
+Aster 大配置用 `aster_snapshot_depth = 100`、`aster_subscription_interval_ms = 500`，
+分批获取初始快照，避免默认 1000 档请求集中启动超出接口预算。计算只使用前 20 档，
+深度不够目标金额就不判定机会。运行时长包含连接与分批启动，160 个 Aster 市场需要至少约 80 秒启动。
+重连与其 HTTP 重试仍由原生适配器处理，完整长期恢复测试尚未完成。
+
+dg-us 的 240 秒复测覆盖全部 425 个市场；每个市场都曾通过新鲜度检查，
+同时新鲜盘口峰值 413 个、满足时间差检查的币种峰值 100 个。
+平均进程 CPU 69.78%（约占两核机器的 34.89%）、内存峰值约 364 MiB。
+这次连接检查强制关闭录制，不证明捕获了收益机会或完成长期 soak。详细计数与限制见
+[扩容验收记录](../reports/opportunity-scan/20261006-universe/acceptance.md)。
+
+dg-us 的安装包暂不含 Backpack 原生模块。五所配置须在包含该模块的 wheel 上运行；
+公开 WebSocket 的验证与原生扫描器验证分别报告。
 
 费用优先使用每个市场显式配置的 `taker_fee_bps`，否则使用 instrument metadata。
 配置费率必须带 `fee_source`，会作为假设原样进入证据。通用 instrument 的零费率可能是未提供费用的默认值，
 因此只有 Lighter 明确的零费率以及 Backpack 完整配置的 economics 接受零值；费用未知就不判定机会。
 Backpack 公共适配器要求显式 `backpack_economics`，示例值是 Configured 假设，不代表已核实的账户费率或保证金。
+Aster 币种的一般 taker 费率配置为 4 bps，已列出的 Group B 使用 10 bps，依据
+[公开费用表](https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees)；扩容前的小示例也已修正。
+费用分类会变动，生成器中的 Group B 清单按 2026-10-06 冻结，更新时须核对。
 
 每个市场必须显式给 `quote_to_usd` 和 `valuation_source`，说明如何将报价换算为 USD。
 示例的 1:1 稳定币换算也是假设，不是实时汇率。特殊的 1000-token 市场可显式给 `canonical_multiplier = "1000"`，
@@ -67,6 +117,7 @@ entry_after_fees_and_reserve_bps = entry_after_fees_and_reserve / buy_cash * 100
 ## 内存与运行边界
 
 只保留每个配置市场的当前 native L2、当前截取盘口和每个方向的少量展示/去重状态；没有按时间增长的价差历史。
+当前 L2 的价格键集合用于增量检查档数上限，避免每次更新复制整个深层盘口。
 Nautilus tick/bar cache 容量均为 1，未订阅逐笔成交或 bars。应用侧当前盘口每侧最多
 `max_levels_per_side` 档，超过上限明确停止，不静默丢弃增量使盘口不一致。
 应用配置最多 1000 个市场，展示只输出前 `top_n` 条。终端刷新频率不改变计算所使用的行情时间戳。
@@ -79,7 +130,7 @@ Backpack 的连接 epoch、metadata、book continuity 和 freshness 会在处理
 离线验证：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests\test_opportunity_core.py tests\test_opportunity_scan.py tests\test_opportunity_native.py
+.\.venv\Scripts\python.exe -m pytest -q tests\test_opportunity_core.py tests\test_opportunity_scan.py tests\test_opportunity_native.py tests\test_opportunity_universe.py tests\test_opportunity_connections.py
 ```
 
 测试通过不表示百币容量、长期 soak 或真实成交已经验证。正式长跑应先查看各腿当前是否有有效盘口，

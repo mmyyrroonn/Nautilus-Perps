@@ -230,6 +230,18 @@ def evaluate_opportunity(
             and _positive(buy_book.asks[0][0]) and _positive(sell_book.bids[0][0])
             and sell_book.bids[0][0] <= buy_book.asks[0][0]):
         return None
+    if (settings.min_entry_edge_bps >= 0 and buy_book.asks and sell_book.bids
+            and len(buy_book.asks[0]) == 2 and len(sell_book.bids[0]) == 2
+            and _positive(buy_book.asks[0][0]) and _positive(sell_book.bids[0][0])):
+        # Even an unlimited fill at the best quotes must pay both taker fees.
+        # This exact upper bound avoids depth walks for small positive spreads.
+        best_net_sell = Fraction(sell_book.bids[0][0]) * (10000 - Fraction(sell_metadata.taker_fee_bps))
+        best_required_buy = Fraction(buy_book.asks[0][0]) * (
+            10000 + Fraction(buy_metadata.taker_fee_bps) + Fraction(settings.reserve_bps)
+            + Fraction(settings.min_entry_edge_bps))
+        if best_net_sell < best_required_buy or (
+                settings.min_entry_edge_bps == 0 and best_net_sell == best_required_buy):
+            return None
     if not _book_valid(buy_book, settings, now_ns) or not _book_valid(sell_book, settings, now_ns):
         return None
     if abs(buy_book.ts_event_ns - sell_book.ts_event_ns) > settings.max_skew_ms * 1_000_000:
@@ -346,6 +358,10 @@ class EventRecorder:
         self.quantity_change_fraction = Fraction(quantity_change_fraction)
         self.max_interval_ns = None if max_interval_ms is None else max_interval_ms * 1_000_000
         self._active: dict[tuple[str, str, str], _SavedEvent] = {}
+
+    def active_keys(self) -> tuple[tuple[str, str, str], ...]:
+        """Expose only bounded direction identifiers, never saved book evidence."""
+        return tuple(self._active)
 
     def observe(
         self, key: tuple[str, str, str], opportunity: dict[str, Any] | None, now_ns: int,

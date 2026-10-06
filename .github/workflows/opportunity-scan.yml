@@ -4,14 +4,14 @@ on:
     paths:
       - src/opportunity_*.py
       - tests/test_opportunity_*.py
-      - config/opportunity-scan.example.toml
+      - config/opportunity-scan*.toml
       - .github/workflows/opportunity-scan.yml
   push:
     branches: [main]
     paths:
       - src/opportunity_*.py
       - tests/test_opportunity_*.py
-      - config/opportunity-scan.example.toml
+      - config/opportunity-scan*.toml
       - .github/workflows/opportunity-scan.yml
 permissions:
   contents: read
@@ -31,3 +31,5 @@ jobs:
           uv run --isolated --no-project --python 3.12.9 --with pytest==9.1.1
           python -m pytest -q -p no:cacheprovider
           tests/test_opportunity_core.py tests/test_opportunity_scan.py tests/test_opportunity_native.py
+          tests/test_opportunity_universe.py tests/test_opportunity_connections.py
+          tests/test_opportunity_coalescing.py
