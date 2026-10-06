@@ -6,6 +6,7 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import sys
+import threading
 import time
 
 import pytest
@@ -63,10 +64,14 @@ def test_scanner_actual_node_subscribes_only_depth_refreshes_and_stops(tmp_path,
             displays = []
             monkeypatch.setattr(state, "display", lambda: displays.append(len(state.books)))
             task = asyncio.ensure_future(node.run_async())
+            timer = threading.Timer(1.5, node.handle().stop)
+            timer.daemon = True
+            timer.start()
             try:
                 await asyncio.wait_for(peer.ready.wait(), 5)
-                await asyncio.sleep(1)
+                await asyncio.wait_for(asyncio.shield(task), 8)
             finally:
+                timer.cancel()
                 node.handle().stop()
                 await asyncio.wait_for(task, 8)
             assert observer.failure is None, observer.failure
