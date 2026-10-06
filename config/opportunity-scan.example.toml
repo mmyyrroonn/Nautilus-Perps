@@ -1,0 +1,123 @@
+# Public data only. Fee/FX values marked Configured are assumptions to verify.
+schema_version = 1
+
+[scan]
+target_notional = "500"
+min_entry_edge_bps = "1"
+reserve_bps = "5"
+max_age_ms = 2000
+max_receive_age_ms = 2000
+max_skew_ms = 500
+
+[recording]
+enabled = true
+path = "../reports/opportunities/opportunities.jsonl"
+cooldown_ms = 5000
+edge_change_bps = "2"
+quantity_change_fraction = "0.1"
+# Optional: save a still-qualified opportunity at least every 60 seconds.
+# max_interval_ms = 60000
+
+[runtime]
+duration_secs = 3600 # Set to 0 to run until Ctrl+C.
+depth_levels = 20
+max_levels_per_side = 2000
+refresh_ms = 1000
+top_n = 20
+connection_timeout_secs = 30
+
+[[markets]]
+symbol = "BTC"
+venue = "HL"
+instrument_id = "BTC-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+taker_fee_bps = "4.5"
+fee_source = "Configured indicative rate; verify current account tier"
+
+[[markets]]
+symbol = "BTC"
+venue = "LIGHTER"
+instrument_id = "BTC-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+
+[[markets]]
+symbol = "BTC"
+venue = "ASTER"
+instrument_id = "BTCUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+taker_fee_bps = "0.9"
+fee_source = "Configured indicative rate; verify current account tier"
+
+[[markets]]
+symbol = "BTC"
+venue = "ONDO"
+instrument_id = "BTC-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+
+[[markets]]
+symbol = "BTC"
+venue = "BACKPACK"
+instrument_id = "BTC_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+taker_fee_bps = "5"
+fee_source = "Configured indicative rate; verify current account tier"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Example assumptions, not verified account economics"
+
+[[markets]]
+symbol = "ETH"
+venue = "HL"
+instrument_id = "ETH-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+taker_fee_bps = "4.5"
+fee_source = "Configured indicative rate; verify current account tier"
+
+[[markets]]
+symbol = "ETH"
+venue = "LIGHTER"
+instrument_id = "ETH-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+
+[[markets]]
+symbol = "ETH"
+venue = "ASTER"
+instrument_id = "ETHUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+taker_fee_bps = "0.9"
+fee_source = "Configured indicative rate; verify current account tier"
+
+[[markets]]
+symbol = "ETH"
+venue = "ONDO"
+instrument_id = "ETH-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+
+[[markets]]
+symbol = "ETH"
+venue = "BACKPACK"
+instrument_id = "ETH_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption"
+taker_fee_bps = "5"
+fee_source = "Configured indicative rate; verify current account tier"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Example assumptions, not verified account economics"

@@ -1,0 +1,37 @@
+{
+  "python": "3.12.9",
+  "symbols": 100,
+  "venues": 5,
+  "markets": 500,
+  "depth_levels": 20,
+  "scope": "Python current-state replay; excludes native/network/book assembly/disk",
+  "no_opportunity": {
+    "updates": 2000,
+    "seconds": 0.12997340003494173,
+    "updates_per_second": 15387.763953719183,
+    "current_books": 500,
+    "raw_books": 500,
+    "current_directions": 0,
+    "saved": 0,
+    "dedup_keys": 0
+  },
+  "qualified": {
+    "updates": 2000,
+    "seconds": 1.1055945999687538,
+    "updates_per_second": 1808.9813391423256,
+    "current_books": 500,
+    "raw_books": 500,
+    "current_directions": 600,
+    "saved": 0,
+    "dedup_keys": 0
+  },
+  "bounded_python_allocations": {
+    "before_bytes": 9722400,
+    "after_bytes": 9722428,
+    "delta_bytes": 28,
+    "current_books": 500,
+    "raw_books": 500,
+    "current_directions": 0,
+    "dedup_keys": 0
+  }
+}
