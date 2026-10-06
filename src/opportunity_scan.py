@@ -80,6 +80,9 @@ class ScanPlan:
     top_n: int = 20
     duration_secs: int = 3600
     connection_timeout_secs: int = 30
+    evaluation_interval_ms: int = 0
+    aster_snapshot_depth: int = 1000
+    aster_subscription_interval_ms: int = 500
 
     def document(self) -> dict:
         def plain(value):
@@ -128,9 +131,13 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
         interval = integer_value(interval, "max_interval_ms", max(1, cooldown), 86400000)
     runtime = document.get("runtime", {})
     allowed_keys(runtime, {"depth_levels", "max_levels_per_side", "refresh_ms", "top_n",
-                          "duration_secs", "connection_timeout_secs"}, "runtime")
+                          "duration_secs", "connection_timeout_secs", "evaluation_interval_ms",
+                          "aster_snapshot_depth", "aster_subscription_interval_ms"}, "runtime")
     cap = integer_value(runtime.get("max_levels_per_side", 2000), "max_levels_per_side", 1, 20000)
     depth = integer_value(runtime.get("depth_levels", 20), "depth_levels", 1, cap)
+    aster_depth = integer_value(runtime.get("aster_snapshot_depth", 1000), "aster_snapshot_depth", 5, 1000)
+    if aster_depth not in {5, 10, 20, 50, 100, 500, 1000}:
+        raise ScanConfigError("unsupported aster_snapshot_depth")
     raw_markets = document.get("markets")
     if not isinstance(raw_markets, list) or not 2 <= len(raw_markets) <= 1000:
         raise ScanConfigError("markets must contain 2..1000 explicit market mappings")
@@ -191,6 +198,8 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
             valuation, fee, source, canonical_multiplier, economics))
     if any(len(group) < 2 for group in groups.values()):
         raise ScanConfigError("every underlying needs at least two venue mappings")
+    if any(m.venue == "ASTER" for m in markets) and depth > aster_depth:
+        raise ScanConfigError("depth_levels cannot exceed aster_snapshot_depth")
     return ScanPlan(tuple(markets), settings, output_path, cooldown,
         decimal_value(recording.get("edge_change_bps", "2"), "edge_change_bps", positive=True),
         decimal_value(recording.get("quantity_change_fraction", "0.1"), "quantity_change_fraction", positive=True),
@@ -198,7 +207,10 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
         integer_value(runtime.get("refresh_ms", 1000), "refresh_ms", 100, 60000),
         integer_value(runtime.get("top_n", 20), "top_n", 1, 1000),
         integer_value(runtime.get("duration_secs", 3600), "duration_secs", 0, 2678400),
-        integer_value(runtime.get("connection_timeout_secs", 30), "connection_timeout_secs", 1, 300))
+        integer_value(runtime.get("connection_timeout_secs", 30), "connection_timeout_secs", 1, 300),
+        integer_value(runtime.get("evaluation_interval_ms", 0), "evaluation_interval_ms", 0, 60000),
+        aster_depth,
+        integer_value(runtime.get("aster_subscription_interval_ms", 500), "aster_subscription_interval_ms", 1, 60000))
 
 
 def load_plan(path: Path) -> ScanPlan:

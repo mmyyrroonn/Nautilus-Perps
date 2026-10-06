@@ -1,0 +1,54 @@
+{
+  "actor_failure": null,
+  "actor_started": true,
+  "all_markets_observed_fresh": true,
+  "average_process_cpu_percent": 43.78,
+  "configured_markets": 8,
+  "configured_symbols": 2,
+  "elapsed_secs": 90.127,
+  "historical_book_samples_retained": 0,
+  "observed_at": "2026-10-06T14:49:04.867488+00:00",
+  "opportunities_recorded": 0,
+  "peak_comparable_symbols": 2,
+  "peak_refresh_interval_cpu_percent": 73.11,
+  "peak_rss_bytes": 327774208,
+  "peak_simultaneously_fresh_markets": 8,
+  "process_cpu_secs": 39.457,
+  "recording_disabled": true,
+  "refresh_samples": 82,
+  "schema_version": 1,
+  "venues": {
+    "ASTER": {
+      "book_updates": 2650,
+      "configured": 2,
+      "ever_fresh": 2,
+      "last_fresh": 2,
+      "missing_fresh_instruments": [],
+      "received_book": 2
+    },
+    "HL": {
+      "book_updates": 32,
+      "configured": 2,
+      "ever_fresh": 2,
+      "last_fresh": 0,
+      "missing_fresh_instruments": [],
+      "received_book": 2
+    },
+    "LIGHTER": {
+      "book_updates": 2899,
+      "configured": 2,
+      "ever_fresh": 2,
+      "last_fresh": 2,
+      "missing_fresh_instruments": [],
+      "received_book": 2
+    },
+    "ONDO": {
+      "book_updates": 636,
+      "configured": 2,
+      "ever_fresh": 2,
+      "last_fresh": 2,
+      "missing_fresh_instruments": [],
+      "received_book": 2
+    }
+  }
+}

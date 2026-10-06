@@ -86,6 +86,27 @@ def test_multiplier_and_lcm_produce_neutral_executable_native_sizes():
     assert D(sizing["sell_notional"]) == D("1.236")
 
 
+def test_positive_spread_below_total_costs_skips_depth_walk(monkeypatch):
+    import src.opportunity_core as core
+    def unexpected_walk(*args):
+        raise AssertionError("best quotes cannot pay fees and reserve")
+    monkeypatch.setattr(core, "_walk", unexpected_walk)
+    assert estimate(sell=book("SELL", "100.01", "101")) is None
+
+
+def test_fee_upper_bound_preserves_exact_threshold_equality_under_low_precision():
+    settings = ScanSettings(min_entry_edge_bps=D("2"), reserve_bps=D("0"))
+    with localcontext() as context:
+        context.prec = 2
+        context.traps[Inexact] = True
+        context.traps[Rounded] = True
+        event = estimate(sell=book("SELL", "100.02", "101"),
+                         buy_metadata=metadata("BUY", taker_fee_bps=D("0")),
+                         sell_metadata=metadata("SELL", taker_fee_bps=D("0")), settings=settings)
+    assert event is not None
+    assert D(event["economics"]["entry_after_fees_and_reserve_bps"]) == D("2")
+
+
 @pytest.mark.parametrize("leg,field,value", [
     ("BUY", "min_quantity", "0.007"),
     ("SELL", "min_quantity", "0.005"),

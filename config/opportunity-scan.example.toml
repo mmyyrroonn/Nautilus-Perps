@@ -48,8 +48,8 @@ venue = "ASTER"
 instrument_id = "BTCUSDT-PERP.ASTER"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption"
-taker_fee_bps = "0.9"
-fee_source = "Configured indicative rate; verify current account tier"
+taker_fee_bps = "4"
+fee_source = "Configured Aster general crypto taker rate; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
 
 [[markets]]
 symbol = "BTC"
@@ -96,8 +96,8 @@ venue = "ASTER"
 instrument_id = "ETHUSDT-PERP.ASTER"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption"
-taker_fee_bps = "0.9"
-fee_source = "Configured indicative rate; verify current account tier"
+taker_fee_bps = "4"
+fee_source = "Configured Aster general crypto taker rate; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
 
 [[markets]]
 symbol = "ETH"
