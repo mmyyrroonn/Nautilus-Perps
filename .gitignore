@@ -11,6 +11,7 @@ catalog/
 *.parquet
 reports/stage1/dev/
 reports/live/
+reports/opportunities/
 
 # Production probe recovery journals may contain account/order identifiers.
 reports/**/journal*.json*
