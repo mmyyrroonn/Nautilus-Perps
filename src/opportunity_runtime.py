@@ -196,11 +196,15 @@ def data_clients(plan):
             )
             economics = {m.instrument_id.removesuffix(".BACKPACK"):
                 BackpackInstrumentEconomics(**m.backpack_economics) for m in markets}
+            # Native public-client bounds are independent of the node's startup budget.
+            backpack_cap = min(plan.max_levels_per_side, 10_000)
+            snapshot_depth = max(depth for depth in (5, 10, 20, 50, 100, 500, 1000)
+                                 if depth <= backpack_cap)
             config = BackpackDataClientConfig(list(economics), economics,
-                max_levels_per_side=plan.max_levels_per_side,
-                depth_snapshot_limit=min(plan.max_levels_per_side, 1000),
-                quote_stale_after_ms=plan.settings.max_age_ms,
-                http_timeout_secs=plan.connection_timeout_secs,
+                max_levels_per_side=backpack_cap,
+                depth_snapshot_limit=snapshot_depth,
+                quote_stale_after_ms=min(plan.settings.max_age_ms, 30_000),
+                http_timeout_secs=min(plan.connection_timeout_secs, 60),
                 shutdown_timeout_secs=10)
             factory = BackpackDataClientFactory()
         else:

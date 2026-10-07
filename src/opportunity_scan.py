@@ -198,6 +198,8 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
             valuation, fee, source, canonical_multiplier, economics))
     if any(len(group) < 2 for group in groups.values()):
         raise ScanConfigError("every underlying needs at least two venue mappings")
+    if any(m.venue == "BACKPACK" for m in markets) and cap < 5:
+        raise ScanConfigError("Backpack requires max_levels_per_side of at least 5")
     if any(m.venue == "ASTER" for m in markets) and depth > aster_depth:
         raise ScanConfigError("depth_levels cannot exceed aster_snapshot_depth")
     return ScanPlan(tuple(markets), settings, output_path, cooldown,
