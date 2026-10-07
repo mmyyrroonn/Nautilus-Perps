@@ -16,6 +16,19 @@ import opportunity_runtime as runtime
 from opportunity_scan import load_plan
 
 
+@pytest.mark.parametrize("cap, timeout, age", [(20_000, 120, 2000), (37, 300, 60_000), (5, 30, 2000)])
+def test_generated_registry_constructs_actual_backpack_client_with_native_bounds(cap, timeout, age):
+    native = pytest.importorskip("nautilus_trader.adapters.backpack")
+    original = load_plan(Path(__file__).resolve().parents[1] / "config/opportunity-scan.universe.toml")
+    plan = replace(original, markets=tuple(m for m in original.markets if m.venue == "BACKPACK"),
+                   max_levels_per_side=cap, depth_levels=min(original.depth_levels, cap),
+                   connection_timeout_secs=timeout,
+                   settings=replace(original.settings, max_age_ms=age))
+    clients = runtime.data_clients(plan)
+    assert len(clients) == 1 and clients[0][0] == "BACKPACK"
+    assert isinstance(clients[0][2], native.BackpackDataClientConfig)
+
+
 def test_scanner_actual_node_subscribes_only_depth_refreshes_and_stops(tmp_path, monkeypatch):
     native = pytest.importorskip("nautilus_trader.adapters.backpack")
     pytest.importorskip("websockets")

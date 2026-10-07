@@ -34,6 +34,16 @@ def document(tmp_path):
             for venue, instrument in [("ONDO", "BTC-USD-PERP.ONDO"), ("ASTER", "BTCUSDT-PERP.ASTER")]]}
 
 
+def test_backpack_rejects_book_cap_below_minimum_snapshot(tmp_path):
+    import tomllib
+
+    with (ROOT / "config/opportunity-scan.example.toml").open("rb") as handle:
+        config = tomllib.load(handle, parse_float=Decimal)
+    config["runtime"].update(max_levels_per_side=4, depth_levels=1)
+    with pytest.raises(scan.ScanConfigError, match="Backpack.*at least 5"):
+        scan.parse_plan(config, tmp_path)
+
+
 def plan(tmp_path):
     return scan.parse_plan(document(tmp_path), tmp_path)
 
