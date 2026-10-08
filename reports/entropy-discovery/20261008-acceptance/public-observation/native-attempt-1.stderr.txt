@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "E:\persarb\worktrees\entropy-app\reports\entropy-discovery\20261008-acceptance\public-observation\observe_native.py", line 13, in <module>
+    import opportunity_connections as connections
+ModuleNotFoundError: No module named 'opportunity_connections'

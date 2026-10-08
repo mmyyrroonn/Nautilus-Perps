@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "dex": "io",
+  "matches": [
+    {
+      "symbol": "SNDK",
+      "product_class": "equity_perpetual",
+      "underlying": "SanDisk Corporation common stock reference",
+      "underlying_source": "https://docs.entropy.io/asset-directory/equity-assets; Aster exchangeInfo SNDKUSD1 STOCK/SanDisk",
+      "oracle": "Entropy RedStone/public equity price plus internal mark construction; Aster Pyth-derived index and median/EWMA mark. Sources: https://docs.entropy.io/equity-perp-mechanics/oracle-price; https://docs.asterdex.com/trading/perpetuals/stock-perpetuals",
+      "trading_hours": "Both are perpetual markets; cash-session and off-hours price bands differ. Entropy per-asset approved configuration and Aster stock sessions require current verification.",
+      "corporate_actions": "Entropy can halt/settle for splits, mergers and delisting; cash dividends have no adjustment. Aster USD1 contract-specific corporate-action treatment remains unverified.",
+      "notes": "Read-only comparison declaration: one native unit per common-stock reference and nominal USD/USDC/USD1 parity are explicit assumptions. Securities class and hedge equivalence are unverified. No account, order or profitability admission.",
+      "legs": [
+        {
+          "venue": "ENTROPY",
+          "instrument_id": "io:SNDK-USD-PERP.HYPERLIQUID",
+          "canonical_multiplier": "1",
+          "quote_currency": "USD",
+          "settlement_currency": "USDC",
+          "collateral_currency": "USDC",
+          "quote_to_usd": "1",
+          "valuation_source": "Configured nominal USD quote; USDC collateral basis is not a live FX observation",
+          "taker_fee_bps": "0.9",
+          "fee_source": "Configured Tier-0 4.5 bps x HIP-3 scale 2 x growth 0.1. io metadata growth enabled/deployerFeeScale 1.0 observed 2026-10-08; recheck current metadata. Account tier/aligned/referral/staking unverified. https://docs.entropy.io/equity-perp-mechanics/fees"
+        },
+        {
+          "venue": "ASTER",
+          "instrument_id": "SNDKUSD1-PERP.ASTER",
+          "canonical_multiplier": "1",
+          "quote_currency": "USD1",
+          "settlement_currency": "USD1",
+          "collateral_currency": "USD1",
+          "quote_to_usd": "1",
+          "valuation_source": "Configured USD1/USD parity; stablecoin basis unverified, not a live FX rate",
+          "taker_fee_bps": "1.25",
+          "fee_source": "Configured public RWA/USD1 RWA taker 0.0125%, verified 2026-10-08, published effective September 7 2026; actual account fees unverified. https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+        }
+      ]
+    },
+    {
+      "symbol": "GPRO",
+      "product_class": "equity_perpetual",
+      "underlying": "GoPro Incorporated common stock reference",
+      "underlying_source": "https://docs.entropy.io/asset-directory/equity-assets; Aster exchangeInfo GPROUSD1 STOCK/GoPro",
+      "oracle": "Entropy RedStone/public equity price plus internal mark construction; Aster Pyth-derived index and median/EWMA mark. Sources: https://docs.entropy.io/equity-perp-mechanics/oracle-price; https://docs.asterdex.com/trading/perpetuals/stock-perpetuals",
+      "trading_hours": "Both are perpetual markets; cash-session and off-hours price bands differ. Entropy per-asset approved configuration and Aster stock sessions require current verification.",
+      "corporate_actions": "Entropy can halt/settle for splits, mergers and delisting; cash dividends have no adjustment. Aster USD1 contract-specific corporate-action treatment remains unverified.",
+      "notes": "Read-only comparison declaration: one native unit per common-stock reference and nominal USD/USDC/USD1 parity are explicit assumptions. Securities class and hedge equivalence are unverified. No account, order or profitability admission.",
+      "legs": [
+        {
+          "venue": "ENTROPY",
+          "instrument_id": "io:GPRO-USD-PERP.HYPERLIQUID",
+          "canonical_multiplier": "1",
+          "quote_currency": "USD",
+          "settlement_currency": "USDC",
+          "collateral_currency": "USDC",
+          "quote_to_usd": "1",
+          "valuation_source": "Configured nominal USD quote; USDC collateral basis is not a live FX observation",
+          "taker_fee_bps": "0.9",
+          "fee_source": "Configured Tier-0 4.5 bps x HIP-3 scale 2 x growth 0.1. io metadata growth enabled/deployerFeeScale 1.0 observed 2026-10-08; recheck current metadata. Account tier/aligned/referral/staking unverified. https://docs.entropy.io/equity-perp-mechanics/fees"
+        },
+        {
+          "venue": "ASTER",
+          "instrument_id": "GPROUSD1-PERP.ASTER",
+          "canonical_multiplier": "1",
+          "quote_currency": "USD1",
+          "settlement_currency": "USD1",
+          "collateral_currency": "USD1",
+          "quote_to_usd": "1",
+          "valuation_source": "Configured USD1/USD parity; stablecoin basis unverified, not a live FX rate",
+          "taker_fee_bps": "1.25",
+          "fee_source": "Configured public RWA/USD1 RWA taker 0.0125%, verified 2026-10-08, published effective September 7 2026; actual account fees unverified. https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+        }
+      ]
+    }
+  ]
+}

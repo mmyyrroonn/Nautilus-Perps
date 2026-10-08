@@ -1,0 +1,23 @@
+{
+  "command": [
+    "E:\\persarb\\worktrees\\entropy-app\\.venv\\Scripts\\python.exe",
+    "src/opportunity_universe.py",
+    "--venues",
+    "ENTROPY,ASTER",
+    "--dex",
+    "io",
+    "--entropy-matches",
+    "config/entropy-matches.example.json",
+    "--timeout-secs",
+    "15",
+    "--capture-dir",
+    "reports/entropy-discovery/20261008-acceptance/public-observation/capture-attempt-2",
+    "--output",
+    "reports/entropy-discovery/20261008-acceptance/public-observation/registry-attempt-2.toml",
+    "--summary",
+    "reports/entropy-discovery/20261008-acceptance/public-observation/discovery-attempt-2.json"
+  ],
+  "started_at_utc": "2026-10-08T09:38:29.390998+00:00",
+  "exit_code": 0,
+  "finished_at_utc": "2026-10-08T09:38:31.136273+00:00"
+}

@@ -59,6 +59,7 @@ class MarketPlan:
     fee_source: str | None = None
     canonical_multiplier: Decimal = Decimal("1")
     backpack_economics: dict[str, str] = field(default_factory=dict)
+    expected_instrument: dict[str, str] = field(default_factory=dict)
 
     @property
     def client_id(self) -> str:
@@ -146,7 +147,8 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
     groups: dict[str, set[str]] = {}
     for market in raw_markets:
         allowed_keys(market, {"symbol", "venue", "instrument_id", "quote_to_usd", "valuation_source",
-                              "taker_fee_bps", "fee_source", "canonical_multiplier", "backpack_economics"}, "market")
+                              "taker_fee_bps", "fee_source", "canonical_multiplier", "backpack_economics",
+                              "expected_instrument"}, "market")
         symbol, venue, instrument_id = (market.get(k) for k in ("symbol", "venue", "instrument_id"))
         if not isinstance(symbol, str) or not symbol or len(symbol) > 40 or not all(
                 c.isalnum() or c in "_-" for c in symbol):
@@ -157,6 +159,11 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
             raise ScanConfigError("instrument_id does not match its venue")
         if len(instrument_id) > 120 or any(c.isspace() for c in instrument_id) or instrument_id in ids:
             raise ScanConfigError("duplicate or invalid instrument_id")
+        if venue == "ENTROPY" and (not instrument_id.startswith("io:") or
+                                    not instrument_id.endswith("-USD-PERP.HYPERLIQUID")):
+            raise ScanConfigError("ENTROPY requires a full io: USD perpetual instrument_id")
+        if venue == "HL" and instrument_id.startswith("io:"):
+            raise ScanConfigError("io: instruments require the ENTROPY logical venue")
         ids.add(instrument_id)
         group = groups.setdefault(symbol, set())
         if venue in group:
@@ -176,6 +183,19 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
         canonical_multiplier = decimal_value(market.get("canonical_multiplier", "1"),
                                              "canonical_multiplier", positive=True)
         economics = market.get("backpack_economics", {})
+        expected = market.get("expected_instrument", {})
+        if not isinstance(expected, dict):
+            raise ScanConfigError("expected_instrument must be a table")
+        if expected:
+            allowed_keys(expected, {"raw_symbol", "quote_currency", "settlement_currency",
+                                    "size_increment", "multiplier"}, "expected_instrument")
+            if set(expected) != {"raw_symbol", "quote_currency", "settlement_currency", "size_increment", "multiplier"}:
+                raise ScanConfigError("expected_instrument must specify identity, currencies and native quantity units")
+            if any(not isinstance(value, str) or not value.strip() or value != value.strip()
+                   for value in expected.values()):
+                raise ScanConfigError("expected_instrument values must be nonempty strings")
+            for key in ("size_increment", "multiplier"):
+                decimal_value(expected[key], "expected_instrument." + key, positive=True)
         if not isinstance(economics, dict):
             raise ScanConfigError("backpack_economics must be a table")
         if venue == "BACKPACK":
@@ -195,9 +215,12 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
             raise ScanConfigError("backpack_economics is only valid for BACKPACK")
         markets.append(MarketPlan(symbol, venue, instrument_id,
             decimal_value(market.get("quote_to_usd"), "quote_to_usd", positive=True),
-            valuation, fee, source, canonical_multiplier, economics))
+            valuation, fee, source, canonical_multiplier, economics, dict(expected)))
     if any(len(group) < 2 for group in groups.values()):
         raise ScanConfigError("every underlying needs at least two venue mappings")
+    entropy_symbols = {market.symbol for market in markets if market.venue == "ENTROPY"}
+    if any(market.symbol in entropy_symbols and not market.expected_instrument for market in markets):
+        raise ScanConfigError("every io comparison leg requires expected_instrument metadata")
     if any(m.venue == "BACKPACK" for m in markets) and cap < 5:
         raise ScanConfigError("Backpack requires max_levels_per_side of at least 5")
     if any(m.venue == "ASTER" for m in markets) and depth > aster_depth:

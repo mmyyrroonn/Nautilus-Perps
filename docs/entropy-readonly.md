@@ -1,5 +1,8 @@
 # Entropy `io:` 只读接入 runbook（SNDK / GPRO）
 
+当前动态发现与同数量 L2 scanner 入口见 [entropy-scanner.md](entropy-scanner.md)。
+下文保留 2026-09-14 watcher 的适用范围与历史费用/资金费前提，不作为当前 scanner 或账户交易验收。
+
 本文件是 `--venues HL,ENTROPY,ASTER` 这条只读行情路径的操作说明。实现计划与取舍见
 [`docs/superpowers/plans/2026-09-14-entropy-io-sndk-gpro.md`](superpowers/plans/2026-09-14-entropy-io-sndk-gpro.md)，
 规划阶段的公开核查证据见 [`reports/entropy-plan-2026-09-14`](../reports/entropy-plan-2026-09-14/README.md)。

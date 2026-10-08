@@ -1,0 +1,123 @@
+[
+  {
+    "file": "hl-meta-io.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "request_body": {
+      "type": "metaAndAssetCtxs",
+      "dex": "io"
+    },
+    "method": "POST",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:14:38.410889+00:00",
+    "status": 200,
+    "bytes": 4997,
+    "sha256": "7dbe3b80628203ccee44cf2199ae8eb3bab7bfdd6275b37f052c171ea171be58",
+    "finished_at_utc": "2026-10-08T09:14:38.737396+00:00"
+  },
+  {
+    "file": "hl-spot-meta.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "request_body": {
+      "type": "spotMeta"
+    },
+    "method": "POST",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:14:38.737396+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:14:43.754496+00:00"
+  },
+  {
+    "file": "hl-spot-meta.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "request_body": {
+      "type": "spotMeta"
+    },
+    "method": "POST",
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:14:43.754496+00:00",
+    "status": 200,
+    "bytes": 136601,
+    "sha256": "a84545ef4addc99185c5124f216902af6375ea43e8c64637bb546e3738863fc5",
+    "finished_at_utc": "2026-10-08T09:14:44.110496+00:00"
+  },
+  {
+    "file": "aster-exchange-info.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/exchangeInfo",
+    "request_body": null,
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:14:44.110496+00:00",
+    "status": 200,
+    "bytes": 851788,
+    "sha256": "276c21bc4291a77199cfb37c012219a5cf53766ccd4183085a7f97e83e65306c",
+    "finished_at_utc": "2026-10-08T09:14:44.562003+00:00"
+  },
+  {
+    "file": "aster-funding-info.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/fundingInfo",
+    "request_body": null,
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:14:44.562003+00:00",
+    "status": 200,
+    "bytes": 107281,
+    "sha256": "bdced3b362b36f6be832955d050d64fe0761777f09e5297c3e1fe9b501ea3105",
+    "finished_at_utc": "2026-10-08T09:14:44.908622+00:00"
+  },
+  {
+    "file": "entropy-llms.txt",
+    "url": "https://docs.entropy.io/llms.txt",
+    "request_body": null,
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:14:44.908622+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:14:49.931974+00:00"
+  },
+  {
+    "file": "entropy-llms.txt",
+    "url": "https://docs.entropy.io/llms.txt",
+    "request_body": null,
+    "method": "GET",
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:14:49.931974+00:00",
+    "status": 200,
+    "bytes": 2635,
+    "sha256": "a50aadf003ca122446dfb8c7dbb7bebdcd92f615ee2dda2cfabc06e6fecb506c",
+    "finished_at_utc": "2026-10-08T09:14:50.296480+00:00"
+  },
+  {
+    "file": "entropy-equity-assets.md",
+    "url": "https://docs.entropy.io/asset-directory/equity-assets.md",
+    "request_body": null,
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:14:50.296480+00:00",
+    "status": 200,
+    "bytes": 3315,
+    "sha256": "235338ef76f144192e41673a32053a3fb85aa603901fc649e7b45488c06c6e26",
+    "finished_at_utc": "2026-10-08T09:14:51.736734+00:00"
+  },
+  {
+    "file": "entropy-fees.md",
+    "url": "https://docs.entropy.io/equity-perp-mechanics/fees.md",
+    "request_body": null,
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:14:51.736734+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:14:56.756125+00:00"
+  },
+  {
+    "file": "entropy-fees.md",
+    "url": "https://docs.entropy.io/equity-perp-mechanics/fees.md",
+    "request_body": null,
+    "method": "GET",
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:14:56.756125+00:00",
+    "status": 200,
+    "bytes": 1152,
+    "sha256": "e915e21f6961a8031eff7c1e2eaf3af5c40a54bf0f2e76246255f1499d5fe782",
+    "finished_at_utc": "2026-10-08T09:15:01.355166+00:00"
+  }
+]
