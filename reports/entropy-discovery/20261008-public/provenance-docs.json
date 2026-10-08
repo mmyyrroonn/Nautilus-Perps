@@ -1,0 +1,97 @@
+[
+  {
+    "file": "entropy-oracle.md",
+    "url": "https://docs.entropy.io/equity-perp-mechanics/oracle-price.md",
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:16:07.545993+00:00",
+    "status": 200,
+    "bytes": 7655,
+    "sha256": "12fd7779affccdf702bd9084bbc0ed1c101c1b44c9283117b890f9dfa1ab360c",
+    "finished_at_utc": "2026-10-08T09:16:07.928500+00:00"
+  },
+  {
+    "file": "entropy-luld.md",
+    "url": "https://docs.entropy.io/equity-perp-mechanics/limit-up-limit-down-luld.md",
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:16:07.928500+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:16:12.944544+00:00"
+  },
+  {
+    "file": "entropy-luld.md",
+    "url": "https://docs.entropy.io/equity-perp-mechanics/limit-up-limit-down-luld.md",
+    "method": "GET",
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:16:12.944544+00:00",
+    "status": 200,
+    "bytes": 2396,
+    "sha256": "dbba5f91d612012cd1db4fcc7a836be8b9ec318d1ed8a8480bb676f3cf3b3449",
+    "finished_at_utc": "2026-10-08T09:16:13.309141+00:00"
+  },
+  {
+    "file": "entropy-equity-definition.md",
+    "url": "https://docs.entropy.io/market-types/equity-perpetuals.md",
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:16:13.309141+00:00",
+    "status": 200,
+    "bytes": 3761,
+    "sha256": "357e491644de3b95ea9204cb9c0e10c416e66fcd9455d914f8b453343673b8fd",
+    "finished_at_utc": "2026-10-08T09:16:13.720141+00:00"
+  },
+  {
+    "file": "entropy-funding.md",
+    "url": "https://docs.entropy.io/equity-perp-mechanics/funding-rate.md",
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:16:13.720141+00:00",
+    "status": 200,
+    "bytes": 1380,
+    "sha256": "e73c1a6c9124a8d62d08ad7f39a25103937366324134244e728f135404b9c7d5",
+    "finished_at_utc": "2026-10-08T09:16:14.118649+00:00"
+  },
+  {
+    "file": "aster-llms.txt",
+    "url": "https://docs.asterdex.com/llms.txt",
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:16:14.118649+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:16:19.139307+00:00"
+  },
+  {
+    "file": "aster-llms.txt",
+    "url": "https://docs.asterdex.com/llms.txt",
+    "method": "GET",
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:16:19.139307+00:00",
+    "status": 200,
+    "bytes": 20038,
+    "sha256": "ecc0f4aac4f69e1f73a5695914a382ff9977a466afb3265ad9280b547443ba1d",
+    "finished_at_utc": "2026-10-08T09:16:19.466906+00:00"
+  },
+  {
+    "file": "hl-fees.md",
+    "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees.md",
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:16:19.466906+00:00",
+    "status": 200,
+    "bytes": 12174,
+    "sha256": "75e55504b1b887a89e1668a9544d09b013242747bcc29f8648a5410142a71258",
+    "finished_at_utc": "2026-10-08T09:16:19.895414+00:00"
+  },
+  {
+    "file": "hl-aligned.md",
+    "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/aligned-quote-assets.md",
+    "method": "GET",
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:16:19.895414+00:00",
+    "status": 200,
+    "bytes": 6814,
+    "sha256": "14ebdc13e0521440601d0f0d95ff93abfaef74ca0f5dbf5afe60081383d00230",
+    "finished_at_utc": "2026-10-08T09:16:20.236415+00:00"
+  }
+]

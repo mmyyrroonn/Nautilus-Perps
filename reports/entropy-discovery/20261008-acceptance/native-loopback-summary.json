@@ -1,0 +1,27 @@
+{
+  "source": "Synthetic owned-loopback inputs following official Hyperliquid/Aster public schemas; not observed venue prices or live execution evidence. Aster SNDKUSD1 schema copied from 2026-10-08 exchangeInfo public response.",
+  "actor_started": true,
+  "registered_data_clients": [
+    "HYPERLIQUID",
+    "ASTER"
+  ],
+  "books": 3,
+  "native_metadata": 3,
+  "qualified_base_quantity": "0.99",
+  "hl_connections": 2,
+  "aster_connections": 2,
+  "hl_frames": 30,
+  "aster_frames": 58,
+  "public_request_counts": {
+    "HL": 5,
+    "ASTER": 3
+  },
+  "saved_pre_stop": 19,
+  "transport_reconnect": true,
+  "execution_registered": false,
+  "shutdown_complete": true,
+  "active_peer_sockets": 0,
+  "actor_stopped": true,
+  "saved": 19,
+  "event_file_rows": 19
+}

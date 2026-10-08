@@ -25,6 +25,7 @@
 添加更多标的可以从公开市场目录生成明确的映射；未知品种不会仅凭代码拼接就被认为已上市。
 目录发现是独立命令，运行中的扫描器不热加载新市场。
 `HL` 和 `ENTROPY` 共享一个 HYPERLIQUID 客户端，Lighter RH 使用独立客户端。
+Entropy 的显式 `dex=io` 动态目录、匹配声明和当前候选验收见 [entropy-scanner.md](entropy-scanner.md)。
 
 ### 多币种目录与连接检查
 

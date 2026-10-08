@@ -1,0 +1,147 @@
+[
+  {
+    "file": "aster-stock-mechanics.md",
+    "url": "https://docs.asterdex.com/trading/perpetuals/stock-perpetuals.md",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:20.213368+00:00",
+    "status": 200,
+    "bytes": 3155,
+    "sha256": "30c9e8d1a9004b35139ed5e0037e1eb98fb559901403d84003777997f0e9d8ee",
+    "finished_at_utc": "2026-10-08T09:17:20.578373+00:00"
+  },
+  {
+    "file": "aster-us-stock-sessions.md",
+    "url": "https://docs.asterdex.com/trading/perpetuals/stock-perpetuals/us-stocks.md",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:20.578373+00:00",
+    "status": 200,
+    "bytes": 2190,
+    "sha256": "eb12a64f9ae04e3b2883fd302ce48fefc55767f2011ab4a48de4936520870f1e",
+    "finished_at_utc": "2026-10-08T09:17:20.914389+00:00"
+  },
+  {
+    "file": "hl-asset-ids.md",
+    "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/asset-ids.md",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:20.914389+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:17:25.937258+00:00"
+  },
+  {
+    "file": "hl-asset-ids.md",
+    "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/asset-ids.md",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:17:25.937258+00:00",
+    "status": 200,
+    "bytes": 2265,
+    "sha256": "eec6b95ef1bf184fef4e29effb3f23e6297757c899aa77110d108686011ae0ae",
+    "finished_at_utc": "2026-10-08T09:17:26.343762+00:00"
+  },
+  {
+    "file": "hl-tick-lot.md",
+    "url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size.md",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:26.343762+00:00",
+    "status": 200,
+    "bytes": 1561,
+    "sha256": "1114a12bc134c7d0e004002e67a3103bb7835f13ec34329d5409c1f895830a10",
+    "finished_at_utc": "2026-10-08T09:17:26.730398+00:00"
+  },
+  {
+    "file": "hl-l2-sndk.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "method": "POST",
+    "request_body": {
+      "type": "l2Book",
+      "coin": "io:SNDK"
+    },
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:26.730398+00:00",
+    "status": 200,
+    "bytes": 1492,
+    "sha256": "9974b629a3b340b2266287f33ac3c8c482ca56be4ae4a57999a33f9403d06a9f",
+    "finished_at_utc": "2026-10-08T09:17:27.153495+00:00"
+  },
+  {
+    "file": "hl-l2-gpro.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "method": "POST",
+    "request_body": {
+      "type": "l2Book",
+      "coin": "io:GPRO"
+    },
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:27.153495+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:17:32.174061+00:00"
+  },
+  {
+    "file": "hl-l2-gpro.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "method": "POST",
+    "request_body": {
+      "type": "l2Book",
+      "coin": "io:GPRO"
+    },
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:17:32.174061+00:00",
+    "status": 200,
+    "bytes": 1445,
+    "sha256": "57b4cb5bfc850fe8f0597a2637d0b70a11ca23a2d3199bbbd567268b27240a07",
+    "finished_at_utc": "2026-10-08T09:17:32.443568+00:00"
+  },
+  {
+    "file": "aster-l2-sndk.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/depth?symbol=SNDKUSD1&limit=20",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:32.443568+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:17:37.466492+00:00"
+  },
+  {
+    "file": "aster-l2-sndk.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/depth?symbol=SNDKUSD1&limit=20",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 2,
+    "started_at_utc": "2026-10-08T09:17:37.466492+00:00",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>",
+    "finished_at_utc": "2026-10-08T09:17:42.486781+00:00"
+  },
+  {
+    "file": "aster-l2-sndk.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/depth?symbol=SNDKUSD1&limit=20",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 3,
+    "started_at_utc": "2026-10-08T09:17:42.486781+00:00",
+    "status": 200,
+    "bytes": 967,
+    "sha256": "19798746b14ff1407356430f3d7bfc1776584546f145437bee856b4dc6f8385d",
+    "finished_at_utc": "2026-10-08T09:17:42.780782+00:00"
+  },
+  {
+    "file": "aster-l2-gpro.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/depth?symbol=GPROUSD1&limit=20",
+    "method": "GET",
+    "request_body": null,
+    "attempt": 1,
+    "started_at_utc": "2026-10-08T09:17:42.780782+00:00",
+    "status": 200,
+    "bytes": 961,
+    "sha256": "27b59b4f1afb08a6f24666c4cf9a656dca2ed0340e75dd39f5a578a3e7165000",
+    "finished_at_utc": "2026-10-08T09:17:43.029568+00:00"
+  }
+]

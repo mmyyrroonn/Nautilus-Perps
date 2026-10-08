@@ -3,15 +3,23 @@ on:
   pull_request:
     paths:
       - src/opportunity_*.py
+      - src/entropy_*.py
       - tests/test_opportunity_*.py
+      - tests/test_entropy_*.py
+      - tests/fixtures/entropy-public/**
       - config/opportunity-scan*.toml
+      - config/entropy-matches*.json
       - .github/workflows/opportunity-scan.yml
   push:
     branches: [main]
     paths:
       - src/opportunity_*.py
+      - src/entropy_*.py
       - tests/test_opportunity_*.py
+      - tests/test_entropy_*.py
+      - tests/fixtures/entropy-public/**
       - config/opportunity-scan*.toml
+      - config/entropy-matches*.json
       - .github/workflows/opportunity-scan.yml
 permissions:
   contents: read
@@ -33,3 +41,4 @@ jobs:
           tests/test_opportunity_core.py tests/test_opportunity_scan.py tests/test_opportunity_native.py
           tests/test_opportunity_universe.py tests/test_opportunity_connections.py
           tests/test_opportunity_coalescing.py
+          tests/test_entropy_universe.py tests/test_entropy_discovery.py tests/test_entropy_native.py

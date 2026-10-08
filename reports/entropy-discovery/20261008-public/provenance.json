@@ -1,0 +1,96 @@
+[
+  {
+    "file": "hl-perp-dexs.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "request_body": {
+      "type": "perpDexs"
+    },
+    "started_at_utc": "2026-10-08T09:13:54.152111+00:00",
+    "method": "POST",
+    "status": 200,
+    "bytes": 21553,
+    "sha256": "6dde6bfdbd00ac6bef44d2d4ed013a2b35f582941cc18d89de32b668c47ec16b",
+    "finished_at_utc": "2026-10-08T09:13:54.518618+00:00"
+  },
+  {
+    "file": "hl-meta-io.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "request_body": {
+      "type": "metaAndAssetCtxs",
+      "dex": "io"
+    },
+    "started_at_utc": "2026-10-08T09:13:54.152111+00:00",
+    "method": "POST",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "hl-meta-xyz.json",
+    "url": "https://api.hyperliquid.xyz/info",
+    "request_body": {
+      "type": "metaAndAssetCtxs",
+      "dex": "xyz"
+    },
+    "started_at_utc": "2026-10-08T09:13:54.153111+00:00",
+    "method": "POST",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "aster-exchange-info.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/exchangeInfo",
+    "request_body": null,
+    "started_at_utc": "2026-10-08T09:13:54.153111+00:00",
+    "method": "GET",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "aster-funding-info.json",
+    "url": "https://fapi.asterdex.com/fapi/v1/fundingInfo",
+    "request_body": null,
+    "started_at_utc": "2026-10-08T09:13:54.519618+00:00",
+    "method": "GET",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "entropy-llms.txt",
+    "url": "https://docs.entropy.io/llms.txt",
+    "request_body": null,
+    "started_at_utc": "2026-10-08T09:13:59.235267+00:00",
+    "method": "GET",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "aster-llms.txt",
+    "url": "https://docs.asterdex.com/llms.txt",
+    "request_body": null,
+    "started_at_utc": "2026-10-08T09:13:59.235267+00:00",
+    "method": "GET",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "entropy-equity-assets.md",
+    "url": "https://docs.entropy.io/asset-directory/equity-assets.md",
+    "request_body": null,
+    "started_at_utc": "2026-10-08T09:13:59.235267+00:00",
+    "method": "GET",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "entropy-fees.md",
+    "url": "https://docs.entropy.io/equity-perp-mechanics/fees.md",
+    "request_body": null,
+    "started_at_utc": "2026-10-08T09:13:59.535365+00:00",
+    "method": "GET",
+    "error": "<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1010)>"
+  },
+  {
+    "file": "aster-fees.md",
+    "url": "https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees.md",
+    "request_body": null,
+    "started_at_utc": "2026-10-08T09:14:04.323367+00:00",
+    "method": "GET",
+    "status": 200,
+    "bytes": 2876,
+    "sha256": "06c248d7a59a3e9811812361a034333f649b26a3649e90594c60a8a3da17d358",
+    "finished_at_utc": "2026-10-08T09:14:04.685874+00:00"
+  }
+]

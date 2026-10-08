@@ -1,0 +1,48 @@
+{
+  "ASTER": {
+    "url": "https://fapi.asterdex.com/fapi/v1/exchangeInfo",
+    "sha256": "3ee6cd7c8c23f348674d645aa70d13e0e51512f3014ea6488f803e196c2e7b58",
+    "fetched_at_utc": "2026-10-08T09:38:29.883507+00:00",
+    "source_capture_time": "unknown",
+    "input_path": "E:\\persarb\\worktrees\\entropy-app\\reports\\entropy-discovery\\20261008-acceptance\\public-observation\\capture-attempt-2\\aster-metadata.json"
+  },
+  "ENTROPY": {
+    "url": "https://api.hyperliquid.xyz/info",
+    "dex": "io",
+    "components": {
+      "perp_dexs": {
+        "url": "https://api.hyperliquid.xyz/info",
+        "request": {
+          "type": "perpDexs"
+        },
+        "sha256": "4873eedd648029f0051c2eaad98b12f2ebbe75a8bea496eb10ebe12e855ab4e5",
+        "fetched_at_utc": "2026-10-08T09:38:30.469012+00:00",
+        "source_capture_time": "unknown",
+        "input_path": "E:\\persarb\\worktrees\\entropy-app\\reports\\entropy-discovery\\20261008-acceptance\\public-observation\\capture-attempt-2\\entropy-perp-dexs.json"
+      },
+      "meta_and_asset_ctxs": {
+        "url": "https://api.hyperliquid.xyz/info",
+        "request": {
+          "type": "metaAndAssetCtxs",
+          "dex": "io"
+        },
+        "sha256": "624c55ede0608325dbd48c8eb5c827ddc65b29b49b9661c2dbae14256ab6f091",
+        "fetched_at_utc": "2026-10-08T09:38:30.735598+00:00",
+        "source_capture_time": "unknown",
+        "input_path": "E:\\persarb\\worktrees\\entropy-app\\reports\\entropy-discovery\\20261008-acceptance\\public-observation\\capture-attempt-2\\entropy-meta-and-asset-ctxs.json"
+      },
+      "spot_meta": {
+        "url": "https://api.hyperliquid.xyz/info",
+        "request": {
+          "type": "spotMeta"
+        },
+        "sha256": "a84545ef4addc99185c5124f216902af6375ea43e8c64637bb546e3738863fc5",
+        "fetched_at_utc": "2026-10-08T09:38:31.084273+00:00",
+        "source_capture_time": "unknown",
+        "input_path": "E:\\persarb\\worktrees\\entropy-app\\reports\\entropy-discovery\\20261008-acceptance\\public-observation\\capture-attempt-2\\entropy-spot-meta.json"
+      }
+    },
+    "canonical_document_sha256": "f7519e6e28953e739c731af3aba19b4a1844420f8510472f70acd677e3acbb28",
+    "source_capture_time": "unknown"
+  }
+}

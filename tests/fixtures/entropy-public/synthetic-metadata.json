@@ -1,0 +1,236 @@
+{
+  "source": "Synthetic owned-loopback inputs following official Hyperliquid/Aster public schemas; not observed venue prices or live execution evidence. Aster SNDKUSD1 schema copied from 2026-10-08 exchangeInfo public response.",
+  "sources": [
+    "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals",
+    "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions",
+    "https://fapi.asterdex.com/fapi/v1/exchangeInfo"
+  ],
+  "perp_dexs": [
+    null,
+    {
+      "name": "xyz"
+    },
+    null,
+    {
+      "name": "io"
+    }
+  ],
+  "all_perp_metas": [
+    {
+      "universe": [
+        {
+          "name": "BTC",
+          "szDecimals": 3,
+          "maxLeverage": 10,
+          "marginTableId": 10,
+          "onlyIsolated": true,
+          "marginMode": "strictIsolated",
+          "growthMode": "enabled",
+          "deployerFeeScale": "1.0"
+        }
+      ],
+      "marginTables": [],
+      "collateralToken": 0
+    },
+    {
+      "universe": [
+        {
+          "name": "xyz:SNDK",
+          "szDecimals": 3,
+          "maxLeverage": 10,
+          "marginTableId": 10,
+          "onlyIsolated": true,
+          "marginMode": "strictIsolated",
+          "growthMode": "enabled",
+          "deployerFeeScale": "1.0"
+        }
+      ],
+      "marginTables": [],
+      "collateralToken": 0
+    },
+    {
+      "universe": [],
+      "marginTables": [],
+      "collateralToken": 0
+    },
+    {
+      "universe": [
+        {
+          "name": "io:RETIRED",
+          "szDecimals": 2,
+          "maxLeverage": 10,
+          "marginTableId": 10,
+          "onlyIsolated": true,
+          "marginMode": "strictIsolated",
+          "growthMode": "enabled",
+          "deployerFeeScale": "1.0",
+          "isDelisted": true
+        },
+        {
+          "name": "io:SNDK",
+          "szDecimals": 4,
+          "maxLeverage": 10,
+          "marginTableId": 10,
+          "onlyIsolated": true,
+          "marginMode": "strictIsolated",
+          "growthMode": "enabled",
+          "deployerFeeScale": "1.0"
+        },
+        {
+          "name": "io:GPRO",
+          "szDecimals": 1,
+          "maxLeverage": 10,
+          "marginTableId": 10,
+          "onlyIsolated": true,
+          "marginMode": "strictIsolated",
+          "growthMode": "enabled",
+          "deployerFeeScale": "1.0"
+        }
+      ],
+      "marginTables": [],
+      "collateralToken": 0
+    }
+  ],
+  "spot_meta": {
+    "tokens": [
+      {
+        "name": "USDC",
+        "szDecimals": 8,
+        "weiDecimals": 8,
+        "index": 0,
+        "tokenId": "0x6d1e7cde53ba9467b783cb7c530ce054",
+        "isCanonical": true,
+        "evmContract": null,
+        "fullName": null
+      }
+    ],
+    "universe": []
+  },
+  "aster": {
+    "timezone": "UTC",
+    "serverTime": 0,
+    "rateLimits": [
+      {
+        "rateLimitType": "REQUEST_WEIGHT",
+        "interval": "MINUTE",
+        "intervalNum": 1,
+        "limit": 2400
+      },
+      {
+        "rateLimitType": "ORDERS",
+        "interval": "MINUTE",
+        "intervalNum": 1,
+        "limit": 1200
+      },
+      {
+        "rateLimitType": "ORDERS",
+        "interval": "SECOND",
+        "intervalNum": 10,
+        "limit": 300
+      }
+    ],
+    "exchangeFilters": [],
+    "symbols": [
+      {
+        "symbol": "SNDKUSD1",
+        "filters": [
+          {
+            "minPrice": "0.01000",
+            "maxPrice": "100000",
+            "filterType": "PRICE_FILTER",
+            "tickSize": "0.01000"
+          },
+          {
+            "stepSize": "0.01",
+            "filterType": "LOT_SIZE",
+            "maxQty": "6000",
+            "minQty": "0.01"
+          },
+          {
+            "stepSize": "0.01",
+            "filterType": "MARKET_LOT_SIZE",
+            "maxQty": "600",
+            "minQty": "0.01"
+          },
+          {
+            "limit": 200,
+            "filterType": "MAX_NUM_ORDERS"
+          },
+          {
+            "limit": 10,
+            "filterType": "MAX_NUM_ALGO_ORDERS"
+          },
+          {
+            "notional": "5",
+            "filterType": "MIN_NOTIONAL"
+          },
+          {
+            "multiplierDown": "0.9500",
+            "multiplierUp": "1.0500",
+            "ltMultiplierDown": "0.9500",
+            "multiplierDecimal": "4",
+            "filterType": "PERCENT_PRICE",
+            "ltMultiplierUp": "1.0500"
+          }
+        ],
+        "orderTypes": [
+          "LIMIT",
+          "MARKET",
+          "STOP",
+          "STOP_MARKET",
+          "TAKE_PROFIT",
+          "TAKE_PROFIT_MARKET",
+          "TRAILING_STOP_MARKET"
+        ],
+        "timeInForce": [
+          "GTC",
+          "IOC",
+          "GTX",
+          "HIDDEN"
+        ],
+        "createTime": 1787250558184,
+        "pair": "SNDKUSD1",
+        "contractType": "PERPETUAL",
+        "deliveryDate": 4133404800000,
+        "onboardDate": 1787254200000,
+        "status": "TRADING",
+        "maintMarginPercent": "16.6600",
+        "requiredMarginPercent": "33.3300",
+        "baseAsset": "SNDK",
+        "quoteAsset": "USD1",
+        "marginAsset": "USD1",
+        "pricePrecision": 5,
+        "quantityPrecision": 2,
+        "baseAssetPrecision": 8,
+        "quotePrecision": 8,
+        "underlyingType": "COIN",
+        "underlyingSubType": [
+          "STOCK",
+          "AOS2",
+          "USD1-RWA"
+        ],
+        "symbolType": 1,
+        "tradingMode": 1,
+        "name": "",
+        "channel": "nasdaq",
+        "sequenceNo": 0,
+        "twapMinNotional": "1000",
+        "imn": "4000.00",
+        "tags": [
+          "SanDisk",
+          "Stock",
+          "\u80a1\u7968",
+          "\u95ea\u8fea",
+          "\u95ea",
+          "\u80a1\u7968",
+          "\u9583\u8fea",
+          "\u9583"
+        ],
+        "settlePlan": 0,
+        "triggerProtect": "0.0500",
+        "liquidationFee": "0.025000",
+        "marketTakeBound": "0.05"
+      }
+    ]
+  }
+}
