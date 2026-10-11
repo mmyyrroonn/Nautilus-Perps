@@ -34,14 +34,6 @@ def market_metadata(market, instrument) -> MarketMetadata:
     native_multiplier = instrument_decimal(getattr(instrument, "multiplier", None))
     if step is None or step <= 0 or native_multiplier is None or native_multiplier <= 0:
         raise ScanConfigError("instrument quantity step or multiplier is unknown")
-    expected = market.expected_instrument
-    if expected:
-        for field in ("raw_symbol", "quote_currency", "settlement_currency"):
-            if str(getattr(instrument, field, None)) != expected[field]:
-                raise ScanConfigError(f"instrument {field} differs from the captured comparison contract")
-        for field, actual in (("size_increment", step), ("multiplier", native_multiplier)):
-            if actual != Decimal(expected[field]):
-                raise ScanConfigError(f"instrument {field} differs from the captured comparison contract")
     multiplier = exact_decimal(Fraction(native_multiplier) * Fraction(market.canonical_multiplier))
     fee, source = market.taker_fee_bps, market.fee_source
     if fee is None:
@@ -145,15 +137,6 @@ class ScanState:
                                    Fraction(self.metadata[i].multiplier) / Fraction(m.canonical_multiplier))),
                                "raw_price_rule": "normalized_price * canonical_multiplier / quote_to_usd"}
                         for side, m, i in (("buy", buy, buy_id), ("sell", sell, sell_id))
-                    }
-                    result["market_scope"] = {
-                        side: {"logical_venue": market.venue, "client_id": market.client_id,
-                               "instrument_id": market.instrument_id,
-                               "dex": (market.instrument_id.split(":", 1)[0]
-                                       if ":" in market.instrument_id else "")
-                                       if market.client_id == "HYPERLIQUID" else None,
-                               "expected_instrument": dict(market.expected_instrument)}
-                        for side, market in (("buy", buy), ("sell", sell))
                     }
                     self.current[key] = {"symbol": symbol, "buy_venue": buy.venue,
                         "sell_venue": sell.venue, "base_quantity": result["sizing"]["base_quantity"],

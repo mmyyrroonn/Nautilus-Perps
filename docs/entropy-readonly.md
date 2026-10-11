@@ -1,14 +1,16 @@
 # Entropy `io:` 只读接入 runbook（SNDK / GPRO）
 
-当前动态发现与同数量 L2 scanner 入口见 [entropy-scanner.md](entropy-scanner.md)。
-下文保留 2026-09-14 watcher 的适用范围与历史费用/资金费前提，不作为当前 scanner 或账户交易验收。
+2026-10-11 已取消 Entropy 专项发现与执行队列，结论见
+[entropy-retirement.md](entropy-retirement.md)。`io:` 与 `xyz:` 共用 Hyperliquid HIP-3 通用接口，
+无需 Entropy 专用适配器。下文继续描述既有 SNDK/GPRO watcher，费用与资金费前提须按当前市场复核。
 
 本文件是 `--venues HL,ENTROPY,ASTER` 这条只读行情路径的操作说明。实现计划与取舍见
 [`docs/superpowers/plans/2026-09-14-entropy-io-sndk-gpro.md`](superpowers/plans/2026-09-14-entropy-io-sndk-gpro.md)，
 规划阶段的公开核查证据见 [`reports/entropy-plan-2026-09-14`](../reports/entropy-plan-2026-09-14/README.md)。
 
 本路径只做公开行情：top-of-book、L2、public trades、funding，以及既有的 CSV 分析。
-没有 Entropy 专用适配器、没有 ExecClient、没有签名、没有账户查询、没有下单。
+本 watcher 不注册 ExecClient，不做签名、账户查询或下单。这是该应用入口的只读范围；
+Hyperliquid 通用交易 API 和适配器提供 HIP-3 市场的统一下单、撤单与改单路径。
 
 采集前必须先做第 2 节的公开 preflight：`--dry-run` 是离线的，它不确认市场还在、费率或
 funding 周期没变。
