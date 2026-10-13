@@ -1,0 +1,103 @@
+{
+  "account_cashflow": {
+    "account_wide": true,
+    "funding_history_reconciled": true,
+    "funding_payments_usdc": "0",
+    "margin_balance_change_usdc": "-0.004268",
+    "settlement_currency": "USDC",
+    "source": "native-account-reconciliation",
+    "strategy_pnl_claimed": false,
+    "wallet_balance_change_usdc": "-0.004268"
+  },
+  "candidate": {
+    "launcher_sha256": "345fcae2db810e9a3e80a207f04db47dd3b51305db8b8b47f626fbe84abaaf27",
+    "native_binary_sha256": "53c6ea7e9436b1686297ee5baec62852df9dfafbc553a1483a08b874dbe139e4",
+    "strategy_sha256": "aef4e2030d6e476feeb72c5651fcbf44ce4b8594f03e1be48de237b20af6a488",
+    "strict_source_binding_passed": true,
+    "wheel_sha256": "6d63d32c70e42bef4a5bd783887f889b7c222f18fe14d6ef00025f42edd863de"
+  },
+  "dms_release": {
+    "acknowledged": true,
+    "attempted": true,
+    "frame_sent": true,
+    "outcome": "acknowledged"
+  },
+  "evidence_type": "historical-mainnet-btc-startup-acceptance",
+  "final_account": {
+    "complete": true,
+    "foreign_open_orders": 0,
+    "late_fills": 0,
+    "own_open_orders": 0,
+    "reconciled_flat": true,
+    "shutdown_status": "clean",
+    "unknown_submissions": 0
+  },
+  "instrument": "BTC-USD-PERP.ONDO",
+  "limitations": [
+    "This mainnet run verifies only one BTC startup placement/cancel/replacement/IOC/reduce-only sequence.",
+    "BTC/TSLA continuous follow-up cycles remain synthetic installed-wheel loopback evidence.",
+    "No unattended strategy, sustained market making, multi-venue global allocator or cross-platform formal release is certified.",
+    "Flat and clean shutdown describe the historical end of this run; no fresh account query was performed while preparing this summary.",
+    "Account-wide wallet/margin change is not attributed to strategy PnL.",
+    "Authorization for this historical run does not authorize another mainnet run."
+  ],
+  "limits": {
+    "max_gross_exposure_usd": "40",
+    "max_live_orders": 2,
+    "max_notional_per_order_usd": "20",
+    "max_requests_per_second": 2,
+    "max_unresolved_orders": 1,
+    "min_available_margin_usdc": "25"
+  },
+  "publication": {
+    "account_balances_included": false,
+    "account_order_trade_ids_included": false,
+    "raw_private_logs_included": false
+  },
+  "result": {
+    "cache_open_positions": 0,
+    "cancel_count": 2,
+    "complete": true,
+    "create_count": 4,
+    "elapsed_secs_rounded_to_millisecond": "103.953",
+    "failure_count": 0,
+    "fills": [
+      {
+        "commission": "0.00208400",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "83353",
+        "quantity": "0.0001",
+        "role": "entry"
+      },
+      {
+        "commission": "0.00208400",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "83352",
+        "quantity": "0.0001",
+        "role": "close"
+      }
+    ],
+    "native_fees_by_currency": {
+      "USDC": "0.00416800"
+    },
+    "native_fill_count": 2,
+    "portfolio_net_position": "0",
+    "startup_roles_created": {
+      "close": 1,
+      "entry": 1,
+      "maker": 1,
+      "replacement": 1
+    },
+    "startup_verified": true,
+    "timed_out": false
+  },
+  "run_stamp_utc": "2026-10-13T04:55:39Z",
+  "schema_version": 1,
+  "scope": "one BTC startup check; process stopped after confirmed Flat; no continuous trading policy",
+  "source": {
+    "local_result_gitignored": true,
+    "source_file_sha256": "2087d935dd0cc0ca406af4f51ed0a83ca1be8d23cc18bc209dc9afdef99b3beb"
+  }
+}

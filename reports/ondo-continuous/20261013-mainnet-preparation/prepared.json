@@ -1,0 +1,96 @@
+﻿{
+  "after_startup": "stop after confirmed Flat; no automatic trading policy",
+  "candidate": {
+    "app": {
+      "commit": "18d72503f6bf0e89efe0a6f4b61b861a4a2a4ed5",
+      "dirty": true,
+      "source_scope": [
+        "src",
+        "scripts",
+        "tests",
+        "config",
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version"
+      ],
+      "tracked_content_sha256": "63cecf2c0dbb71354fe266080c2cd2ee98af496d6529499f5c87d011f7477735",
+      "tree": "4fbad3a6a966c881d8ff60cfa92fd114d9d59214",
+      "untracked_sha256": "d75b2431772bbef93612396d90bc4d6e0a7af563ae9569e38f36082fd39e0681"
+    },
+    "installed": {
+      "adapter_stub_sha256": {
+        "nautilus_trader/adapters/aster/__init__.pyi": "9b72dbc7b89b2578ef6d124b7a6df9e57b047e21edb7789acce82f85fed9bb00",
+        "nautilus_trader/adapters/ondo/__init__.pyi": "b1b1dffccc54822bd8c99b52d2e40d7c67230522a6a5d39faeee604ecb081d6d"
+      },
+      "direct_url": "file:///E:/persarb/_tmp/issue122-acceptance/wheel-v2/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "interpreter": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Scripts\\python.exe",
+      "native_module": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Lib\\site-packages\\nautilus_trader\\_libnautilus.cp312-win_amd64.pyd",
+      "native_module_sha256": "53c6ea7e9436b1686297ee5baec62852df9dfafbc553a1483a08b874dbe139e4",
+      "python_version": "3.12.9"
+    },
+    "native_provenance": {
+      "declared_build": {
+        "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+        "profile": "nextest"
+      },
+      "declared_native": {
+        "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+        "commit": "f2965180f074dc12fbc1c45509465f2d551541ac",
+        "dirty": [
+          "M crates/adapters/ondo/README.md",
+          " M crates/adapters/ondo/src/config.rs",
+          " M crates/adapters/ondo/src/diagnostics.rs",
+          " M crates/adapters/ondo/src/execution.rs",
+          " M crates/adapters/ondo/src/http/client.rs",
+          " M crates/adapters/ondo/src/http/rate_limit.rs",
+          " M crates/adapters/ondo/src/production.rs",
+          " M crates/adapters/ondo/src/python/config.rs",
+          " M crates/adapters/ondo/src/python/factories.rs",
+          " M crates/adapters/ondo/src/python/mod.rs",
+          " M crates/adapters/ondo/src/reconciliation.rs",
+          " M crates/adapters/ondo/src/websocket/private/stream.rs",
+          " M crates/adapters/ondo/tests/private_runtime.rs",
+          " M crates/adapters/ondo/tests/python.rs",
+          " M python/nautilus_trader/adapters/ondo/__init__.py",
+          " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+          "?? crates/adapters/ondo/src/continuous.rs",
+          "?? crates/adapters/ondo/tests/continuous_execution.rs"
+        ],
+        "dirty_count": 18,
+        "tracked_diff_sha256": "a9e52d8ea437b668ab065ef6638d1933e7814f0be7aec79bed7d3206c8bdd9f6",
+        "tree": "084910450328755dffc458c6a1ee831fe00795ad",
+        "untracked_sha256": "d4770e9aaa04a0a929d93ff57d4e0d9dbb057841c062a9ceb8ea1b80b2b0a812"
+      },
+      "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\native-provenance.json",
+      "sha256": "cd81154b9aa9a287e653a1bca34e7e91d08ed2935619f69bf0235735c70fb5d0",
+      "source_binding": "verified"
+    },
+    "schema_version": 1,
+    "strict_source_binding_passed": true,
+    "wheel": {
+      "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "sha256": "6d63d32c70e42bef4a5bd783887f889b7c222f18fe14d6ef00025f42edd863de",
+      "tags": [
+        "cp312-cp312-win_amd64"
+      ]
+    }
+  },
+  "credentials_read": false,
+  "instrument": "BTC-USD-PERP.ONDO",
+  "launcher_live_verified": false,
+  "launcher_sha256": "345fcae2db810e9a3e80a207f04db47dd3b51305db8b8b47f626fbe84abaaf27",
+  "limits": {
+    "max_gross_exposure_usd": "40",
+    "max_live_orders": 2,
+    "max_notional_per_order_usd": "20",
+    "max_requests_per_second": 2,
+    "max_unresolved_orders": 1,
+    "min_available_margin_usdc": "25"
+  },
+  "mode": "offline-preparation",
+  "orders_sent": false,
+  "residual_handling": "retain journal and report incomplete; no guessed close or replay",
+  "sequence": "post-only cancel/replace, protected IOC entry, exact reduce-only exit",
+  "strategy_sha256": "aef4e2030d6e476feeb72c5651fcbf44ce4b8594f03e1be48de237b20af6a488",
+  "venue_contacted": false
+}

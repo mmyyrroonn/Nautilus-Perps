@@ -2,3 +2,8 @@ config/native-candidate.lock.json text eol=lf
 uv.lock text eol=lf
 # Keep captured response bytes and Windows logs intact for SHA256 verification.
 reports/entropy-discovery/** -text -whitespace
+# Keep reviewed operator source and recorded candidate evidence byte-stable.
+src/ondo_continuous.py text eol=lf
+scripts/run_ondo_continuous.py text eol=lf
+reports/ondo-continuous/** -text -whitespace
+reports/app-issues-20260928/acceptance.md -text -whitespace

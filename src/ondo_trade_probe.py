@@ -67,7 +67,10 @@ _SRC_DIR = Path(__file__).resolve().parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from ondo_dms_diagnostics import read_dms_release_diagnostics  # noqa: E402
+from ondo_dms_diagnostics import (  # noqa: E402
+    read_dms_release_diagnostics,
+    read_shutdown_diagnostics,
+)
 from ondo_native_diagnostics import (  # noqa: E402  (needs sys.path above)
     IDENTITY_MATCHED,
     read_native_diagnostics,
@@ -117,6 +120,9 @@ from nautilus_trader.model import (  # noqa: E402
     AccountId,
     ClientOrderId,
     InstrumentId,
+    Money,
+    OrderFilled,
+    QuoteTick,
     OrderRejected,
     OrderSide,
     TraderId,
@@ -152,10 +158,9 @@ ENV_FILE_VARIABLE = "ONDO_PROBE_ENV_FILE"
 
 # ------------------------------------------------------------- native contract names
 #
-# These names are the *app's required native write contract*, recorded for the next native
-# worker in required-native-interface.md.  The capability probe below fails closed when any
-# of them is absent, so the installed R52 wheel (which has none of them) can never be
-# written through by this layer.
+# These names are the app's current native write contract (docs/native-interface.md).
+# The capability probe below fails closed when any required member is absent from the
+# installed wheel. Source implementation alone does not establish installed capability.
 
 NATIVE_ENVELOPE_CLASS = "OndoExecutionEnvelopeConfig"
 NATIVE_ENVELOPE_FIELD = "execution_envelope"
@@ -1630,6 +1635,8 @@ class FillRecord:
     trade_id: str | None
     quantity: Decimal
     price: Decimal
+    commission_amount: Decimal | None = None
+    commission_currency: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -1638,6 +1645,10 @@ class FillRecord:
             "trade_id": self.trade_id,
             "quantity": str(self.quantity),
             "price": str(self.price),
+            "native_commission": None if self.commission_amount is None else {
+                "amount": str(self.commission_amount), "currency": self.commission_currency,
+                "source": "native-order-filled",
+            },
         }
 
 
@@ -1721,7 +1732,10 @@ class TradeSequencer:
     def quote_is_fresh(self, now: float, max_age_secs: Decimal) -> bool:
         if self._last_quote_monotonic is None:
             return False
-        return Decimal(str(now - self._last_quote_monotonic)) <= max_age_secs
+        age = Decimal(str(now - self._last_quote_monotonic))
+        # The native pre-send guard has a two-second limit, even when the approved
+        # application window is larger. Do not consume bounded attempts on older data.
+        return Decimal(0) <= age <= min(max_age_secs, Decimal("2"))
 
     def _touch(self, side: str) -> Decimal | None:
         if side == SIDE_BUY:
@@ -2131,6 +2145,20 @@ def _guarded(method: Callable[..., None]) -> Callable[..., None]:
     return wrapper
 
 
+def _native_quote_observed_monotonic(
+    quote: QuoteTick, *, received_monotonic: float, native_now_ns: int,
+) -> float | None:
+    """Bridge native quote age into monotonic time without using Python wall time."""
+    timestamp = int(quote.ts_init)
+    age_ns = native_now_ns - timestamp
+    if timestamp <= 0 or age_ns < 0 or age_ns > 2_000_000_000:
+        return None
+    if (quote.bid_price.as_decimal() <= 0 or quote.ask_price < quote.bid_price
+            or quote.bid_size.as_decimal() <= 0 or quote.ask_size.as_decimal() <= 0):
+        return None
+    return received_monotonic - age_ns / 1_000_000_000
+
+
 class OndoTradeStrategy(Strategy):
     """Drives one bounded production trade: one entry limit-IOC, <=2 reduce-only closes.
 
@@ -2273,7 +2301,14 @@ class OndoTradeStrategy(Strategy):
         if bid is None or ask is None or bid <= 0 or ask <= 0:
             return
         now = time.monotonic()
-        self._sequencer.on_quote(bid, ask, now=now)
+        observed = now
+        if isinstance(quote, QuoteTick):
+            observed = _native_quote_observed_monotonic(
+                quote, received_monotonic=now, native_now_ns=int(self.clock.timestamp_ns()),
+            )
+            if observed is None:
+                return
+        self._sequencer.on_quote(bid, ask, now=observed)
         if self._sequencer.phase == PHASE_AWAITING_QUOTE:
             decision = self._sequencer.decide_entry(now=now)
         elif self._sequencer.phase == PHASE_CLOSING:
@@ -2386,12 +2421,15 @@ class OndoTradeStrategy(Strategy):
     def on_order_filled(self, event) -> None:
         role = self._role_for(event.client_order_id)
         client_order_id = str(event.client_order_id)
+        commission = _native_commission(event)
         self._sequencer.note_fill(FillRecord(
             role=role,
             client_order_id=client_order_id,
             trade_id=_trade_id(event),
             quantity=_decimal_attr(event, "last_qty") or Decimal(0),
             price=_decimal_attr(event, "last_px") or Decimal(0),
+            commission_amount=commission[0],
+            commission_currency=commission[1],
         ))
         self._handle(role, client_order_id)
 
@@ -2555,6 +2593,76 @@ def _amount_attr(
     if not number.is_finite() or number <= 0:
         return None, currency, "malformed"
     return number, currency, "present"
+
+
+def _native_fill_fee_document(sequencer: TradeSequencer | None) -> dict[str, object]:
+    """Summarize consumed native commissions without converting settlement currencies."""
+    fills = [] if sequencer is None else sequencer.fills
+    totals: dict[str, Decimal] = {}
+    missing = 0
+    for fill in fills:
+        if fill.commission_amount is None or fill.commission_currency is None:
+            missing += 1
+            continue
+        totals[fill.commission_currency] = (
+            totals.get(fill.commission_currency, Decimal("0")) + fill.commission_amount)
+    expected = None if sequencer is None or sequencer.entry_view is None else (
+        sequencer.entry_view.filled_qty + sequencer.closed_quantity)
+    observed = sum((fill.quantity for fill in fills), Decimal("0"))
+    return {
+        "source": "native-order-filled",
+        "observed_fill_count": len(fills),
+        "fills_without_commission": missing,
+        "observed_totals_by_currency": {key: str(value) for key, value in sorted(totals.items())},
+        "covers_confirmed_fill_quantity": expected is not None and observed == expected,
+        "coverage_complete": bool(fills) and missing == 0 and expected is not None and observed == expected,
+        "currency_conversion_performed": False,
+    }
+
+
+def _native_account_cashflows(target: object | None, run_id: str) -> dict[str, object] | None:
+    """Read fixed native cashflow facts independently of the DMS release verdict."""
+    snapshot, _reason = _read_snapshot_mapping(target, run_id=run_id, phase="final")
+    if snapshot is None:
+        snapshot, _reason = _read_snapshot_mapping(target, run_id=run_id, phase="reconciled")
+    if snapshot is None:
+        return None
+    data = snapshot.get("account_cashflows")
+    if not isinstance(data, Mapping) or (
+        data.get("source") != "native-account-reconciliation"
+        or data.get("settlement_currency") != "USDC"
+        or data.get("account_wide") is not True
+        or data.get("strategy_pnl_claimed") is not False
+    ):
+        return None
+    baseline = _as_count_or_none(data.get("baseline_read_unix_nanos"))
+    latest = _as_count_or_none(data.get("latest_read_unix_nanos"))
+    snapshot_ns = _as_count_or_none(snapshot.get("snapshot_unix_nanos"))
+    if baseline is None or latest is None or snapshot_ns is None or not (0 < baseline < latest <= snapshot_ns):
+        return None
+    result: dict[str, object] = {
+        "source": "native-account-reconciliation", "settlement_currency": "USDC",
+        "account_wide": True, "strategy_pnl_claimed": False,
+        "baseline_read_unix_nanos": baseline, "latest_read_unix_nanos": latest,
+    }
+    for key in ("wallet_balance_change_usdc", "margin_balance_change_usdc", "funding_payments_usdc"):
+        value = _as_decimal(data.get(key))
+        result[key] = None if value is None else str(value)
+    result["funding_history_reconciled"] = (
+        data.get("funding_history_reconciled") is True and result["funding_payments_usdc"] is not None)
+    if result["funding_history_reconciled"] is not True:
+        result["funding_payments_usdc"] = None
+    return result
+
+
+def _native_commission(event: object) -> tuple[Decimal | None, str | None]:
+    """Consume the native fill's Money directly, including zero fees and rebates."""
+    if not isinstance(event, OrderFilled) or not isinstance(event.commission, Money):
+        return None, None
+    amount = event.commission.as_decimal()
+    if not amount.is_finite():
+        return None, None
+    return amount, str(event.commission.currency)
 
 
 def _trade_id(event: object) -> str | None:
@@ -2954,6 +3062,13 @@ def trade_report_document(*, run_id: str, started: datetime, finished: datetime,
     fees_known = bool(isinstance(execution_cost, Mapping)
                       and execution_cost.get("fees_usd") is not None)
     outcome = strategy.outcome if strategy is not None else OUTCOME_NOT_STARTED
+    fill_fees = _native_fill_fee_document(sequencer)
+    cashflows = _native_account_cashflows(dms_release_target, run_id)
+    economic_complete = bool(
+        fill_fees["coverage_complete"] is True and cashflows is not None
+        and cashflows["funding_history_reconciled"] is True
+        and cashflows["wallet_balance_change_usdc"] is not None
+        and cashflows["margin_balance_change_usdc"] is not None)
     document: dict[str, object] = {
         "tool": TOOL,
         "schema_version": SCHEMA_VERSION,
@@ -2990,6 +3105,7 @@ def trade_report_document(*, run_id: str, started: datetime, finished: datetime,
         "credentials_published": False,
         "raw_frames_published": False,
         "dms_release": read_dms_release_diagnostics(dms_release_target, run_id=run_id),
+        "shutdown_diagnostics": read_shutdown_diagnostics(dms_release_target),
         "outcome": outcome,
         "terminal_reason": sequencer.terminal_reason if sequencer is not None else None,
         "phase": sequencer.phase if sequencer is not None else PHASE_NOT_STARTED,
@@ -3048,8 +3164,28 @@ def trade_report_document(*, run_id: str, started: datetime, finished: datetime,
         "fees": execution_cost.get("fees_usd") if fees_known else "unknown",
         "fees_known": fees_known,
         "fees_reason": (
-            "a fee is recorded only when the native final snapshot carried one; no fee is "
-            "invented and no cost or profit is computed"
+            "the legacy USD fee scalar requires a native final snapshot; native fill "
+            "commissions are reported separately in their settlement currencies"
+        ),
+        "native_fill_fees": fill_fees,
+        "account_cashflows": cashflows,
+        "funding_payments": None if cashflows is None or cashflows["funding_history_reconciled"] is not True else {
+            "amount": cashflows["funding_payments_usdc"], "currency": "USDC",
+            "source": "native-account-reconciliation", "account_wide": True,
+        },
+        "balance_change": None if cashflows is None else {
+            "wallet": cashflows["wallet_balance_change_usdc"],
+            "margin": cashflows["margin_balance_change_usdc"], "currency": "USDC",
+            "account_wide": True, "strategy_pnl_claimed": False,
+        },
+        "economic_evidence_complete": economic_complete,
+        "full_production_acceptance_verified": acceptance["clean"] is True and economic_complete,
+        "economic_evidence_reason": (
+            "native commissions cover confirmed fills and native funding/balance facts are available; "
+            "account-wide balance changes are not strategy PnL"
+            if economic_complete else
+            "native commission coverage or same-run native funding/balance facts are incomplete; "
+            "missing facts stay unknown"
         ),
         "execution_cost": dict(execution_cost) if isinstance(execution_cost, Mapping) else None,
         "no_economic_claim_made": True,

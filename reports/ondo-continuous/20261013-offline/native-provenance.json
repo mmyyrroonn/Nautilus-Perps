@@ -1,0 +1,249 @@
+{
+  "build": {
+    "build_warnings_override": "allow",
+    "builder_sha256": "7f94cb247ddbc432779b03e97f87a75703df882fa39bee359413ae2e69d98b70",
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+    "cargo_target_dir": "E:/persarb/.backpack-target/native",
+    "command": [
+      "build",
+      "--profile",
+      "nextest",
+      "--locked",
+      "--interpreter",
+      "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+      "--out",
+      "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2",
+      "--offline"
+    ],
+    "completed_at": "2026-10-13T03:56:08.407625+00:00",
+    "conda_path_entries_removed": true,
+    "finished_source": {
+      "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+      "commit": "f2965180f074dc12fbc1c45509465f2d551541ac",
+      "dirty": [
+        "M crates/adapters/ondo/README.md",
+        " M crates/adapters/ondo/src/config.rs",
+        " M crates/adapters/ondo/src/diagnostics.rs",
+        " M crates/adapters/ondo/src/execution.rs",
+        " M crates/adapters/ondo/src/http/client.rs",
+        " M crates/adapters/ondo/src/http/rate_limit.rs",
+        " M crates/adapters/ondo/src/production.rs",
+        " M crates/adapters/ondo/src/python/config.rs",
+        " M crates/adapters/ondo/src/python/factories.rs",
+        " M crates/adapters/ondo/src/python/mod.rs",
+        " M crates/adapters/ondo/src/reconciliation.rs",
+        " M crates/adapters/ondo/src/websocket/private/stream.rs",
+        " M crates/adapters/ondo/tests/private_runtime.rs",
+        " M crates/adapters/ondo/tests/python.rs",
+        " M python/nautilus_trader/adapters/ondo/__init__.py",
+        " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+        "?? crates/adapters/ondo/src/continuous.rs",
+        "?? crates/adapters/ondo/tests/continuous_execution.rs"
+      ],
+      "dirty_count": 18,
+      "tracked_diff_sha256": "a9e52d8ea437b668ab065ef6638d1933e7814f0be7aec79bed7d3206c8bdd9f6",
+      "tree": "084910450328755dffc458c6a1ee831fe00795ad",
+      "untracked_sha256": "d4770e9aaa04a0a929d93ff57d4e0d9dbb057841c062a9ceb8ea1b80b2b0a812"
+    },
+    "interpreter": "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+    "machine": "AMD64",
+    "maturin_config_sha256": "51288a9b821361cdfa6a915ca3048c2e5daf92e9793edd1b8514c0767e666018",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python_uv_lock_sha256": "5bf016c9fa06ee5ecad7d3d346e148793a205bb186e56bfb5d30106a57be7a55",
+    "started_source": {
+      "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+      "commit": "f2965180f074dc12fbc1c45509465f2d551541ac",
+      "dirty": [
+        "M crates/adapters/ondo/README.md",
+        " M crates/adapters/ondo/src/config.rs",
+        " M crates/adapters/ondo/src/diagnostics.rs",
+        " M crates/adapters/ondo/src/execution.rs",
+        " M crates/adapters/ondo/src/http/client.rs",
+        " M crates/adapters/ondo/src/http/rate_limit.rs",
+        " M crates/adapters/ondo/src/production.rs",
+        " M crates/adapters/ondo/src/python/config.rs",
+        " M crates/adapters/ondo/src/python/factories.rs",
+        " M crates/adapters/ondo/src/python/mod.rs",
+        " M crates/adapters/ondo/src/reconciliation.rs",
+        " M crates/adapters/ondo/src/websocket/private/stream.rs",
+        " M crates/adapters/ondo/tests/private_runtime.rs",
+        " M crates/adapters/ondo/tests/python.rs",
+        " M python/nautilus_trader/adapters/ondo/__init__.py",
+        " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+        "?? crates/adapters/ondo/src/continuous.rs",
+        "?? crates/adapters/ondo/tests/continuous_execution.rs"
+      ],
+      "dirty_count": 18,
+      "tracked_diff_sha256": "a9e52d8ea437b668ab065ef6638d1933e7814f0be7aec79bed7d3206c8bdd9f6",
+      "tree": "084910450328755dffc458c6a1ee831fe00795ad",
+      "untracked_sha256": "d4770e9aaa04a0a929d93ff57d4e0d9dbb057841c062a9ceb8ea1b80b2b0a812"
+    },
+    "tools": {
+      "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+      "maturin": "maturin 1.15.0",
+      "python": "Python 3.12.9",
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+      "uv": "uv 0.12.6 (7938ca5d5 2026-08-25 x86_64-pc-windows-msvc)"
+    }
+  },
+  "collector": {
+    "machine": "AMD64",
+    "platform": "Windows-11-10.0.26300-SP0"
+  },
+  "declared_build": {
+    "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+    "profile": "nextest"
+  },
+  "declared_by": "evidence_file",
+  "declared_evidence": {
+    "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\native-build-input.json",
+    "sha256": "5bb3db5b57dd5580126e2f221515c879a94a59d33040067ca697d7fcec270be5"
+  },
+  "declared_native": {
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+    "commit": "f2965180f074dc12fbc1c45509465f2d551541ac",
+    "dirty": [
+      "M crates/adapters/ondo/README.md",
+      " M crates/adapters/ondo/src/config.rs",
+      " M crates/adapters/ondo/src/diagnostics.rs",
+      " M crates/adapters/ondo/src/execution.rs",
+      " M crates/adapters/ondo/src/http/client.rs",
+      " M crates/adapters/ondo/src/http/rate_limit.rs",
+      " M crates/adapters/ondo/src/production.rs",
+      " M crates/adapters/ondo/src/python/config.rs",
+      " M crates/adapters/ondo/src/python/factories.rs",
+      " M crates/adapters/ondo/src/python/mod.rs",
+      " M crates/adapters/ondo/src/reconciliation.rs",
+      " M crates/adapters/ondo/src/websocket/private/stream.rs",
+      " M crates/adapters/ondo/tests/private_runtime.rs",
+      " M crates/adapters/ondo/tests/python.rs",
+      " M python/nautilus_trader/adapters/ondo/__init__.py",
+      " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+      "?? crates/adapters/ondo/src/continuous.rs",
+      "?? crates/adapters/ondo/tests/continuous_execution.rs"
+    ],
+    "dirty_count": 18,
+    "tracked_diff_sha256": "a9e52d8ea437b668ab065ef6638d1933e7814f0be7aec79bed7d3206c8bdd9f6",
+    "tree": "084910450328755dffc458c6a1ee831fe00795ad",
+    "untracked_sha256": "d4770e9aaa04a0a929d93ff57d4e0d9dbb057841c062a9ceb8ea1b80b2b0a812"
+  },
+  "embedded_adapter_stubs": [
+    {
+      "path": "nautilus_trader/adapters/__init__.pyi",
+      "sha256": "b6f46e5fd703208605a3892ee1e09d7d361f68b3d58d0f435db30063765e2324"
+    },
+    {
+      "path": "nautilus_trader/adapters/architect_ax/__init__.pyi",
+      "sha256": "e7734c547cd35be5cf5367575f34a105b5714ca11e29c4688078264d62c9bb93"
+    },
+    {
+      "path": "nautilus_trader/adapters/aster/__init__.pyi",
+      "sha256": "9b72dbc7b89b2578ef6d124b7a6df9e57b047e21edb7789acce82f85fed9bb00"
+    },
+    {
+      "path": "nautilus_trader/adapters/backpack/__init__.pyi",
+      "sha256": "1498096ee67e641cdc27ecab2ffecacf771d4552c79ce24ffbc2bf50154abc11"
+    },
+    {
+      "path": "nautilus_trader/adapters/betfair/__init__.pyi",
+      "sha256": "531091ad2a75b53f42e7da0029f9551f5779d5d3dce6adc24eaa85f159221637"
+    },
+    {
+      "path": "nautilus_trader/adapters/binance/__init__.pyi",
+      "sha256": "2e3e9c4253a8cac2414d456598f7ae682fe3e889871e83d241cb99f3b77c7368"
+    },
+    {
+      "path": "nautilus_trader/adapters/bitmex/__init__.pyi",
+      "sha256": "f44f4d8bd628688dce3405c62a3aa5f2572c3f0aad508807999b95aaa1e7d4db"
+    },
+    {
+      "path": "nautilus_trader/adapters/blockchain/__init__.pyi",
+      "sha256": "e7a9a7d88d3cf63fb924e64c065f39f7c83f27d2ca8635e9768412bfc30eb79f"
+    },
+    {
+      "path": "nautilus_trader/adapters/bybit/__init__.pyi",
+      "sha256": "10c5adb89788504f3bb4bd457e911182087183fd512cba7df87d62e723b9f86c"
+    },
+    {
+      "path": "nautilus_trader/adapters/coinbase/__init__.pyi",
+      "sha256": "563f757b9ce7e62e34ac7f0c9a674b4d7b02e3fcb3e9dcf3c2de8d4aa81263f6"
+    },
+    {
+      "path": "nautilus_trader/adapters/databento/__init__.pyi",
+      "sha256": "e4996914215dd9b1e2a24f9fd7c45d2c085e03d77034d617870d5c5a823b6148"
+    },
+    {
+      "path": "nautilus_trader/adapters/deribit/__init__.pyi",
+      "sha256": "052e4de1171ccb3f3e2d29d877d9f33fce52dd9f203880c52b7b399361d9e663"
+    },
+    {
+      "path": "nautilus_trader/adapters/derive/__init__.pyi",
+      "sha256": "2ef1919968809db7627dbb1ffd7d9d1b98fe251d55dc311422fb3bccbe0e8bd7"
+    },
+    {
+      "path": "nautilus_trader/adapters/dydx/__init__.pyi",
+      "sha256": "52888fdf72d97aadf496dc0e888e57e8eb1cec26ae9fa97815705002f51d5ceb"
+    },
+    {
+      "path": "nautilus_trader/adapters/hyperliquid/__init__.pyi",
+      "sha256": "e97732418ed0b2907bfe73f37562f4485c844b08542bd5ab970c9ed906d53db7"
+    },
+    {
+      "path": "nautilus_trader/adapters/interactive_brokers/__init__.pyi",
+      "sha256": "edf80aacbf93888ad7f9b518f660e0b1f874263e16d5dcbe9c582d601cfec7f6"
+    },
+    {
+      "path": "nautilus_trader/adapters/kraken/__init__.pyi",
+      "sha256": "f7cdfd712d3188a0bc816e02ab7a31ca2ce5fececc4df7c81b41cfd791853737"
+    },
+    {
+      "path": "nautilus_trader/adapters/lighter/__init__.pyi",
+      "sha256": "425f451b5fac36359dbad8d0f11779f892ce6801897c1d4768fabe911f5a7b00"
+    },
+    {
+      "path": "nautilus_trader/adapters/okx/__init__.pyi",
+      "sha256": "de8fda7bee851ec3faa58bcb81fb48a812c1ca391e5cb6b879b4bd97f7eac707"
+    },
+    {
+      "path": "nautilus_trader/adapters/ondo/__init__.pyi",
+      "sha256": "b1b1dffccc54822bd8c99b52d2e40d7c67230522a6a5d39faeee604ecb081d6d"
+    },
+    {
+      "path": "nautilus_trader/adapters/polymarket/__init__.pyi",
+      "sha256": "62d7f08ea762f17435fe471bc4ba732a65da58599cc74df694fcacb80ac843a0"
+    },
+    {
+      "path": "nautilus_trader/adapters/sandbox/__init__.pyi",
+      "sha256": "bc89c0b96a747963eff82153ba7eae5cd5ab5ef4f37efdd8285bd0803252ddd6"
+    },
+    {
+      "path": "nautilus_trader/adapters/tardis/__init__.pyi",
+      "sha256": "dc5f6d93e6bc60a96e9041ef2cabf044efc73430dde84c9aae703d4fba00aba0"
+    }
+  ],
+  "embedded_native_objects": [
+    {
+      "path": "nautilus_trader/_libnautilus.cp312-win_amd64.pyd",
+      "sha256": "53c6ea7e9436b1686297ee5baec62852df9dfafbc553a1483a08b874dbe139e4",
+      "size": 387610624
+    }
+  ],
+  "generated_at": "2026-10-13T03:56:08.293391+00:00",
+  "purpose": "name the binary an installed wheel actually is (issue #11)",
+  "reference_stubs": [],
+  "schema_version": 1,
+  "source_binding": "verified",
+  "source_binding_note": "single controlled build from matching pre/post source fingerprints",
+  "source_fingerprint_sha256": "6b03f5953e22dfc064928b639560a1c9af7e90a5fe18dbcd0e7ee4b20c81eb6b",
+  "wheel": {
+    "filename": "nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "name": "nautilus-trader",
+    "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "sha256": "6d63d32c70e42bef4a5bd783887f889b7c222f18fe14d6ef00025f42edd863de",
+    "size": 108772754,
+    "tags": [
+      "cp312-cp312-win_amd64"
+    ],
+    "version": "2.0.0rc4"
+  }
+}

@@ -595,3 +595,30 @@ acceptance, fills, reduce-only closing, cancellation and full final account reco
 still unverified for BTC. No priced/approved BTC plan was generated, and no consumed hash was
 reused. Actual mainnet execution is a user-initiated step with a fresh exact plan.
 Evidence: `reports/ondo-acceptance/20260922-btc-functional/acceptance.md`.
+
+### Continuous native execution and later BTC startup acceptance (2026-10-13)
+
+The dated BTC/DMS observations above retain their original candidate and result.
+Native Issue 122 adds explicit multi-instrument continuous execution through the
+real Factory/LiveNode/Strategy path, with native admission, owned cancellation,
+reconciliation, uncertainty, journals and DMS protection. Native amend remains
+unsupported; replacement waits for confirmed cancellation and uses a new order ID.
+
+Use [ondo-continuous.md](ondo-continuous.md) for configuration and the same Strategy's
+continuation callback, [native-interface.md](native-interface.md) for the maintained
+contract, and [acceptance-status.md](acceptance-status.md) for current evidence.
+The [installed-wheel report](../reports/ondo-continuous/20261013-offline/README.md)
+covers synthetic BTC/TSLA follow-up cycles. The later
+[sanitized mainnet report](../reports/ondo-continuous/20261013-mainnet/README.md)
+covers one successful human-operated BTC startup with confirmed fills, Flat,
+matching DMS release ACK and clean shutdown; it does not certify sustained or
+multi-symbol mainnet trading or alter an older incomplete result.
+
+The explicit human entry point is `scripts/run_ondo_continuous.py --execute`, using
+the exact reviewed local interpreter and candidate in
+[ondo-mainnet-launch.md](ondo-mainnet-launch.md). Without `--execute`, it only
+verifies local identity and prepares limits; it reads no credential file and
+starts no node. Execution still needs current-turn `上主网`, an interactive operator
+and the reviewed candidate. The process stops after confirmed BTC startup Flat and
+installs no unattended trading policy. This local candidate is separate from the
+published formal dependency lock.

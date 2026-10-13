@@ -27,7 +27,15 @@ IDENTITY_SHA256 = "1a8441b650857b0d8a2972cd36def69e37d856b085c33085c580e43a93d67
 LIMITS = APP / "config/ondo_btc_test.toml"
 OUTPUT = APP / "reports/ondo-acceptance/btc-operator"
 CLAIM = OUTPUT / "MAINNET_ATTEMPT_CLAIMED.json"
-ENV_FILE = APP.parents[1] / ".env"
+
+
+def canonical_env_file(app: Path) -> Path:
+    """Resolve the credential file for a root checkout or its local worktree."""
+    root = app.parents[1] if app.parent.name == ".worktrees" else app
+    return root / ".env"
+
+
+ENV_FILE = canonical_env_file(APP)
 MAX_CAPTURE_AGE_SECS = 60
 PHRASE = "上主网"
 
@@ -79,6 +87,37 @@ def verify_candidate() -> dict:
         "candidate_identity_sha256": IDENTITY_SHA256,
         "wheel_sha256": identity["wheel_sha256"],
         "binary_sha256": identity["binary_sha256"],
+        "operator_script_sha256": digest(Path(__file__)),
+        "launcher_sha256": digest(APP / "scripts/run_ondo_btc_test.ps1"),
+        "dms_release_host_contract_verified": False,
+    }
+
+
+def verify_reviewed_candidate(path: Path, expected_sha256: str) -> dict:
+    """Bind an explicitly reviewed candidate to this interpreter and unchanged app source."""
+    if not expected_sha256 or digest(path) != expected_sha256.lower():
+        raise Refused("The explicit candidate identity digest does not match")
+    reviewed = read_json(path)
+    identity = reviewed["installed_identity"]
+    if Path(identity["installed"]["interpreter"]).resolve() != Path(sys.executable).resolve():
+        raise Refused("Use the exact interpreter in the reviewed candidate identity")
+    provenance = Path(reviewed["native_provenance_path"])
+    if digest(provenance) != reviewed["native_provenance_sha256"]:
+        raise Refused("The reviewed native provenance changed")
+    sys.path.insert(0, str(APP / "scripts"))
+    from verify_native_install import verify
+    actual = verify(
+        Path(identity["wheel"]["path"]), identity["wheel"]["sha256"],
+        provenance=provenance, require_source_binding=True, require_ondo=True,
+    )
+    if actual["app"] != identity["app"]:
+        raise Refused("Reviewed application source changed; review a new identity")
+    if actual["installed"]["native_module_sha256"] != identity["installed"]["native_module_sha256"]:
+        raise Refused("The reviewed installed native binary changed")
+    return {
+        "candidate_identity_sha256": expected_sha256.lower(),
+        "wheel_sha256": actual["wheel"]["sha256"],
+        "binary_sha256": actual["installed"]["native_module_sha256"],
         "operator_script_sha256": digest(Path(__file__)),
         "launcher_sha256": digest(APP / "scripts/run_ondo_btc_test.ps1"),
         "dms_release_host_contract_verified": False,
@@ -309,7 +348,9 @@ def reviewed_policy(plan: dict) -> dict:
 
 def execute_once(plan: dict, run_dir: Path, *, supersede: bool,
                  confirmed_plan_sha256: str | None = None,
-                 confirmed_policy: bool = False) -> int:
+                 confirmed_policy: bool = False,
+                 candidate_identity: Path | None = None,
+                 candidate_identity_sha256: str | None = None) -> int:
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if confirmed_plan_sha256 is None and not confirmed_policy and not interactive:
         raise Refused("Live dispatch requires an interactive terminal; piped approval is refused")
@@ -335,7 +376,8 @@ def execute_once(plan: dict, run_dir: Path, *, supersede: bool,
             raise Refused("Confirmation did not match; nothing was dispatched")
 
     # Recheck after operator think-time; no auto-refresh of approved prices or hashes.
-    candidate = verify_candidate()
+    candidate = (verify_reviewed_candidate(candidate_identity, candidate_identity_sha256)
+                 if candidate_identity is not None else verify_candidate())
     draft = read_json(run_dir / "draft-plan.json")
     rebuilt = make_plan(run_dir / "public", run_dir, plan["entry"]["side"], candidate)
     if draft != plan or rebuilt != plan:
@@ -417,8 +459,14 @@ def main(argv=None) -> int:
              "that policy in the current conversation; recorded with source="
              "chat_operator_confirmation and the bounds the authorization covered",
     )
+    parser.add_argument("--candidate-identity", type=Path,
+                        help="explicitly reviewed source-bound candidate identity")
+    parser.add_argument("--candidate-identity-sha256",
+                        help="reviewed digest required with --candidate-identity")
     args = parser.parse_args(argv)
     try:
+        if (args.candidate_identity is None) != (args.candidate_identity_sha256 is None):
+            raise Refused("Candidate identity path and reviewed digest must be supplied together")
         if args.supersede_claim and not args.execute:
             raise Refused("--supersede-claim only applies to --execute")
         if args.operator_confirmed_plan_sha256 is not None and not args.execute:
@@ -433,7 +481,8 @@ def main(argv=None) -> int:
             raise Refused("Live dispatch requires an interactive terminal")
         if args.execute and CLAIM.exists() and not args.supersede_claim:
             raise Refused("This one-attempt launcher is already claimed; review before any further live attempt")
-        candidate = verify_candidate()
+        candidate = (verify_reviewed_candidate(args.candidate_identity, args.candidate_identity_sha256)
+                     if args.candidate_identity is not None else verify_candidate())
         run_id = now().strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex[:12]
         run_dir = OUTPUT / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
@@ -448,6 +497,8 @@ def main(argv=None) -> int:
             plan, run_dir, supersede=args.supersede_claim,
             confirmed_plan_sha256=args.operator_confirmed_plan_sha256,
             confirmed_policy=args.operator_confirmed_policy,
+            candidate_identity=args.candidate_identity,
+            candidate_identity_sha256=args.candidate_identity_sha256,
         )
     except (Refused, OSError, ValueError, KeyError, TypeError, ArithmeticError, EOFError) as exc:
         # Public failures may be detailed; never interpolate an exception from a private child.
