@@ -61,6 +61,23 @@ or stale quotes still refuse dispatch; the two-second freshness bound is unchang
 
 ## Startup check and continued policy
 
+`build_session(..., startup_mode="market")` selects a bounded two-direction MARKET
+check instead of the default maker check below. It sends buy/open-long,
+sell/reduce-only-close-long, sell/open-short and buy/reduce-only-close-short through
+the native order factory. It requires native and Cache/Portfolio Flat before each
+opening, terminal entry fills plus signed position proof before each close, and
+exact fee/fill coverage and confirmed Flat after each round trip. Partial terminal
+entries close only their confirmed quantity; partial exits stop the sequence.
+Reports include `market_completed_round_trips`, signed opening position evidence,
+order types/sides and the observed bid/ask at each submission.
+
+MARKET bodies omit price and time-in-force. Native admission checks current quote
+estimates against the caller's notional budgets, retaining the existing metadata,
+identity, margin, ownership, quote age, journal, unresolved-submission and DMS
+checks. Market fills have no limit-price protection. The new native candidate and
+the loopback peer's four actual market request bodies must be verified before
+using this mode. See [the launcher runbook](ondo-mainnet-launch.md).
+
 The startup check is a small real execution sequence, initiated only in an explicitly
 enabled session:
 

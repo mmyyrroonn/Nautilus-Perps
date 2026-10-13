@@ -1,0 +1,150 @@
+{
+  "account_cashflow": {
+    "account_wide": true,
+    "funding_history_reconciled": true,
+    "funding_payments_usdc": "0",
+    "margin_balance_change_usdc": "-0.006253",
+    "settlement_currency": "USDC",
+    "source": "native-account-reconciliation",
+    "strategy_pnl_claimed": false,
+    "wallet_balance_change_usdc": "-0.006253"
+  },
+  "candidate": {
+    "launcher_sha256": "c8a552d902acdb4b0a4eb0c306f75fc3a0cae69b3e17391be3222e45d48a2b2f",
+    "native_binary_sha256": "7474abfa68327a3cc989bb2e710dd5ea52063d894b53a118aa7d4aad9d082355",
+    "strategy_sha256": "54aa1306bdd8f062652d2fec04b176158c4b8322d49c772898f64985ab75db66",
+    "strict_source_binding_passed": true,
+    "wheel_sha256": "089fda49ca54bb91af84a9b3785ad69520e092cb8fadc601d205fff8979c1335"
+  },
+  "dms_release": {
+    "acknowledged": true,
+    "attempted": true,
+    "frame_sent": true,
+    "outcome": "acknowledged"
+  },
+  "evidence_type": "historical-mainnet-btc-market-long-short-acceptance",
+  "final_account": {
+    "complete": true,
+    "foreign_open_orders": 0,
+    "late_fills": 0,
+    "own_open_orders": 0,
+    "reconciled_flat": true,
+    "shutdown_status": "clean",
+    "unknown_submissions": 0
+  },
+  "instrument": "BTC-USD-PERP.ONDO",
+  "limitations": [
+    "The recorded launcher predates removal of the redundant terminal confirmation; native and Strategy source are unchanged.",
+    "The prompt-removal revision has offline preparation and mocked-dispatch checks, not a separate mainnet run.",
+    "MARKET admission caps use current quote estimates and do not guarantee execution prices.",
+    "This is one BTC round trip in each direction, not sustained or cross-venue trading acceptance.",
+    "Flat and clean shutdown describe the historical run end; no fresh account query was performed.",
+    "Account-wide cashflow is not attributed to strategy PnL.",
+    "The candidate is a local Windows build, not a portable published release."
+  ],
+  "limits": {
+    "max_gross_exposure_usd": "40",
+    "max_live_orders": 2,
+    "max_notional_per_order_usd": "20",
+    "max_requests_per_second": 2,
+    "max_unresolved_orders": 1,
+    "min_available_margin_usdc": "25"
+  },
+  "publication": {
+    "account_balances_included": false,
+    "account_order_trade_ids_included": false,
+    "raw_private_logs_included": false
+  },
+  "result": {
+    "cache_open_positions": 0,
+    "complete": true,
+    "elapsed_secs_rounded_to_millisecond": "87.406",
+    "failure_count": 0,
+    "fills": [
+      {
+        "commission": "0.00208800",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "83535",
+        "quantity": "0.0001",
+        "role": "market_open_long"
+      },
+      {
+        "commission": "0.00208900",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "83555",
+        "quantity": "0.0001",
+        "role": "market_close_long"
+      },
+      {
+        "commission": "0.00208800",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "83536",
+        "quantity": "0.0001",
+        "role": "market_open_short"
+      },
+      {
+        "commission": "0.00208800",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "83535",
+        "quantity": "0.0001",
+        "role": "market_close_short"
+      }
+    ],
+    "market_completed_round_trips": [
+      "long",
+      "short"
+    ],
+    "native_fees_by_currency": {
+      "USDC": "0.00835300"
+    },
+    "native_fill_count": 4,
+    "orders": [
+      {
+        "closed": true,
+        "filled_quantity": "0.0001",
+        "order_type": "MARKET",
+        "reduce_only": false,
+        "role": "market_open_long",
+        "side": "BUY"
+      },
+      {
+        "closed": true,
+        "filled_quantity": "0.0001",
+        "order_type": "MARKET",
+        "reduce_only": true,
+        "role": "market_close_long",
+        "side": "SELL"
+      },
+      {
+        "closed": true,
+        "filled_quantity": "0.0001",
+        "order_type": "MARKET",
+        "reduce_only": false,
+        "role": "market_open_short",
+        "side": "SELL"
+      },
+      {
+        "closed": true,
+        "filled_quantity": "0.0001",
+        "order_type": "MARKET",
+        "reduce_only": true,
+        "role": "market_close_short",
+        "side": "BUY"
+      }
+    ],
+    "portfolio_net_position": "0",
+    "startup_verified": true,
+    "timed_out": false
+  },
+  "run_stamp_utc": "2026-10-13T07:06:25Z",
+  "schema_version": 1,
+  "scope": "One BTC MARKET long and short round trip; stopped after confirmed Flat.",
+  "source": {
+    "local_result_gitignored": true,
+    "source_file_sha256": "b75e4a637b0a8247067cf8fe9940148eff1519c5f040c343e2aa83510850802e"
+  }
+}

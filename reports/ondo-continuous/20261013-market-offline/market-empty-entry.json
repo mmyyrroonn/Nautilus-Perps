@@ -1,0 +1,280 @@
+{
+  "elapsed_secs": 45.15700000000652,
+  "final_snapshot": {
+    "account_cashflows": {
+      "account_wide": true,
+      "baseline_read_unix_nanos": 1791871245538794100,
+      "funding_history_reconciled": true,
+      "funding_payments_usdc": "0",
+      "latest_read_unix_nanos": 1791871269554520500,
+      "margin_balance_change_usdc": "0.00",
+      "settlement_currency": "USDC",
+      "source": "native-account-reconciliation",
+      "strategy_pnl_claimed": false,
+      "wallet_balance_change_usdc": "0.00"
+    },
+    "account_positions_owned": true,
+    "complete": true,
+    "connected_ready": false,
+    "coverage_complete": true,
+    "dms_release": {
+      "acknowledged": true,
+      "attempted": true,
+      "frame_sent": true,
+      "last_update_data_kind": "missing",
+      "last_update_enabled": "missing",
+      "last_update_op": "missing",
+      "last_update_status": "missing",
+      "last_update_timeout": "missing",
+      "outcome": "acknowledged",
+      "trace": {
+        "checkpoint_finished_unix_nanos": 1791871274690751100,
+        "dms_subscribed_after_release": 0,
+        "dms_unsubscribed_after_release": 1,
+        "last_frame_kind": "unsubscribed",
+        "last_frame_unix_nanos": 1791871274548552000,
+        "other_unsubscribed_after_release": 0,
+        "release_ack_observed_unix_nanos": 1791871274548569700,
+        "release_sent_unix_nanos": 1791871274548264900,
+        "release_started_unix_nanos": 1791871274548250700,
+        "request_drain_finished_unix_nanos": 1791871266663210000,
+        "requests_drained": true,
+        "shutdown_budget_nanos": 15000000000,
+        "shutdown_finished_unix_nanos": 1791871274690795400,
+        "shutdown_started_unix_nanos": 1791871266661665300,
+        "stream_stop_finished_unix_nanos": 1791871274686213900,
+        "stream_stop_started_unix_nanos": 1791871274560513800,
+        "text_frames_after_release": 1,
+        "text_frames_before_release": 8,
+        "unclassified_after_release": 0
+      },
+      "updates_after_release": 0,
+      "updates_before_release": 0
+    },
+    "execution_cost": null,
+    "foreign_open_orders": 0,
+    "generation": 7,
+    "late_fills": 0,
+    "latest_activity_generation": 5,
+    "latest_activity_unix_nanos": 1791871266661676200,
+    "metadata_fresh": true,
+    "mode": "continuous",
+    "native_ready": false,
+    "own_open_orders": 0,
+    "phase": "final",
+    "position_quantities": {},
+    "reconciled_activity_generation": 5,
+    "reconciled_flat": true,
+    "reconciliation_unix_nanos": 1791871274548065000,
+    "reduction_ready": false,
+    "run_id": "continuous-app-market-empty",
+    "shutdown_status": "clean",
+    "snapshot_fresh": true,
+    "snapshot_unix_nanos": 1791871274548065000,
+    "unknown_submissions": 0
+  },
+  "node_error": null,
+  "observation": {
+    "account_balances": {
+      "USDC": {
+        "free": "5000.00000000",
+        "locked": "0E-8",
+        "total": "5000.00000000"
+      }
+    },
+    "failures": [
+      "market_open_long terminated without a fill; no automatic replay"
+    ],
+    "fees_by_currency": {},
+    "fills": [],
+    "market_completed_round_trips": [],
+    "market_position_observations": [],
+    "native_snapshot": {
+      "account_cashflows": {
+        "account_wide": true,
+        "baseline_read_unix_nanos": 1791871245538794100,
+        "funding_history_reconciled": true,
+        "funding_payments_usdc": "0",
+        "latest_read_unix_nanos": 1791871269554520500,
+        "margin_balance_change_usdc": "0.00",
+        "settlement_currency": "USDC",
+        "source": "native-account-reconciliation",
+        "strategy_pnl_claimed": false,
+        "wallet_balance_change_usdc": "0.00"
+      },
+      "account_positions_owned": true,
+      "complete": true,
+      "connected_ready": false,
+      "coverage_complete": true,
+      "dms_release": {
+        "acknowledged": true,
+        "attempted": true,
+        "frame_sent": true,
+        "last_update_data_kind": "missing",
+        "last_update_enabled": "missing",
+        "last_update_op": "missing",
+        "last_update_status": "missing",
+        "last_update_timeout": "missing",
+        "outcome": "acknowledged",
+        "trace": {
+          "checkpoint_finished_unix_nanos": 1791871274690751100,
+          "dms_subscribed_after_release": 0,
+          "dms_unsubscribed_after_release": 1,
+          "last_frame_kind": "unsubscribed",
+          "last_frame_unix_nanos": 1791871274548552000,
+          "other_unsubscribed_after_release": 0,
+          "release_ack_observed_unix_nanos": 1791871274548569700,
+          "release_sent_unix_nanos": 1791871274548264900,
+          "release_started_unix_nanos": 1791871274548250700,
+          "request_drain_finished_unix_nanos": 1791871266663210000,
+          "requests_drained": true,
+          "shutdown_budget_nanos": 15000000000,
+          "shutdown_finished_unix_nanos": 1791871274690795400,
+          "shutdown_started_unix_nanos": 1791871266661665300,
+          "stream_stop_finished_unix_nanos": 1791871274686213900,
+          "stream_stop_started_unix_nanos": 1791871274560513800,
+          "text_frames_after_release": 1,
+          "text_frames_before_release": 8,
+          "unclassified_after_release": 0
+        },
+        "updates_after_release": 0,
+        "updates_before_release": 0
+      },
+      "execution_cost": null,
+      "foreign_open_orders": 0,
+      "generation": 7,
+      "late_fills": 0,
+      "latest_activity_generation": 5,
+      "latest_activity_unix_nanos": 1791871266661676200,
+      "metadata_fresh": true,
+      "mode": "continuous",
+      "native_ready": false,
+      "own_open_orders": 0,
+      "phase": "final",
+      "position_quantities": {},
+      "reconciled_activity_generation": 5,
+      "reconciled_flat": true,
+      "reconciliation_unix_nanos": 1791871274548065000,
+      "reduction_ready": false,
+      "run_id": "continuous-app-market-empty",
+      "shutdown_status": "clean",
+      "snapshot_fresh": true,
+      "snapshot_unix_nanos": 1791871274548065000,
+      "unknown_submissions": 0
+    },
+    "net_position": "0",
+    "net_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": "0",
+      "TSLA-USD-PERP.ONDO": "0"
+    },
+    "open_positions": 0,
+    "open_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": 0,
+      "TSLA-USD-PERP.ONDO": 0
+    },
+    "operations": [
+      {
+        "client_order_id": "O-20261013-060054-001-000-1",
+        "events": [
+          {
+            "elapsed_secs": 0.01600000000325963,
+            "kind": "submitted",
+            "observed_monotonic": 191759.125,
+            "ts_event": 1791871254598269900,
+            "ts_init": 1791871254598269900
+          },
+          {
+            "elapsed_secs": 1.9530000000086147,
+            "kind": "accepted",
+            "observed_monotonic": 191761.062,
+            "ts_event": 1791871256538201000,
+            "ts_init": 1791871256539328700
+          },
+          {
+            "elapsed_secs": 1.9530000000086147,
+            "kind": "canceled",
+            "observed_monotonic": 191761.062,
+            "ts_event": 1791871256538201000,
+            "ts_init": 1791871256539693300
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "order_type": "MARKET",
+        "post_only": false,
+        "price": null,
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "reference_ask": "85001.0",
+        "reference_bid": "85000.0",
+        "requested_monotonic": 191759.109,
+        "requested_unix_nanos": 1791871254597537800,
+        "role": "market_open_long",
+        "side": "BUY",
+        "time_in_force": "IOC"
+      }
+    ],
+    "phase": "failed",
+    "source": "installed-native-LiveNode-Strategy",
+    "startup_mode": "market",
+    "startup_verified": false,
+    "strategy_pnl_claimed": false
+  },
+  "order_requests": [
+    {
+      "body": {
+        "clientOrderId": "O-20261013-060054-001-000-1",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.0001",
+        "type": "market"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    }
+  ],
+  "scope": "synthetic loopback only; no real venue or credentials",
+  "shutdown": {
+    "acknowledged": true,
+    "attempted": true,
+    "frame_sent": true,
+    "last_update_data_kind": "missing",
+    "last_update_enabled": "missing",
+    "last_update_op": "missing",
+    "last_update_status": "missing",
+    "last_update_timeout": "missing",
+    "outcome": "acknowledged",
+    "trace": {
+      "checkpoint_finished_unix_nanos": 1791871274690751100,
+      "dms_subscribed_after_release": 0,
+      "dms_unsubscribed_after_release": 1,
+      "last_frame_kind": "unsubscribed",
+      "last_frame_unix_nanos": 1791871274548552000,
+      "other_unsubscribed_after_release": 0,
+      "release_ack_observed_unix_nanos": 1791871274548569700,
+      "release_sent_unix_nanos": 1791871274548264900,
+      "release_started_unix_nanos": 1791871274548250700,
+      "request_drain_finished_unix_nanos": 1791871266663210000,
+      "requests_drained": true,
+      "shutdown_budget_nanos": 15000000000,
+      "shutdown_finished_unix_nanos": 1791871274690795400,
+      "shutdown_started_unix_nanos": 1791871266661665300,
+      "stream_stop_finished_unix_nanos": 1791871274686213900,
+      "stream_stop_started_unix_nanos": 1791871274560513800,
+      "text_frames_after_release": 1,
+      "text_frames_before_release": 8,
+      "unclassified_after_release": 0
+    },
+    "updates_after_release": 0,
+    "updates_before_release": 0
+  },
+  "venue_fills": [],
+  "venue_quantities": {
+    "BTC-USD.P": "0",
+    "TSLA-USD.P": "0"
+  },
+  "watchdog_fired": false,
+  "wheel_sha256": "089fda49ca54bb91af84a9b3785ad69520e092cb8fadc601d205fff8979c1335"
+}

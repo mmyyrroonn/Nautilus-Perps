@@ -1,0 +1,557 @@
+{
+  "elapsed_secs": 86.13999999998487,
+  "final_snapshot": {
+    "account_cashflows": {
+      "account_wide": true,
+      "baseline_read_unix_nanos": 1791871157064519600,
+      "funding_history_reconciled": true,
+      "funding_payments_usdc": "0",
+      "latest_read_unix_nanos": 1791871222087000900,
+      "margin_balance_change_usdc": "-0.04",
+      "settlement_currency": "USDC",
+      "source": "native-account-reconciliation",
+      "strategy_pnl_claimed": false,
+      "wallet_balance_change_usdc": "-0.04"
+    },
+    "account_positions_owned": true,
+    "complete": true,
+    "connected_ready": false,
+    "coverage_complete": true,
+    "dms_release": {
+      "acknowledged": true,
+      "attempted": true,
+      "frame_sent": true,
+      "last_update_data_kind": "missing",
+      "last_update_enabled": "missing",
+      "last_update_op": "missing",
+      "last_update_status": "missing",
+      "last_update_timeout": "missing",
+      "outcome": "acknowledged",
+      "trace": {
+        "checkpoint_finished_unix_nanos": 1791871227204924300,
+        "dms_subscribed_after_release": 0,
+        "dms_unsubscribed_after_release": 1,
+        "last_frame_kind": "unsubscribed",
+        "last_frame_unix_nanos": 1791871227063746800,
+        "other_unsubscribed_after_release": 0,
+        "release_ack_observed_unix_nanos": 1791871227063764600,
+        "release_sent_unix_nanos": 1791871227063434000,
+        "release_started_unix_nanos": 1791871227063419900,
+        "request_drain_finished_unix_nanos": 1791871220198435200,
+        "requests_drained": true,
+        "shutdown_budget_nanos": 15000000000,
+        "shutdown_finished_unix_nanos": 1791871227204970100,
+        "shutdown_started_unix_nanos": 1791871220197084100,
+        "stream_stop_finished_unix_nanos": 1791871227201095000,
+        "stream_stop_started_unix_nanos": 1791871227076286700,
+        "text_frames_after_release": 1,
+        "text_frames_before_release": 20,
+        "unclassified_after_release": 0
+      },
+      "updates_after_release": 0,
+      "updates_before_release": 0
+    },
+    "execution_cost": null,
+    "foreign_open_orders": 0,
+    "generation": 14,
+    "late_fills": 0,
+    "latest_activity_generation": 25,
+    "latest_activity_unix_nanos": 1791871220197096000,
+    "metadata_fresh": true,
+    "mode": "continuous",
+    "native_ready": false,
+    "own_open_orders": 0,
+    "phase": "final",
+    "position_quantities": {},
+    "reconciled_activity_generation": 25,
+    "reconciled_flat": true,
+    "reconciliation_unix_nanos": 1791871227063217600,
+    "reduction_ready": false,
+    "run_id": "continuous-app-market",
+    "shutdown_status": "clean",
+    "snapshot_fresh": true,
+    "snapshot_unix_nanos": 1791871227063217600,
+    "unknown_submissions": 0
+  },
+  "node_error": null,
+  "observation": {
+    "account_balances": {
+      "USDC": {
+        "free": "4999.96000000",
+        "locked": "0E-8",
+        "total": "4999.96000000"
+      }
+    },
+    "failures": [],
+    "fees_by_currency": {
+      "USDC": "0.04000000"
+    },
+    "fills": [
+      {
+        "client_order_id": "O-20261013-055926-001-000-1",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "85000.0",
+        "quantity": "0.0001",
+        "role": "market_open_long",
+        "trade_id": "fill-0",
+        "ts_event": 1791871168066743000,
+        "ts_init": 1791871171071192600
+      },
+      {
+        "client_order_id": "O-20261013-055936-001-000-2",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "85000.0",
+        "quantity": "0.0001",
+        "role": "market_close_long",
+        "trade_id": "fill-1",
+        "ts_event": 1791871177072841000,
+        "ts_init": 1791871179061117400
+      },
+      {
+        "client_order_id": "O-20261013-055947-001-000-3",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "85000.0",
+        "quantity": "0.0001",
+        "role": "market_open_short",
+        "trade_id": "fill-2",
+        "ts_event": 1791871189070608000,
+        "ts_init": 1791871190066500800
+      },
+      {
+        "client_order_id": "O-20261013-055958-001-000-4",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "85000.0",
+        "quantity": "0.0001",
+        "role": "market_close_short",
+        "trade_id": "fill-3",
+        "ts_event": 1791871199059306000,
+        "ts_init": 1791871201066763400
+      }
+    ],
+    "market_completed_round_trips": [
+      "long",
+      "short"
+    ],
+    "market_position_observations": [
+      {
+        "confirmed_filled_quantity": "0.0001",
+        "native_reduction_ready": true,
+        "portfolio_net_position": "0.0001",
+        "role": "market_open_long"
+      },
+      {
+        "confirmed_filled_quantity": "0.0001",
+        "native_reduction_ready": true,
+        "portfolio_net_position": "-0.0001",
+        "role": "market_open_short"
+      }
+    ],
+    "native_snapshot": {
+      "account_cashflows": {
+        "account_wide": true,
+        "baseline_read_unix_nanos": 1791871157064519600,
+        "funding_history_reconciled": true,
+        "funding_payments_usdc": "0",
+        "latest_read_unix_nanos": 1791871222087000900,
+        "margin_balance_change_usdc": "-0.04",
+        "settlement_currency": "USDC",
+        "source": "native-account-reconciliation",
+        "strategy_pnl_claimed": false,
+        "wallet_balance_change_usdc": "-0.04"
+      },
+      "account_positions_owned": true,
+      "complete": true,
+      "connected_ready": false,
+      "coverage_complete": true,
+      "dms_release": {
+        "acknowledged": true,
+        "attempted": true,
+        "frame_sent": true,
+        "last_update_data_kind": "missing",
+        "last_update_enabled": "missing",
+        "last_update_op": "missing",
+        "last_update_status": "missing",
+        "last_update_timeout": "missing",
+        "outcome": "acknowledged",
+        "trace": {
+          "checkpoint_finished_unix_nanos": 1791871227204924300,
+          "dms_subscribed_after_release": 0,
+          "dms_unsubscribed_after_release": 1,
+          "last_frame_kind": "unsubscribed",
+          "last_frame_unix_nanos": 1791871227063746800,
+          "other_unsubscribed_after_release": 0,
+          "release_ack_observed_unix_nanos": 1791871227063764600,
+          "release_sent_unix_nanos": 1791871227063434000,
+          "release_started_unix_nanos": 1791871227063419900,
+          "request_drain_finished_unix_nanos": 1791871220198435200,
+          "requests_drained": true,
+          "shutdown_budget_nanos": 15000000000,
+          "shutdown_finished_unix_nanos": 1791871227204970100,
+          "shutdown_started_unix_nanos": 1791871220197084100,
+          "stream_stop_finished_unix_nanos": 1791871227201095000,
+          "stream_stop_started_unix_nanos": 1791871227076286700,
+          "text_frames_after_release": 1,
+          "text_frames_before_release": 20,
+          "unclassified_after_release": 0
+        },
+        "updates_after_release": 0,
+        "updates_before_release": 0
+      },
+      "execution_cost": null,
+      "foreign_open_orders": 0,
+      "generation": 14,
+      "late_fills": 0,
+      "latest_activity_generation": 25,
+      "latest_activity_unix_nanos": 1791871220197096000,
+      "metadata_fresh": true,
+      "mode": "continuous",
+      "native_ready": false,
+      "own_open_orders": 0,
+      "phase": "final",
+      "position_quantities": {},
+      "reconciled_activity_generation": 25,
+      "reconciled_flat": true,
+      "reconciliation_unix_nanos": 1791871227063217600,
+      "reduction_ready": false,
+      "run_id": "continuous-app-market",
+      "shutdown_status": "clean",
+      "snapshot_fresh": true,
+      "snapshot_unix_nanos": 1791871227063217600,
+      "unknown_submissions": 0
+    },
+    "net_position": "0",
+    "net_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": "0",
+      "TSLA-USD-PERP.ONDO": "0"
+    },
+    "open_positions": 0,
+    "open_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": 0,
+      "TSLA-USD-PERP.ONDO": 0
+    },
+    "operations": [
+      {
+        "client_order_id": "O-20261013-055926-001-000-1",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 191670.656,
+            "ts_event": 1791871166134980500,
+            "ts_init": 1791871166134980500
+          },
+          {
+            "elapsed_secs": 1.937000000005355,
+            "kind": "accepted",
+            "observed_monotonic": 191672.593,
+            "ts_event": 1791871168066743000,
+            "ts_init": 1791871168068209700
+          },
+          {
+            "elapsed_secs": 4.937000000005355,
+            "kind": "filled",
+            "observed_monotonic": 191675.593,
+            "ts_event": 1791871168066743000,
+            "ts_init": 1791871171071192600
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "order_type": "MARKET",
+        "post_only": false,
+        "price": null,
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "reference_ask": "85001.0",
+        "reference_bid": "85000.0",
+        "requested_monotonic": 191670.656,
+        "requested_unix_nanos": 1791871166133994500,
+        "role": "market_open_long",
+        "side": "BUY",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-055936-001-000-2",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 191680.671,
+            "ts_event": 1791871176148728100,
+            "ts_init": 1791871176148728100
+          },
+          {
+            "elapsed_secs": 0.9219999999913853,
+            "kind": "accepted",
+            "observed_monotonic": 191681.593,
+            "ts_event": 1791871177072841000,
+            "ts_init": 1791871177073637100
+          },
+          {
+            "elapsed_secs": 2.9070000000065193,
+            "kind": "filled",
+            "observed_monotonic": 191683.578,
+            "ts_event": 1791871177072841000,
+            "ts_init": 1791871179061117400
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "order_type": "MARKET",
+        "post_only": false,
+        "price": null,
+        "quantity": "0.0001",
+        "reduce_only": true,
+        "reference_ask": "85001.0",
+        "reference_bid": "85000.0",
+        "requested_monotonic": 191680.671,
+        "requested_unix_nanos": 1791871176148215200,
+        "role": "market_close_long",
+        "side": "SELL",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-055947-001-000-3",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 191691.703,
+            "ts_event": 1791871187180893600,
+            "ts_init": 1791871187180893600
+          },
+          {
+            "elapsed_secs": 1.889999999984866,
+            "kind": "accepted",
+            "observed_monotonic": 191693.593,
+            "ts_event": 1791871189070608000,
+            "ts_init": 1791871189071114700
+          },
+          {
+            "elapsed_secs": 2.875,
+            "kind": "filled",
+            "observed_monotonic": 191694.578,
+            "ts_event": 1791871189070608000,
+            "ts_init": 1791871190066500800
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "order_type": "MARKET",
+        "post_only": false,
+        "price": null,
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "reference_ask": "85001.0",
+        "reference_bid": "85000.0",
+        "requested_monotonic": 191691.703,
+        "requested_unix_nanos": 1791871187180358000,
+        "role": "market_open_short",
+        "side": "SELL",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-055958-001-000-4",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 191702.593,
+            "ts_event": 1791871198073996200,
+            "ts_init": 1791871198073996200
+          },
+          {
+            "elapsed_secs": 0.985000000015134,
+            "kind": "accepted",
+            "observed_monotonic": 191703.578,
+            "ts_event": 1791871199059306000,
+            "ts_init": 1791871199059872200
+          },
+          {
+            "elapsed_secs": 2.985000000015134,
+            "kind": "filled",
+            "observed_monotonic": 191705.578,
+            "ts_event": 1791871199059306000,
+            "ts_init": 1791871201066763400
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "order_type": "MARKET",
+        "post_only": false,
+        "price": null,
+        "quantity": "0.0001",
+        "reduce_only": true,
+        "reference_ask": "85001.0",
+        "reference_bid": "85000.0",
+        "requested_monotonic": 191702.593,
+        "requested_unix_nanos": 1791871198073567700,
+        "role": "market_close_short",
+        "side": "BUY",
+        "time_in_force": "IOC"
+      }
+    ],
+    "phase": "continuous",
+    "source": "installed-native-LiveNode-Strategy",
+    "startup_mode": "market",
+    "startup_verified": true,
+    "strategy_pnl_claimed": false
+  },
+  "order_requests": [
+    {
+      "body": {
+        "clientOrderId": "O-20261013-055926-001-000-1",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.0001",
+        "type": "market"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-055936-001-000-2",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "reduceOnly": true,
+        "side": "sell",
+        "size": "0.0001",
+        "type": "market"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-055947-001-000-3",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "reduceOnly": false,
+        "side": "sell",
+        "size": "0.0001",
+        "type": "market"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-055958-001-000-4",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "reduceOnly": true,
+        "side": "buy",
+        "size": "0.0001",
+        "type": "market"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    }
+  ],
+  "scope": "synthetic loopback only; no real venue or credentials",
+  "shutdown": {
+    "acknowledged": true,
+    "attempted": true,
+    "frame_sent": true,
+    "last_update_data_kind": "missing",
+    "last_update_enabled": "missing",
+    "last_update_op": "missing",
+    "last_update_status": "missing",
+    "last_update_timeout": "missing",
+    "outcome": "acknowledged",
+    "trace": {
+      "checkpoint_finished_unix_nanos": 1791871227204924300,
+      "dms_subscribed_after_release": 0,
+      "dms_unsubscribed_after_release": 1,
+      "last_frame_kind": "unsubscribed",
+      "last_frame_unix_nanos": 1791871227063746800,
+      "other_unsubscribed_after_release": 0,
+      "release_ack_observed_unix_nanos": 1791871227063764600,
+      "release_sent_unix_nanos": 1791871227063434000,
+      "release_started_unix_nanos": 1791871227063419900,
+      "request_drain_finished_unix_nanos": 1791871220198435200,
+      "requests_drained": true,
+      "shutdown_budget_nanos": 15000000000,
+      "shutdown_finished_unix_nanos": 1791871227204970100,
+      "shutdown_started_unix_nanos": 1791871220197084100,
+      "stream_stop_finished_unix_nanos": 1791871227201095000,
+      "stream_stop_started_unix_nanos": 1791871227076286700,
+      "text_frames_after_release": 1,
+      "text_frames_before_release": 20,
+      "unclassified_after_release": 0
+    },
+    "updates_after_release": 0,
+    "updates_before_release": 0
+  },
+  "venue_fills": [
+    {
+      "clientOrderId": "O-20261013-055926-001-000-1",
+      "direction": "openLong",
+      "fee": "0.01",
+      "id": "fill-0",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-055926-001-000-1",
+      "price": "85000.0",
+      "side": "buy",
+      "size": "0.0001",
+      "time": "2026-10-13T05:59:28.066743Z"
+    },
+    {
+      "clientOrderId": "O-20261013-055936-001-000-2",
+      "direction": "closeLong",
+      "fee": "0.01",
+      "id": "fill-1",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-055936-001-000-2",
+      "price": "85000.0",
+      "side": "sell",
+      "size": "0.0001",
+      "time": "2026-10-13T05:59:37.072841Z"
+    },
+    {
+      "clientOrderId": "O-20261013-055947-001-000-3",
+      "direction": "openShort",
+      "fee": "0.01",
+      "id": "fill-2",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-055947-001-000-3",
+      "price": "85000.0",
+      "side": "sell",
+      "size": "0.0001",
+      "time": "2026-10-13T05:59:49.070608Z"
+    },
+    {
+      "clientOrderId": "O-20261013-055958-001-000-4",
+      "direction": "closeShort",
+      "fee": "0.01",
+      "id": "fill-3",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-055958-001-000-4",
+      "price": "85000.0",
+      "side": "buy",
+      "size": "0.0001",
+      "time": "2026-10-13T05:59:59.059306Z"
+    }
+  ],
+  "venue_quantities": {
+    "BTC-USD.P": "0.0000",
+    "TSLA-USD.P": "0"
+  },
+  "watchdog_fired": false,
+  "wheel_sha256": "089fda49ca54bb91af84a9b3785ad69520e092cb8fadc601d205fff8979c1335"
+}

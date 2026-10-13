@@ -1,0 +1,69 @@
+{
+  "recorded_at": "2026-10-13T05:55:34.213678+00:00",
+  "native_root": "E:/persarb/nautilus_trader",
+  "change": "Project a first create response which is already canceled after its Accepted event using a ledger-based Canceled report. Shared MARKET and limit IOC behavior. No inferred fills.",
+  "cargo_target_dir": "E:/persarb/.backpack-target/native",
+  "cargo_build_warnings": "allow",
+  "final_per_target_passed": {
+    "lib": 547,
+    "continuous_execution": 10,
+    "execution": 80,
+    "http_client": 44,
+    "http_contract": 78,
+    "market_data": 43,
+    "private_runtime": 136,
+    "production_envelope": 41,
+    "reconciliation": 121,
+    "signing": 63,
+    "doc_tests": 1
+  },
+  "total_distinct_passing_tests": 1164,
+  "runs": [
+    {
+      "command": "cargo test -p nautilus-ondo --profile nextest --offline --test execution already_canceled_create",
+      "exit_code": 0,
+      "passed": 2,
+      "assertions": [
+        "Accepted precedes Canceled report",
+        "Canceled filled_qty is zero",
+        "No fill reports or applied fills",
+        "Duplicate canceled read is Unchanged and emits nothing",
+        "One create request only"
+      ]
+    },
+    {
+      "command": "cargo test -p nautilus-ondo --profile nextest --offline",
+      "exit_code": 101,
+      "log": "E:\\persarb\\_tmp\\ondo-market-20261013\\native-tests-v2.log",
+      "note": "Initial logging wrapper omitted scoped warning override. Cargo stopped before tests on existing MSVC linker_messages warning denial."
+    },
+    {
+      "command": "cargo test -p nautilus-ondo --profile nextest --offline",
+      "exit_code": 101,
+      "log": "E:\\persarb\\_tmp\\ondo-market-20261013\\native-tests-v2-final.log",
+      "note": "547+10+80+44+78+43 groups passed. private_runtime 135 pass/1 transient failure in existing read-only readiness test (Recovering versus ReadOnlySynced after an 8*20ms polling loop). This read-only path cannot execute the new canceled create projection. Remaining targets were not run by this invocation."
+    },
+    {
+      "command": "cargo test -p nautilus-ondo --profile nextest --offline --test private_runtime --test production_envelope --test reconciliation --test signing",
+      "exit_code": 0,
+      "log": "E:\\persarb\\_tmp\\ondo-market-20261013\\native-tests-v2-followup.log",
+      "passed": 361,
+      "note": "Failed target rerun entirely without code or test changes; original read-only case passed. Remaining targets also passed."
+    },
+    {
+      "command": "cargo test -p nautilus-ondo --profile nextest --offline --doc",
+      "exit_code": 0,
+      "passed": 1
+    },
+    {
+      "command": "cargo fmt -p nautilus-ondo",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "network": "No real venue/credentials; native tests use loopback fixtures and --offline dependencies.",
+  "baseline_lint_debt": "Initial Clippy result is preserved in native-clippy.jsonl; no unrelated repairs made."
+}

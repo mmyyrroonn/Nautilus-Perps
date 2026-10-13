@@ -1,0 +1,14 @@
+{
+  "wheel": "E:\\persarb\\_tmp\\ondo-market-20261013\\wheel-v2\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+  "wheel_sha256": "089fda49ca54bb91af84a9b3785ad69520e092cb8fadc601d205fff8979c1335",
+  "provenance": "E:\\persarb\\_tmp\\ondo-market-20261013\\wheel-v2\\native-provenance.json",
+  "provenance_sha256": "1d0dfa5169a2ddc1d3b061734d882d5bcd0ffead5bb5f9e238ff4d438e86cc45",
+  "source_binding": "verified",
+  "source_fingerprint_sha256": "4aa38d2c236be794ad598087571fcd146a6ffe17ee4cd977f76a761b66e46527",
+  "current_source_matches": true,
+  "completed_at": "2026-10-13T05:55:18.931694+00:00",
+  "build_log": "E:\\persarb\\_tmp\\ondo-market-20261013\\native-build-v2.log",
+  "actual_builder_exit_code": 0,
+  "logging_wrapper_exit_code": 1,
+  "logging_wrapper_note": "Builder returned 0. Console-only printing of maturin emoji log tail failed under gbk after the build finished; complete UTF-8 log and source-bound artifacts are intact."
+}
