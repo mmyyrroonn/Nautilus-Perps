@@ -45,3 +45,8 @@ reports/stage1/*NVDA_HL-LIGHTER_*.csv
 
 # Downloaded candidate wheels and local identity results
 .native-cache/
+
+# Backpack raw operational evidence and durable account/order state stay local.
+reports/backpack/acceptance/
+reports/backpack/operator-state/
+reports/backpack-production/
