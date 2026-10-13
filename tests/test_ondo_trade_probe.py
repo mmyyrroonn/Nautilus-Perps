@@ -1438,6 +1438,20 @@ def test_dms_observations_are_reported_but_cannot_replace_final_proof(acknowledg
             "raw_frame": "SYNTHETIC_PRIVATE_FRAME",
         },
     })
+    native.production_shutdown_diagnostics = lambda: {
+        "attempted": True, "frame_sent": True, "acknowledged": acknowledged,
+        "outcome": "acknowledged" if acknowledged else "ack_timeout",
+        "raw_frame": "SYNTHETIC_PRIVATE_FRAME",
+        "trace": {
+            "release_sent_unix_nanos": 123,
+            "text_frames_after_release": 1,
+            "last_frame_kind": "unclassified",
+        },
+    }
+    sequencer.note_fill(trade.FillRecord(
+        "entry", "E1", "T-FEE", Decimal("0.100"), Decimal("100.30"),
+        commission_amount=Decimal("0.03"), commission_currency="USDC",
+    ))
     document = trade.trade_report_document(
         run_id="r", started=datetime.datetime.now(datetime.timezone.utc),
         finished=datetime.datetime.now(datetime.timezone.utc),
@@ -1448,8 +1462,13 @@ def test_dms_observations_are_reported_but_cannot_replace_final_proof(acknowledg
         dms_release_target=native,
     )
 
+    assert document["fills"][0]["native_commission"]["currency"] == "USDC"
+    assert document["fills"][0]["native_commission"]["amount"] == "0.03"
     assert document["dms_release"]["acknowledged"] is acknowledged
     assert document["dms_release"]["frame_sent"] is True
+    assert document["shutdown_diagnostics"]["available"] is True
+    assert document["shutdown_diagnostics"]["trace"]["release_sent_unix_nanos"] == 123
+    assert document["shutdown_diagnostics"]["release"]["acknowledged"] is acknowledged
     assert document["production_execution_verified"] is False
     assert "SYNTHETIC_PRIVATE_FRAME" not in json.dumps(document, default=trade._json_default)
 
@@ -1906,7 +1925,9 @@ def _new_limit_order(coid: str, side: OrderSide, qty: str, px: str,
     )
 
 
-def _fill_events(order: LimitOrder, qty: str, px: str, trade_id: str) -> OrderFilled:
+def _fill_events(
+    order: LimitOrder, qty: str, px: str, trade_id: str, commission: Money | None = None,
+) -> OrderFilled:
     return OrderFilled(
         trader_id=TraderId.from_str("TESTER-001"),
         strategy_id=StrategyId.from_str("S-001"),
@@ -1921,6 +1942,7 @@ def _fill_events(order: LimitOrder, qty: str, px: str, trade_id: str) -> OrderFi
         last_px=Price.from_str(px),
         currency=Currency.from_str("USD"),
         liquidity_side=LiquiditySide.TAKER,
+        commission=commission,
         event_id=UUID4(),
         ts_event=3,
         ts_init=3,
@@ -2857,3 +2879,174 @@ def test_early_return_cancels_an_active_reconciliation_poll_before_publish(
     assert time.monotonic() - started < 1.5
     report = json.loads((tmp_path / "report" / "trade.json").read_text(encoding="utf-8"))
     assert report["watchdog"]["worker_alive_after_join"] is False
+
+
+@pytest.mark.parametrize("amount,currency", [
+    ("0.03", "USD"), ("0", "USDC"), ("-0.01", "USDC"), (None, None),
+])
+def test_native_fill_commission_preserves_zero_rebate_and_currency_once(amount, currency):
+    strategy = _integration_strategy(TypeStrictCache(), FakeOrderFactory())
+    strategy.on_quote(_Quote("100.00", "100.10"))
+    entry = strategy.submitted[0]
+    _apply_fill(entry, "0.100", "100.30", "T-FEE")
+    money = None if amount is None else Money.from_str(f"{amount} {currency}")
+    event = _fill_events(entry, "0.100", "100.30", "T-FEE", money)
+    strategy.on_order_filled(event)
+    strategy.on_order_filled(event)
+    assert len(strategy.sequencer.fills) == 1
+    record = strategy.sequencer.fills[0].as_dict()["native_commission"]
+    if amount is None:
+        assert record is None
+    else:
+        assert Decimal(record["amount"]) == Decimal(amount)
+        assert record["currency"] == currency
+        assert record["source"] == "native-order-filled"
+
+
+def test_unknown_or_non_native_commission_is_not_promoted_to_fee_fact():
+    from types import SimpleNamespace
+    assert trade._native_commission(SimpleNamespace(commission=Money.from_str("1 USD"))) == (None, None)
+
+
+def test_fee_projection_preserves_observed_rebate_and_missing_fee_without_fx():
+    sequencer = seq_for()
+    _drive_entry(sequencer)
+    sequencer.note_fill(trade.FillRecord(
+        "entry", "E1", "T1", Decimal("0.050"), Decimal("100.30"),
+        commission_amount=Decimal("0.03"), commission_currency="USDC"))
+    sequencer.note_fill(trade.FillRecord(
+        "entry", "E1", "T2", Decimal("0.025"), Decimal("100.30"),
+        commission_amount=Decimal("-0.01"), commission_currency="USDC"))
+    sequencer.note_fill(trade.FillRecord(
+        "entry", "E1", "T3", Decimal("0.025"), Decimal("100.30")))
+    fees = trade._native_fill_fee_document(sequencer)
+    assert fees["observed_totals_by_currency"] == {"USDC": "0.02"}
+    assert fees["fills_without_commission"] == 1
+    assert fees["coverage_complete"] is False
+    assert fees["currency_conversion_performed"] is False
+
+
+def _cashflow_snapshot(**changes):
+    data = {
+        "source": "native-account-reconciliation", "settlement_currency": "USDC",
+        "account_wide": True, "strategy_pnl_claimed": False,
+        "baseline_read_unix_nanos": 1, "latest_read_unix_nanos": 2,
+        "wallet_balance_change_usdc": "-0.03", "margin_balance_change_usdc": "-0.03",
+        "funding_history_reconciled": True, "funding_payments_usdc": "0",
+        "raw": "PRIVATE_NOT_FOR_REPORT",
+    }
+    data.update(changes)
+    return {"run_id": "cashflow-run", "phase": "reconciled", "snapshot_unix_nanos": 3,
+            "account_cashflows": data}
+
+
+def test_native_cashflow_facts_survive_unconfirmed_dms_without_claiming_pnl():
+    target = SnapshotTarget(_cashflow_snapshot())
+    cashflows = trade._native_account_cashflows(target, "cashflow-run")
+    assert cashflows["funding_payments_usdc"] == "0"
+    assert cashflows["wallet_balance_change_usdc"] == "-0.03"
+    assert cashflows["strategy_pnl_claimed"] is False
+    assert "PRIVATE_NOT_FOR_REPORT" not in json.dumps(cashflows)
+    assert trade._native_account_cashflows(target, "another-run") is None
+
+
+@pytest.mark.parametrize("changes", [
+    {"settlement_currency": "USD"}, {"account_wide": False},
+    {"strategy_pnl_claimed": True}, {"baseline_read_unix_nanos": 0},
+    {"latest_read_unix_nanos": 4}, {"latest_read_unix_nanos": 1},
+])
+def test_native_cashflow_refuses_wrong_currency_scope_and_unordered_time(changes):
+    assert trade._native_account_cashflows(SnapshotTarget(_cashflow_snapshot(**changes)), "cashflow-run") is None
+
+
+@pytest.mark.parametrize("changes", [
+    {"funding_history_reconciled": False}, {"funding_payments_usdc": "NaN"},
+    {"funding_payments_usdc": None},
+])
+def test_unreconciled_or_missing_native_funding_stays_unknown(changes):
+    cashflows = trade._native_account_cashflows(SnapshotTarget(_cashflow_snapshot(**changes)), "cashflow-run")
+    assert cashflows["funding_payments_usdc"] is None
+    assert cashflows["funding_history_reconciled"] is False
+
+
+@pytest.mark.parametrize("shutdown_clean", [False, True])
+def test_complete_native_economic_facts_cannot_override_shutdown_verdict(shutdown_clean):
+    sequencer = seq_for()
+    sequencer.begin()
+    sequencer.on_quote(Decimal("100.00"), Decimal("100.10"), now=0.0)
+    sequencer.decide_entry(now=0.0)
+    sequencer.bind_entry("E1")
+    sequencer.note_fill(trade.FillRecord(
+        "entry", "E1", "T1", Decimal("0.100"), Decimal("100.30"),
+        commission_amount=Decimal("0.03"), commission_currency="USDC"))
+    sequencer.note_entry(trade.OrderView(
+        "entry", "E1", "FILLED", Decimal("0.100"), Decimal("100.30"), True), now=0.0)
+    sequencer.bind_close("C1")
+    sequencer.note_fill(trade.FillRecord(
+        "close", "C1", "T2", Decimal("0.100"), Decimal("100.00"),
+        commission_amount=Decimal("0.03"), commission_currency="USDC"))
+    sequencer.note_close(trade.OrderView(
+        "close", "C1", "FILLED", Decimal("0.100"), Decimal("100.00"), True), now=0.0)
+    snapshot = _cashflow_snapshot()
+    snapshot["phase"] = "final" if shutdown_clean else "reconciled"
+    target = SnapshotTarget(snapshot)
+    document = trade.trade_report_document(
+        run_id="cashflow-run", started=datetime.datetime.now(datetime.timezone.utc),
+        finished=datetime.datetime.now(datetime.timezone.utc), exit_code=0 if shutdown_clean else 1,
+        failure=None, plan=sequencer.plan, limits=sequencer.limits,
+        capability=trade.detect_native_trade_capability(CapableAdapter()), readiness=good_readiness(),
+        strategy=FakeStrategy(sequencer), stop_condition="run-returned", stops=[], watchdog=None,
+        diagnostics=None, final=clean_final() if shutdown_clean else None, dms_release_target=target,
+    )
+    assert document["native_fill_fees"]["observed_totals_by_currency"] == {"USDC": "0.06"}
+    assert document["economic_evidence_complete"] is True
+    assert document["funding_payments"]["amount"] == "0"
+    assert document["balance_change"]["strategy_pnl_claimed"] is False
+    assert document["fees"] == "unknown"
+    assert document["production_execution_verified"] is shutdown_clean
+    assert document["full_production_acceptance_verified"] is shutdown_clean
+    assert "PRIVATE_NOT_FOR_REPORT" not in json.dumps(document, default=trade._json_default)
+
+
+def test_close_waits_inside_app_five_seconds_but_outside_native_two_seconds():
+    sequencer = seq_for()
+    sequencer.begin()
+    sequencer.on_quote(Decimal("100.00"), Decimal("100.10"), now=0.0)
+    assert sequencer.decide_entry(now=0.0) is not None
+    sequencer.bind_entry("E1")
+    assert sequencer.note_entry(trade.OrderView(
+        "entry", "E1", "FILLED", Decimal("0.100"), Decimal("100.30"), True,
+    ), now=3.0) is None
+    assert sequencer.close_attempts == 0
+    assert sequencer.maybe_close(now=3.0) is None
+    sequencer.on_quote(Decimal("100.00"), Decimal("100.10"), now=3.0)
+    assert sequencer.maybe_close(now=3.0) is not None
+    assert sequencer.close_attempts == 1
+
+
+def test_future_monotonic_quote_does_not_pass_freshness():
+    sequencer = seq_for()
+    sequencer.on_quote(Decimal("100.00"), Decimal("100.10"), now=10.0)
+    assert sequencer.quote_is_fresh(9.0, Decimal("5")) is False
+
+
+@pytest.mark.parametrize("age_ns,bid_size,expected", [
+    (1_000_000_000, "1.00", 99.0),
+    (3_000_000_000, "1.00", None),
+    (-1, "1.00", None),
+    (0, "0.00", None),
+])
+def test_real_native_quote_age_and_validity_are_not_reset_by_callback_receipt(
+    age_ns, bid_size, expected,
+):
+    from nautilus_trader.model import QuoteTick, Price, Quantity, InstrumentId
+    native_now = 10_000_000_000
+    quote = QuoteTick(
+        InstrumentId.from_str("NVDA-USD-PERP.ONDO"),
+        Price.from_str("100.00"), Price.from_str("100.10"),
+        Quantity.from_str(bid_size), Quantity.from_str("1.00"),
+        native_now - age_ns, native_now - age_ns,
+    )
+    assert trade._native_quote_observed_monotonic(
+        quote, received_monotonic=100.0, native_now_ns=native_now,
+    ) == expected

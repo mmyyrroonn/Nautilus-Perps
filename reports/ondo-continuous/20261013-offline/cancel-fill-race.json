@@ -1,0 +1,619 @@
+{
+  "all_endpoints_loopback": true,
+  "continued_in_same_strategy": false,
+  "continued_instruments": [],
+  "elapsed_secs": 56.25,
+  "entry_observations": [],
+  "final_snapshot": null,
+  "frames": [
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "login"
+    },
+    {
+      "channel": "ordersPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "fillsPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "topOfBooksPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "topOfBooksPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    }
+  ],
+  "identity": {
+    "app": {
+      "commit": "18d72503f6bf0e89efe0a6f4b61b861a4a2a4ed5",
+      "dirty": true,
+      "source_scope": [
+        "src",
+        "scripts",
+        "tests",
+        "config",
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version"
+      ],
+      "tracked_content_sha256": "63cecf2c0dbb71354fe266080c2cd2ee98af496d6529499f5c87d011f7477735",
+      "tree": "4fbad3a6a966c881d8ff60cfa92fd114d9d59214",
+      "untracked_sha256": "ae01ec2c0dc10cbffbd3ea4635e0185816d9324a8a7c4a45597aaa5b62252a16"
+    },
+    "installed": {
+      "adapter_stub_sha256": {
+        "nautilus_trader/adapters/aster/__init__.pyi": "9b72dbc7b89b2578ef6d124b7a6df9e57b047e21edb7789acce82f85fed9bb00",
+        "nautilus_trader/adapters/ondo/__init__.pyi": "b1b1dffccc54822bd8c99b52d2e40d7c67230522a6a5d39faeee604ecb081d6d"
+      },
+      "direct_url": "file:///E:/persarb/_tmp/issue122-acceptance/wheel-v2/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "interpreter": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Scripts\\python.exe",
+      "native_module": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Lib\\site-packages\\nautilus_trader\\_libnautilus.cp312-win_amd64.pyd",
+      "native_module_sha256": "53c6ea7e9436b1686297ee5baec62852df9dfafbc553a1483a08b874dbe139e4",
+      "python_version": "3.12.9"
+    },
+    "native_provenance": {
+      "declared_build": {
+        "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+        "profile": "nextest"
+      },
+      "declared_native": {
+        "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+        "commit": "f2965180f074dc12fbc1c45509465f2d551541ac",
+        "dirty": [
+          "M crates/adapters/ondo/README.md",
+          " M crates/adapters/ondo/src/config.rs",
+          " M crates/adapters/ondo/src/diagnostics.rs",
+          " M crates/adapters/ondo/src/execution.rs",
+          " M crates/adapters/ondo/src/http/client.rs",
+          " M crates/adapters/ondo/src/http/rate_limit.rs",
+          " M crates/adapters/ondo/src/production.rs",
+          " M crates/adapters/ondo/src/python/config.rs",
+          " M crates/adapters/ondo/src/python/factories.rs",
+          " M crates/adapters/ondo/src/python/mod.rs",
+          " M crates/adapters/ondo/src/reconciliation.rs",
+          " M crates/adapters/ondo/src/websocket/private/stream.rs",
+          " M crates/adapters/ondo/tests/private_runtime.rs",
+          " M crates/adapters/ondo/tests/python.rs",
+          " M python/nautilus_trader/adapters/ondo/__init__.py",
+          " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+          "?? crates/adapters/ondo/src/continuous.rs",
+          "?? crates/adapters/ondo/tests/continuous_execution.rs"
+        ],
+        "dirty_count": 18,
+        "tracked_diff_sha256": "a9e52d8ea437b668ab065ef6638d1933e7814f0be7aec79bed7d3206c8bdd9f6",
+        "tree": "084910450328755dffc458c6a1ee831fe00795ad",
+        "untracked_sha256": "d4770e9aaa04a0a929d93ff57d4e0d9dbb057841c062a9ceb8ea1b80b2b0a812"
+      },
+      "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\native-provenance.json",
+      "sha256": "cd81154b9aa9a287e653a1bca34e7e91d08ed2935619f69bf0235735c70fb5d0",
+      "source_binding": "verified"
+    },
+    "schema_version": 1,
+    "strict_source_binding_passed": true,
+    "wheel": {
+      "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "sha256": "6d63d32c70e42bef4a5bd783887f889b7c222f18fe14d6ef00025f42edd863de",
+      "tags": [
+        "cp312-cp312-win_amd64"
+      ]
+    }
+  },
+  "journal_exists": true,
+  "node_error": "Failed to disconnect execution clients: the Ondo shutdown left work unresolved: outcome=TimedOut, tasks_drained=true, switch_released=false, production_finalized=false, outstanding=[]",
+  "observation": {
+    "account_balances": {
+      "USDC": {
+        "free": "4999.99000000",
+        "locked": "0E-8",
+        "total": "4999.99000000"
+      }
+    },
+    "failures": [
+      "post-only cancel raced a fill; exposure must be reconciled by native cleanup"
+    ],
+    "fees_by_currency": {
+      "USDC": "0.01000000"
+    },
+    "fills": [
+      {
+        "client_order_id": "O-20261013-035948-001-000-1",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "84999.8",
+        "quantity": "0.0001",
+        "role": "maker",
+        "trade_id": "fill-0",
+        "ts_event": 1791863991442110000,
+        "ts_init": 1791863994434426500
+      }
+    ],
+    "native_snapshot": null,
+    "net_position": "0.0001",
+    "net_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": "0.0001",
+      "TSLA-USD-PERP.ONDO": "0"
+    },
+    "open_positions": 1,
+    "open_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": 1,
+      "TSLA-USD-PERP.ONDO": 0
+    },
+    "operations": [
+      {
+        "client_order_id": "O-20261013-035948-001-000-1",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184493.015,
+            "ts_event": 1791863988498616600,
+            "ts_init": 1791863988498616600
+          },
+          {
+            "elapsed_secs": 1.952999999979511,
+            "kind": "accepted",
+            "observed_monotonic": 184494.968,
+            "ts_event": 1791863990442890000,
+            "ts_init": 1791863990443713100
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": true,
+        "price": "84999.8",
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "requested_monotonic": 184493.015,
+        "requested_unix_nanos": 1791863988497972900,
+        "role": "maker",
+        "time_in_force": "GTC"
+      },
+      {
+        "client_order_id": "O-20261013-035948-001-000-1",
+        "events": [
+          {
+            "elapsed_secs": 3.985000000015134,
+            "kind": "filled",
+            "observed_monotonic": 184498.953,
+            "ts_event": 1791863991442110000,
+            "ts_init": 1791863994434426500
+          }
+        ],
+        "operation": "cancel",
+        "requested_monotonic": 184494.968,
+        "requested_unix_nanos": 1791863990444057300,
+        "role": "maker"
+      }
+    ],
+    "phase": "failed",
+    "source": "installed-native-LiveNode-Strategy",
+    "startup_verified": false,
+    "strategy_pnl_claimed": false
+  },
+  "raw_authentication_recorded": false,
+  "readonly": {
+    "account_reconciliation": {
+      "clean": true,
+      "findings": 0,
+      "foreign_nonterminal_orders": 0,
+      "foreign_terminal_orders": 0,
+      "funding_findings": 0,
+      "production_reconciled": true,
+      "uncertain_findings": 0
+    },
+    "account_state_events": 9,
+    "identity_match": "matched",
+    "logged_in": true,
+    "reconnects": 0,
+    "recoveries": 5,
+    "run_id": "continuous-app-cancel-race",
+    "run_state": "stopped",
+    "shutdown_status": "incomplete",
+    "subscriptions_acked": {
+      "fillsPerps": true,
+      "ordersPerps": true
+    }
+  },
+  "requests": [
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/contracts"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/contracts"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035948-001-000-1",
+        "market": "BTC-USD.P",
+        "postOnly": true,
+        "price": "84999.8",
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.0001",
+        "timeInForce": "GTC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "DELETE",
+      "path": "/v1/perps/orders/venue-O-20261013-035948-001-000-1"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    }
+  ],
+  "shutdown": {
+    "acknowledged": false,
+    "attempted": true,
+    "frame_sent": false,
+    "last_update_data_kind": "missing",
+    "last_update_enabled": "missing",
+    "last_update_op": "missing",
+    "last_update_status": "missing",
+    "last_update_timeout": "missing",
+    "outcome": "blocked_unsettled",
+    "trace": {
+      "checkpoint_finished_unix_nanos": 1791864019669730900,
+      "dms_subscribed_after_release": 0,
+      "dms_unsubscribed_after_release": 0,
+      "last_frame_kind": "subscribed",
+      "last_frame_unix_nanos": 1791864016447536000,
+      "other_unsubscribed_after_release": 0,
+      "release_ack_observed_unix_nanos": null,
+      "release_sent_unix_nanos": null,
+      "release_started_unix_nanos": null,
+      "request_drain_finished_unix_nanos": 1791864004541924200,
+      "requests_drained": true,
+      "shutdown_budget_nanos": 15000000000,
+      "shutdown_finished_unix_nanos": 1791864019669767300,
+      "shutdown_started_unix_nanos": 1791864004540457700,
+      "stream_stop_finished_unix_nanos": 1791864019665511400,
+      "stream_stop_started_unix_nanos": 1791864019541386500,
+      "text_frames_after_release": 0,
+      "text_frames_before_release": 12,
+      "unclassified_after_release": 0
+    },
+    "updates_after_release": 0,
+    "updates_before_release": 0
+  },
+  "venue_fills": [
+    {
+      "clientOrderId": "O-20261013-035948-001-000-1",
+      "direction": "openLong",
+      "fee": "0.01",
+      "id": "fill-0",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-035948-001-000-1",
+      "price": "84999.8",
+      "side": "buy",
+      "size": "0.0001",
+      "time": "2026-10-13T03:59:51.442110Z"
+    }
+  ],
+  "venue_quantities": {
+    "BTC-USD.P": "0.0001",
+    "TSLA-USD.P": "0"
+  },
+  "venue_quantity": "0.0001",
+  "watchdog_fired": false
+}

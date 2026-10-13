@@ -239,6 +239,13 @@ def test_exclusive_write_never_overwrites(tmp_path):
     assert op.read_json(path) == {"original": True}
 
 
+def test_root_and_worktree_use_the_same_canonical_env_path(tmp_path):
+    root = tmp_path / "Nautilus-Perps"
+    worktree = root / ".worktrees" / "candidate"
+    assert op.canonical_env_file(root) == root / ".env"
+    assert op.canonical_env_file(worktree) == root / ".env"
+
+
 def test_child_environment_uses_canonical_credentials_only_after_confirmation(monkeypatch):
     monkeypatch.setenv("ONDO_MAINNET_API_KEY", "synthetic-do-not-inherit")
     monkeypatch.setenv("ONDO_MAINNET_ACCOUNT_ID", "synthetic-other-account")
@@ -386,3 +393,56 @@ def test_hash_and_policy_confirmations_cannot_be_combined(monkeypatch):
                     "--operator-confirmed-plan-sha256", plan["plan_sha256"]]) == 2
     assert not op.CLAIM.exists()
     assert not list(op.OUTPUT.glob("*/approved-plan.json"))
+
+
+@pytest.mark.parametrize("args", [
+    ["--candidate-identity", "unreviewed.json"], ["--candidate-identity-sha256", "0" * 64],
+])
+def test_explicit_candidate_requires_both_reviewed_path_and_digest(args):
+    assert op.main(["--side", "buy", *args]) == 2
+    assert not op.CLAIM.exists()
+    assert not op.OUTPUT.exists()
+
+
+@pytest.mark.parametrize("changed", ["none", "interpreter", "provenance", "source", "binary", "manifest"])
+def test_reviewed_candidate_refuses_changed_identity_before_private_dispatch(tmp_path, monkeypatch, changed):
+    sys.path.insert(0, str(op.APP / "scripts"))
+    import verify_native_install
+    provenance = tmp_path / "provenance.json"
+    provenance.write_text("synthetic-provenance", encoding="utf-8")
+    identity = {
+        "installed": {"interpreter": sys.executable, "native_module_sha256": "binary-v1"},
+        "app": {"tracked_content_sha256": "source-v1"},
+        "wheel": {"path": "synthetic.whl", "sha256": "wheel-v1"},
+    }
+    actual = copy.deepcopy(identity)
+    if changed == "interpreter":
+        identity["installed"]["interpreter"] = str(tmp_path / "other-python.exe")
+    if changed == "source":
+        actual["app"]["tracked_content_sha256"] = "source-v2"
+    if changed == "binary":
+        actual["installed"]["native_module_sha256"] = "binary-v2"
+    path = tmp_path / "reviewed.json"
+    op.write_once(path, {"installed_identity": identity, "native_provenance_path": str(provenance),
+                         "native_provenance_sha256": op.digest(provenance)})
+    digest = op.digest(path)
+    if changed == "provenance":
+        provenance.write_text("changed-provenance", encoding="utf-8")
+    if changed == "manifest":
+        path.write_text("changed-manifest", encoding="utf-8")
+    calls = []
+    def verified(*args, **kwargs):
+        calls.append(kwargs)
+        assert kwargs["require_source_binding"] is True
+        assert kwargs["require_ondo"] is True
+        return actual
+    monkeypatch.setattr(verify_native_install, "verify", verified)
+    if changed == "none":
+        result = op.verify_reviewed_candidate(path, digest)
+        assert result["candidate_identity_sha256"] == digest
+        assert result["binary_sha256"] == "binary-v1"
+        assert len(calls) == 1
+    else:
+        with pytest.raises(op.Refused):
+            op.verify_reviewed_candidate(path, digest)
+    assert not op.CLAIM.exists()

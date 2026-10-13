@@ -1,0 +1,161 @@
+{
+  "app_source": {
+    "commit": "18d72503f6bf0e89efe0a6f4b61b861a4a2a4ed5",
+    "dirty": true,
+    "source_scope": [
+      "src",
+      "scripts",
+      "tests",
+      "config",
+      "pyproject.toml",
+      "uv.lock",
+      ".python-version"
+    ],
+    "tracked_content_sha256": "63cecf2c0dbb71354fe266080c2cd2ee98af496d6529499f5c87d011f7477735",
+    "tree": "4fbad3a6a966c881d8ff60cfa92fd114d9d59214",
+    "untracked_sha256": "ae01ec2c0dc10cbffbd3ea4635e0185816d9324a8a7c4a45597aaa5b62252a16"
+  },
+  "app_source_archive": {
+    "files": {
+      "docs/ondo-continuous.md": "1bd6f6fc0b51f007dc2528337310b2a545b70d36472611e1f1d56eec3207a0a0",
+      "src/ondo_continuous.py": "aef4e2030d6e476feeb72c5651fcbf44ce4b8594f03e1be48de237b20af6a488",
+      "tests/support/ondo_continuous_peer.py": "4286c3aeafd59e4b470a22a7aa2befa12a5d16ebc33c31b61bc146d5451529b8",
+      "tests/test_ondo_continuous.py": "8ab31a85155ed049bd49acece02fbb75d06969d228753b4d6a45cc4222b15746"
+    },
+    "path": "E:\\persarb\\worktrees\\issue122-ondo-app\\reports\\ondo-continuous\\20261013-offline\\app-source.zip",
+    "sha256": "5bc53e95ee64583b5811d342af27ad5e20ce288b1268d2a988b22c48e7ff4abf"
+  },
+  "application_tests": {
+    "continuous": 12,
+    "continuous_failures": 0,
+    "probe_operator_regressions": 256
+  },
+  "cancel_fill_race": {
+    "node_error": "Failed to disconnect execution clients: the Ondo shutdown left work unresolved: outcome=TimedOut, tasks_drained=true, switch_released=false, production_finalized=false, outstanding=[]",
+    "startup_verified": false,
+    "venue_residual_quantity": "0.0001"
+  },
+  "installed": {
+    "adapter_stub_sha256": {
+      "nautilus_trader/adapters/aster/__init__.pyi": "9b72dbc7b89b2578ef6d124b7a6df9e57b047e21edb7789acce82f85fed9bb00",
+      "nautilus_trader/adapters/ondo/__init__.pyi": "b1b1dffccc54822bd8c99b52d2e40d7c67230522a6a5d39faeee604ecb081d6d"
+    },
+    "direct_url": "file:///E:/persarb/_tmp/issue122-acceptance/wheel-v2/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "interpreter": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Scripts\\python.exe",
+    "native_module": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Lib\\site-packages\\nautilus_trader\\_libnautilus.cp312-win_amd64.pyd",
+    "native_module_sha256": "53c6ea7e9436b1686297ee5baec62852df9dfafbc553a1483a08b874dbe139e4",
+    "python_version": "3.12.9"
+  },
+  "issue": "mmyyrroonn/nautilus_trader#122",
+  "limitations": [
+    "No credentials read or venue account contacted; no mainnet acceptance claimed.",
+    "Windows CPython 3.12.9 local nextest-profile wheel; no formal cross-platform release or publication.",
+    "Application caller allocates Ondo budget against the multi-venue global cap.",
+    "Native amendment unsupported; confirmed cancel/replace uses a new client order ID.",
+    "Long-running journal growth remains separate work under issue 89."
+  ],
+  "native_source": {
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+    "commit": "f2965180f074dc12fbc1c45509465f2d551541ac",
+    "dirty": [
+      "M crates/adapters/ondo/README.md",
+      " M crates/adapters/ondo/src/config.rs",
+      " M crates/adapters/ondo/src/diagnostics.rs",
+      " M crates/adapters/ondo/src/execution.rs",
+      " M crates/adapters/ondo/src/http/client.rs",
+      " M crates/adapters/ondo/src/http/rate_limit.rs",
+      " M crates/adapters/ondo/src/production.rs",
+      " M crates/adapters/ondo/src/python/config.rs",
+      " M crates/adapters/ondo/src/python/factories.rs",
+      " M crates/adapters/ondo/src/python/mod.rs",
+      " M crates/adapters/ondo/src/reconciliation.rs",
+      " M crates/adapters/ondo/src/websocket/private/stream.rs",
+      " M crates/adapters/ondo/tests/private_runtime.rs",
+      " M crates/adapters/ondo/tests/python.rs",
+      " M python/nautilus_trader/adapters/ondo/__init__.py",
+      " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+      "?? crates/adapters/ondo/src/continuous.rs",
+      "?? crates/adapters/ondo/tests/continuous_execution.rs"
+    ],
+    "dirty_count": 18,
+    "tracked_diff_sha256": "a9e52d8ea437b668ab065ef6638d1933e7814f0be7aec79bed7d3206c8bdd9f6",
+    "tree": "084910450328755dffc458c6a1ee831fe00795ad",
+    "untracked_sha256": "d4770e9aaa04a0a929d93ff57d4e0d9dbb057841c062a9ceb8ea1b80b2b0a812"
+  },
+  "native_source_archive": {
+    "files": {
+      "crates/adapters/ondo/README.md": "7160b4e21186fd2cf1d4081bbe0a1c5dace9e662e8aff79c2a91e9cff11f78dd",
+      "crates/adapters/ondo/src/config.rs": "9bdd14a0939919fdafc9a7fa56378d0d9da03a1876b3c48470de293696e065bb",
+      "crates/adapters/ondo/src/continuous.rs": "7d9827e1281772ff0be435173f46802556a77263e22493df831f8b8b7273fc2b",
+      "crates/adapters/ondo/src/diagnostics.rs": "aa652549edd952c049b11d64ace80310b06c3b759c90ec426badb159a5bd7844",
+      "crates/adapters/ondo/src/execution.rs": "d5af0f992faee79922d569556047ca13d01ad999cceb4694f47b31bed083543a",
+      "crates/adapters/ondo/src/http/client.rs": "b56a524e6b7d9a34ffcfea98552341d2b5d359124d4b332e81b355bd30ba3bf4",
+      "crates/adapters/ondo/src/http/rate_limit.rs": "9a776f2d096493be17b9cf4dc5202f5979d700ac2ffa8216ad7272ac6e9c65fe",
+      "crates/adapters/ondo/src/production.rs": "8b55ba21acf99405e2c7a476d22e751a0e519f3ee7670bcc5410d13e09464f02",
+      "crates/adapters/ondo/src/python/config.rs": "6d6c2061d9a009837330d1623cd6096087dd214b3b6a5c53ae96c273d30440b5",
+      "crates/adapters/ondo/src/python/factories.rs": "75c935b000383c4ff13671e68b9ec2c2e7b144699f62823482a2188bb90e0ee6",
+      "crates/adapters/ondo/src/python/mod.rs": "e85615886af374da65a549ba3a397e80ee9b3a689c3c9d1a295fd1721f56bf5c",
+      "crates/adapters/ondo/src/reconciliation.rs": "0fa4fe30ee7ad64133fc13f254715cc574e51ac19a0c4593473f82271ef5e988",
+      "crates/adapters/ondo/src/websocket/private/stream.rs": "d4d629b2bcfba5e36495e69d97f3d92443f725797ecb882ced2ecf4c9f81ba50",
+      "crates/adapters/ondo/tests/continuous_execution.rs": "aa0458f1f65902e3ce427501fd4bb4c2740fd2067d0217ddcccde620bfb45e7a",
+      "crates/adapters/ondo/tests/private_runtime.rs": "869666f8154541cf0fccad0a3a7fe02078adb860e37d63f806fa850a86508d51",
+      "crates/adapters/ondo/tests/python.rs": "12b99e9b0887da99b9b11467708a5b92a8ec64ad678cc2ea108c03833ada8e4f",
+      "python/nautilus_trader/adapters/ondo/__init__.py": "91c3182823bcc658841b8e04e505bfd771cc9d6f1d8ea5b00bb8cb1c2afe7216",
+      "python/nautilus_trader/adapters/ondo/__init__.pyi": "b1b1dffccc54822bd8c99b52d2e40d7c67230522a6a5d39faeee604ecb081d6d"
+    },
+    "path": "E:\\persarb\\worktrees\\issue122-ondo-app\\reports\\ondo-continuous\\20261013-offline\\native-source.zip",
+    "sha256": "35b419176c35ae2c4c9c965dfd0c995e13fd71fc3c8ad3af633b2275249186a6"
+  },
+  "native_tests": {
+    "continuous_transport": 9,
+    "integration_regressions": 604,
+    "python_projection": 9,
+    "total": 1156,
+    "unit": 534
+  },
+  "provenance_path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\native-provenance.json",
+  "provenance_sha256": "cd81154b9aa9a287e653a1bca34e7e91d08ed2935619f69bf0235735c70fb5d0",
+  "saved_existing_commits": {
+    "app": [
+      "b94d2b1",
+      "18d7250"
+    ],
+    "native": "eebe7762493d9a97b291a1df864e50162bbd139f"
+  },
+  "scope": "source-bound local Windows candidate; synthetic loopback execution only",
+  "success": {
+    "balances": {
+      "USDC": {
+        "free": "4999.94000000",
+        "locked": "0E-8",
+        "total": "4999.94000000"
+      }
+    },
+    "elapsed_secs": 133.15599999998813,
+    "fees": {
+      "USDC": "0.06000000"
+    },
+    "fills": 6,
+    "net_positions": {
+      "BTC-USD-PERP.ONDO": "0",
+      "TSLA-USD-PERP.ONDO": "0"
+    },
+    "same_strategy": true,
+    "shutdown_complete": true,
+    "symbols": [
+      "BTC-USD-PERP.ONDO",
+      "TSLA-USD-PERP.ONDO"
+    ]
+  },
+  "wheel": {
+    "filename": "nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "name": "nautilus-trader",
+    "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "sha256": "6d63d32c70e42bef4a5bd783887f889b7c222f18fe14d6ef00025f42edd863de",
+    "size": 108772754,
+    "tags": [
+      "cp312-cp312-win_amd64"
+    ],
+    "version": "2.0.0rc4"
+  }
+}

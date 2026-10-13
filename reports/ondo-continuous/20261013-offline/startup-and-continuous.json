@@ -1,0 +1,1687 @@
+{
+  "all_endpoints_loopback": true,
+  "continued_in_same_strategy": true,
+  "continued_instruments": [
+    "BTC-USD-PERP.ONDO",
+    "TSLA-USD-PERP.ONDO"
+  ],
+  "elapsed_secs": 133.15599999998813,
+  "entry_observations": [
+    {
+      "cached_open_quantity": "0.0001",
+      "confirmed_filled_quantity": "0.0001",
+      "instrument_id": "BTC-USD-PERP.ONDO",
+      "portfolio_net_position": "0.0001"
+    },
+    {
+      "cached_open_quantity": "0.01",
+      "confirmed_filled_quantity": "0.01",
+      "instrument_id": "TSLA-USD-PERP.ONDO",
+      "portfolio_net_position": "0.01"
+    }
+  ],
+  "final_snapshot": {
+    "account_cashflows": {
+      "account_wide": true,
+      "baseline_read_unix_nanos": 1791863844062295601,
+      "funding_history_reconciled": true,
+      "funding_payments_usdc": "0",
+      "latest_read_unix_nanos": 1791863956072013100,
+      "margin_balance_change_usdc": "-0.06",
+      "settlement_currency": "USDC",
+      "source": "native-account-reconciliation",
+      "strategy_pnl_claimed": false,
+      "wallet_balance_change_usdc": "-0.06"
+    },
+    "account_positions_owned": true,
+    "complete": true,
+    "connected_ready": false,
+    "coverage_complete": true,
+    "dms_release": {
+      "acknowledged": true,
+      "attempted": true,
+      "frame_sent": true,
+      "last_update_data_kind": "missing",
+      "last_update_enabled": "missing",
+      "last_update_op": "missing",
+      "last_update_status": "missing",
+      "last_update_timeout": "missing",
+      "outcome": "acknowledged",
+      "trace": {
+        "checkpoint_finished_unix_nanos": 1791863961207844200,
+        "dms_subscribed_after_release": 0,
+        "dms_unsubscribed_after_release": 1,
+        "last_frame_kind": "unsubscribed",
+        "last_frame_unix_nanos": 1791863961065480300,
+        "other_unsubscribed_after_release": 0,
+        "release_ack_observed_unix_nanos": 1791863961065492700,
+        "release_sent_unix_nanos": 1791863961065202300,
+        "release_started_unix_nanos": 1791863961065191100,
+        "request_drain_finished_unix_nanos": 1791863955180503200,
+        "requests_drained": true,
+        "shutdown_budget_nanos": 15000000000,
+        "shutdown_finished_unix_nanos": 1791863961207887400,
+        "shutdown_started_unix_nanos": 1791863955178370300,
+        "stream_stop_finished_unix_nanos": 1791863961203866400,
+        "stream_stop_started_unix_nanos": 1791863961078146500,
+        "text_frames_after_release": 1,
+        "text_frames_before_release": 34,
+        "unclassified_after_release": 0
+      },
+      "updates_after_release": 0,
+      "updates_before_release": 0
+    },
+    "execution_cost": null,
+    "foreign_open_orders": 0,
+    "generation": 22,
+    "late_fills": 0,
+    "latest_activity_generation": 53,
+    "latest_activity_unix_nanos": 1791863955178375400,
+    "metadata_fresh": true,
+    "mode": "continuous",
+    "native_ready": false,
+    "own_open_orders": 0,
+    "phase": "final",
+    "position_quantities": {},
+    "reconciled_activity_generation": 53,
+    "reconciled_flat": true,
+    "reconciliation_unix_nanos": 1791863961065032700,
+    "reduction_ready": false,
+    "run_id": "continuous-app-matching",
+    "shutdown_status": "clean",
+    "snapshot_fresh": true,
+    "snapshot_unix_nanos": 1791863961065032700,
+    "unknown_submissions": 0
+  },
+  "frames": [
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "login"
+    },
+    {
+      "channel": "ordersPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "fillsPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "topOfBooksPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "topOfBooksPerps",
+      "has_timeout": false,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "",
+      "has_timeout": false,
+      "op": "ping"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": true,
+      "op": "subscribe"
+    },
+    {
+      "channel": "cancelAllOrdersAfterPerps",
+      "has_timeout": false,
+      "op": "unsubscribe"
+    }
+  ],
+  "identity": {
+    "app": {
+      "commit": "18d72503f6bf0e89efe0a6f4b61b861a4a2a4ed5",
+      "dirty": true,
+      "source_scope": [
+        "src",
+        "scripts",
+        "tests",
+        "config",
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version"
+      ],
+      "tracked_content_sha256": "63cecf2c0dbb71354fe266080c2cd2ee98af496d6529499f5c87d011f7477735",
+      "tree": "4fbad3a6a966c881d8ff60cfa92fd114d9d59214",
+      "untracked_sha256": "ae01ec2c0dc10cbffbd3ea4635e0185816d9324a8a7c4a45597aaa5b62252a16"
+    },
+    "installed": {
+      "adapter_stub_sha256": {
+        "nautilus_trader/adapters/aster/__init__.pyi": "9b72dbc7b89b2578ef6d124b7a6df9e57b047e21edb7789acce82f85fed9bb00",
+        "nautilus_trader/adapters/ondo/__init__.pyi": "b1b1dffccc54822bd8c99b52d2e40d7c67230522a6a5d39faeee604ecb081d6d"
+      },
+      "direct_url": "file:///E:/persarb/_tmp/issue122-acceptance/wheel-v2/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "interpreter": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Scripts\\python.exe",
+      "native_module": "E:\\persarb\\_tmp\\issue122-acceptance\\venv\\Lib\\site-packages\\nautilus_trader\\_libnautilus.cp312-win_amd64.pyd",
+      "native_module_sha256": "53c6ea7e9436b1686297ee5baec62852df9dfafbc553a1483a08b874dbe139e4",
+      "python_version": "3.12.9"
+    },
+    "native_provenance": {
+      "declared_build": {
+        "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+        "profile": "nextest"
+      },
+      "declared_native": {
+        "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+        "commit": "f2965180f074dc12fbc1c45509465f2d551541ac",
+        "dirty": [
+          "M crates/adapters/ondo/README.md",
+          " M crates/adapters/ondo/src/config.rs",
+          " M crates/adapters/ondo/src/diagnostics.rs",
+          " M crates/adapters/ondo/src/execution.rs",
+          " M crates/adapters/ondo/src/http/client.rs",
+          " M crates/adapters/ondo/src/http/rate_limit.rs",
+          " M crates/adapters/ondo/src/production.rs",
+          " M crates/adapters/ondo/src/python/config.rs",
+          " M crates/adapters/ondo/src/python/factories.rs",
+          " M crates/adapters/ondo/src/python/mod.rs",
+          " M crates/adapters/ondo/src/reconciliation.rs",
+          " M crates/adapters/ondo/src/websocket/private/stream.rs",
+          " M crates/adapters/ondo/tests/private_runtime.rs",
+          " M crates/adapters/ondo/tests/python.rs",
+          " M python/nautilus_trader/adapters/ondo/__init__.py",
+          " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+          "?? crates/adapters/ondo/src/continuous.rs",
+          "?? crates/adapters/ondo/tests/continuous_execution.rs"
+        ],
+        "dirty_count": 18,
+        "tracked_diff_sha256": "a9e52d8ea437b668ab065ef6638d1933e7814f0be7aec79bed7d3206c8bdd9f6",
+        "tree": "084910450328755dffc458c6a1ee831fe00795ad",
+        "untracked_sha256": "d4770e9aaa04a0a929d93ff57d4e0d9dbb057841c062a9ceb8ea1b80b2b0a812"
+      },
+      "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\native-provenance.json",
+      "sha256": "cd81154b9aa9a287e653a1bca34e7e91d08ed2935619f69bf0235735c70fb5d0",
+      "source_binding": "verified"
+    },
+    "schema_version": 1,
+    "strict_source_binding_passed": true,
+    "wheel": {
+      "path": "E:\\persarb\\_tmp\\issue122-acceptance\\wheel-v2\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+      "sha256": "6d63d32c70e42bef4a5bd783887f889b7c222f18fe14d6ef00025f42edd863de",
+      "tags": [
+        "cp312-cp312-win_amd64"
+      ]
+    }
+  },
+  "journal_exists": true,
+  "node_error": null,
+  "observation": {
+    "account_balances": {
+      "USDC": {
+        "free": "4999.94000000",
+        "locked": "0E-8",
+        "total": "4999.94000000"
+      }
+    },
+    "failures": [],
+    "fees_by_currency": {
+      "USDC": "0.06000000"
+    },
+    "fills": [
+      {
+        "client_order_id": "O-20261013-035756-001-000-3",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "85171.0",
+        "quantity": "0.0001",
+        "role": "entry",
+        "trade_id": "fill-0",
+        "ts_event": 1791863878066645000,
+        "ts_init": 1791863879064177000
+      },
+      {
+        "client_order_id": "O-20261013-035807-001-000-4",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "84830.0",
+        "quantity": "0.0001",
+        "role": "close",
+        "trade_id": "fill-1",
+        "ts_event": 1791863888060258000,
+        "ts_init": 1791863891067564800
+      },
+      {
+        "client_order_id": "O-20261013-035821-001-000-5",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "85171.0",
+        "quantity": "0.0001",
+        "role": "policy_entry_BTC-USD-PERP",
+        "trade_id": "fill-2",
+        "ts_event": 1791863903058061000,
+        "ts_init": 1791863904058989400
+      },
+      {
+        "client_order_id": "O-20261013-035832-001-000-6",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "price": "84830.0",
+        "quantity": "0.0001",
+        "role": "policy_close_BTC-USD-PERP",
+        "trade_id": "fill-3",
+        "ts_event": 1791863913057653000,
+        "ts_init": 1791863915071430500
+      },
+      {
+        "client_order_id": "O-20261013-035843-001-000-7",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "TSLA-USD-PERP.ONDO",
+        "price": "227.95",
+        "quantity": "0.01",
+        "role": "policy_entry_TSLA-USD-PERP",
+        "trade_id": "fill-4",
+        "ts_event": 1791863925071707000,
+        "ts_init": 1791863926065701900
+      },
+      {
+        "client_order_id": "O-20261013-035854-001-000-8",
+        "commission": "0.01000000",
+        "currency": "USDC",
+        "instrument_id": "TSLA-USD-PERP.ONDO",
+        "price": "227.04",
+        "quantity": "0.01",
+        "role": "policy_close_TSLA-USD-PERP",
+        "trade_id": "fill-5",
+        "ts_event": 1791863935069008000,
+        "ts_init": 1791863937067090000
+      }
+    ],
+    "native_snapshot": {
+      "account_cashflows": {
+        "account_wide": true,
+        "baseline_read_unix_nanos": 1791863844062295601,
+        "funding_history_reconciled": true,
+        "funding_payments_usdc": "0",
+        "latest_read_unix_nanos": 1791863940076625500,
+        "margin_balance_change_usdc": "-0.06",
+        "settlement_currency": "USDC",
+        "source": "native-account-reconciliation",
+        "strategy_pnl_claimed": false,
+        "wallet_balance_change_usdc": "-0.06"
+      },
+      "account_positions_owned": true,
+      "complete": false,
+      "connected_ready": true,
+      "coverage_complete": true,
+      "dms_release": {
+        "acknowledged": false,
+        "attempted": false,
+        "frame_sent": false,
+        "last_update_data_kind": "missing",
+        "last_update_enabled": "missing",
+        "last_update_op": "missing",
+        "last_update_status": "missing",
+        "last_update_timeout": "missing",
+        "outcome": "not_attempted",
+        "trace": {
+          "checkpoint_finished_unix_nanos": null,
+          "dms_subscribed_after_release": 0,
+          "dms_unsubscribed_after_release": 0,
+          "last_frame_kind": "subscribed",
+          "last_frame_unix_nanos": 1791863941085484500,
+          "other_unsubscribed_after_release": 0,
+          "release_ack_observed_unix_nanos": null,
+          "release_sent_unix_nanos": null,
+          "release_started_unix_nanos": null,
+          "request_drain_finished_unix_nanos": null,
+          "requests_drained": null,
+          "shutdown_budget_nanos": null,
+          "shutdown_finished_unix_nanos": null,
+          "shutdown_started_unix_nanos": null,
+          "stream_stop_finished_unix_nanos": null,
+          "stream_stop_started_unix_nanos": null,
+          "text_frames_after_release": 0,
+          "text_frames_before_release": 32,
+          "unclassified_after_release": 0
+        },
+        "updates_after_release": 0,
+        "updates_before_release": 0
+      },
+      "execution_cost": null,
+      "foreign_open_orders": 0,
+      "generation": 19,
+      "late_fills": 0,
+      "latest_activity_generation": 52,
+      "latest_activity_unix_nanos": 1791863937067031600,
+      "metadata_fresh": true,
+      "mode": "continuous",
+      "native_ready": true,
+      "own_open_orders": 0,
+      "phase": "continuous",
+      "position_quantities": {},
+      "reconciled_activity_generation": 52,
+      "reconciled_flat": true,
+      "reconciliation_unix_nanos": 1791863945060358600,
+      "reduction_ready": true,
+      "run_id": "continuous-app-matching",
+      "snapshot_fresh": true,
+      "snapshot_unix_nanos": 1791863945060358600,
+      "unknown_submissions": 0
+    },
+    "net_position": "0",
+    "net_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": "0",
+      "TSLA-USD-PERP.ONDO": "0"
+    },
+    "open_positions": 0,
+    "open_positions_by_instrument": {
+      "BTC-USD-PERP.ONDO": 0,
+      "TSLA-USD-PERP.ONDO": 0
+    },
+    "operations": [
+      {
+        "client_order_id": "O-20261013-035733-001-000-1",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184357.64,
+            "ts_event": 1791863853120517800,
+            "ts_init": 1791863853120517800
+          },
+          {
+            "elapsed_secs": 1.937999999994645,
+            "kind": "accepted",
+            "observed_monotonic": 184359.578,
+            "ts_event": 1791863855066159000,
+            "ts_init": 1791863855066807800
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": true,
+        "price": "84999.8",
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "requested_monotonic": 184357.64,
+        "requested_unix_nanos": 1791863853119684100,
+        "role": "maker",
+        "time_in_force": "GTC"
+      },
+      {
+        "client_order_id": "O-20261013-035733-001-000-1",
+        "events": [
+          {
+            "elapsed_secs": 1.0,
+            "kind": "canceled",
+            "observed_monotonic": 184360.578,
+            "ts_event": 1791863855066159000,
+            "ts_init": 1791863856065068100
+          }
+        ],
+        "operation": "cancel",
+        "requested_monotonic": 184359.578,
+        "requested_unix_nanos": 1791863855067133000,
+        "role": "maker"
+      },
+      {
+        "client_order_id": "O-20261013-035744-001-000-2",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184368.578,
+            "ts_event": 1791863864059831200,
+            "ts_init": 1791863864059831200
+          },
+          {
+            "elapsed_secs": 1.0,
+            "kind": "accepted",
+            "observed_monotonic": 184369.578,
+            "ts_event": 1791863865061295000,
+            "ts_init": 1791863865062582500
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": true,
+        "price": "84999.7",
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "requested_monotonic": 184368.578,
+        "requested_unix_nanos": 1791863864059421600,
+        "role": "replacement",
+        "time_in_force": "GTC"
+      },
+      {
+        "client_order_id": "O-20261013-035744-001-000-2",
+        "events": [
+          {
+            "elapsed_secs": 1.0,
+            "kind": "canceled",
+            "observed_monotonic": 184370.578,
+            "ts_event": 1791863865061295000,
+            "ts_init": 1791863866062797900
+          }
+        ],
+        "operation": "cancel",
+        "requested_monotonic": 184369.578,
+        "requested_unix_nanos": 1791863865062822600,
+        "role": "replacement"
+      },
+      {
+        "client_order_id": "O-20261013-035756-001-000-3",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184380.656,
+            "ts_event": 1791863876132022500,
+            "ts_init": 1791863876132022500
+          },
+          {
+            "elapsed_secs": 1.937000000005355,
+            "kind": "accepted",
+            "observed_monotonic": 184382.593,
+            "ts_event": 1791863878066645000,
+            "ts_init": 1791863878067336500
+          },
+          {
+            "elapsed_secs": 2.922000000020489,
+            "kind": "filled",
+            "observed_monotonic": 184383.578,
+            "ts_event": 1791863878066645000,
+            "ts_init": 1791863879064177000
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": false,
+        "price": "85171.0",
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "requested_monotonic": 184380.656,
+        "requested_unix_nanos": 1791863876131571700,
+        "role": "entry",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-035807-001-000-4",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184391.578,
+            "ts_event": 1791863887059672500,
+            "ts_init": 1791863887059672500
+          },
+          {
+            "elapsed_secs": 1.0,
+            "kind": "accepted",
+            "observed_monotonic": 184392.578,
+            "ts_event": 1791863888060258000,
+            "ts_init": 1791863888060642000
+          },
+          {
+            "elapsed_secs": 4.014999999984866,
+            "kind": "filled",
+            "observed_monotonic": 184395.593,
+            "ts_event": 1791863888060258000,
+            "ts_init": 1791863891067564800
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": false,
+        "price": "84830.0",
+        "quantity": "0.0001",
+        "reduce_only": true,
+        "requested_monotonic": 184391.578,
+        "requested_unix_nanos": 1791863887059236600,
+        "role": "close",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-035821-001-000-5",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184405.671,
+            "ts_event": 1791863901151838000,
+            "ts_init": 1791863901151838000
+          },
+          {
+            "elapsed_secs": 1.9070000000065193,
+            "kind": "accepted",
+            "observed_monotonic": 184407.578,
+            "ts_event": 1791863903058061000,
+            "ts_init": 1791863903058520800
+          },
+          {
+            "elapsed_secs": 2.9070000000065193,
+            "kind": "filled",
+            "observed_monotonic": 184408.578,
+            "ts_event": 1791863903058061000,
+            "ts_init": 1791863904058989400
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": false,
+        "price": "85171.0",
+        "quantity": "0.0001",
+        "reduce_only": false,
+        "requested_monotonic": 184405.671,
+        "requested_unix_nanos": 1791863901151375400,
+        "role": "policy_entry_BTC-USD-PERP",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-035832-001-000-6",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184416.64,
+            "ts_event": 1791863912116478300,
+            "ts_init": 1791863912116478300
+          },
+          {
+            "elapsed_secs": 0.9379999999946449,
+            "kind": "accepted",
+            "observed_monotonic": 184417.578,
+            "ts_event": 1791863913057653000,
+            "ts_init": 1791863913058157500
+          },
+          {
+            "elapsed_secs": 2.952999999979511,
+            "kind": "filled",
+            "observed_monotonic": 184419.593,
+            "ts_event": 1791863913057653000,
+            "ts_init": 1791863915071430500
+          }
+        ],
+        "instrument_id": "BTC-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": false,
+        "price": "84830.0",
+        "quantity": "0.0001",
+        "reduce_only": true,
+        "requested_monotonic": 184416.64,
+        "requested_unix_nanos": 1791863912116067900,
+        "role": "policy_close_BTC-USD-PERP",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-035843-001-000-7",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184427.703,
+            "ts_event": 1791863923178736600,
+            "ts_init": 1791863923178736600
+          },
+          {
+            "elapsed_secs": 1.889999999984866,
+            "kind": "accepted",
+            "observed_monotonic": 184429.593,
+            "ts_event": 1791863925071707000,
+            "ts_init": 1791863925072108100
+          },
+          {
+            "elapsed_secs": 2.875,
+            "kind": "filled",
+            "observed_monotonic": 184430.578,
+            "ts_event": 1791863925071707000,
+            "ts_init": 1791863926065701900
+          }
+        ],
+        "instrument_id": "TSLA-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": false,
+        "price": "227.95",
+        "quantity": "0.01",
+        "reduce_only": false,
+        "requested_monotonic": 184427.703,
+        "requested_unix_nanos": 1791863923178202900,
+        "role": "policy_entry_TSLA-USD-PERP",
+        "time_in_force": "IOC"
+      },
+      {
+        "client_order_id": "O-20261013-035854-001-000-8",
+        "events": [
+          {
+            "elapsed_secs": 0.0,
+            "kind": "submitted",
+            "observed_monotonic": 184438.593,
+            "ts_event": 1791863934080404900,
+            "ts_init": 1791863934080404900
+          },
+          {
+            "elapsed_secs": 1.0,
+            "kind": "accepted",
+            "observed_monotonic": 184439.593,
+            "ts_event": 1791863935069008000,
+            "ts_init": 1791863935070237800
+          },
+          {
+            "elapsed_secs": 3.0,
+            "kind": "filled",
+            "observed_monotonic": 184441.593,
+            "ts_event": 1791863935069008000,
+            "ts_init": 1791863937067090000
+          }
+        ],
+        "instrument_id": "TSLA-USD-PERP.ONDO",
+        "operation": "create",
+        "post_only": false,
+        "price": "227.04",
+        "quantity": "0.01",
+        "reduce_only": true,
+        "requested_monotonic": 184438.593,
+        "requested_unix_nanos": 1791863934079990200,
+        "role": "policy_close_TSLA-USD-PERP",
+        "time_in_force": "IOC"
+      }
+    ],
+    "phase": "continuous",
+    "source": "installed-native-LiveNode-Strategy",
+    "startup_verified": true,
+    "strategy_pnl_claimed": false
+  },
+  "raw_authentication_recorded": false,
+  "readonly": {
+    "account_reconciliation": {
+      "clean": true,
+      "findings": 0,
+      "foreign_nonterminal_orders": 0,
+      "foreign_terminal_orders": 0,
+      "funding_findings": 0,
+      "production_reconciled": true,
+      "uncertain_findings": 0
+    },
+    "account_state_events": 22,
+    "identity_match": "matched",
+    "logged_in": true,
+    "reconnects": 0,
+    "recoveries": 19,
+    "run_id": "continuous-app-matching",
+    "run_state": "stopped",
+    "shutdown_status": "complete",
+    "subscriptions_acked": {
+      "fillsPerps": true,
+      "ordersPerps": true
+    }
+  },
+  "requests": [
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/contracts"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/account"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/contracts"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035733-001-000-1",
+        "market": "BTC-USD.P",
+        "postOnly": true,
+        "price": "84999.8",
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.0001",
+        "timeInForce": "GTC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "DELETE",
+      "path": "/v1/perps/orders/venue-O-20261013-035733-001-000-1"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035744-001-000-2",
+        "market": "BTC-USD.P",
+        "postOnly": true,
+        "price": "84999.7",
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.0001",
+        "timeInForce": "GTC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "DELETE",
+      "path": "/v1/perps/orders/venue-O-20261013-035744-001-000-2"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035756-001-000-3",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "price": "85171.0",
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.0001",
+        "timeInForce": "IOC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035807-001-000-4",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "price": "84830.0",
+        "reduceOnly": true,
+        "side": "sell",
+        "size": "0.0001",
+        "timeInForce": "IOC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/contracts"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035821-001-000-5",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "price": "85171.0",
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.0001",
+        "timeInForce": "IOC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035832-001-000-6",
+        "market": "BTC-USD.P",
+        "postOnly": false,
+        "price": "84830.0",
+        "reduceOnly": true,
+        "side": "sell",
+        "size": "0.0001",
+        "timeInForce": "IOC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035843-001-000-7",
+        "market": "TSLA-USD.P",
+        "postOnly": false,
+        "price": "227.95",
+        "reduceOnly": false,
+        "side": "buy",
+        "size": "0.01",
+        "timeInForce": "IOC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": {
+        "clientOrderId": "O-20261013-035854-001-000-8",
+        "market": "TSLA-USD.P",
+        "postOnly": false,
+        "price": "227.04",
+        "reduceOnly": true,
+        "side": "sell",
+        "size": "0.01",
+        "timeInForce": "IOC",
+        "type": "limit"
+      },
+      "method": "POST",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/markets"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/orders"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/fills"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/positions"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/balance"
+    },
+    {
+      "body": null,
+      "method": "GET",
+      "path": "/v1/perps/funding_fees"
+    }
+  ],
+  "shutdown": {
+    "acknowledged": true,
+    "attempted": true,
+    "frame_sent": true,
+    "last_update_data_kind": "missing",
+    "last_update_enabled": "missing",
+    "last_update_op": "missing",
+    "last_update_status": "missing",
+    "last_update_timeout": "missing",
+    "outcome": "acknowledged",
+    "trace": {
+      "checkpoint_finished_unix_nanos": 1791863961207844200,
+      "dms_subscribed_after_release": 0,
+      "dms_unsubscribed_after_release": 1,
+      "last_frame_kind": "unsubscribed",
+      "last_frame_unix_nanos": 1791863961065480300,
+      "other_unsubscribed_after_release": 0,
+      "release_ack_observed_unix_nanos": 1791863961065492700,
+      "release_sent_unix_nanos": 1791863961065202300,
+      "release_started_unix_nanos": 1791863961065191100,
+      "request_drain_finished_unix_nanos": 1791863955180503200,
+      "requests_drained": true,
+      "shutdown_budget_nanos": 15000000000,
+      "shutdown_finished_unix_nanos": 1791863961207887400,
+      "shutdown_started_unix_nanos": 1791863955178370300,
+      "stream_stop_finished_unix_nanos": 1791863961203866400,
+      "stream_stop_started_unix_nanos": 1791863961078146500,
+      "text_frames_after_release": 1,
+      "text_frames_before_release": 34,
+      "unclassified_after_release": 0
+    },
+    "updates_after_release": 0,
+    "updates_before_release": 0
+  },
+  "venue_fills": [
+    {
+      "clientOrderId": "O-20261013-035756-001-000-3",
+      "direction": "openLong",
+      "fee": "0.01",
+      "id": "fill-0",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-035756-001-000-3",
+      "price": "85171.0",
+      "side": "buy",
+      "size": "0.0001",
+      "time": "2026-10-13T03:57:58.066645Z"
+    },
+    {
+      "clientOrderId": "O-20261013-035807-001-000-4",
+      "direction": "closeLong",
+      "fee": "0.01",
+      "id": "fill-1",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-035807-001-000-4",
+      "price": "84830.0",
+      "side": "sell",
+      "size": "0.0001",
+      "time": "2026-10-13T03:58:08.060258Z"
+    },
+    {
+      "clientOrderId": "O-20261013-035821-001-000-5",
+      "direction": "openLong",
+      "fee": "0.01",
+      "id": "fill-2",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-035821-001-000-5",
+      "price": "85171.0",
+      "side": "buy",
+      "size": "0.0001",
+      "time": "2026-10-13T03:58:23.058061Z"
+    },
+    {
+      "clientOrderId": "O-20261013-035832-001-000-6",
+      "direction": "closeLong",
+      "fee": "0.01",
+      "id": "fill-3",
+      "isMaker": false,
+      "market": "BTC-USD.P",
+      "orderId": "venue-O-20261013-035832-001-000-6",
+      "price": "84830.0",
+      "side": "sell",
+      "size": "0.0001",
+      "time": "2026-10-13T03:58:33.057653Z"
+    },
+    {
+      "clientOrderId": "O-20261013-035843-001-000-7",
+      "direction": "openLong",
+      "fee": "0.01",
+      "id": "fill-4",
+      "isMaker": false,
+      "market": "TSLA-USD.P",
+      "orderId": "venue-O-20261013-035843-001-000-7",
+      "price": "227.95",
+      "side": "buy",
+      "size": "0.01",
+      "time": "2026-10-13T03:58:45.071707Z"
+    },
+    {
+      "clientOrderId": "O-20261013-035854-001-000-8",
+      "direction": "closeLong",
+      "fee": "0.01",
+      "id": "fill-5",
+      "isMaker": false,
+      "market": "TSLA-USD.P",
+      "orderId": "venue-O-20261013-035854-001-000-8",
+      "price": "227.04",
+      "side": "sell",
+      "size": "0.01",
+      "time": "2026-10-13T03:58:55.069008Z"
+    }
+  ],
+  "venue_quantities": {
+    "BTC-USD.P": "0.0000",
+    "TSLA-USD.P": "0.00"
+  },
+  "venue_quantity": "0.0000",
+  "watchdog_fired": false
+}
