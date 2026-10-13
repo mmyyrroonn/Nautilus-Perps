@@ -203,3 +203,7 @@ max_close_attempts = 2
 max_slippage_bps = "20"
 cleanup_budget_secs = 15
 
+# Finite native Backpack operator envelope. Values may shrink the code-level caps.
+[backpack_trade]
+order_notional_usd = 5
+max_gross_notional_usd = 5

@@ -1,0 +1,13 @@
+[
+  {
+    "action": "submit",
+    "symbol": "BTC_USDC_PERP",
+    "side": "buy",
+    "quantity": "0.00001",
+    "price": "100000",
+    "time_in_force": "GTC",
+    "post_only": true,
+    "reduce_only": false,
+    "cancel_after_accept": true
+  }
+]
