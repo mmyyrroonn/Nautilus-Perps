@@ -184,6 +184,7 @@ class ContinuousStrategyConfig(StrategyConfig):
         "account_id",
         "startup_timeout_secs",
         "slippage_bps",
+        "startup_mode",
     )
 
     def __new__(cls, *args, **kwargs):
@@ -197,6 +198,7 @@ class ContinuousStrategyConfig(StrategyConfig):
         account_id: AccountId,
         startup_timeout_secs: int = 120,
         slippage_bps: str = "20",
+        startup_mode: str = "maker",
         **_kwargs,
     ):
         super().__init__()
@@ -204,6 +206,7 @@ class ContinuousStrategyConfig(StrategyConfig):
         self.account_id = account_id
         self.startup_timeout_secs = startup_timeout_secs
         self.slippage_bps = slippage_bps
+        self.startup_mode = startup_mode
 
 
 def _guarded_callback(method):
@@ -220,7 +223,7 @@ def _guarded_callback(method):
 
 
 class OndoContinuousStrategy(Strategy):
-    """Check cancel/replace/IOC/RO once, then serve policy callbacks in this same Strategy.
+    """Check the chosen maker or market sequence, then serve policy callbacks.
 
     Post-only orders must be confirmed cancelled without fills before a replacement
     is created. A maker fill/cancel race fails the startup check rather than replaying
@@ -248,6 +251,8 @@ class OndoContinuousStrategy(Strategy):
             raise ValueError(
                 "startup timeout must be positive and price protection within 20 bps"
             )
+        if config.startup_mode not in {"maker", "market"}:
+            raise ValueError("startup mode must be maker or market")
         self.session = session
         self._configured_ids = tuple(
             InstrumentId.from_str(name) for name in session.instrument_ids
@@ -270,6 +275,9 @@ class OndoContinuousStrategy(Strategy):
         self._entry_price: Decimal | None = None
         self._maker_price: Decimal | None = None
         self._startup_ids: dict[str, str] = {}
+        self._market_step = 0
+        self._market_position_observations: list[dict] = []
+        self._market_completed: list[str] = []
 
     @_guarded_callback
     def on_start(self) -> None:
@@ -411,6 +419,9 @@ class OndoContinuousStrategy(Strategy):
         now = int(self.clock.timestamp_ns())
         if not 0 <= now - self._last_quote.ts_init <= 2_000_000_000:
             return
+        if self.config.startup_mode == "market":
+            self._advance_market()
+            return
         if self.phase == "awaiting_native":
             if not self._native_ready(flat=True):
                 return
@@ -522,6 +533,175 @@ class OndoContinuousStrategy(Strategy):
             self.startup_verified = True
             self.phase = "continuous"
 
+    def _application_flat(self) -> bool:
+        return not self.cache.positions_open(
+            instrument_id=self.config.instrument_id,
+            account_id=self.config.account_id,
+        ) and self.portfolio.net_position(
+            self.config.instrument_id, self.config.account_id
+        ) == Decimal(0)
+
+    def _fills_complete(self, role: str, order) -> bool:
+        fills = [fill for fill in self.fills.values() if fill["role"] == role]
+        return bool(
+            fills
+            and sum((exact(fill["quantity"]) for fill in fills), Decimal(0))
+            == order.filled_qty.as_decimal()
+            and all(
+                fill["commission"] is not None and fill["currency"] is not None
+                for fill in fills
+            )
+        )
+
+    def _advance_market(self) -> None:
+        """Verify both directional round trips; never infer a fill or replay an order."""
+        roles = (
+            "market_open_long",
+            "market_close_long",
+            "market_open_short",
+            "market_close_short",
+        )
+        sides = (OrderSide.BUY, OrderSide.SELL, OrderSide.SELL, OrderSide.BUY)
+        step = self._market_step
+        role, side = roles[step], sides[step]
+        closing = step % 2 == 1
+        name = self._startup_ids.get(role)
+        if name is None:
+            if closing:
+                if not self._native_ready(reduce_only=True):
+                    return
+                entry = self.cache.order(
+                    ClientOrderId.from_str(self._startup_ids[roles[step - 1]])
+                )
+                quantity = entry.filled_qty.as_decimal()
+            else:
+                if not self._native_ready(flat=True):
+                    return
+                if not self._application_flat():
+                    self._fail(
+                        "market opening requires native and application account Flat"
+                    )
+                    return
+                # Use the lower touch for venue minimums, and leave sizing headroom.
+                # This estimate is not a market execution price or slippage guarantee.
+                quantity = minimum_quantity(
+                    self._instrument,
+                    self._last_quote.bid_price.as_decimal(),
+                    exact(self.session.limits.max_notional_per_order_usd),
+                )
+                if quantity * self._protected_price(OrderSide.BUY) > exact(
+                    self.session.limits.max_notional_per_order_usd
+                ):
+                    self._fail(
+                        "minimum market quantity exceeds the approved order budget"
+                    )
+                    return
+            self.phase = f"{role}_pending"
+            self._startup_ids[role] = self.submit_market(
+                role, side, quantity, reduce_only=closing
+            )
+            return
+        order = self.cache.order(ClientOrderId.from_str(name))
+        if order is None or not order.is_closed:
+            return
+        filled = order.filled_qty.as_decimal()
+        if filled <= 0:
+            self._fail(f"{role} terminated without a fill; no automatic replay")
+            return
+        if not self._fills_complete(role, order):
+            return
+        if closing:
+            entry = self.cache.order(
+                ClientOrderId.from_str(self._startup_ids[roles[step - 1]])
+            )
+            if filled != entry.filled_qty.as_decimal():
+                self._fail(
+                    "market close did not cover the confirmed entry fill; no next opening"
+                )
+                return
+            if not self._native_ready(flat=True) or not self._application_flat():
+                return
+            self._market_completed.append("long" if step == 1 else "short")
+            if step == 3:
+                self.startup_verified = True
+                self.phase = "continuous"
+                return
+        else:
+            if not self._native_ready(reduce_only=True):
+                return
+            net = self.portfolio.net_position(
+                self.config.instrument_id, self.config.account_id
+            )
+            expected = filled if side == OrderSide.BUY else -filled
+            positions = self.cache.positions_open(
+                instrument_id=self.config.instrument_id,
+                account_id=self.config.account_id,
+            )
+            if (
+                net != expected
+                or sum(
+                    (position.quantity.as_decimal() for position in positions),
+                    Decimal(0),
+                )
+                != filled
+            ):
+                return
+            self._market_position_observations.append(
+                {
+                    "role": role,
+                    "confirmed_filled_quantity": str(filled),
+                    "portfolio_net_position": str(net),
+                    "native_reduction_ready": True,
+                }
+            )
+        self._market_step += 1
+        self.phase = "awaiting_market_order"
+
+    def submit_market(
+        self,
+        role: str,
+        side: OrderSide,
+        quantity: Decimal,
+        *,
+        reduce_only: bool = False,
+    ) -> str:
+        """Submit a genuine native MARKET order with no limit price on the wire."""
+        if self.failures or not self.session.execution_enabled or quantity <= 0:
+            raise ValueError("market execution is disabled or quantity is invalid")
+        # Require a fresh native quote even though MARKET carries no price boundary.
+        self._protected_price(side)
+        order = self.order_factory.market(
+            instrument_id=self.config.instrument_id,
+            order_side=side,
+            quantity=self._instrument.make_qty(quantity),
+            time_in_force=TimeInForce.IOC,
+            reduce_only=reduce_only,
+        )
+        name = str(order.client_order_id)
+        self._orders[name] = role
+        self.operations.append(
+            {
+                "operation": "create",
+                "role": role,
+                "client_order_id": name,
+                "instrument_id": str(self.config.instrument_id),
+                "order_type": "MARKET",
+                "side": str(side),
+                "quantity": str(order.quantity.as_decimal()),
+                "price": None,
+                "post_only": False,
+                "reduce_only": reduce_only,
+                "time_in_force": str(TimeInForce.IOC),
+                "reference_bid": str(self._last_quote.bid_price.as_decimal()),
+                "reference_ask": str(self._last_quote.ask_price.as_decimal()),
+                "requested_unix_nanos": int(self.clock.timestamp_ns()),
+                "requested_monotonic": time.monotonic(),
+                "events": [],
+            }
+        )
+        self.submit_order(order)
+        return name
+
     def submit_limit(
         self,
         role: str,
@@ -561,6 +741,8 @@ class OndoContinuousStrategy(Strategy):
         self.operations.append(
             {
                 "operation": "create",
+                "order_type": "LIMIT",
+                "side": str(side),
                 "role": role,
                 "client_order_id": name,
                 "instrument_id": str(target),
@@ -707,6 +889,9 @@ class OndoContinuousStrategy(Strategy):
 
     def on_order_expired(self, event) -> None:
         role = self._event(event, "expired")
+        if role and role.startswith("market_"):
+            self._advance()
+            return
         if role == "entry":
             order = self.cache.order(event.client_order_id)
             if (
@@ -735,6 +920,9 @@ class OndoContinuousStrategy(Strategy):
             "source": "installed-native-LiveNode-Strategy",
             "phase": self.phase,
             "startup_verified": self.startup_verified,
+            "startup_mode": self.config.startup_mode,
+            "market_completed_round_trips": list(self._market_completed),
+            "market_position_observations": list(self._market_position_observations),
             "failures": list(self.failures),
             "operations": self.operations,
             "fills": list(self.fills.values()),
@@ -784,6 +972,7 @@ def build_session(
     *,
     startup_instrument: str | None = None,
     startup_timeout_secs: int = 120,
+    startup_mode: str = "maker",
     on_continuous_quote: Callable | None = None,
 ):
     """Register real native data/execution factories and the reusable Strategy, without I/O."""
@@ -841,6 +1030,7 @@ def build_session(
             instrument_id=instrument,
             account_id=AccountId.from_str(session.account_id),
             startup_timeout_secs=startup_timeout_secs,
+            startup_mode=startup_mode,
         ),
         session=session,
         execution_factory=factory,

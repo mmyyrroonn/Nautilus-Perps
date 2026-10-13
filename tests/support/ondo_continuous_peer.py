@@ -35,10 +35,15 @@ class ContinuousPeer:
     """A shared account, REST order history, fill history and two real socket surfaces."""
 
     def __init__(
-        self, *, fill_on_cancel: bool = False, missing_release: bool = False
+        self,
+        *,
+        fill_on_cancel: bool = False,
+        missing_release: bool = False,
+        empty_market_entry: bool = False,
     ) -> None:
         self.fill_on_cancel = fill_on_cancel
         self.missing_release = missing_release
+        self.empty_market_entry = empty_market_entry
         self.orders: dict[str, dict] = {}
         self.fills: list[dict] = []
         self.quantities = {MARKET: Decimal(0), SECOND_MARKET: Decimal(0)}
@@ -164,6 +169,7 @@ class ContinuousPeer:
         return self.quantities[MARKET]
 
     def _fill(self, order: dict) -> dict:
+        held = self.quantities[order["market"]]
         quantity = Decimal(order["size"]) - Decimal(order["filledSize"])
         order.update(
             status="fullyfilled",
@@ -183,7 +189,9 @@ class ContinuousPeer:
             "price": order["price"],
             "size": str(quantity),
             "side": order["side"],
-            "direction": "openLong" if order["side"] == "buy" else "closeLong",
+            "direction": ("closeShort" if held < 0 else "openLong")
+            if order["side"] == "buy"
+            else ("closeLong" if held > 0 else "openShort"),
             "fee": "0.01",
             "time": timestamp(),
             "isMaker": False,
@@ -293,13 +301,20 @@ class ContinuousPeer:
                 if quantity != 0
             ]
         elif method == "POST" and path == "/v1/perps/orders":
+            market_order = body["type"] == "market"
+            if market_order and (
+                "price" in body or "timeInForce" in body or body["postOnly"]
+            ):
+                return 400, None, []
             name = body["clientOrderId"]
             order = {
                 "orderId": "venue-" + name,
                 "clientOrderId": name,
                 "market": body["market"],
                 "side": body["side"],
-                "price": body["price"],
+                "price": body.get(
+                    "price", "85000.0" if body["market"] == MARKET else "227.50"
+                ),
                 "size": body["size"],
                 "filledSize": "0",
                 "lastFillSize": "0",
@@ -307,17 +322,26 @@ class ContinuousPeer:
                 "fee": "0",
                 "status": "open",
                 "createdAt": timestamp(),
-                "type": "limit",
-                "timeInForce": body["timeInForce"],
+                "type": body["type"],
                 "reduceOnly": body["reduceOnly"],
             }
+            if not market_order:
+                order["timeInForce"] = body["timeInForce"]
             self.orders[name] = order
-            if body["timeInForce"] == "IOC":
+            if market_order or body["timeInForce"] == "IOC":
                 held = self.quantities[body["market"]]
-                if body["reduceOnly"] and (held <= 0 or Decimal(body["size"]) > held):
+                if body["reduceOnly"] and (
+                    held == 0
+                    or Decimal(body["size"]) > abs(held)
+                    or (held > 0 and body["side"] != "sell")
+                    or (held < 0 and body["side"] != "buy")
+                ):
                     return 400, None, []
-                fill = self._fill(order)
-                updates.append(("fillsPerps", fill))
+                if market_order and self.empty_market_entry and not body["reduceOnly"]:
+                    order["status"] = "canceled"
+                else:
+                    fill = self._fill(order)
+                    updates.append(("fillsPerps", fill))
             updates.insert(0, ("ordersPerps", copy.deepcopy(order)))
             result = order
         elif path.startswith("/v1/perps/orders/"):

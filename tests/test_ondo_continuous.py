@@ -104,7 +104,11 @@ def _child(mode: str, journal: Path) -> dict:
     sys.path.insert(0, str(ROOT / "tests" / "support"))
     from ondo_continuous_peer import ContinuousPeer, INSTRUMENT, SECOND_INSTRUMENT
 
-    peer = ContinuousPeer(fill_on_cancel=mode == "cancel-race")
+    market_test = mode.startswith("market")
+    peer = ContinuousPeer(
+        fill_on_cancel=mode == "cancel-race",
+        empty_market_entry=mode == "market-empty",
+    )
     session = ContinuousSession(
         instrument_ids=(INSTRUMENT, SECOND_INSTRUMENT),
         environment="production",
@@ -216,13 +220,14 @@ def _child(mode: str, journal: Path) -> dict:
         node, factory, strategy = build_session(
             session,
             startup_timeout_secs=120,
-            on_continuous_quote=policy,
+            startup_mode="market" if market_test else "maker",
+            on_continuous_quote=None if market_test else policy,
         )
         handle = node.handle()
 
         def monitor() -> None:
             while not monitor_done.wait(0.05):
-                if strategy.failures:
+                if strategy.failures or (market_test and strategy.startup_verified):
                     handle.stop()
                     return
 
@@ -441,6 +446,213 @@ def test_installed_continuous_cancel_fill_race_refuses_replacement(tmp_path) -> 
     assert (
         result["final_snapshot"] is None
         or result["final_snapshot"]["complete"] is False
+    )
+
+
+def test_installed_market_opens_and_closes_long_and_short(tmp_path) -> None:
+    result = _run("market", tmp_path / "market-ledger.json")
+    report = result["observation"]
+    assert result["node_error"] is None, result
+    assert not result["watchdog_fired"] and not report["failures"]
+    assert report["startup_verified"] is True
+    assert report["startup_mode"] == "market"
+    assert report["market_completed_round_trips"] == ["long", "short"]
+    writes = [row for row in result["requests"] if row["method"] != "GET"]
+    assert len(writes) == 4 and all(row["method"] == "POST" for row in writes)
+    bodies = [row["body"] for row in writes]
+    assert [row["side"] for row in bodies] == ["buy", "sell", "sell", "buy"]
+    assert [row["reduceOnly"] for row in bodies] == [False, True, False, True]
+    assert all(row["type"] == "market" and not row["postOnly"] for row in bodies)
+    assert all("price" not in row and "timeInForce" not in row for row in bodies)
+    assert all(row["market"] == "BTC-USD.P" for row in bodies)
+    assert len({row["clientOrderId"] for row in bodies}) == 4
+    assert all(Decimal(row["size"]) == Decimal("0.0001") for row in bodies)
+    assert [
+        Decimal(row["portfolio_net_position"])
+        for row in report["market_position_observations"]
+    ] == [
+        Decimal("0.0001"),
+        Decimal("-0.0001"),
+    ]
+    assert [row["direction"] for row in result["venue_fills"]] == [
+        "openLong",
+        "closeLong",
+        "openShort",
+        "closeShort",
+    ]
+    assert len(report["fills"]) == 4
+    assert Decimal(report["fees_by_currency"]["USDC"]) == Decimal("0.04")
+    assert report["open_positions"] == 0 and Decimal(report["net_position"]) == 0
+    assert Decimal(result["venue_quantity"]) == 0
+    assert result["final_snapshot"]["complete"] is True
+    assert result["final_snapshot"]["reconciled_flat"] is True
+    assert result["final_snapshot"]["unknown_submissions"] == 0
+    assert result["final_snapshot"]["own_open_orders"] == 0
+
+
+def test_installed_empty_market_entry_never_opens_next_direction(tmp_path) -> None:
+    result = _run("market-empty", tmp_path / "empty-ledger.json")
+    report = result["observation"]
+    assert result["watchdog_fired"] is False
+    assert report["startup_verified"] is False and report["failures"]
+    assert report["market_completed_round_trips"] == []
+    assert report["fills"] == []
+    writes = [row for row in result["requests"] if row["method"] != "GET"]
+    assert len(writes) == 1 and writes[0]["body"]["type"] == "market"
+    assert Decimal(result["venue_quantity"]) == 0
+    assert any("without a fill" in reason for reason in report["failures"])
+
+
+def _market_state(
+    step, filled, *, entry_filled="0.0002", net="0", ready=True, fill_coverage=True
+):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from ondo_continuous import OndoContinuousStrategy
+
+    def amount(value):
+        return SimpleNamespace(as_decimal=lambda: Decimal(value))
+
+    roles = (
+        "market_open_long",
+        "market_close_long",
+        "market_open_short",
+        "market_close_short",
+    )
+    orders = {
+        "open-long": SimpleNamespace(is_closed=True, filled_qty=amount(entry_filled)),
+        "open-short": SimpleNamespace(is_closed=True, filled_qty=amount(entry_filled)),
+        "current": SimpleNamespace(is_closed=True, filled_qty=amount(filled)),
+    }
+    state = SimpleNamespace(
+        config=SimpleNamespace(
+            instrument_id="BTC-USD-PERP.ONDO", account_id="ONDO-TEST"
+        ),
+        _market_step=step,
+        _startup_ids={
+            "market_open_long": "open-long",
+            "market_open_short": "open-short",
+            roles[step]: "current",
+        },
+        _market_completed=[],
+        _market_position_observations=[],
+        cache=SimpleNamespace(
+            order=lambda name: orders[str(name)],
+            positions_open=lambda **kwargs: (
+                []
+                if Decimal(net) == 0
+                else [SimpleNamespace(quantity=amount(str(abs(Decimal(net)))))]
+            ),
+        ),
+        portfolio=SimpleNamespace(net_position=lambda *args: Decimal(net)),
+        _native_ready=lambda **kwargs: ready,
+        _fills_complete=lambda *args: fill_coverage,
+        submit_market=Mock(),
+        _fail=Mock(),
+        startup_verified=False,
+        phase="pending",
+    )
+    state._application_flat = lambda: OndoContinuousStrategy._application_flat(state)
+    return state
+
+
+@pytest.mark.parametrize(
+    "step,net,close_side", [(0, "0.0001", "SELL"), (2, "-0.0001", "BUY")]
+)
+def test_terminal_partial_market_entry_closes_only_proven_quantity(
+    step, net, close_side
+):
+    from ondo_continuous import OndoContinuousStrategy
+
+    state = _market_state(step, "0.0001", net=net)
+    OndoContinuousStrategy._advance_market(state)
+    assert state._market_step == step + 1
+    assert Decimal(
+        state._market_position_observations[0]["portfolio_net_position"]
+    ) == Decimal(net)
+    OndoContinuousStrategy._advance_market(state)
+    args, kwargs = state.submit_market.call_args
+    assert str(args[1]) == close_side and args[2] == Decimal("0.0001")
+    assert kwargs == {"reduce_only": True}
+    state._fail.assert_not_called()
+
+
+def test_partial_market_close_stops_before_another_opening():
+    from ondo_continuous import OndoContinuousStrategy
+
+    state = _market_state(1, "0.0001", entry_filled="0.0002", net="0.0001")
+    OndoContinuousStrategy._advance_market(state)
+    state._fail.assert_called_once()
+    assert state._market_step == 1 and state._market_completed == []
+    state.submit_market.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "changes", [{"ready": False}, {"fill_coverage": False}, {"net": "0.0002"}]
+)
+def test_market_transition_waits_for_native_fills_and_portfolio_agreement(changes):
+    from ondo_continuous import OndoContinuousStrategy
+
+    state = _market_state(0, "0.0001", **({"net": "0.0001"} | changes))
+    OndoContinuousStrategy._advance_market(state)
+    assert state._market_step == 0
+    state.submit_market.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "changes", [{"ready": False}, {"net": "0.0001"}, {"fill_coverage": False}]
+)
+def test_market_next_direction_requires_reconciled_flat(changes):
+    from ondo_continuous import OndoContinuousStrategy
+
+    state = _market_state(1, "0.0002", **changes)
+    OndoContinuousStrategy._advance_market(state)
+    assert state._market_step == 1 and state._market_completed == []
+    state.submit_market.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "change,complete",
+    [
+        ({}, True),
+        ({"commission": None}, False),
+        ({"currency": None}, False),
+        ({"quantity": "0.00005"}, False),
+    ],
+)
+def test_market_fill_coverage_uses_all_fills_and_requires_fees(change, complete):
+    from types import SimpleNamespace
+    from ondo_continuous import OndoContinuousStrategy
+
+    state = SimpleNamespace(
+        fills={
+            ("entry", "first"): {
+                "role": "market_open_long",
+                "quantity": "0.0001",
+                "commission": "0.001",
+                "currency": "USDC",
+            },
+            ("entry", "second"): {
+                "role": "market_open_long",
+                "quantity": "0.0001",
+                "commission": "0.001",
+                "currency": "USDC",
+                **change,
+            },
+            ("other", "fill"): {
+                "role": "market_close_long",
+                "quantity": "0.0002",
+                "commission": "0.002",
+                "currency": "USDC",
+            },
+        }
+    )
+    order = SimpleNamespace(
+        filled_qty=SimpleNamespace(as_decimal=lambda: Decimal("0.0002"))
+    )
+    assert (
+        OndoContinuousStrategy._fills_complete(state, "market_open_long", order)
+        is complete
     )
 
 

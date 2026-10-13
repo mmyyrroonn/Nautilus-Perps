@@ -1,0 +1,166 @@
+{
+  "app_commit": "c45ae29777eea279264df1cdae768edc74e9bf41",
+  "app_dirty": true,
+  "app_source_files": {
+    "scripts/run_ondo_continuous.py": "e6eeb232b1ae0962a39efd8f051114335e666d38a444626cf721929284fd5c28",
+    "src/ondo_continuous.py": "54aa1306bdd8f062652d2fec04b176158c4b8322d49c772898f64985ab75db66",
+    "tests/support/ondo_continuous_peer.py": "3baa9774db60e5cb25ead2c20e1e040247b216a15d9d1b2e750bf6e119d83753",
+    "tests/test_ondo_continuous.py": "81cec782df2ae7e343b5fecb713260c9c9f8c990bf6440e9d5f308236a3d5cde"
+  },
+  "application_test_selection": {
+    "continuous": [
+      "tests/test_ondo_continuous.py",
+      "-k",
+      "not installed_continuous"
+    ],
+    "regression": [
+      "tests/test_ondo_trade_probe.py",
+      "tests/test_ondo_btc_operator.py",
+      "tests/test_ondo_btc_trade.py"
+    ]
+  },
+  "application_tests": {
+    "continuous": 25,
+    "regression": 281
+  },
+  "artifacts": {
+    "app-continuous-v2.log": "f6049a717307d352e2e6e0ec16e494749f0c1ce8af81f758daa7c25fd029478b",
+    "app-regression-v2.log": "46093b5e5e531682b715af03944396a7b2b1b6cb6493ac5981ccef14252259ba",
+    "continuous-v2-junit.xml": "d0a725963cfe8662376bea36750de9527ad543b0feff861c269a281437e6cef9",
+    "market-empty-entry.json": "7a14949b0ff66afe6b16dcf5c2c5c370bf9f0f59747ded0bcef4a34088757ba6",
+    "market-round-trips.json": "f71aa4df7b88ecfdb86aa0a88126fbf59ca31826e79f0df280ea66dc5bc1be47",
+    "native-build-verification-v2.json": "75a4930e31e809d812dc4cbeb65d1cd97f3a2c68abf70b540ce7170bcb5c6be0",
+    "native-test-summary-v2.json": "db5c009be21b952b70ebda3451c3a2775c23ab43d388f633d20ebde2df3db500",
+    "regression-v2-junit.xml": "4f0c6412d3bfc0c06e762a77f3aa15e69d7c9f53a06eee8f2b598207fa814f4d"
+  },
+  "credentials_read": false,
+  "installed": {
+    "adapter_exports": {},
+    "adapter_stub_sha256": {
+      "nautilus_trader/adapters/aster/__init__.pyi": "9b72dbc7b89b2578ef6d124b7a6df9e57b047e21edb7789acce82f85fed9bb00",
+      "nautilus_trader/adapters/ondo/__init__.pyi": "c67ab54ec093425570ed116d03a2a7921d6db2de72854b1a8d13a736f6e63965"
+    },
+    "direct_url": "file:///E:/persarb/_tmp/ondo-market-20261013/wheel-v2/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "interpreter": "E:\\persarb\\_tmp\\ondo-market-20261013\\venv\\Scripts\\python.exe",
+    "native_module": "E:\\persarb\\_tmp\\ondo-market-20261013\\venv\\Lib\\site-packages\\nautilus_trader\\_libnautilus.cp312-win_amd64.pyd",
+    "native_module_sha256": "7474abfa68327a3cc989bb2e710dd5ea52063d894b53a118aa7d4aad9d082355",
+    "python_version": "3.12.9"
+  },
+  "launcher_revision": {
+    "change": "Remove redundant input/TTY confirmation; explicit --execute starts the operator run.",
+    "checks": [
+      "Python syntax",
+      "Ruff E9/F",
+      "maker and market offline preparation",
+      "--execute dispatch with execution mocked",
+      "git diff --check"
+    ],
+    "credentials_read": false,
+    "full_application_suite_rerun": false,
+    "mainnet_orders_sent": false,
+    "note": "Native and Strategy source unchanged; earlier suite evidence remains tied to its recorded source. Only the launcher confirmation and documentation changed.",
+    "previous_sha256": "c8a552d902acdb4b0a4eb0c306f75fc3a0cae69b3e17391be3222e45d48a2b2f"
+  },
+  "launcher_sha256": "e6eeb232b1ae0962a39efd8f051114335e666d38a444626cf721929284fd5c28",
+  "limitations": [
+    "Market caps are quote estimates, not execution-price bounds.",
+    "Partial-fill application transitions have state tests; loopback market fills are full or zero.",
+    "Native Clippy has pre-existing diagnostics; its command did not pass."
+  ],
+  "mainnet_orders_sent": false,
+  "native_source": {
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+    "commit": "5987c21b1d370cd58baa54f348d3eb02313ff279",
+    "dirty": [
+      "M crates/adapters/ondo/README.md",
+      " M crates/adapters/ondo/src/continuous.rs",
+      " M crates/adapters/ondo/src/execution.rs",
+      " M crates/adapters/ondo/tests/continuous_execution.rs",
+      " M crates/adapters/ondo/tests/execution.rs"
+    ],
+    "dirty_count": 5,
+    "tracked_diff_sha256": "a9a3837072a9b89cc8ef341b293e957fefede802fff00f16b9056259af76260b",
+    "tree": "22f3840d0431d9978751c7789bc5e566fdad32cf",
+    "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "native_tests": {
+    "baseline_lint_debt": "Initial Clippy result is preserved in native-clippy.jsonl; no unrelated repairs made.",
+    "cargo_build_warnings": "allow",
+    "cargo_target_dir": "E:/persarb/.backpack-target/native",
+    "change": "Project a first create response which is already canceled after its Accepted event using a ledger-based Canceled report. Shared MARKET and limit IOC behavior. No inferred fills.",
+    "final_per_target_passed": {
+      "continuous_execution": 10,
+      "doc_tests": 1,
+      "execution": 80,
+      "http_client": 44,
+      "http_contract": 78,
+      "lib": 547,
+      "market_data": 43,
+      "private_runtime": 136,
+      "production_envelope": 41,
+      "reconciliation": 121,
+      "signing": 63
+    },
+    "native_root": "E:/persarb/nautilus_trader",
+    "network": "No real venue/credentials; native tests use loopback fixtures and --offline dependencies.",
+    "recorded_at": "2026-10-13T05:55:34.213678+00:00",
+    "runs": [
+      {
+        "assertions": [
+          "Accepted precedes Canceled report",
+          "Canceled filled_qty is zero",
+          "No fill reports or applied fills",
+          "Duplicate canceled read is Unchanged and emits nothing",
+          "One create request only"
+        ],
+        "command": "cargo test -p nautilus-ondo --profile nextest --offline --test execution already_canceled_create",
+        "exit_code": 0,
+        "passed": 2
+      },
+      {
+        "command": "cargo test -p nautilus-ondo --profile nextest --offline",
+        "exit_code": 101,
+        "log": "E:\\persarb\\_tmp\\ondo-market-20261013\\native-tests-v2.log",
+        "note": "Initial logging wrapper omitted scoped warning override. Cargo stopped before tests on existing MSVC linker_messages warning denial."
+      },
+      {
+        "command": "cargo test -p nautilus-ondo --profile nextest --offline",
+        "exit_code": 101,
+        "log": "E:\\persarb\\_tmp\\ondo-market-20261013\\native-tests-v2-final.log",
+        "note": "547+10+80+44+78+43 groups passed. private_runtime 135 pass/1 transient failure in existing read-only readiness test (Recovering versus ReadOnlySynced after an 8*20ms polling loop). This read-only path cannot execute the new canceled create projection. Remaining targets were not run by this invocation."
+      },
+      {
+        "command": "cargo test -p nautilus-ondo --profile nextest --offline --test private_runtime --test production_envelope --test reconciliation --test signing",
+        "exit_code": 0,
+        "log": "E:\\persarb\\_tmp\\ondo-market-20261013\\native-tests-v2-followup.log",
+        "note": "Failed target rerun entirely without code or test changes; original read-only case passed. Remaining targets also passed.",
+        "passed": 361
+      },
+      {
+        "command": "cargo test -p nautilus-ondo --profile nextest --offline --doc",
+        "exit_code": 0,
+        "passed": 1
+      },
+      {
+        "command": "cargo fmt -p nautilus-ondo",
+        "exit_code": 0
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      }
+    ],
+    "total_distinct_passing_tests": 1164
+  },
+  "provenance_path": "E:\\persarb\\_tmp\\ondo-market-20261013\\wheel-v2\\native-provenance.json",
+  "provenance_sha256": "1d0dfa5169a2ddc1d3b061734d882d5bcd0ffead5bb5f9e238ff4d438e86cc45",
+  "scope": "local Windows offline market candidate; mainnet not executed",
+  "strategy_sha256": "54aa1306bdd8f062652d2fec04b176158c4b8322d49c772898f64985ab75db66",
+  "wheel": {
+    "path": "E:\\persarb\\_tmp\\ondo-market-20261013\\wheel-v2\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "sha256": "089fda49ca54bb91af84a9b3785ad69520e092cb8fadc601d205fff8979c1335",
+    "tags": [
+      "cp312-cp312-win_amd64"
+    ]
+  }
+}
