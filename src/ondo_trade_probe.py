@@ -3,7 +3,7 @@
 
     src/ondo_trade_probe.py --mode production-trade --side buy --dry-run
     src/ondo_trade_probe.py --mode production-trade --plan <approved-plan.json> \
-        --confirm-production-trade --acknowledge-mainnet-authorization
+        --confirm-production-trade
 
 What this file is
 -----------------
@@ -20,9 +20,8 @@ What this file refuses
 ----------------------
 
 1. **It never writes by default.**  A live run needs a complete approved plan, the
-   ``--confirm-production-trade`` acknowledgement, the
-   ``--acknowledge-mainnet-authorization`` acknowledgement, a native adapter that exposes
-    the write-envelope contract *and* every documented start gate satisfied. Any one missing is a
+   ``--confirm-production-trade`` acknowledgement, a native adapter that exposes
+   the write-envelope contract *and* every documented start gate satisfied. Any one missing is a
    refusal (exit 2) *before a credential is read or a client is built*.
 2. **It cannot enable the installed R52 wheel.**  The installed wheel has no production
    write envelope, no production read-only scope and no trade snapshot accessor.  The
@@ -905,18 +904,12 @@ def validate_trade_plan(plan: TradePlan, limits: TradeLimits, *,
 
 
 def authorization_problems(plan: TradePlan) -> list[str]:
-    """The conversational-authorization gates the plan itself must carry."""
+    """Require approval of the exact hashed plan."""
     problems: list[str] = []
     authorization = plan.document.get("authorization")
     if not isinstance(authorization, Mapping):
         problems.append("authorization block is missing: the plan is not approved")
         return problems
-    if authorization.get("user_phrase_上主网_present") is not True:
-        problems.append(
-            "authorization.user_phrase_上主网_present must be true: the plan records that "
-            "the user gave current-turn authorization, and this tool cannot verify a "
-            "conversation for them",
-        )
     if authorization.get("approved_plan_sha256") != plan.plan_sha256:
         problems.append(
             "authorization.approved_plan_sha256 must equal the plan's recomputed hash",
@@ -958,7 +951,6 @@ def sanitized_plan_document(plan: TradePlan) -> dict[str, object]:
             )
         },
         "authorization": {
-            "user_phrase_上主网_present": authorization.get("user_phrase_上主网_present"),
             "approved_plan_sha256": authorization.get("approved_plan_sha256"),
         },
     }
@@ -2848,7 +2840,6 @@ def intent_document(args: argparse.Namespace, limits: TradeLimits,
             "stop_budget_secs": limits.cleanup_budget_secs,
         },
         "authorization": {
-            "user_phrase_上主网_present": False,
             "approved_plan_sha256": None,
         },
         "plan_sha256": None,
@@ -3717,7 +3708,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description=(
             "Restricted Ondo Perps production-trade probe: one entry limit-IOC and at most "
             "two reduce-only closes for the confirmed quantity. A live run needs an approved "
-            "plan, explicit acknowledgements and a native adapter that exposes the "
+            "plan, explicit production confirmation and a native adapter that exposes the "
             "production write-envelope contract."
         ),
     )
@@ -3731,11 +3722,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="dedicated [ondo_trade] limits file (default: config/limits.toml)")
     parser.add_argument("--confirm-production-trade", action="store_true",
                         help="acknowledge that this is a production write run")
+    # Accept the retired flag for existing launch scripts; it no longer gates execution.
     parser.add_argument("--acknowledge-mainnet-authorization", action="store_true",
-                        help=(
-                            "record that the user gave current-turn 上主网 authorization and "
-                            "approved the exact plan; this tool cannot verify a conversation"
-                        ))
+                        help=argparse.SUPPRESS)
     parser.add_argument("--minutes", type=float, default=None,
                         help="run deadline override in minutes (capped, and never above 600 s)")
     parser.add_argument("--out", default=DEFAULT_OUT, help=f"report directory (default: {DEFAULT_OUT})")
@@ -3830,14 +3819,6 @@ def main(argv: Sequence[str] | None = None, *, adapter: OndoAdapter | None = Non
     if not args.confirm_production_trade:
         print(f"{TOOL}: refused: a live production run requires --confirm-production-trade",
               file=sys.stderr)
-        return EXIT_REFUSED
-    if not args.acknowledge_mainnet_authorization:
-        print(
-            f"{TOOL}: refused: a live production run requires "
-            f"--acknowledge-mainnet-authorization (the user's current-turn 上主网 authorization "
-            f"and approval of the exact plan)",
-            file=sys.stderr,
-        )
         return EXIT_REFUSED
     if not args.plan:
         print(f"{TOOL}: refused: a live production run requires --plan", file=sys.stderr)

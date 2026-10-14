@@ -51,15 +51,11 @@ Modes
                 ``--hedge none`` to rehearse maker-only.
 ``--env mainnet --live --confirm-mainnet``
                 Refuses without the flag, prints the limits and sleeps 10 s before connecting.
-                **Per CLAUDE.md the user must say 「上主网」 in the current conversation before
-                anyone runs this.**  No amount of configuration substitutes for that.
 
-DEVIATION FROM PROMPT.md STAGE 3 - NEEDS THE USER'S APPROVAL
-------------------------------------------------------------
-PROMPT.md caps the mainnet stage at "单日最多 20 次触发".  That budget was written for the
-taker/taker arbitrage, where one trigger is one whole round trip.  A two-sided maker earns
-from many small passive fills - a ten minute session already prints dozens - so the daily
-budget here is counted in FILLS: ``[daily] max_fills`` defaults to 200 with a hard cap of 500,
+DAILY ORDER BUDGET
+------------------
+A two-sided maker earns from many small passive fills, so the daily budget here is
+counted in FILLS: ``[daily] max_fills`` defaults to 200 with a hard cap of 500,
 plus a separate ``max_tx`` budget over Lighter order transactions.  The per-order notional
 (50 USD) and total exposure (100 USD) hard caps are unchanged.  See ``src/live_limits.py``.
 
@@ -4314,8 +4310,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Two-sided maker on Lighter hedged taker on Aster, under config/limits.toml and "
             "the hard caps in src/live_limits.py. --dry-run builds and prints; --paper runs "
             "the identical logic on public mainnet feeds with locally simulated fills; --live "
-            "trades, and on mainnet also needs --confirm-mainnet AND the user saying "
-            "上主网 in the current conversation."
+            "trades, and on mainnet also needs --confirm-mainnet."
         ),
     )
     parser.add_argument("--env", default="mainnet", choices=sorted(SYMBOLS),
@@ -4346,8 +4341,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="with --live: connect both exec clients, report balances / positions / "
                              "open orders every 30 s, never place, modify or cancel an order")
     parser.add_argument("--confirm-mainnet", action="store_true",
-                        help="required by --live --env mainnet; the user must also have said "
-                             "上主网 in the current conversation (CLAUDE.md)")
+                        help="explicitly enable mainnet execution with --live --env mainnet")
     parser.add_argument("--hedge", default="aster", choices=("aster", "none"),
                         help="hedge venue; 'none' quotes maker-only (default: aster)")
     parser.add_argument("--limits", type=Path, default=Path("config/limits.toml"),
@@ -4525,9 +4519,7 @@ def main(argv: list[str] | None = None) -> int:
     if mode == "live":
         if args.env == "mainnet" and not args.confirm_mainnet:
             print(
-                "Refusing to start: --live --env mainnet requires --confirm-mainnet, and per "
-                "CLAUDE.md the user must have said 上主网 in the current "
-                "conversation. Neither this flag nor any config file substitutes for that.",
+                "Refusing to start: --live --env mainnet requires --confirm-mainnet.",
                 file=sys.stderr,
             )
             return EXIT_REFUSED

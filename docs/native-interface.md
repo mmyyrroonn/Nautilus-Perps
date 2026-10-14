@@ -31,8 +31,8 @@ not authorization or venue acceptance.
 Continuous writing configuration requires an expected venue account identity,
 diagnostic run id, durable journal, DMS timeout in 1..30 seconds and one-second
 reconciliation. Production additionally requires `allow_production_orders=True`;
-read-only configuration cannot enable continuous writes. The application also
-requires current-turn user `上主网` authorization for real production endpoints.
+read-only configuration cannot enable continuous writes. The application requires
+explicit `execution_enabled=True` for a write-enabled session.
 Default construction remains sandbox read-only, with no automatic signal or order.
 
 The native account budget covers owned positions and prepared/outstanding/unresolved

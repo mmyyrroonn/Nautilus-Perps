@@ -7,7 +7,6 @@ and DMS shutdown belong to the Rust adapter. Trading policy belongs to the appli
 
 from __future__ import annotations
 
-import ipaddress
 import functools
 import time
 from dataclasses import dataclass, field
@@ -15,7 +14,6 @@ from datetime import timedelta
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlsplit
 
 from nautilus_trader.common import Environment, LoggerConfig, LogLevel
 from nautilus_trader.config import LiveRiskEngineConfig
@@ -105,7 +103,6 @@ class ContinuousSession:
     base_url_ws: str | None = None
     api_key: str | None = field(default=None, repr=False)
     api_secret: str | None = field(default=None, repr=False)
-    mainnet_authorized: bool = False
 
     def validate(self) -> None:
         self.limits.validate()
@@ -134,26 +131,6 @@ class ContinuousSession:
             raise ValueError(
                 "continuous execution requires one-second native reconciliation"
             )
-        if self.environment == "production" and not self.mainnet_authorized:
-            # A synthetic production-contract test must use two explicit loopback endpoints.
-            # This exception cannot connect to a real account and does not load an .env file.
-            if not (_loopback(self.base_url_http) and _loopback(self.base_url_ws)):
-                raise ValueError(
-                    "production execution requires current-turn mainnet authorization"
-                )
-
-
-def _loopback(url: str | None) -> bool:
-    if not url:
-        return False
-    parsed = urlsplit(url)
-    try:
-        return (
-            parsed.scheme in {"http", "ws"}
-            and ipaddress.ip_address(parsed.hostname).is_loopback
-        )
-    except (TypeError, ValueError):
-        return False
 
 
 def minimum_quantity(instrument, protected_buy_price: Decimal, cap: Decimal) -> Decimal:

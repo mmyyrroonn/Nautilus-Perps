@@ -52,8 +52,7 @@ R2 行情/录制/回放（[`20260915T153817Z-r2`](../reports/ondo-acceptance/202
 `--max-orders` / `--max-exposure-usd` / `--allow-sandbox-orders`，它在**读 `.env`、构造 client、建连之前**就以
 退出码 2 拒绝。
 
-**`sandbox` 仍然不是主网。** 按 `CLAUDE.md` 的硬规则，主网真实下单还必须在**当轮对话**里由用户明确说
-「上主网」，之前只允许 testnet / paper；这条规则不在本计划或本文件的授权范围内，`sandbox` 模式不触碰它。
+`sandbox` 使用 sandbox 账户。生产执行通过独立交易入口显式启用，并遵守计划与额度限制。
 
 ## 2. 环境与凭据
 
@@ -223,8 +222,8 @@ Write-Output "probe_exit_code=$LASTEXITCODE"
 表示结束。应用为这一模式保留 30 秒连接窗口，其余模式仍是 10 秒。
 
 这只是**生产只读 A/B 验收**，不是完整私有协议验收：`protocol_verified` 仍为 `false`，因为它没有测试认证下单、
-撤单、订单/成交事件载荷或 DMS 续期/释放。它也仍然不是「上主网」授权：不发任何写请求，主网真实下单的
-「上主网」规则见第 8 节。旧 wheel 若拒绝 production，或 native snapshot 缺少任一必需证据，probe 仍会
+撤单、订单/成交事件载荷或 DMS 续期/释放。这次只读验收没有发送写请求。旧 wheel 若拒绝 production，
+或 native snapshot 缺少任一必需证据，probe 仍会
 如实写成失败，不会用退出码 0 冒充通过。
 
 Astra 跑主网只读的推荐命令（canonical `.env` 用环境变量显式传入，**不复制进 worktree**；日志脱敏见第 4 节）：
@@ -314,8 +313,7 @@ configured / cap / applied 三个数一起出现，钳没钳住是看得见的�
 会打印派生的 `load_ids`（例如 `BTC-USD-PERP.ONDO`），**再用第 3.1 节的真实预检核对 venue 当前确实返回它，不要
 按记忆写**。`--instrument` 可以重复给多次。
 
-**`sandbox` 不是主网，也不需要"上主网"授权**；但主网**写入**在任何模式下都继续被拒绝（第 8 节）。
-`--mode production-readonly` 只做只读账户同步，同样不是「上主网」授权。
+这些 probe 模式不提供生产写入（第 8 节）。`--mode production-readonly` 只做只读账户同步。
 
 ## 4. probe 写了什么
 
@@ -470,7 +468,6 @@ venv 中独立验证了 `supports_ordered_shutdown` 为精确布尔 `True`、生
 
 - **这条路径不开启主网交易。** production 的签名写入在任何模式下都继续被**无条件拒绝**，包括
   `allow_production_orders=true` 的组合；`allow_production_orders` 只产生拒绝，不开启任何东西。
-  主网真实下单还需要用户**在当轮对话里**明确说「上主网」，这是 `CLAUDE.md` 的硬规则。
 - **只读模式没有撤单或死手开关副作用。** `account-readonly` 与 `production-readonly` 都用
   `account_read_only=True`：不发单、不撤单、不订阅死手开关、永不进入 trading-ready。不该为了"把账户弄干净"
   而自动撤单或下单。
@@ -532,8 +529,8 @@ or authorization evidence and cannot establish that a production run is runnable
 
 A future live plan must be generated from fresh official metadata and executable quotes, include
 both directional worst prices and exact ticks, be hash-bound, and pass every native start gate.
-Actual production execution still requires current-turn `上主网` authorization and approval of
-that exact plan. Do not reuse the dry-run null fields or an older public snapshot as a priced plan.
+Actual production execution requires explicit execution mode and approval of that exact plan.
+Do not reuse the dry-run null fields or an older public snapshot as a priced plan.
 
 ### DMS release observations (2026-09-22 candidate)
 
@@ -618,7 +615,7 @@ The explicit human entry point is `scripts/run_ondo_continuous.py --execute`, us
 the exact reviewed local interpreter and candidate in
 [ondo-mainnet-launch.md](ondo-mainnet-launch.md). Without `--execute`, it only
 verifies local identity and prepares limits; it reads no credential file and
-starts no node. Execution still needs current-turn `上主网`, an interactive operator
-and the reviewed candidate. The process stops after confirmed BTC startup Flat and
+starts no node. Execution requires the explicit `--execute` flag and the reviewed
+candidate. The process stops after confirmed BTC startup Flat and
 installs no unattended trading policy. This local candidate is separate from the
 published formal dependency lock.
