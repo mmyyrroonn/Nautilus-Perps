@@ -125,7 +125,6 @@ def execute(env_file: Path, limits: ContinuousLimits, prepared: dict) -> int:
     session = ContinuousSession(
         environment="production",
         execution_enabled=True,
-        mainnet_authorized=True,
         account_id="ONDO-" + account,
         expected_venue_account_id=account,
         api_key=key,

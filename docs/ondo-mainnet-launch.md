@@ -53,8 +53,8 @@ shutdown. Published aggregate evidence and artifact digests are in the
 
 That later observation verifies one BTC startup sequence. The earlier synthetic
 BTC/TSLA continuous follow-up evidence remains an offline result; it is not a
-mainnet multi-symbol or sustained trading result. Historical authorization does
-not authorize another run. The preparation and execution paths remain distinct.
+mainnet multi-symbol or sustained trading result. Every execution requires the
+explicit `--execute` flag. The preparation and execution paths remain distinct.
 
 Run these commands yourself in PowerShell:
 

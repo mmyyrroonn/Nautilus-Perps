@@ -8,12 +8,10 @@ HTTP. All order commands use the native Strategy/order factory path.
 
 The default `ContinuousSession()` is sandbox read-only. Enabling execution requires
 explicit instruments, account identity, diagnostic run id, durable journal, DMS
-timeout in 1..30 seconds and one-second reconciliation. Real production endpoints
-also require current-turn user authorization `上主网`, represented by the caller's
-`mainnet_authorized` flag. An old authorization or a command-line switch alone is
-not authorization. Two explicit numeric loopback endpoints can exercise the
-production configuration contract with synthetic credentials without authorizing
-mainnet activity.
+timeout in 1..30 seconds and one-second reconciliation. Execution must be explicitly
+enabled with `execution_enabled=True`; native production configuration also uses
+`allow_production_orders=True`. Local protocol fixtures exercise the production
+configuration contract with synthetic credentials.
 
 ## Native contract and limits
 

@@ -142,7 +142,6 @@ def resolved_plan(**overrides) -> dict:
             "stop_budget_secs": 5,
         },
         "authorization": {
-            "user_phrase_上主网_present": False,
             "approved_plan_sha256": None,
         },
         "plan_sha256": None,
@@ -171,7 +170,6 @@ def parse(document: dict, limits=None) -> trade.TradePlan:
 
 
 def authorized(document: dict) -> dict:
-    document["authorization"]["user_phrase_上主网_present"] = True
     rebind_hashes(document)
     return document
 
@@ -784,11 +782,12 @@ def test_a_float_decimal_is_refused():
         parse(document)
 
 
-def test_a_plan_without_user_authorization_is_refused():
-    document = resolved_plan()  # user_phrase false
+def test_a_plan_without_hash_approval_is_refused():
+    document = resolved_plan()
+    document["authorization"]["approved_plan_sha256"] = None
     plan = parse(document)
     problems = trade.authorization_problems(plan)
-    assert problems and "user_phrase" in problems[0]
+    assert problems and "approved_plan_sha256" in problems[0]
 
 
 def test_an_approved_plan_passes_authorization():
@@ -1666,12 +1665,12 @@ def test_a_live_run_with_an_unsupported_wheel_refuses_before_credentials(tmp_pat
     assert "write-envelope contract" in err.getvalue()
 
 
-def test_a_live_run_without_the_acknowledgements_is_refused(tmp_path):
+def test_a_live_run_without_production_confirmation_is_refused(tmp_path):
     plan_path = write_plan(tmp_path, authorized(resolved_plan()))
     base = ["--mode", "production-trade", "--plan", str(plan_path)]
     cases = (
         base + ["--acknowledge-mainnet-authorization"],  # missing --confirm-production-trade
-        base + ["--confirm-production-trade"],  # missing --acknowledge-mainnet-authorization
+        base,  # missing --confirm-production-trade
     )
     for argv in cases:
         with contextlib.redirect_stderr(io.StringIO()):
@@ -1703,7 +1702,9 @@ def test_a_live_run_with_a_capable_wheel_but_missing_credentials_refuses(tmp_pat
 
 
 def test_a_live_run_with_an_unapproved_plan_is_refused(tmp_path):
-    plan_path = write_plan(tmp_path, resolved_plan())  # user_phrase false
+    document = resolved_plan()
+    document["authorization"]["approved_plan_sha256"] = None
+    plan_path = write_plan(tmp_path, document)
     with contextlib.redirect_stderr(io.StringIO()):
         code = trade.main(
             ["--mode", "production-trade", "--plan", str(plan_path),
@@ -2469,7 +2470,10 @@ def test_a_renewal_interval_the_native_does_not_expose_is_refused():
         parse(document)
 
 
-def test_a_shorter_minutes_reaches_execute(monkeypatch, tmp_path):
+@pytest.mark.parametrize("legacy_args", [[], ["--acknowledge-mainnet-authorization"]])
+def test_a_shorter_minutes_reaches_execute_without_conversation_acknowledgement(
+    monkeypatch, tmp_path, legacy_args,
+):
     plan_path = write_plan(tmp_path, authorized(resolved_plan()))
     limits_path = write_explicit_limits(tmp_path)
     captured: dict = {}
@@ -2481,7 +2485,7 @@ def test_a_shorter_minutes_reaches_execute(monkeypatch, tmp_path):
     monkeypatch.setattr(trade, "execute", fake_execute)
     code = trade.main(
         ["--mode", "production-trade", "--plan", str(plan_path),
-         "--confirm-production-trade", "--acknowledge-mainnet-authorization",
+         "--confirm-production-trade", *legacy_args,
          "--minutes", "5", "--limits", str(limits_path)],
         adapter=CapableAdapter(),
         environ={
