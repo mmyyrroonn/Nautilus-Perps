@@ -122,6 +122,57 @@ def test_duplicate_or_single_leg_underlying_is_rejected(tmp_path):
         scan.parse_plan(d, tmp_path)
 
 
+@pytest.mark.parametrize("symbol,instrument", [
+    ("PRL", "PRL-PERP.LIGHTER"),
+    ("PRL", "BTC-PERP.LIGHTER"),
+    ("PEARL", "PRL-PERP.LIGHTER"),
+    ("PERLE", "PRL-PERP.LIGHTER"),
+    ("BTC", "PRL-PERP.LIGHTER"),
+    ("prl", "prl-PERP.LIGHTER"),
+])
+@pytest.mark.parametrize("multiplier", ["1", "10", "1000"])
+def test_lighter_prl_stale_or_aliased_plan_is_rejected_before_runtime(tmp_path, symbol, instrument, multiplier):
+    d = document(tmp_path)
+    d["markets"][0].update(symbol=symbol, venue="LIGHTER", instrument_id=instrument,
+                           canonical_multiplier=multiplier)
+    d["markets"][1].update(symbol=symbol, instrument_id="PRLUSDT-PERP.ASTER")
+    with pytest.raises(scan.ScanConfigError, match="suspected ticker collision / asset identity unverified"):
+        scan.parse_plan(d, tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_stale_prl_config_cannot_bypass_guard_with_cli_symbol_selection(tmp_path, monkeypatch, capsys):
+    d = document(tmp_path)
+    d["markets"].extend([
+        {**d["markets"][0], "symbol": "PRL", "venue": "LIGHTER", "instrument_id": "PRL-PERP.LIGHTER"},
+        {**d["markets"][1], "symbol": "PRL", "instrument_id": "PRLUSDT-PERP.ASTER"},
+    ])
+    monkeypatch.setattr(scan, "load_plan", lambda path: scan.parse_plan(d, path.parent))
+    original_import = builtins.__import__
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith(("nautilus_trader", "dotenv", "opportunity_runtime")):
+            raise AssertionError("quarantine must fail before runtime imports")
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    assert scan.main(["--config", str(tmp_path / "stale.toml"), "--symbols", "BTC", "--dry-run"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "suspected ticker collision / asset identity unverified" in captured.err
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("filename,symbol_count,market_count", [
+    ("opportunity-scan.universe.toml", 166, 496),
+    ("opportunity-scan.dg-us.toml", 163, 423),
+])
+def test_checked_in_generated_configs_exclude_prl_and_still_validate(filename, symbol_count, market_count):
+    result = scan.load_plan(ROOT / "config" / filename)
+    assert len(result.markets) == market_count
+    assert len({m.symbol for m in result.markets}) == symbol_count
+    assert all(m.symbol != "PRL" and m.instrument_id != "PRL-PERP.LIGHTER" for m in result.markets)
+    assert {m.venue for m in result.markets if m.symbol == "BTC"} >= {"HL", "LIGHTER", "ASTER"}
+
+
 def test_configured_native_fee_zero_and_unknown_have_distinct_sources(tmp_path):
     m = plan(tmp_path).markets[0]
     instrument = SimpleNamespace(id=m.instrument_id, size_increment="0.01", multiplier="1",

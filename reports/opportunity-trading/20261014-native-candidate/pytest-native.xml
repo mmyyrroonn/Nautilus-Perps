@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="29" time="341.774" timestamp="2026-10-14T02:24:29.133607+08:00" hostname="主力机器"><testcase classname="reports.opportunity-trading.20261014-native-candidate.test_native_account_controls" name="test_authenticated_snapshot_and_expiry_renewal_preserve_owned_scope[False]" time="0.967"><failure message="Failed: DID NOT RAISE ValueError">tmp_path = WindowsPath('E:/persarb/worktrees/opportunity-scan/reports/opportunity-trading/20261014-native-candidate/pytest-tmp/test_authenticated_snapshot_an0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001DC83EC9E80&gt;
+external = False
+
+    @pytest.mark.parametrize("external", [False, True])
+    def test_authenticated_snapshot_and_expiry_renewal_preserve_owned_scope(tmp_path, monkeypatch, external):
+        snapshots = []
+        controls = []
+        original = scenarios.build_node
+
+        def instrumented(peer, directory, steps):
+            node, strategy, control, plan, public = original(peer, directory, steps)
+            controls.append(control)
+            advance = strategy.advance
+            renewed = False
+
+            def observe():
+                nonlocal renewed
+                advance()
+                try:
+                    snapshot = json.loads(control.account_snapshot_json())
+                except RuntimeError:
+                    return
+                if not renewed:
+                    expiry = plan.authority.expires_at_ms + 1
+                    control.renew_authority(expiry)
+                    with pytest.raises(ValueError):
+                        control.renew_authority(expiry)
+                    with pytest.raises(ValueError):
+                        control.renew_authority(time.time_ns() // 1_000_000 + 300_001)
+                    renewed = True
+                snapshots.append(snapshot)
+
+            strategy.advance = observe
+            return node, strategy, control, plan, public
+
+        monkeypatch.setattr(scenarios, "build_node", instrumented)
+
+        async def scenario():
+            async with ProductionPeer(external=external) as peer:
+                result = await scenarios.run_node(peer, tmp_path, scenarios.roundtrips(1),
+                    expect_denial=external)
+                assert not peer.errors
+                if external:
+                    assert not peer.posts
+                else:
+                    scenarios.assert_economics(result, 4)
+
+&gt;       asyncio.run(scenario())
+
+reports\opportunity-trading\20261014-native-candidate\test_native_account_controls.py:60:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\myron\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Users\myron\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\myron\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+reports\opportunity-trading\20261014-native-candidate\test_native_account_controls.py:52: in scenario
+    result = await scenarios.run_node(peer, tmp_path, scenarios.roundtrips(1),
+tests\test_backpack_production_native.py:204: in run_node
+    strategy.advance()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def observe():
+        nonlocal renewed
+        advance()
+        try:
+            snapshot = json.loads(control.account_snapshot_json())
+        except RuntimeError:
+            return
+        if not renewed:
+            expiry = plan.authority.expires_at_ms + 1
+            control.renew_authority(expiry)
+            with pytest.raises(ValueError):
+                control.renew_authority(expiry)
+&gt;           with pytest.raises(ValueError):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE ValueError
+
+reports\opportunity-trading\20261014-native-candidate\test_native_account_controls.py:40: Failed</failure></testcase><testcase classname="reports.opportunity-trading.20261014-native-candidate.test_native_account_controls" name="test_authenticated_snapshot_and_expiry_renewal_preserve_owned_scope[True]" time="0.577"><failure message="Failed: DID NOT RAISE ValueError">tmp_path = WindowsPath('E:/persarb/worktrees/opportunity-scan/reports/opportunity-trading/20261014-native-candidate/pytest-tmp/test_authenticated_snapshot_an1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001DCF40948C0&gt;
+external = True
+
+    @pytest.mark.parametrize("external", [False, True])
+    def test_authenticated_snapshot_and_expiry_renewal_preserve_owned_scope(tmp_path, monkeypatch, external):
+        snapshots = []
+        controls = []
+        original = scenarios.build_node
+
+        def instrumented(peer, directory, steps):
+            node, strategy, control, plan, public = original(peer, directory, steps)
+            controls.append(control)
+            advance = strategy.advance
+            renewed = False
+
+            def observe():
+                nonlocal renewed
+                advance()
+                try:
+                    snapshot = json.loads(control.account_snapshot_json())
+                except RuntimeError:
+                    return
+                if not renewed:
+                    expiry = plan.authority.expires_at_ms + 1
+                    control.renew_authority(expiry)
+                    with pytest.raises(ValueError):
+                        control.renew_authority(expiry)
+                    with pytest.raises(ValueError):
+                        control.renew_authority(time.time_ns() // 1_000_000 + 300_001)
+                    renewed = True
+                snapshots.append(snapshot)
+
+            strategy.advance = observe
+            return node, strategy, control, plan, public
+
+        monkeypatch.setattr(scenarios, "build_node", instrumented)
+
+        async def scenario():
+            async with ProductionPeer(external=external) as peer:
+                result = await scenarios.run_node(peer, tmp_path, scenarios.roundtrips(1),
+                    expect_denial=external)
+                assert not peer.errors
+                if external:
+                    assert not peer.posts
+                else:
+                    scenarios.assert_economics(result, 4)
+
+&gt;       asyncio.run(scenario())
+
+reports\opportunity-trading\20261014-native-candidate\test_native_account_controls.py:60:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\myron\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Users\myron\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\myron\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+reports\opportunity-trading\20261014-native-candidate\test_native_account_controls.py:52: in scenario
+    result = await scenarios.run_node(peer, tmp_path, scenarios.roundtrips(1),
+tests\test_backpack_production_native.py:204: in run_node
+    strategy.advance()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def observe():
+        nonlocal renewed
+        advance()
+        try:
+            snapshot = json.loads(control.account_snapshot_json())
+        except RuntimeError:
+            return
+        if not renewed:
+            expiry = plan.authority.expires_at_ms + 1
+            control.renew_authority(expiry)
+            with pytest.raises(ValueError):
+                control.renew_authority(expiry)
+&gt;           with pytest.raises(ValueError):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE ValueError
+
+reports\opportunity-trading\20261014-native-candidate\test_native_account_controls.py:40: Failed</failure></testcase><testcase classname="tests.test_ondo_continuous" name="test_installed_continuous_startup_and_followup_use_same_native_strategy" time="135.504" /><testcase classname="tests.test_ondo_continuous" name="test_installed_continuous_cancel_fill_race_refuses_replacement" time="58.438" /><testcase classname="tests.test_ondo_continuous" name="test_installed_market_opens_and_closes_long_and_short" time="98.420" /><testcase classname="tests.test_ondo_continuous" name="test_installed_empty_market_entry_never_opens_next_direction" time="47.481" /><testcase classname="tests.test_ondo_continuous" name="test_terminal_partial_market_entry_closes_only_proven_quantity[0-0.0001-SELL]" time="0.006" /><testcase classname="tests.test_ondo_continuous" name="test_terminal_partial_market_entry_closes_only_proven_quantity[2--0.0001-BUY]" time="0.001" /><testcase classname="tests.test_ondo_continuous" name="test_partial_market_close_stops_before_another_opening" time="0.001" /><testcase classname="tests.test_ondo_continuous" name="test_market_transition_waits_for_native_fills_and_portfolio_agreement[changes0]" time="0.001" /><testcase classname="tests.test_ondo_continuous" name="test_market_transition_waits_for_native_fills_and_portfolio_agreement[changes1]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_transition_waits_for_native_fills_and_portfolio_agreement[changes2]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_next_direction_requires_reconciled_flat[changes0]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_next_direction_requires_reconciled_flat[changes1]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_next_direction_requires_reconciled_flat[changes2]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_fill_coverage_uses_all_fills_and_requires_fees[change0-True]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_fill_coverage_uses_all_fills_and_requires_fees[change1-False]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_fill_coverage_uses_all_fills_and_requires_fees[change2-False]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_market_fill_coverage_uses_all_fills_and_requires_fees[change3-False]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_continuous_defaults_do_not_enable_production" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes0]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes1]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes2]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes3]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes4]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes5]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes6]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_application_preserves_explicit_native_limit_boundaries[changes7]" time="0.000" /><testcase classname="tests.test_ondo_continuous" name="test_production_execution_requires_fresh_explicit_binding_and_authorization" time="0.001" /></testsuite></testsuites>

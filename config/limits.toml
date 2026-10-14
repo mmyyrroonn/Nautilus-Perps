@@ -207,3 +207,12 @@ cleanup_budget_secs = 15
 [backpack_trade]
 order_notional_usd = 5
 max_gross_notional_usd = 5
+
+# Independent multi-venue pair strategy. The user requested USD 100 per leg.
+# These do not widen the legacy maker or restricted Ondo limits above.
+# The live run also requires explicit total-risk values in its own config/CLI.
+[opportunity_trade]
+order_notional_usd = "100"
+max_pairs = 16
+max_gross_notional_usd = "500"
+startup_max_notional_usd = "50"

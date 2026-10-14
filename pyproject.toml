@@ -13,6 +13,8 @@ dependencies = [
     # (wss://webapi-quote.futunn.com/ws) and its Ed25519 / RSA-SHA256 auth signature.
     "websockets==17.1",
     "cryptography==50.0.1",
+    # Independent signed Aster account reconciliation (EIP-712).
+    "eth-account==0.14.0",
 ]
 
 [dependency-groups]

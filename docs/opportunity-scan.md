@@ -8,12 +8,14 @@
 
 ## 启动与配置
 
-在 `E:\persarb\Nautilus-Perps`，使用经过项目流程安装 fork wheel 的 Python 环境：
+扫描工作树位于 `E:\persarb\worktrees\opportunity-scan`，本次扫描与交易实现位于此工作树。
+在该工作树中，使用经过项目流程安装 fork wheel 的显式 Python 环境：
 
 ```powershell
-.\.venv\Scripts\python.exe src\opportunity_scan.py --config config\opportunity-scan.example.toml --dry-run
-.\.venv\Scripts\python.exe src\opportunity_scan.py --config config\opportunity-scan.example.toml --symbols BTC --duration-secs 300
-.\.venv\Scripts\python.exe src\opportunity_scan.py --config config\opportunity-scan.example.toml --no-record --duration-secs 0
+$ScanPython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
+& $ScanPython -B src\opportunity_scan.py --config config\opportunity-scan.example.toml --dry-run
+& $ScanPython -B src\opportunity_scan.py --config config\opportunity-scan.example.toml --symbols BTC --duration-secs 300
+& $ScanPython -B src\opportunity_scan.py --config config\opportunity-scan.example.toml --no-record --duration-secs 0
 ```
 
 `dry-run` 只读取指定配置、输出 JSON，不导入原生模块、不建立连接、不创建输出目录。
@@ -31,16 +33,17 @@
 
 ### 多币种目录与连接检查
 
-`config/opportunity-scan.universe.toml` 是 2026-10-06 的五所公开目录快照，包含 167 个币种、498 个市场：
-HL 149、Lighter 109、Aster 161、Ondo 9、Backpack 70。每个币种至少覆盖两个所。
-`config/opportunity-scan.dg-us.toml` 是现有 Linux 安装包可用的四所配置，包含 164 个币种、425 个市场。
+`config/opportunity-scan.universe.toml` 基于 2026-10-06 的五所公开目录快照，经 2026-10-07 PRL 隔离后，
+本地配置包含 166 个币种、496 个市场：HL 149、Lighter 108、Aster 160、Ondo 9、Backpack 70。
+每个币种至少覆盖两个所。`config/opportunity-scan.dg-us.toml` 是现有 Linux 安装包可用的四所配置，
+同样隔离 PRL 后，本地包含 163 个币种、423 个市场。
 目录快照不是持续行情历史，也不代表每条盘口始终新鲜。新上市、停牌或退市后应重新生成。
 
 ```powershell
-.\.venv\Scripts\python.exe src\opportunity_universe.py --output config\opportunity-scan.universe.toml
-.\.venv\Scripts\python.exe src\opportunity_universe.py --venues HL,LIGHTER,ASTER,ONDO --output config\opportunity-scan.dg-us.toml
-.\.venv\Scripts\python.exe src\opportunity_connections.py --config config\opportunity-scan.universe.toml --duration-secs 240
-.\.venv\Scripts\python.exe src\opportunity_scan.py --config config\opportunity-scan.universe.toml --duration-secs 0
+& $ScanPython -B src\opportunity_universe.py --output config\opportunity-scan.universe.toml
+& $ScanPython -B src\opportunity_universe.py --venues HL,LIGHTER,ASTER,ONDO --output config\opportunity-scan.dg-us.toml
+& $ScanPython -B src\opportunity_connections.py --config config\opportunity-scan.universe.toml --duration-secs 240
+& $ScanPython -B src\opportunity_scan.py --config config\opportunity-scan.universe.toml --duration-secs 0
 ```
 
 发现命令仅调用固定的公开市场目录 API，不保存盘口；可加 `--symbols BTC,ETH,SOL` 或 `--dry-run`。
@@ -48,6 +51,30 @@ HL 149、Lighter 109、Aster 161、Ondo 9、Backpack 70。每个币种至少覆�
 保存目录来源和哈希；默认仅输出摘要。股票、商品、现货、停用品种及身份冲突会排除。
 `k` / `1000` 前缀不会自动去除：未经逐个确认的数量单位不能互相配对。HL 原生 ID 的大小写会保留。
 Lighter 的 operator index 无法区分股票和币种，因此还须与其他所明确标为 crypto 的目录交叉核对。
+这只是 ticker 与分类的交集，并未认证其他币种的经济标的身份。
+
+### PRL 身份隔离（2026-10-07，本地修补）
+
+Lighter 的官方公开 [tokenlist](https://mainnet.zklighter.elliot.ai/api/v1/tokenlist) 将 PRL 命名为
+`Pearl`（`gecko_id = "pearl-2"`，`asset_type = "CRYPTO"`）。Aster 的
+[PRL 上币公告](https://www.asterdex.com/bapi/composite/v1/public/composite/ae/announcement/get?id=145)
+只列 ticker；其公开合约目录未给出完整项目名称。因此本修补不宣称 Aster PRL 已确认为 Perle，
+也不从价格差推断十代币合约或可执行套利。
+
+共享规则位于 `src/opportunity_identity.py`，隔离原因是
+`suspected ticker collision / asset identity unverified`。发现器不再允许其他场所的同名 crypto
+ticker 将 Lighter PRL 引入配对，摘要记录 `suspected_ticker_collision_asset_identity_unverified`。
+扫描器在加载旧配置或手工配置时，拒绝 Lighter canonical `PRL`，也拒绝原生 ID
+`PRL-PERP.LIGHTER`；将 canonical 改成别名或设置数量乘数不能绕过隔离。
+上述两个本地生成配置都移除了 Lighter PRL；各自剩余的 Aster PRL 因只有单一场所，一并移除。
+BTC 等非 PRL 的发现规则保持原行为；这不是完整的资产身份系统，也不认证其他 ticker 或非 Lighter PRL。
+
+补丁只影响以后明确启动时使用该工作树的修补代码及本地配置的扫描器。正在运行的采集器继续使用旧的
+已加载代码和配置，不热加载、不停止、不重启；旧采集器仍可能继续记录 PRL 候选。
+此次没有远程部署或重新抓取全量目录，历史快照保持原样。
+
+### 其他目录与连接边界
+
 Backpack 原生客户端最多配置 100 个市场；生成器同时遵守总计 1000 个映射的应用上限。
 Backpack 客户端单侧最多保留 10000 层，HTTP 请求最长 60 秒，内部盘口过期最长 30000 毫秒；
 扫描器对这些参数取更严格的客户端上限。REST 快照选择不超过客户端容量的支持档位，
@@ -68,7 +95,7 @@ Aster 大配置用 `aster_snapshot_depth = 100`、`aster_subscription_interval_m
 深度不够目标金额就不判定机会。运行时长包含连接与分批启动，160 个 Aster 市场需要至少约 80 秒启动。
 重连与其 HTTP 重试仍由原生适配器处理，完整长期恢复测试尚未完成。
 
-dg-us 的 240 秒复测覆盖全部 425 个市场；每个市场都曾通过新鲜度检查，
+隔离前 dg-us 的 240 秒复测覆盖当时全部 425 个市场；每个市场都曾通过新鲜度检查，
 同时新鲜盘口峰值 413 个、满足时间差检查的币种峰值 100 个。
 平均进程 CPU 69.78%（约占两核机器的 34.89%）、内存峰值约 364 MiB。
 这次连接检查强制关闭录制，不证明捕获了收益机会或完成长期 soak。详细计数与限制见
@@ -136,7 +163,7 @@ Backpack 的连接 epoch、metadata、book continuity 和 freshness 会在处理
 离线验证：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests\test_opportunity_core.py tests\test_opportunity_scan.py tests\test_opportunity_native.py tests\test_opportunity_universe.py tests\test_opportunity_connections.py
+& $ScanPython -B -m pytest -q tests\test_opportunity_core.py tests\test_opportunity_scan.py tests\test_opportunity_native.py tests\test_opportunity_universe.py tests\test_opportunity_connections.py
 ```
 
 测试通过不表示百币容量、长期 soak 或真实成交已经验证。正式长跑应先查看各腿当前是否有有效盘口，

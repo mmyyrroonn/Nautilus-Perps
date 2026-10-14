@@ -17,6 +17,7 @@ edge_change_bps = "2"
 quantity_change_fraction = "0.1"
 
 [runtime]
+hyperliquid_fast_book = true
 connection_timeout_secs = 120
 duration_secs = 3600
 depth_levels = 20
@@ -3134,22 +3135,6 @@ venue = "LIGHTER"
 instrument_id = "POPCAT-PERP.LIGHTER"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
-
-[[markets]]
-symbol = "PRL"
-venue = "LIGHTER"
-instrument_id = "PRL-PERP.LIGHTER"
-quote_to_usd = "1"
-valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
-
-[[markets]]
-symbol = "PRL"
-venue = "ASTER"
-instrument_id = "PRLUSDT-PERP.ASTER"
-quote_to_usd = "1"
-valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
-taker_fee_bps = "4"
-fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
 
 [[markets]]
 symbol = "PROVE"

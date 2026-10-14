@@ -1,0 +1,42 @@
+# Operator-run multi-venue trading. Default CLI action validates without connecting.
+# User-selected initial total scale: USD 500, at most two concurrent pairs.
+schema_version = 1
+mode = "live"
+environment = "mainnet"
+scan_config = "opportunity-scan.universe.toml"
+state_path = "../reports/opportunity-trading/live.sqlite3"
+limits_path = "limits.toml"
+# All order mutations use the matching native Nautilus execution factory.
+venues = ["HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"]
+
+[trade]
+order_notional_usd = "100"
+entry_edge_bps = "30"
+take_profit_bps = "5"
+max_loss_bps = "20"
+loss_stop_enabled = true
+breakeven_after_secs = 180
+force_close_after_secs = 300
+slippage_bps = "0"
+
+[risk]
+# Zero refuses all execution; values can only tighten the total USD 500 hard cap.
+max_pairs = 2
+max_gross_notional_usd = "500"
+
+[startup]
+mandatory = true
+# Actual BTC clip uses each venue's current lot/minimum; this is only an outer cap.
+max_notional_usd = "50"
+slippage_bps = "20"
+# Complete native account cycles can take about ten seconds before a fresh fence.
+timeout_secs = 20
+
+[runtime]
+duration_secs = 0
+drain_timeout_secs = 30
+timer_interval_ms = 100
+# Complete native account reads may take several seconds; BBO freshness is separate.
+account_max_age_ms = 15000
+order_timeout_secs = 10
+retry_interval_ms = 1000

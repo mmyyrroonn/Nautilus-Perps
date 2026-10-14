@@ -11,6 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import opportunity_universe as universe
+from opportunity_identity import LIGHTER_PRL_QUARANTINE_CODE
 from opportunity_scan import parse_plan
 
 
@@ -129,6 +130,33 @@ def test_lighter_known_stock_collision_is_rejected_even_with_crypto_anchor():
     document, summary = generate(data)
     assert not any(m["venue"] == "LIGHTER" and m["symbol"] == "COIN" for m in document["markets"])
     assert summary["exclusions"]["LIGHTER"]["unanchored_or_ambiguous_asset"] == 1
+
+
+@pytest.mark.parametrize("venues", [None, ("HL", "LIGHTER", "ASTER", "ONDO"), ("LIGHTER", "ASTER")])
+@pytest.mark.parametrize("native_symbol", ["PRL", "prl"])
+def test_lighter_prl_is_quarantined_and_single_venue_anchor_drops_without_other_changes(venues, native_symbol):
+    data = metadata()
+    expected, _ = generate(data, venues=venues)
+    rows(data, "LIGHTER").append(lighter(native_symbol, market_id=4097, strategy_index=7))
+    rows(data, "ASTER").append(aster("PRL", underlyingSubType=["AI"], name=""))
+    original = deepcopy(data)
+    document, summary = generate(data, venues=venues)
+    assert document == expected
+    assert {m["symbol"] for m in document["markets"]} == {"BTC", "ETH"}
+    assert data == original
+    assert summary["exclusions"]["LIGHTER"][LIGHTER_PRL_QUARANTINE_CODE] == 1
+    assert summary["exclusions"]["ASTER"]["fewer_than_two_venues"] == 1
+    assert "other asset identities are not certified" in summary["lighter_identity_policy"]
+    with pytest.raises(universe.UniverseError, match="two selected"):
+        generate(data, venues=venues, symbols=("PRL",))
+
+
+def test_prl_quarantine_is_lighter_specific_not_a_verdict_on_other_venues():
+    data = metadata(("BTC", "PRL"))
+    document, summary = generate(data, venues=("HL", "LIGHTER", "ASTER"))
+    prl = [m for m in document["markets"] if m["symbol"] == "PRL"]
+    assert {m["venue"] for m in prl} == {"HL", "ASTER"}
+    assert summary["exclusions"]["LIGHTER"][LIGHTER_PRL_QUARANTINE_CODE] == 1
 
 
 def test_venue_and_symbol_subsets_keep_only_two_leg_symbols():

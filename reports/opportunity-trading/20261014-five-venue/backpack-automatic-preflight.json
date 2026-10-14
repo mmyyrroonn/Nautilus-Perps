@@ -1,0 +1,516 @@
+{
+  "preflight": {
+    "result": "passed",
+    "stage": "finished",
+    "reason": null,
+    "venue": "BACKPACK",
+    "owned_quantity": "0",
+    "planned_quantity": "0.00001",
+    "pending_request_id": null,
+    "unresolved_client_order_ids": [],
+    "results": [
+      {
+        "venue": "BACKPACK",
+        "result": "passed",
+        "reason": null
+      }
+    ],
+    "ignored_receipts": 2,
+    "max_notional_usd": "20",
+    "adjust_modes": {
+      "BACKPACK": "cancel_replace"
+    },
+    "late_residuals_by_venue": {},
+    "operation_timings": [
+      {
+        "venue": "BACKPACK",
+        "operation": "connect",
+        "stage": "connecting",
+        "request_id": "native-check-backpack-r1",
+        "client_order_id": "",
+        "started_ns": 1791916889399709800,
+        "completed_ns": 1791916890558672900,
+        "elapsed_ms": "1158.9631",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "connected"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "reconcile",
+        "stage": "initial_reconcile",
+        "request_id": "native-check-backpack-r2",
+        "client_order_id": "",
+        "started_ns": 1791916890558672900,
+        "completed_ns": 1791916891581584600,
+        "elapsed_ms": "1022.9117",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "account"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "submit",
+        "stage": "probe_accept",
+        "request_id": "native-check-backpack-r3",
+        "client_order_id": "native-check-backpack-v0-probe-3",
+        "started_ns": 1791916891581584600,
+        "completed_ns": 1791916891609553800,
+        "elapsed_ms": "27.9692",
+        "accepted_elapsed_ms": "27.9692",
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "accepted"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "cancel",
+        "stage": "replacement_cancel",
+        "request_id": "native-check-backpack-r4",
+        "client_order_id": "native-check-backpack-v0-probe-3",
+        "started_ns": 1791916891609553800,
+        "completed_ns": 1791916891626568700,
+        "elapsed_ms": "17.0149",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "canceled"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "reconcile",
+        "stage": "replacement_reconcile",
+        "request_id": "native-check-backpack-r5",
+        "client_order_id": "native-check-backpack-v0-probe-3",
+        "started_ns": 1791916891626568700,
+        "completed_ns": 1791916892595441500,
+        "elapsed_ms": "968.8728",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "account"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "submit",
+        "stage": "replacement_accept",
+        "request_id": "native-check-backpack-r6",
+        "client_order_id": "native-check-backpack-v0-replacement-6",
+        "started_ns": 1791916892595441500,
+        "completed_ns": 1791916892627821900,
+        "elapsed_ms": "32.3804",
+        "accepted_elapsed_ms": "32.3804",
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "accepted"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "cancel",
+        "stage": "probe_cancel",
+        "request_id": "native-check-backpack-r7",
+        "client_order_id": "native-check-backpack-v0-replacement-6",
+        "started_ns": 1791916892627821900,
+        "completed_ns": 1791916892652244800,
+        "elapsed_ms": "24.4229",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "canceled"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "reconcile",
+        "stage": "probe_clean_reconcile",
+        "request_id": "native-check-backpack-r8",
+        "client_order_id": "native-check-backpack-v0-replacement-6",
+        "started_ns": 1791916892652244800,
+        "completed_ns": 1791916893625913900,
+        "elapsed_ms": "973.6691",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "account"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "submit",
+        "stage": "open_terminal",
+        "request_id": "native-check-backpack-r9",
+        "client_order_id": "native-check-backpack-v0-open-9",
+        "started_ns": 1791916893625913900,
+        "completed_ns": 1791916893806429300,
+        "elapsed_ms": "180.5154",
+        "accepted_elapsed_ms": "41.0071",
+        "first_fill_elapsed_ms": "180.5154",
+        "terminal_elapsed_ms": "180.5154",
+        "completion": "terminal"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "reconcile",
+        "stage": "close_reconcile",
+        "request_id": "native-check-backpack-r10",
+        "client_order_id": "native-check-backpack-v0-open-9",
+        "started_ns": 1791916893806429300,
+        "completed_ns": 1791916894626807000,
+        "elapsed_ms": "820.3777",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "account"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "submit",
+        "stage": "close_terminal",
+        "request_id": "native-check-backpack-r11",
+        "client_order_id": "native-check-backpack-v0-close-11",
+        "started_ns": 1791916894626807000,
+        "completed_ns": 1791916894820422900,
+        "elapsed_ms": "193.6159",
+        "accepted_elapsed_ms": "32.0558",
+        "first_fill_elapsed_ms": "193.6159",
+        "terminal_elapsed_ms": "193.6159",
+        "completion": "terminal"
+      },
+      {
+        "venue": "BACKPACK",
+        "operation": "reconcile",
+        "stage": "final_reconcile",
+        "request_id": "native-check-backpack-r12",
+        "client_order_id": "native-check-backpack-v0-close-11",
+        "started_ns": 1791916894820422900,
+        "completed_ns": 1791916895627232100,
+        "elapsed_ms": "806.8092",
+        "accepted_elapsed_ms": null,
+        "first_fill_elapsed_ms": null,
+        "terminal_elapsed_ms": null,
+        "completion": "account"
+      }
+    ],
+    "session_id": "native-check-backpack",
+    "order_journal": {
+      "native-check-backpack-v0-probe-3": {
+        "role": "probe",
+        "quantity": "0.00001",
+        "filled": "0",
+        "terminal": true,
+        "accepted": true,
+        "venue": "BACKPACK"
+      },
+      "native-check-backpack-v0-replacement-6": {
+        "role": "replacement",
+        "quantity": "0.00001",
+        "filled": "0",
+        "terminal": true,
+        "accepted": true,
+        "venue": "BACKPACK"
+      },
+      "native-check-backpack-v0-open-9": {
+        "role": "open",
+        "quantity": "0.00001",
+        "filled": "0.00001",
+        "terminal": true,
+        "accepted": true,
+        "venue": "BACKPACK"
+      },
+      "native-check-backpack-v0-close-11": {
+        "role": "close",
+        "quantity": "0.00001",
+        "filled": "0.00001",
+        "terminal": true,
+        "accepted": true,
+        "venue": "BACKPACK"
+      }
+    },
+    "intent_journal": {
+      "native-check-backpack-r1": {
+        "action": "connect",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r1",
+        "client_order_id": "",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r2": {
+        "action": "reconcile",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r2",
+        "client_order_id": "",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r3": {
+        "action": "submit",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r3",
+        "client_order_id": "native-check-backpack-v0-probe-3",
+        "side": "BUY",
+        "quantity": "0.00001",
+        "price": "99.9",
+        "time_in_force": "GTC",
+        "post_only": true,
+        "reduce_only": false
+      },
+      "native-check-backpack-r4": {
+        "action": "cancel",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r4",
+        "client_order_id": "native-check-backpack-v0-probe-3",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r5": {
+        "action": "reconcile",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r5",
+        "client_order_id": "native-check-backpack-v0-probe-3",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r6": {
+        "action": "submit",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r6",
+        "client_order_id": "native-check-backpack-v0-replacement-6",
+        "side": "BUY",
+        "quantity": "0.00001",
+        "price": "99.8",
+        "time_in_force": "GTC",
+        "post_only": true,
+        "reduce_only": false
+      },
+      "native-check-backpack-r7": {
+        "action": "cancel",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r7",
+        "client_order_id": "native-check-backpack-v0-replacement-6",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r8": {
+        "action": "reconcile",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r8",
+        "client_order_id": "native-check-backpack-v0-replacement-6",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r9": {
+        "action": "submit",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r9",
+        "client_order_id": "native-check-backpack-v0-open-9",
+        "side": "BUY",
+        "quantity": "0.00001",
+        "price": "101.3",
+        "time_in_force": "IOC",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r10": {
+        "action": "reconcile",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r10",
+        "client_order_id": "native-check-backpack-v0-open-9",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      },
+      "native-check-backpack-r11": {
+        "action": "submit",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r11",
+        "client_order_id": "native-check-backpack-v0-close-11",
+        "side": "SELL",
+        "quantity": "0.00001",
+        "price": "99.8",
+        "time_in_force": "IOC",
+        "post_only": false,
+        "reduce_only": true
+      },
+      "native-check-backpack-r12": {
+        "action": "reconcile",
+        "venue": "BACKPACK",
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "request_id": "native-check-backpack-r12",
+        "client_order_id": "native-check-backpack-v0-close-11",
+        "side": "",
+        "quantity": "0",
+        "price": "0",
+        "time_in_force": "",
+        "post_only": false,
+        "reduce_only": false
+      }
+    },
+    "execution_journal": {
+      "BACKPACK:native-check-backpack-v0-open-9:9007199254740993": {
+        "client_order_id": "native-check-backpack-v0-open-9",
+        "quantity": "0.00001"
+      },
+      "BACKPACK:native-check-backpack-v0-close-11:9007199254740994": {
+        "client_order_id": "native-check-backpack-v0-close-11",
+        "quantity": "0.00001"
+      }
+    }
+  },
+  "accounts": [
+    {
+      "venue": "BACKPACK",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "bid": "100.0",
+      "ask": "101.0",
+      "observed_ns": 1791916891351000000,
+      "position_quantity": "0",
+      "open_order_ids": [],
+      "connected": true,
+      "authoritative": true,
+      "book_observed_ns": 1791916891550274000
+    },
+    {
+      "venue": "BACKPACK",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "bid": "100.0",
+      "ask": "101.0",
+      "observed_ns": 1791916892348000000,
+      "position_quantity": "0",
+      "open_order_ids": [],
+      "connected": true,
+      "authoritative": true,
+      "book_observed_ns": 1791916892545423000
+    },
+    {
+      "venue": "BACKPACK",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "bid": "100.0",
+      "ask": "101.0",
+      "observed_ns": 1791916893342000000,
+      "position_quantity": "0",
+      "open_order_ids": [],
+      "connected": true,
+      "authoritative": true,
+      "book_observed_ns": 1791916893572912000
+    },
+    {
+      "venue": "BACKPACK",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "bid": "100.0",
+      "ask": "101.0",
+      "observed_ns": 1791916894359000000,
+      "position_quantity": "0.00001",
+      "open_order_ids": [],
+      "connected": true,
+      "authoritative": true,
+      "book_observed_ns": 1791916894500122000
+    },
+    {
+      "venue": "BACKPACK",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "bid": "100.0",
+      "ask": "101.0",
+      "observed_ns": 1791916895352000000,
+      "position_quantity": "0",
+      "open_order_ids": [],
+      "connected": true,
+      "authoritative": true,
+      "book_observed_ns": 1791916895500258000
+    }
+  ],
+  "fills": [
+    {
+      "client_order_id": "native-check-backpack-v0-open-9",
+      "trade_id": "9007199254740993",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "venue": "BACKPACK",
+      "side": "BUY",
+      "native_qty": "0.00001",
+      "native_price": "101.3",
+      "execution_id": "BACKPACK:native-check-backpack-v0-open-9:9007199254740993",
+      "quantity": "0.00001",
+      "price": "101.3",
+      "commission_amount": "0.00000300",
+      "commission_currency": "USDC",
+      "received_ns": 1791916893805429500
+    },
+    {
+      "client_order_id": "native-check-backpack-v0-close-11",
+      "trade_id": "9007199254740994",
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "venue": "BACKPACK",
+      "side": "SELL",
+      "native_qty": "0.00001",
+      "native_price": "99.8",
+      "execution_id": "BACKPACK:native-check-backpack-v0-close-11:9007199254740994",
+      "quantity": "0.00001",
+      "price": "99.8",
+      "commission_amount": "0.00000300",
+      "commission_currency": "USDC",
+      "received_ns": 1791916894820422900
+    }
+  ],
+  "native": {
+    "schema_version": 1,
+    "venue": "BACKPACK",
+    "account_id": "BACKPACK-SIGNED-PEER",
+    "snapshot_started_ns": 1791916895352000000,
+    "snapshot_completed_ns": 1791916895502000000,
+    "complete": true,
+    "connected": true,
+    "epoch": 0,
+    "positions": [
+      {
+        "instrument_id": "BTC_USDC_PERP.BACKPACK",
+        "quantity": "0"
+      },
+      {
+        "instrument_id": "SOL_USDC_PERP.BACKPACK",
+        "quantity": "0"
+      }
+    ],
+    "own_open_orders": 0,
+    "foreign_open_orders": 0,
+    "open_orders": [],
+    "unknown_submissions": 0
+  }
+}

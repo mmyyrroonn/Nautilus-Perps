@@ -1,0 +1,19 @@
+{
+  "clean": true,
+  "venues": {
+    "ONDO": {
+      "clean": true,
+      "reason": "clean",
+      "own_open_orders": 0,
+      "foreign_open_orders": 0,
+      "unknown_submissions": 0,
+      "late_fills": 0,
+      "complete_account_proof": true,
+      "activity_reconciled": true,
+      "native_positions_flat": true,
+      "owned_stop_complete": true,
+      "dms_release_confirmed": true,
+      "requests_drained": true
+    }
+  }
+}

@@ -73,6 +73,8 @@ class ScanState:
     def __init__(self, plan: ScanPlan):
         self.plan = plan
         self.markets = {m.instrument_id: m for m in plan.markets}
+        self.allowed_pairs = None if plan.pair_allowlist is None else {
+            frozenset(pair) for pair in plan.pair_allowlist}
         self.groups = {}
         for market in plan.markets:
             self.groups.setdefault(market.symbol, []).append(market.instrument_id)
@@ -110,15 +112,19 @@ class ScanState:
         if evaluate:
             self.evaluate_symbol(market.symbol, now_ns, changed_id=instrument_id)
 
+    def pair_allowed(self, first: str, second: str) -> bool:
+        return first != second and (self.allowed_pairs is None or
+                                    frozenset((first, second)) in self.allowed_pairs)
+
     def evaluate_symbol(self, symbol: str, now_ns: int, *, changed_id: str | None = None):
         for buy_id in self.groups[symbol]:
             for sell_id in self.groups[symbol]:
-                if buy_id == sell_id:
+                if not self.pair_allowed(buy_id, sell_id):
                     continue
                 if changed_id is not None and changed_id not in (buy_id, sell_id):
                     continue
                 buy, sell = self.markets[buy_id], self.markets[sell_id]
-                key = (symbol, buy.venue, sell.venue)
+                key = (symbol, buy.venue, sell.venue) if self.allowed_pairs is None else (symbol, buy_id, sell_id)
                 result = None
                 if all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
                     result = evaluate_opportunity(self.books[buy_id], self.metadata[buy_id],
@@ -139,7 +145,8 @@ class ScanState:
                         for side, m, i in (("buy", buy, buy_id), ("sell", sell, sell_id))
                     }
                     self.current[key] = {"symbol": symbol, "buy_venue": buy.venue,
-                        "sell_venue": sell.venue, "base_quantity": result["sizing"]["base_quantity"],
+                        "sell_venue": sell.venue, "buy_id": buy_id, "sell_id": sell_id,
+                        "base_quantity": result["sizing"]["base_quantity"],
                         "entry_edge_bps": result["economics"]["entry_after_fees_and_reserve_bps"]}
                 if self.recorder.observe(key, result, now_ns):
                     self.saved += 1
@@ -148,12 +155,15 @@ class ScanState:
         for symbol in self.groups:
             self.evaluate_symbol(symbol, now_ns)
 
+    def on_evaluation_timer(self, now_ns: int):
+        """Optional state hook after all changed native books have been published."""
+
     def prune(self, now_ns: int, blocked_symbols=()):
         """Remove superseded/stale display rows without discovering or recording."""
         for key in set(self.current) | set(self.recorder.active_keys()):
-            symbol, buy_venue, sell_venue = key
-            ids = [i for i in self.groups[symbol]
-                   if self.markets[i].venue in {buy_venue, sell_venue}]
+            symbol, buy_leg, sell_leg = key
+            ids = [buy_leg, sell_leg] if self.allowed_pairs is not None else [
+                i for i in self.groups[symbol] if self.markets[i].venue in {buy_leg, sell_leg}]
             usable = (len(ids) == 2 and all(i in self.books and i in self.metadata
                 and _metadata_valid(self.metadata[i])
                 and _book_valid(self.books[i], self.plan.settings, now_ns) for i in ids))
@@ -177,7 +187,7 @@ class ScanState:
         stream.flush()
 
 
-def data_clients(plan):
+def data_clients(plan, *, backpack_quota=None):
     """Reuse public factories; constructing this list never registers execution."""
     from spread_watch import (
         _aster_client, _hyperliquid_client, _lighter_client, _lighter_rh_client, _ondo_client,
@@ -206,7 +216,8 @@ def data_clients(plan):
                 quote_stale_after_ms=min(plan.settings.max_age_ms, 30_000),
                 http_timeout_secs=min(plan.connection_timeout_secs, 60),
                 shutdown_timeout_secs=10)
-            factory = BackpackDataClientFactory()
+            factory = (BackpackDataClientFactory(quota=backpack_quota)
+                       if backpack_quota is not None else BackpackDataClientFactory())
         else:
             factory, config = factories[client_id]([m.instrument_id for m in markets])
         result.append((client_id, factory, config))
@@ -275,6 +286,8 @@ def create_observer(plan, state, stop, client_configs):
             client = ClientId.from_str(market.client_id)
             self.subscribe_instrument(instrument_id, client_id=client)
             kwargs = {"depth": plan.aster_snapshot_depth} if market.venue == "ASTER" else {}
+            if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
+                kwargs = {"depth": min(plan.depth_levels, 5), "params": {"fast": True}}
             self.subscribe_book_deltas(instrument_id, BookType.L2_MBP,
                                        client_id=client, managed=False, **kwargs)
             if market.venue == "ONDO":
@@ -394,13 +407,18 @@ def create_observer(plan, state, stop, client_configs):
             if market.instrument_id not in state.metadata:
                 return
             book = self.local_books[instrument_id]
-            raw_bids = tuple(book.bids_to_dict(plan.depth_levels).items())
-            raw_asks = tuple(book.asks_to_dict(plan.depth_levels).items())
+            depth = plan.depth_levels
+            if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
+                if any(len(prices) > 5 for prices in self.level_prices[instrument_id].values()):
+                    raise ScanConfigError("Hyperliquid fast subscription delivered more than five levels")
+                depth = min(depth, 5)
+            raw_bids = tuple(book.bids_to_dict(depth).items())
+            raw_asks = tuple(book.asks_to_dict(depth).items())
             ts_event, ts_received, sequence = stamp
             valid = instrument_id not in (self.halted | self.metadata_stale | self.disconnected | self.backpack_unhealthy)
             snapshot = BookSnapshot(market.venue, market.symbol,
                 normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
-                ts_event, ts_received, valid=valid, coverage_limit=plan.depth_levels)
+                ts_event, ts_received, valid=valid, coverage_limit=depth)
             raw = None
             if plan.output_path is not None:
                 def rows(levels):
@@ -414,7 +432,7 @@ def create_observer(plan, state, stop, client_configs):
                 raw = {"instrument_id": market.instrument_id,
                        "bids": rows(raw_bids), "asks": rows(raw_asks),
                        "ts_event_ns": ts_event, "ts_received_ns": ts_received,
-                       "coverage_limit": plan.depth_levels, "complete_book_claimed": False,
+                       "coverage_limit": depth, "complete_book_claimed": False,
                        "sequence": sequence}
             state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw, evaluate=evaluate)
 
@@ -486,6 +504,7 @@ def create_observer(plan, state, stop, client_configs):
                     # Every changed leg is current before evaluating any pair.
                     for symbol in changed:
                         state.evaluate_symbol(symbol, time.time_ns())
+                    state.on_evaluation_timer(time.time_ns())
                     self.last_evaluation_ns = time.time_ns()
                 if time.time_ns() - self.last_display_ns >= plan.refresh_ms * 1_000_000:
                     if plan.evaluation_interval_ms:
@@ -501,11 +520,11 @@ def create_observer(plan, state, stop, client_configs):
     return Observer()
 
 
-def build_node(plan):
+def build_node(plan, *, state_factory=ScanState):
     from nautilus_trader.common import CacheConfig, Environment, LoggerConfig, LogLevel
     from nautilus_trader.live import LiveDataEngineConfig, LiveNode
     from nautilus_trader.model import TraderId
-    state = ScanState(plan)
+    state = state_factory(plan)
     builder = (LiveNode.builder("OPPORTUNITY-SCAN", TraderId.from_str("SCAN-001"), Environment.LIVE)
         .with_logging(LoggerConfig(stdout_level=LogLevel.WARNING, fileout_level=LogLevel.OFF,
                                    print_config=False))

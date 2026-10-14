@@ -1,6 +1,7 @@
 """Discover comparable crypto perps from public metadata, without native imports.
 
-Identity is based on explicit crypto classifications and exact native base units.
+Discovery uses crypto classifications and exact native base-unit strings, subject
+to explicit identity quarantines. This does not certify asset identity.
 No k/1000 aliases are silently merged. Public fees and USD parity are labelled
 assumptions; discovery does not establish account fees or usable live books.
 """
@@ -16,6 +17,8 @@ from pathlib import Path
 import re
 import sys
 import urllib.request
+
+from opportunity_identity import LIGHTER_PRL_QUARANTINE_CODE, identity_quarantine_reason
 
 
 VENUES = ("HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK")
@@ -184,9 +187,12 @@ def _candidate(venue, row):
     canonical = _token(row.get("symbol"))
     if canonical is None or type(row.get("market_id")) is not int:
         return None, None, "invalid_identity"
+    native = canonical + "-PERP.LIGHTER"
+    if identity_quarantine_reason(venue, canonical, native):
+        return None, None, LIGHTER_PRL_QUARANTINE_CODE
     if _decimal(row.get("multiplier", "1"), positive=True) != 1:
         return None, None, "unsupported_nonunit_multiplier"
-    return canonical, canonical + "-PERP.LIGHTER", None
+    return canonical, native, None
 
 
 def _rwa_names(venue, rows):
@@ -323,7 +329,7 @@ def generate_document(metadata, *, venues=None, symbols=None, provenance=None, g
         "exclusions": {venue: dict(sorted(exclusions[venue].items())) for venue in VENUES if venue in rows},
         "alias_policy": "exact native base units only; k/1000 aliases not merged or independently verified",
         "capacity_policy": "reserve two legs per alphabetically ordered symbol, then favor underrepresented optional venues; Backpack cap100, total cap1000",
-        "lighter_identity_policy": "trusted crypto anchor intersection; known RWA collisions excluded; operator index is not a classifier",
+        "lighter_identity_policy": "ticker-only crypto anchor intersection; known RWA collisions and quarantined Lighter PRL excluded; operator index is not a classifier; other asset identities are not certified",
         "lighter_public_operator_counts": dict(sorted(observed_operators.items())),
         "inputs": {venue: (provenance or {}).get(venue, {"url": URLS[venue],
             "canonical_document_sha256": hashlib.sha256(json.dumps(metadata[venue], sort_keys=True,
