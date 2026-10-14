@@ -14,20 +14,28 @@ $TradePython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 # Validate the five-venue plan without credentials, connections or orders.
 & $TradePython -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --dry-run
 
-# Real BTC minimum-size startup checks on all five venues, then BTC/ETH pair trading.
+# Trade BTC/ETH after readonly startup account checks; BTC trading self-tests are disabled by default.
 & $TradePython -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --symbols BTC,ETH --execute-live
+
+# Explicitly run BTC trading self-tests on all five venues before continuous trading.
+& $TradePython -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --symbols BTC,ETH --execute-live --startup-self-test
 
 # Omit --symbols to trade all eligible symbols in the configured registry.
 # Optional: stop after startup checks, without enabling the continuous strategy.
 & $TradePython -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --symbols BTC --execute-live --self-test-only
 ```
 
-正常实盘命令先逐所执行 BTC 自检，全部通过才进入连续策略；`--self-test-only` 是可选诊断参数。
-自检检查连接、被动挂单、改价、撤单、最小金额 IOC 开仓、减仓平仓和最终空仓，逐项记录耗时。
+默认配置 `startup.self_test_enabled = false`，启动时只读取行情与账户证据，不发送 BTC 自检交易。
+配置为 `true` 或显式传 `--startup-self-test`，才逐所执行 BTC 交易自检，通过后进入连续策略。
+`--self-test-only` 也会显式启用自检，通过后直接结束。自检只发生在启动阶段，连续交易每次平仓后直接回到机会扫描。
+旧配置 `startup.mandatory` 作为同义布尔开关兼容；两个开关同时存在且不一致时拒绝启动。
+关闭交易自检仍保留原生候选校验、逐所只读账户门禁以及每个拟交易品种原有的订单归属与账户核对。
+只读门禁使用各所 BTC 映射；没有 BTC 映射时使用该所已配置的交易品种。其结果单独保存在 `account_gate`，不伪造 BTC 自检通过。
+启用的交易自检检查连接、被动挂单、改价、撤单、最小金额 IOC 开仓、减仓平仓和最终空仓，逐项记录耗时。
 金额按该所实时最小数量、步长和已发布的最小名义额向上取整，可能高于 1–2 美元；
 `startup.max_notional_usd = "50"` 是拒绝超额的外部上限，不是每次自检的下单目标。
 Backpack 的最低下单单位来自公开市场 `quantity` 过滤器，见[官方市场接口](https://docs.backpack.exchange/#tag/Markets)。
-存在已有 BTC 仓位、非本策略挂单、未知提交或任一检查失败时，不会跳过该所开启正式交易。
+账户证据过期、不权威、净仓不符、存在外部挂单或历史未决提交时，不会跳过该所开启正式交易。
 
 | 交易所 | 下单路径 | 启动改价检查 |
 |---|---|---|
@@ -176,7 +184,25 @@ $TradePython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 默认实盘账本为 `reports/opportunity-trading/live.sqlite3`。`events` 表中的 `startup_operation`
 保存每所每步的开始、完成、接受、首次成交和终态耗时；`order_accepted`、`fill`、`order_terminal`
 保存连续交易的对应耗时。`state` 表同时保存启动结果、未完订单原始 ID、各 pair 数量、现金额和手续费。
-正式交易只根据真实逐笔成交增加仓位，订单接受不等于成交；一腿失败或不平衡会转入自有数量减仓。
+连续交易这些延迟以订单意图创建时的 `sent_ns` 为基点，包含其后的持久化与派发等待，不能直接当作纯网络往返耗时。
+这些记录尚未覆盖行情评估、持久化、派发排队及账户 proof 等所有内部步骤，完整 trace 与分析导出见
+[issue 14](https://github.com/mmyyrroonn/Nautilus-Perps/issues/64)。关闭 BTC 自检时没有 `startup_operation` 交易操作事件，只有只读 `startup_account_gate` 结果。
+正式交易只根据真实逐笔成交增加仓位，订单接受不等于成交。连续开平仓订单都是 LIMIT IOC、`post_only=false`；
+被动 Maker GTC 探针只用于显式启用的 BTC 交易自检。
+归一化标的成交量一边大于零、另一边为零时称为单腿；两边均成交但数量不等也属于不平衡。
+两腿已确认终态、两边成交量均大于零但不等时进入 `rebalancing`：以较小数量为保留目标，
+只减较大腿多出的差额，不补较小腿。减仓部分成交后按剩余差额处理，未决减仓单先核对原 ID；
+减仓终态与新账户证明通过后转回持仓管理。保留原始持仓计时、实际现金与费用，以及 pair 锁和预算。
+纯单腿（另一边确认零成交）立即进入 `entry_imbalance`，退出全部已确认自有量，不补另一边。
+两腿终态且等量部分成交按实际数量管理；两边均为零则核对账户后释放。
+差额不满足数量规则或缺少有效执行条件时，保留差额并记录 `entry_rebalance_blocked`，不能向上取整或减较小腿。
+原有停止、止损、最长持仓等硬退出仍优先于保留配平仓位；退出过程中的不平衡继续退出，不重新转成持仓。
+
+终态由原生订单关闭状态和成交覆盖共同确认：本地逐笔成交累计量必须等于原生订单的累计成交量。
+100ms 定时轮询补查原生缓存，原生事件到达也可直接推进。10 秒订单超时仅标为 unknown 并查询原 ID，
+每隔 10 秒可再次查询，不因超时假定订单终态或零成交。账户读取超时为 20 秒，与订单终态及 300 秒最长持仓不同。
+另一腿未决或 unknown 时持续查询原 ID，不将其推断成零成交；独立未对冲金额/时间上限待
+[issue 07](https://github.com/mmyyrroonn/Nautilus-Perps/issues/57) 补齐，当前仍可能等到 300 秒才退出已确认量。
 
 五分钟或启用的 20bp 亏损线触发后，按每条腿的新鲜深度持续发送受价格保护的 IOC 减仓。
 部分成交保留余量，未知提交继续查询原 ID，绝不因超时换 ID 重开；只在双腿残量为零且新账户快照
@@ -186,11 +212,15 @@ $TradePython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 Ondo/Backpack 使用原生完整账户核对快照，其他三所使用独立只读账户核对。账户时间为读取开始时间，
 必须晚于本程序最近的成交/终态；账户默认最多 15 秒旧，盘口仍严格最多 2 秒旧，两种时间不混用。
 开仓手续费使用真实成交手续费；退出判断使用当前盘口及预计退出手续费。手续费未知时不触发软止盈，
-但保留五分钟减仓。净收益当前不包含资金费和借贷成本，这一口径也在运行结果 `pnl_excludes` 中输出。
+硬退出当前仍可能被缺失的费率元数据阻塞，独立校验待
+[issue 10](https://github.com/mmyyrroonn/Nautilus-Perps/issues/60) 补齐。净收益当前不包含资金费和借贷成本，这一口径也在运行结果 `pnl_excludes` 中输出。
 
 同配置重启时，已确认终态的仓位先与账户核对，再沿用原始持仓时间恢复管理。若上次有未知提交、
 自检中断、执行账本异常或原生关停证明不完整，程序保留原始 ID 并停在恢复阻塞状态，等待人工核对，不重复启动 BTC 开仓。
 仅在配置/凭证校验阶段失败、尚无任何启动意图或订单的空会话，可在修正配置后正常重试首次启动。
+无 BTC 自检交易日志、无交易订单和持仓的只读账户门禁，即使读取中断也可以重试。
+只读门禁已通过的历史会话按原订单终态与原生关停证明决定能否恢复；每次启动仍取得新的账户证据。
+关闭自检开关不能绕过以前中断的 BTC 自检订单或残仓。
 不要删除旧 SQLite 或原生日志来绕过残仓检查。修改币种/金额/阈值前先完成当前仓位清理；
 不同配置指纹不能复用同一账本，也不要同时运行不同账本去共享同一组交易账户。
 

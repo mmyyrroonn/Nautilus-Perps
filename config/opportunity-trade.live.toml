@@ -25,7 +25,7 @@ max_pairs = 2
 max_gross_notional_usd = "500"
 
 [startup]
-mandatory = true
+self_test_enabled = false
 # Actual BTC clip uses each venue's current lot/minimum; this is only an outer cap.
 max_notional_usd = "50"
 slippage_bps = "20"

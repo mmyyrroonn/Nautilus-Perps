@@ -355,7 +355,8 @@ class LiveTradeState(ScanState):
         position = {"position_id": self.sequence, "symbol": key[0], "pair": list(key),
             "buy_id": buy_id, "sell_id": sell_id, "opened_ns": None, "status": "entering",
             "exit_reason": None, "exit_requested_ns": None, "entry": estimate,
-            "entry_ids": [], "exit_ids": [], "entry_buy_base": "0", "entry_sell_base": "0",
+            "entry_ids": [], "exit_ids": [], "rebalance_ids": [],
+            "entry_buy_base": "0", "entry_sell_base": "0",
             "remaining_buy_base": "0", "remaining_sell_base": "0",
             "closing_long_cash_usd": "0", "closing_short_cash_usd": "0", "closing_fees_usd": "0",
             "actual_entry": {"buy_notional_usd": "0", "sell_notional_usd": "0",
@@ -496,6 +497,62 @@ class LiveTradeState(ScanState):
             return "positive_after_wait"
         return None
 
+    def _reduction_bound(self, position, leg, qty, now_ns):
+        instrument_id = position[f"{leg}_id"]
+        if not qty or now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
+            return None
+        if not self._account_ready(instrument_id, now_ns):
+            return None
+        current = self.metadata.get(instrument_id)
+        original = position["entry"][f"{leg}_metadata"]
+        if current is None or F(current.multiplier) != F(original["multiplier"]) or (
+                F(current.size_increment) != F(original["size_increment"])):
+            return None
+        native_remaining = qty / F(original["multiplier"])
+        delta = -native_remaining if leg == "buy" else native_remaining
+        net = self.expected_native(instrument_id)
+        reducing = net * delta < 0 and abs(delta) <= abs(net)
+        return self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
+                           now_ns, partial=True, reduce_only=reducing)
+
+    def _rebalance_entry(self, position, now_ns):
+        """Trim only the excess leg; never increase either confirmed entry leg."""
+        target = F(position["rebalance_target_base"])
+        leg = position["rebalance_leg"]
+        other = "sell" if leg == "buy" else "buy"
+        remaining = F(position[f"remaining_{leg}_base"])
+        if target <= 0 or remaining < target or F(position[f"remaining_{other}_base"]) != target:
+            self.halt_reason = "entry rebalance inventory differs from its durable target"
+            self.emit("rebalance_inventory_mismatch", now_ns, position_id=position["position_id"])
+            return
+        ready = [self._account_ready(position[f"{side}_id"], now_ns) for side in ("buy", "sell")]
+        if not all(ready):
+            return
+        excess = remaining - target
+        if excess == 0:
+            position.update(status="open", rebalance_completed_ns=now_ns)
+            position.pop("rebalance_blocked", None)
+            self.emit("entry_rebalanced", now_ns, position_id=position["position_id"],
+                      retained_base=_number(target), reduced_leg=leg,
+                      elapsed_ms=_number(F(now_ns-position["rebalance_started_ns"], 1_000_000)))
+            self.emit("opened", now_ns, position_id=position["position_id"],
+                      buy_base=_number(target), sell_base=_number(target), rebalanced=True)
+            return
+        instrument_id = position[f"{leg}_id"]
+        if now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
+            return
+        bound = self._reduction_bound(position, leg, excess, now_ns)
+        if bound is None:
+            if not position.get("rebalance_blocked"):
+                position["rebalance_blocked"] = True
+                self.emit("entry_rebalance_blocked", now_ns, position_id=position["position_id"],
+                          reason="excess reduction has no executable bound",
+                          remaining_excess_base=_number(excess), target_base=_number(target))
+            return
+        position.pop("rebalance_blocked", None)
+        intent = self._make_order(position, leg, "rebalance", bound, now_ns)
+        self._publish_orders([intent], now_ns, position)
+
     def observe(self, key, now_ns):
         position = self.positions[key]
         ids = (position["buy_id"], position["sell_id"])
@@ -529,16 +586,32 @@ class LiveTradeState(ScanState):
             return
         if position["status"] == "entering" and entry_done:
             balanced = remains[0] == remains[1] and remains[0] > 0
-            position["status"] = "open" if balanced else "exit_pending"
-            if not balanced:
+            if not balanced and all(q > 0 for q in remains):
+                position.update(status="rebalancing", rebalance_started_ns=now_ns,
+                                rebalance_target_base=_number(min(remains)),
+                                rebalance_leg="buy" if remains[0] > remains[1] else "sell")
+                position.setdefault("rebalance_ids", [])
+                self.emit("entry_rebalance_requested", now_ns, position_id=position["position_id"],
+                          buy_base=_number(remains[0]), sell_base=_number(remains[1]),
+                          target_base=position["rebalance_target_base"], reduced_leg=position["rebalance_leg"])
+            elif balanced:
+                position["status"] = "open"
+                self.emit("opened", now_ns, position_id=position["position_id"],
+                          buy_base=_number(remains[0]), sell_base=_number(remains[1]))
+            else:
+                position["status"] = "exit_pending"
                 position["exit_reason"] = "entry_imbalance"
                 position["exit_requested_ns"] = now_ns
-            self.emit("opened" if balanced else "entry_imbalance", now_ns,
-                      position_id=position["position_id"], buy_base=_number(remains[0]), sell_base=_number(remains[1]))
+                self.emit("entry_imbalance", now_ns, position_id=position["position_id"],
+                          buy_base=_number(remains[0]), sell_base=_number(remains[1]))
         if position["exit_ids"] and remains[0] != remains[1]:
             position["exit_reason"] = "exit_imbalance"
             position["status"] = "exit_pending"
         reason = self._exit_reason(position, now_ns)
+        if (position["status"] == "rebalancing" and position["exit_reason"] not in HARD_EXITS
+                and reason not in HARD_EXITS):
+            self._rebalance_entry(position, now_ns)
+            return
         if position["exit_reason"] not in HARD_EXITS:
             if reason is None:
                 position["status"], position["exit_reason"] = "open", None
@@ -548,22 +621,8 @@ class LiveTradeState(ScanState):
                 self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=reason)
         hard = position["exit_reason"] in HARD_EXITS
         bounds = {}
-        for leg, instrument_id, qty in zip(("buy", "sell"), ids, remains):
-            if not qty or now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
-                continue
-            if not self._account_ready(instrument_id, now_ns):
-                continue
-            current = self.metadata.get(instrument_id)
-            original = position["entry"][f"{leg}_metadata"]
-            if current is None or F(current.multiplier) != F(original["multiplier"]) or (
-                    F(current.size_increment) != F(original["size_increment"])):
-                continue
-            native_remaining = qty / F(position["entry"][f"{leg}_metadata"]["multiplier"])
-            delta = -native_remaining if leg == "buy" else native_remaining
-            net = self.expected_native(instrument_id)
-            reducing = net * delta < 0 and abs(delta) <= abs(net)
-            bound = self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
-                                now_ns, partial=True, reduce_only=reducing)
+        for leg, qty in zip(("buy", "sell"), remains):
+            bound = self._reduction_bound(position, leg, qty, now_ns)
             if bound is not None:
                 bounds[leg] = bound
         if not bounds or (not hard and len(bounds) != sum(q > 0 for q in remains)):

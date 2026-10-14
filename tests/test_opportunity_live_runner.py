@@ -119,6 +119,8 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert len(plan.trade_symbols) > 2 and plan.ready
     assert plan.policy.order_notional_usd == 100 and plan.max_gross_notional_usd == 500
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
+    assert plan.startup_self_test is False
+    assert plan.document()["startup"]["account_gate_required"] is True
 
 
 
@@ -141,7 +143,7 @@ def test_explicit_risk_zero_refuses_execution_before_reading_credentials(tmp_pat
 
 @pytest.mark.parametrize("kwargs", [
     {"venues": '["HYPERLIQUID", "ONDO"]'}, {"venues": '["HYPERLIQUID", "BACKPACK"]'},
-    {"venues": '["HYPERLIQUID", "HL"]'}, {"mandatory": "false"},
+    {"venues": '["HYPERLIQUID", "HL"]'}, {"mandatory": '"false"'},
     {"pairs": "true"}, {"gross": "NaN"}, {"extra": "private_key = 'forbidden'"},
 ])
 def test_invalid_or_unsupported_config_never_creates_runtime(tmp_path, kwargs):
@@ -186,6 +188,177 @@ def test_cli_risk_override_and_symbol_filter_keep_required_btc_subscriptions(tmp
     assert plan.duration_secs == 10
     with pytest.raises(ScanConfigError):
         load_live_plan(path, symbols="UNKNOWN")
+
+
+@pytest.mark.parametrize("flag", ["--startup-self-test", "--self-test-only"])
+def test_optional_self_test_cli_is_explicit_and_inspection_has_no_side_effects(tmp_path, capsys, flag):
+    path = configs(tmp_path, mandatory="false")
+    assert main(["--config", str(path)]) == 0
+    assert json.loads(capsys.readouterr().out)["startup"]["self_test_enabled"] is False
+    assert main(["--config", str(path), flag]) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["startup"]["self_test_enabled"] is True
+    assert document["self_test_only"] == (flag == "--self-test-only")
+    assert document["remote_writes_allowed"] is False and not (tmp_path / "state").exists()
+
+
+def test_new_toggle_defaults_off_and_legacy_explicit_boolean_is_supported(tmp_path):
+    path = configs(tmp_path)
+    assert load_live_plan(path).startup_self_test is True
+    original = path.read_text(encoding="utf-8")
+    path.write_text(original.replace("mandatory = true", ""), encoding="utf-8")
+    assert load_live_plan(path).startup_self_test is False
+    path.write_text(original.replace("mandatory = true", "self_test_enabled = false"), encoding="utf-8")
+    assert load_live_plan(path).startup_self_test is False
+    path.write_text(original.replace("mandatory = true", "mandatory = true\nself_test_enabled = false"), encoding="utf-8")
+    with pytest.raises(ScanConfigError, match="conflict"):
+        load_live_plan(path)
+
+
+def test_disabling_trading_self_test_does_not_require_btc_markets(tmp_path):
+    path = configs(tmp_path, mandatory="false")
+    scan_path = tmp_path / "scan.toml"
+    scan_path.write_text(scan_path.read_text(encoding="utf-8").replace('symbol = "BTC"', 'symbol = "SOL"'),
+                         encoding="utf-8")
+    plan = load_live_plan(path, symbols="ETH")
+    assert plan.trade_symbols == ("ETH",) and not plan.startup_self_test
+    assert {m.symbol for m in plan.scan.markets} == {"ETH"}
+    with pytest.raises(ScanConfigError, match="BTC market"):
+        load_live_plan(path, symbols="ETH", startup_self_test=True)
+
+
+def readonly_coordinator(tmp_path, *, saved=None):
+    from opportunity_live import LiveTradeState
+    plan = load_live_plan(configs(tmp_path, mandatory="false"))
+    store = MemoryStore(saved)
+    proxy = SessionStoreProxy(store)
+    live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
+                         max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
+                         account_max_age_ms=plan.account_max_age_ms)
+    for market in plan.scan.markets:
+        live.register_instrument(market.instrument_id, D("0.01"), D(1), "USD")
+        live.update_book(market.instrument_id, BookSnapshot(market.venue, market.symbol,
+            ((D(100), D(10)),), ((D("100.02"), D(10)),), NOW, NOW), NOW, evaluate=False)
+    stopped = []
+    state = LiveCoordinator(plan, live, proxy, stop=lambda: stopped.append(True))
+    gateway = FakeGateway()
+    state.attach(gateway)
+    return state, live, gateway, store, stopped
+
+
+def test_no_trading_self_test_still_requires_each_venue_account_proof(tmp_path):
+    state, live, gateway, store, stopped = readonly_coordinator(tmp_path)
+    state.tick(NOW)
+    assert state.phase == "waiting_accounts" and live.phase != "active"
+    assert len(gateway.sent) == len(state.plan.venues)
+    assert all(i.action == "reconcile" for i in gateway.sent)
+    for index, market in enumerate(state.account_markets):
+        state.on_account(AccountSnapshot(market.venue, market.instrument_id, D(100), D("100.02"),
+                         NOW + 1, D(0)), NOW + 1)
+        if index < len(state.account_markets) - 1:
+            state.tick(NOW + 1)
+            assert state.phase == "waiting_accounts"
+    state.tick(NOW + 2)
+    assert state.phase == "active" and live.phase == "active" and not stopped
+    assert store.saved["startup"] is None and store.saved["startup_complete"] is False
+    assert store.saved["account_gate"]["result"] == "passed"
+    for stamp in (NOW + 3, NOW + 4, NOW + 5):
+        state.tick(stamp)
+    assert live.event_counts["strategy_enabled"] == 1
+    assert not live.orders and all(i.action == "reconcile" for i in gateway.sent)
+
+
+@pytest.mark.parametrize("bad", ["stale", "position", "open_orders", "non_authoritative", "disconnected"])
+def test_bad_account_proof_cannot_be_skipped_when_trading_self_test_is_off(tmp_path, bad):
+    state, live, gateway, store, stopped = readonly_coordinator(tmp_path)
+    state.tick(NOW)
+    for index, market in enumerate(state.account_markets):
+        values = {}
+        if index == 0:
+            values = {"stale": {"observed_ns": NOW - 20_000_000_000},
+                      "position": {"position_quantity": D("0.1")},
+                      "open_orders": {"open_order_ids": ("external-order",)},
+                      "non_authoritative": {"authoritative": False},
+                      "disconnected": {"connected": False}}[bad]
+        snapshot = AccountSnapshot(market.venue, market.instrument_id, D(100), D("100.02"), NOW, D(0))
+        state.on_account(replace(snapshot, **values), NOW)
+    state.tick(NOW + 1)
+    assert state.phase == "waiting_accounts" and live.phase != "active"
+    state.tick(NOW + state.plan.scan.connection_timeout_secs * 1_000_000_000)
+    assert state.finished and state.failure and stopped
+    assert store.saved["account_gate"]["result"] == "failed"
+    assert not live.orders and all(i.action == "reconcile" for i in gateway.sent)
+
+
+@pytest.mark.parametrize("journal", [
+    {"result": "blocked", "owned_quantity": "0.001"},
+    {"result": "running", "owned_quantity": "0", "unresolved_client_order_ids": ["original-btc-id"]},
+])
+def test_switching_off_self_test_does_not_bypass_interrupted_btc_journal(tmp_path, journal):
+    saved = {"schema_version": 1, "startup_complete": False, "startup": journal,
+             "account_gate": {"result": "passed"}, "live": {"positions": [], "orders": {}}}
+    path = configs(tmp_path, mandatory="false")
+    state, live, preflight, gateway, store, stopped = coordinator(tmp_path, saved=saved, plan_path=path)
+    state.tick(NOW)
+    assert state.phase == "resume_readonly" and state.failure and stopped
+    assert not gateway.sent and not live.activated and preflight.started == 0
+    assert state.document()["startup"] == journal and store.saved == saved
+
+
+@pytest.mark.parametrize("gate_result", ["checking", "passed"])
+def test_readonly_startup_can_restart_without_trading_self_test(tmp_path, gate_result):
+    saved = {"schema_version": 1, "startup_complete": False, "startup": None,
+             "account_gate": {"result": gate_result},
+             "live": {"positions": [], "orders": {}, "executions": {}, "request_sequence": 3}}
+    path = configs(tmp_path, mandatory="false")
+    state, live, preflight, gateway, _, stopped = coordinator(tmp_path, saved=saved, plan_path=path)
+    live._account_ready = lambda instrument_id, now_ns: False
+    state.tick(NOW)
+    assert state.phase == "waiting_accounts" and not state.failure and not stopped
+    assert preflight.started == 0 and not live.activated and not gateway.sent
+
+
+def test_readonly_session_restart_requires_new_process_account_evidence(tmp_path):
+    state, live, _, store, _ = readonly_coordinator(tmp_path)
+    state.tick(NOW)
+    for market in state.account_markets:
+        state.on_account(AccountSnapshot(market.venue, market.instrument_id, D(100), D("100.02"), NOW, D(0)), NOW)
+    state.tick(NOW + 1)
+    assert state.phase == "active" and store.saved["account_gate"]["result"] == "passed"
+    resumed, resumed_live, gateway, _, stopped = readonly_coordinator(tmp_path, saved=store.saved)
+    resumed.tick(NOW + 2)
+    assert resumed.phase == "waiting_accounts" and resumed_live.phase != "active"
+    assert len(gateway.sent) == len(resumed.plan.venues)
+    assert all(i.action == "reconcile" for i in gateway.sent)
+    assert not stopped and resumed.preflight is None
+
+
+@pytest.mark.parametrize("blocker", ["pending_order", "dirty_native", "halted_ledger"])
+def test_readonly_gate_never_overrides_execution_recovery_blockers(tmp_path, blocker):
+    saved = {"schema_version": 1, "startup_complete": False, "startup": None,
+             "account_gate": {"result": "passed"}, "live": {"positions": [], "orders": {}}}
+    if blocker == "pending_order":
+        saved["live"]["orders"]["original-order"] = {"terminal_ns": None}
+    elif blocker == "dirty_native":
+        saved["native_shutdown"] = {"clean": False}
+    else:
+        saved["live"]["halt_reason"] = "ledger requires reconciliation"
+    path = configs(tmp_path, mandatory="false")
+    state, live, preflight, gateway, _, stopped = coordinator(tmp_path, saved=saved, plan_path=path)
+    state.tick(NOW)
+    assert state.phase == "resume_readonly" and state.failure and stopped
+    assert not live.activated and not gateway.sent and preflight.started == 0
+
+
+def test_self_test_only_forces_opt_in_even_when_config_defaults_off(tmp_path):
+    path = configs(tmp_path, mandatory="false")
+    state, live, preflight, gateway, _, stopped = coordinator(tmp_path, self_test_only=True, plan_path=path)
+    state.tick(NOW)
+    assert state.phase == "preflight" and preflight.started == 1
+    assert [i.action for i in gateway.sent] == ["connect"]
+    preflight.result, preflight.stage = "passed", "finished"
+    state.tick(NOW + 1)
+    assert state.phase == "self_test_complete" and stopped and not live.activated
 
 
 class MemoryStore:
@@ -479,16 +652,19 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
 
 
 @pytest.mark.parametrize("five_venues", [False, True])
-def test_native_node_registers_real_strategy_and_execution_clients_using_mock_transports(tmp_path, monkeypatch, five_venues):
+@pytest.mark.parametrize("startup_self_test", [False, True])
+def test_native_node_registers_real_strategy_and_execution_clients_using_mock_transports(
+        tmp_path, monkeypatch, five_venues, startup_self_test):
     import opportunity_runtime
-    path = configs(tmp_path, all_five=five_venues,
+    path = configs(tmp_path, all_five=five_venues, mandatory=str(startup_self_test).lower(),
         venues='["HL","LIGHTER","ASTER","ONDO","BACKPACK"]' if five_venues else '["HL","LIGHTER","ASTER"]')
     state, live, _, _, _, stopped = coordinator(tmp_path, plan_path=path)
     plan = state.plan
     native_instruments = {m.instrument_id: SimpleNamespace(price_increment=D("0.01"),
         size_increment=D("0.001"), multiplier=D(1), quote_currency="USDT",
         min_quantity=D("0.001") if m.venue == "BACKPACK" else None,
-        min_notional=None if m.venue in {"BACKPACK", "ONDO"} else D(5), is_inverse=False) for m in plan.scan.markets}
+        min_notional=None if not startup_self_test or m.venue in {"BACKPACK", "ONDO"} else D(5),
+        is_inverse=False) for m in plan.scan.markets}
     timers = []
     class Strategy:
         def __init__(self, config):
@@ -576,15 +752,19 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
     assert strategy.config.values["oms_type"] == "NETTING"
     strategy.on_start()
     assert not state.failure and len(live.instruments) == len(plan.scan.markets)
-    assert state.preflight.market.venue == "HL"
-    assert state.preflight.markets[-1].modify_mode == "cancel_replace"
-    assert len(state.preflight.markets) == len(plan.venues)
-    assert {m.venue for m in state.preflight.markets if m.modify_mode == "cancel_replace"} == (
-        {"ASTER", "ONDO", "BACKPACK"} if five_venues else {"ASTER"})
-    assert state.preflight.markets[0].min_quantity == D("0.001")
-    if five_venues:
-        assert state.preflight.markets[-1].min_notional == 0
-        assert state.preflight.markets[-2].min_notional == 0
+    if startup_self_test:
+        assert state.preflight.market.venue == "HL"
+        assert state.preflight.markets[-1].modify_mode == "cancel_replace"
+        assert len(state.preflight.markets) == len(plan.venues)
+        assert {m.venue for m in state.preflight.markets if m.modify_mode == "cancel_replace"} == (
+            {"ASTER", "ONDO", "BACKPACK"} if five_venues else {"ASTER"})
+        assert state.preflight.markets[0].min_quantity == D("0.001")
+        if five_venues:
+            assert state.preflight.markets[-1].min_notional == 0
+            assert state.preflight.markets[-2].min_notional == 0
+    else:
+        assert state.preflight is None
+        assert {m.venue for m in state.account_markets} == set(plan.venues)
     assert callable(state.gateway.kwargs["quote_provider"])
     assert state.gateway.kwargs["account_timeout_secs"] == 20
     assert state.gateway.kwargs["timeout_secs"] == 10

@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"src"))
 from opportunity_core import BookSnapshot, MarketMetadata
 from opportunity_live import LiveTradeState
@@ -34,7 +36,8 @@ class ExchangeTransport:
         self.sent.append(intent)
         self.pending.append(intent)
         if intent.client_order_id.startswith("L") and self.first_live_startup is None:
-            self.first_live_startup = self.coordinator.preflight.document()
+            self.first_live_startup = (self.coordinator.preflight.document() if self.coordinator.preflight else
+                                       {"result": "disabled"})
 
     def poll(self, now_ns):
         self.now = now_ns
@@ -71,7 +74,8 @@ class ExchangeTransport:
                 receipt("terminal")
 
 
-def test_five_startup_checks_are_integrated_before_continuous_roundtrip():
+@pytest.mark.parametrize("startup_self_test", [False, True])
+def test_five_startup_checks_are_integrated_before_continuous_roundtrip(startup_self_test):
     scan = make_plan(venues=VENUES)
     store = MemoryStore()
     proxy = SessionStoreProxy(store)
@@ -84,11 +88,12 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip():
         mode = "native" if market.venue in {"HL", "LIGHTER"} else "cancel_replace"
         markets.append(PreflightMarket(market.venue, market.instrument_id, D("0.01"), D("0.01"),
             D("0.01"), D(5), supports_modify=mode == "native", modify_mode=mode))
-    plan = SimpleNamespace(scan=replace(scan, connection_timeout_secs=120), duration_secs=0, drain_timeout_secs=30)
+    plan = SimpleNamespace(scan=replace(scan, connection_timeout_secs=120), duration_secs=0, drain_timeout_secs=30,
+                           venues=VENUES, trade_symbols=("BTC",), startup_self_test=startup_self_test)
     stopped = []
     coordinator = LiveCoordinator(plan, live, proxy, stop=lambda: stopped.append(True))
     transport = ExchangeTransport(coordinator)
-    preflight = BtcPreflight(markets, session_id="fixture", slippage_bps=D(20))
+    preflight = BtcPreflight(markets, session_id="fixture", slippage_bps=D(20)) if startup_self_test else None
     coordinator.attach(transport, preflight)
 
     def books(now_ns, *, closing=False):
@@ -108,10 +113,15 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip():
             break
         assert not live.positions
         assert not any(intent.client_order_id.startswith("L") for intent in transport.sent)
-    assert coordinator.phase == "active" and preflight.result == "passed"
-    assert {r["venue"] for r in preflight.results} == set(VENUES)
+    assert coordinator.phase == "active"
+    if startup_self_test:
+        assert preflight.result == "passed"
+        assert {r["venue"] for r in preflight.results} == set(VENUES)
+    else:
+        assert coordinator.preflight is None and proxy.account_gate["result"] == "passed"
+        assert all(intent.action == "reconcile" for intent in transport.sent)
     assert all(q == 0 for q in transport.position.values())
-    assert proxy.startup_complete and not stopped
+    assert proxy.startup_complete == startup_self_test and not stopped
     for _ in range(10):
         now += 100_000_000
         books(now)
@@ -120,7 +130,7 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip():
         if any(p["status"] == "open" for p in live.positions.values()):
             break
     assert len(live.positions) == 1
-    assert transport.first_live_startup["result"] == "passed"
+    assert transport.first_live_startup["result"] == ("passed" if startup_self_test else "disabled")
     assert all(o["filled_quantity"] != "0" for o in live.orders.values())
     for _ in range(30):
         now += 100_000_000
@@ -130,6 +140,25 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip():
             break
     assert live.completed == 1 and not live.positions and not stopped
     assert all(q == 0 for q in transport.position.values())
-    assert any(e["event"] == "startup_operation" for _, events in store.writes for e in events)
+    assert any(e["event"] == "startup_operation" for _, events in store.writes for e in events) == startup_self_test
     assert any(e["event"] == "closed" for _, events in store.writes for e in events)
-    assert store.saved["live"]["mode"] == "live" and store.saved["startup_complete"]
+    assert store.saved["live"]["mode"] == "live" and store.saved["startup_complete"] == startup_self_test
+    startup_mutations = [i for i in transport.sent if i.client_order_id.startswith("fixture")]
+    for _ in range(10):
+        now += 100_000_000
+        books(now)
+        live.evaluate_symbol("BTC", now)
+        coordinator.tick(now)
+        if any(p["status"] == "open" for p in live.positions.values()):
+            break
+    assert len(live.positions) == 1
+    for _ in range(30):
+        now += 100_000_000
+        books(now, closing=True)
+        coordinator.tick(now)
+        if live.completed == 2:
+            break
+    assert live.completed == 2 and not live.positions
+    assert [i for i in transport.sent if i.client_order_id.startswith("fixture")] == startup_mutations
+    assert all(i.time_in_force == "IOC" and not i.post_only for i in transport.sent
+               if i.action == "submit" and i.client_order_id.startswith("L"))
