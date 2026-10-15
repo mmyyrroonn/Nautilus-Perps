@@ -40,3 +40,4 @@ jobs:
           tests/test_opportunity_timing.py
           tests/test_opportunity_account_reconciliation.py
           tests/test_opportunity_live_flow.py
+          tests/test_opportunity_balances.py tests/test_opportunity_balance_runner.py

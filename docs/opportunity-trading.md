@@ -37,6 +37,51 @@ $TradePython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 Backpack 的最低下单单位来自公开市场 `quantity` 过滤器，见[官方市场接口](https://docs.backpack.exchange/#tag/Markets)。
 账户证据过期、不权威、净仓不符、存在外部挂单或历史未决提交时，不会跳过该所开启正式交易。
 
+### 可选启动余额检测
+
+`startup.balance_check_enabled = false` 默认关闭。设为 `true`，或在原启动命令后追加
+`--startup-balance-check`，即可在等待盘口、账户门禁及 BTC 交易自检之前，单独读取各所余额。
+`--no-startup-balance-check` 可临时覆盖配置并关闭；该开关与 `startup.self_test_enabled`
+彼此独立，不改变账本指纹、交易额度或原有账户门禁。重启时重新读取，不复用上次成功结果。
+
+```powershell
+# Inspect the enabled balance check without connecting or trading.
+.\.venv\Scripts\python.exe -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --startup-balance-check --dry-run
+```
+
+实际读取仍需原有的 `--execute-live`。余额检测本身只读，通过后继续原启动流程；
+它不是“只查余额后退出”命令，也不会自动启用 BTC 交易自检。
+完成后立即输出独立的 `startup_balance_check` JSON，最终报告和 SQLite 会话中的
+`balance_check` 同时保留逐所结果、币种、`total/free/locked`、原始本地观察时间
+`observed_ns`、事件时间 `event_ns` 和本次读取时间 `read_ns`。金额保留十进制字符串，
+不跨币种求和；交易所未提供事件时间时 `event_ns` 为 0。
+
+检测使用原生账户事件：HL/Aster/Backpack 请求账户刷新，Lighter 查询最近 WS 缓存，
+Ondo 等待原生连续账户核对周期。仅接受最近 `runtime.account_max_age_ms` 内的
+reported 事件，不把本次读缓存的时间当作新数据时间；事件中的余额行按原样投影，
+不把旧缓存中其他币种的行拼成新快照。等待上限为 `startup.timeout_secs`。
+某所读取失败、缺失或过期时保留原因并停止启动，不发送后续交易自检或策略订单。
+显式零余额可成功读取；显式空余额列表记录为 `[]`，不推断为零资金。
+
+`passed` 仅表示成功取得余额事件，不表示资金足够开仓。各所原生余额口径不同：
+HL 为原生合约/现货合并口径，不能当作所有 DEX 抵押品总额；Lighter 的 `locked`
+只涵盖现货预留，不代表全部合约保证金占用；Aster 为钱包余额；Ondo 为原生适配器
+核对后的结算账户映射；Backpack 为钱包交易余额。尤其不能把所有交易所的 `free`
+统一解释成可开仓保证金。
+
+只检测余额并退出，在 `E:\persarb\Nautilus-Perps` 执行：
+
+```powershell
+.\.venv\Scripts\python.exe -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --balance-check-only
+```
+
+该命令直接运行有限时的只读账户会话，自动开启余额读取并关闭交易自检；不需要
+`--execute-live`，也不接受与交易、自检或关闭余额读取的参数混用。追加 `--dry-run`
+则仅检查配置。使用仓库 `.env` 的现有账户配置，输出五所结果后退出，失败返回非零。
+独立模式不订阅盘口、不启动配对策略、不打开交易 SQLite 或登记风险占用；原生只读
+客户端的本地状态放在已忽略的 `.native-cache/balance-check/<run-id>/`。
+Ondo 使用 `account_read_only=true`，Backpack 使用只读执行工厂，均不创建生产写入权限。
+
 | 交易所 | 下单路径 | 启动改价检查 |
 |---|---|---|
 | Hyperliquid | Native ExecutionClientFactory | 原生改单 |

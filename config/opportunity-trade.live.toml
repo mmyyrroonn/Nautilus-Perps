@@ -30,6 +30,8 @@ max_unhedged_secs = 10
 
 [startup]
 self_test_enabled = false
+# Independently read and report native balances before trading; failure blocks startup.
+balance_check_enabled = false
 # Actual BTC clip uses each venue's current lot/minimum; this is only an outer cap.
 max_notional_usd = "50"
 slippage_bps = "20"

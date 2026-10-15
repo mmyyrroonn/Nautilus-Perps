@@ -70,6 +70,7 @@ class LiveRunPlan:
     limits_present: bool = True
     environment: str = "mainnet"
     startup_self_test: bool = False
+    startup_balance_check: bool = False
     max_unhedged_notional_usd: Decimal = HARD_MAX_UNHEDGED_NOTIONAL_USD
     max_unhedged_secs: int = HARD_MAX_UNHEDGED_SECS
 
@@ -114,6 +115,7 @@ class LiveRunPlan:
                 "max_unhedged_notional_usd": self.max_unhedged_notional_usd,
                 "max_unhedged_secs": self.max_unhedged_secs},
             "startup": {"self_test_enabled": self.startup_self_test,
+                "balance_check_enabled": self.startup_balance_check,
                 "mandatory": self.startup_self_test, "symbol": "BTC",
                 "account_gate_required": True,
                 "max_notional_usd": self.startup_max_notional_usd,
@@ -129,7 +131,7 @@ class LiveRunPlan:
 
 @timed("config.live_plan")
 def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd=None,
-                   duration_secs=None, startup_self_test=None):
+                   duration_secs=None, startup_self_test=None, startup_balance_check=None):
     path = Path(path).resolve()
     with path.open("rb") as handle:
         document = tomllib.load(handle, parse_float=Decimal)
@@ -168,8 +170,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     unhedged = decimal_value(risk.get("max_unhedged_notional_usd", "100"), "max_unhedged_notional_usd", positive=True)
     unhedged_secs = integer_value(risk.get("max_unhedged_secs", 10), "max_unhedged_secs", 1, 86400)
     startup = document.get("startup", {})
-    allowed_keys(startup, {"mandatory", "self_test_enabled", "max_notional_usd", "slippage_bps", "timeout_secs"}, "live startup")
-    for key in ("mandatory", "self_test_enabled"):
+    allowed_keys(startup, {"mandatory", "self_test_enabled", "balance_check_enabled", "max_notional_usd", "slippage_bps", "timeout_secs"}, "live startup")
+    for key in ("mandatory", "self_test_enabled", "balance_check_enabled"):
         if key in startup and type(startup[key]) is not bool:
             raise ScanConfigError(f"startup.{key} must be a boolean")
     if "mandatory" in startup and "self_test_enabled" in startup and startup["mandatory"] != startup["self_test_enabled"]:
@@ -180,6 +182,11 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         if type(startup_self_test) is not bool:
             raise ScanConfigError("startup_self_test override must be a boolean")
         self_test = startup_self_test
+    balance_check = startup.get("balance_check_enabled", False)
+    if startup_balance_check is not None:
+        if type(startup_balance_check) is not bool:
+            raise ScanConfigError("startup_balance_check override must be a boolean")
+        balance_check = startup_balance_check
     startup_cap = decimal_value(startup.get("max_notional_usd", "50"), "startup.max_notional_usd", positive=True)
     startup_slip = decimal_value(startup.get("slippage_bps", "20"), "startup.slippage_bps", nonnegative=True)
     if startup_slip > 20:
@@ -240,7 +247,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         order_timeout_secs=integer_value(runtime.get("order_timeout_secs", 10), "order_timeout_secs", 1, 30),
         retry_interval_ms=integer_value(runtime.get("retry_interval_ms", 1000), "retry_interval_ms", 100, 10000),
         startup_timeout_secs=startup_timeout, limits_present=limits_present,
-        startup_self_test=self_test, max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs)
+        startup_self_test=self_test, startup_balance_check=balance_check,
+        max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs)
 
 
 class SessionStoreProxy:
@@ -256,6 +264,7 @@ class SessionStoreProxy:
         self.latest_live = saved.get("live") if saved else None
         self.native_shutdown = saved.get("native_shutdown") if saved else None
         self.account_gate = saved.get("account_gate") if saved else None
+        self.balance_check = saved.get("balance_check") if saved else None
         self.account_binding = getattr(store, "account_binding", None)
         if saved and self.account_binding is not None and saved.get("account_binding") != self.account_binding:
             raise ValueError("live envelope account binding does not match its ledger")
@@ -268,8 +277,14 @@ class SessionStoreProxy:
         self.store.save({"schema_version": 1, "mode": "live", "startup_complete": self.startup_complete,
                          "account_binding": self.account_binding,
                          "startup": self.startup, "account_gate": self.account_gate,
+                         "balance_check": self.balance_check,
                          "native_shutdown": self.native_shutdown,
                          "live": snapshot}, events)
+
+    def checkpoint_balance_check(self, document):
+        if document != self.balance_check:
+            self.balance_check = document
+            self.save(self.latest_live or {}, [{"event": "startup_balance_check", **document}])
 
     def checkpoint_account_gate(self, result, markets, now_ns):
         self.account_gate = {"result": result, "observed_ns": now_ns,
@@ -309,8 +324,14 @@ def native_quote(state, instrument_id, now_ns):
 
 class LiveCoordinator:
     """Route callbacks and durable intents across startup and continuous trading."""
-    def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None):
+    def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None, balance_reporter=None):
+        from opportunity_balances import StartupBalanceCheck
         self.plan, self.live, self.proxy = plan, live, proxy
+        self.balance_check = StartupBalanceCheck(plan.venues, enabled=plan.startup_balance_check,
+            timeout_secs=plan.startup_timeout_secs, max_age_ms=plan.account_max_age_ms)
+        # A previous process's read is never a result for this startup.
+        self.proxy.balance_check = self.balance_check.document()
+        self.balance_reporter = balance_reporter or (lambda document: None)
         self.self_test_only, self.stop = self_test_only, stop or (lambda: None)
         self.startup_self_test = self_test_only or plan.startup_self_test
         self.preflight = None
@@ -351,6 +372,8 @@ class LiveCoordinator:
             if (clean_startup or unused or account_only) and known_orders and native_clean and not saved_live.get("halt_reason"):
                 self.failure = None
                 self.phase = "recovery_reconcile" if (proxy.latest_live or {}).get("positions") else "waiting_books"
+        if plan.startup_balance_check and self.phase != "resume_readonly":
+            self.after_balance_phase, self.phase = self.phase, "waiting_balances"
 
     def attach(self, gateway, preflight=None):
         self.gateway, self.preflight = gateway, preflight
@@ -405,6 +428,11 @@ class LiveCoordinator:
     def request_stop(self, now_ns, reason="operator_stop"):
         if self.stop_requested_ns is None:
             self.stop_requested_ns = now_ns
+            if self.phase == "waiting_balances":
+                self.balance_check.interrupt(now_ns)
+                self.proxy.checkpoint_balance_check(self.balance_check.document())
+                self.balance_reporter(self.balance_check.document())
+                self.failure = self.failure or "startup balance checks interrupted"
             if self.phase == "preflight":
                 self.phase = "preflight_draining"
                 self.failure = self.failure or "startup interrupted; owned BTC orders/residuals require cleanup"
@@ -438,13 +466,25 @@ class LiveCoordinator:
             self.finished = True
             self.stop()
             return
+        if self.phase == "waiting_balances":
+            self.balance_check.tick(self.gateway, now_ns)
+            self.proxy.checkpoint_balance_check(self.balance_check.document())
+            if self.balance_check.result == "running":
+                return
+            self.balance_reporter(self.balance_check.document())
+            if self.balance_check.result != "passed":
+                self.failure, self.finished = "startup balance reads failed; trading remains inactive", True
+                self.stop()
+                return
+            self.phase = self.after_balance_phase
+        startup_wait_started_ns = self.balance_check.completed_ns or self.started_ns
         if self.phase == "recovery_reconcile":
             required = {p[f"{leg}_id"] for p in self.live.positions.values() for leg in ("buy", "sell")}
             ready = [self.live._account_ready(instrument_id, now_ns) for instrument_id in required]
             self._live_intents(now_ns)
             if all(ready) and self.live.activate(now_ns):
                 self.phase = "active"
-            elif now_ns - self.started_ns >= self.plan.scan.connection_timeout_secs * 1_000_000_000:
+            elif now_ns - startup_wait_started_ns >= self.plan.scan.connection_timeout_secs * 1_000_000_000:
                 self.phase, self.finished = "resume_readonly", True
                 self.failure = "persisted inventory did not match authoritative account evidence; no new orders dispatched"
                 self.stop()
@@ -454,7 +494,7 @@ class LiveCoordinator:
                 for market in self.preflight.markets if self.startup_self_test else self.account_markets:
                     native_quote(self.live, market.instrument_id, now_ns)
             except ValueError:
-                if now_ns-self.started_ns > self.plan.scan.connection_timeout_secs*1_000_000_000:
+                if now_ns-startup_wait_started_ns > self.plan.scan.connection_timeout_secs*1_000_000_000:
                     self.failure, self.finished = "fresh startup books were unavailable before deadline", True
                     self.stop()
                 return
@@ -474,7 +514,7 @@ class LiveCoordinator:
                     self.stop()
                     return
                 self.phase = "active"
-            elif now_ns-self.started_ns >= self.plan.scan.connection_timeout_secs*1_000_000_000:
+            elif now_ns-startup_wait_started_ns >= self.plan.scan.connection_timeout_secs*1_000_000_000:
                 self.proxy.checkpoint_account_gate("failed", self.account_markets, now_ns)
                 self.failure, self.finished = "authoritative startup accounts did not reconcile before deadline", True
                 self.stop()
@@ -530,6 +570,7 @@ class LiveCoordinator:
                 "last_execution_error": getattr(self.gateway, "last_error", None),
                 "native_shutdown": self.proxy.native_shutdown,
                 "startup_self_test_enabled": self.startup_self_test,
+                "balance_check": self.balance_check.document(),
                 "account_gate": self.proxy.account_gate,
                 "startup": self.proxy.startup if self.phase in {"resume_readonly", "recovery_reconcile"} or (
                     self.preflight and self.preflight.stage == "not_started" and self.proxy.startup_complete) else
@@ -718,7 +759,9 @@ def run_live(plan, *, self_test_only=False):
                 max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
                 account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
                 retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
-            coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only)
+            coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,
+                balance_reporter=lambda document: print(json.dumps(
+                    {"event": "startup_balance_check", **document}), flush=True))
         coordinator.stop_signal = stop_signal
         verify_execution_identity(binding, environ)
         node, observer, strategy = build_live_node(plan, live, coordinator, environ=environ)
@@ -782,6 +825,10 @@ def main(argv=None):
     parser.add_argument("--self-test-only", action="store_true")
     parser.add_argument("--startup-self-test", action="store_true",
                         help="opt in to one BTC trading self-test per venue before continuous trading")
+    parser.add_argument("--startup-balance-check", action=argparse.BooleanOptionalAction, default=None,
+                        help="read and report native balances before startup trading checks or continuous trading")
+    parser.add_argument("--balance-check-only", action="store_true",
+                        help="connect read-only account clients, report balances and exit without trading")
     parser.add_argument("--symbols")
     parser.add_argument("--max-pairs", type=int)
     parser.add_argument("--max-gross-notional-usd")
@@ -793,9 +840,21 @@ def main(argv=None):
 
 def _run(args):
     try:
+        if args.balance_check_only and (args.execute_live or args.startup_self_test or args.self_test_only
+                                       or args.startup_balance_check is False):
+            raise ScanConfigError("balance-only mode conflicts with trading or disabled balance flags")
         plan = load_live_plan(args.config, symbols=args.symbols, max_pairs=args.max_pairs,
             max_gross_notional_usd=args.max_gross_notional_usd, duration_secs=args.duration_secs,
-            startup_self_test=True if args.startup_self_test or args.self_test_only else None)
+            startup_self_test=False if args.balance_check_only else True if args.startup_self_test or args.self_test_only else None,
+            startup_balance_check=True if args.balance_check_only else args.startup_balance_check)
+        if args.balance_check_only:
+            if args.dry_run:
+                print(json.dumps({"mode": "balance_check_only", "runtime_started": False,
+                    "remote_writes_allowed": False, "venues": plan.venues,
+                    "startup": {"balance_check_enabled": True, "self_test_enabled": False}}, indent=2))
+                return 0
+            from opportunity_balance_runner import run_balance_check
+            return run_balance_check(plan)
         if not args.execute_live:
             document = plan.document()
             document["self_test_only"] = args.self_test_only

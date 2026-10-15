@@ -31,8 +31,18 @@ class ExchangeTransport:
         self.orders, self.sent, self.pending = {}, [], []
         self.now = NOW
         self.first_live_startup = None
+        self.balance_queries = []
+
+    def query_balance(self, venue):
+        self.balance_queries.append(venue)
+
+    def read_balance(self, venue, now_ns, max_age_ms):
+        return {"venue": venue, "observed_ns": now_ns, "balances": [
+            {"currency": "USDC", "total": "100", "free": "100", "locked": "0"}]}
 
     def dispatch(self, intent, now_ns):
+        if self.coordinator.plan.startup_balance_check:
+            assert self.coordinator.balance_check.result == "passed"
         self.sent.append(intent)
         self.pending.append(intent)
         if intent.client_order_id.startswith("L") and self.first_live_startup is None:
@@ -75,7 +85,8 @@ class ExchangeTransport:
 
 
 @pytest.mark.parametrize("startup_self_test", [False, True])
-def test_five_startup_checks_are_integrated_before_continuous_roundtrip(startup_self_test):
+@pytest.mark.parametrize("startup_balance_check", [False, True])
+def test_five_startup_checks_are_integrated_before_continuous_roundtrip(startup_self_test, startup_balance_check):
     scan = make_plan(venues=VENUES)
     store = MemoryStore()
     proxy = SessionStoreProxy(store)
@@ -89,7 +100,8 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip(startup_
         markets.append(PreflightMarket(market.venue, market.instrument_id, D("0.01"), D("0.01"),
             D("0.01"), D(5), supports_modify=mode == "native", modify_mode=mode))
     plan = SimpleNamespace(scan=replace(scan, connection_timeout_secs=120), duration_secs=0, drain_timeout_secs=30,
-                           venues=VENUES, trade_symbols=("BTC",), startup_self_test=startup_self_test)
+                           venues=VENUES, trade_symbols=("BTC",), startup_self_test=startup_self_test,
+                           startup_balance_check=startup_balance_check, startup_timeout_secs=20, account_max_age_ms=15000)
     stopped = []
     coordinator = LiveCoordinator(plan, live, proxy, stop=lambda: stopped.append(True))
     transport = ExchangeTransport(coordinator)
@@ -114,6 +126,8 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip(startup_
         assert not live.positions
         assert not any(intent.client_order_id.startswith("L") for intent in transport.sent)
     assert coordinator.phase == "active"
+    assert transport.balance_queries == (list(VENUES) if startup_balance_check else [])
+    assert proxy.balance_check["result"] == ("passed" if startup_balance_check else "disabled")
     if startup_self_test:
         assert preflight.result == "passed"
         assert {r["venue"] for r in preflight.results} == set(VENUES)
