@@ -82,6 +82,10 @@ class AccountSnapshot:
     connected: bool = True
     authoritative: bool = True
     book_observed_ns: int | None = None
+    # Complete venue response (HL: the queried DEX), including unconfigured markets.
+    # None denotes legacy instrument-only evidence, never complete account coverage.
+    account_positions: tuple[tuple[str, Decimal], ...] | None = None
+    account_open_orders: tuple[tuple[str, str], ...] | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "bid", _decimal(self.bid, "bid", positive=True))
@@ -104,6 +108,25 @@ class AccountSnapshot:
             raise ValueError("book_observed_ns must be a positive integer")
         if type(self.connected) is not bool or type(self.authoritative) is not bool:
             raise ValueError("account status must be boolean")
+        if (self.account_positions is None) != (self.account_open_orders is None):
+            raise ValueError("complete account positions and orders must be supplied together")
+        if self.account_positions is not None:
+            positions, seen = [], set()
+            for instrument, quantity in self.account_positions:
+                if not isinstance(instrument, str) or not instrument or instrument in seen:
+                    raise ValueError("invalid or duplicate account position identity")
+                if isinstance(quantity, bool) or not isinstance(quantity, (str, int, Decimal)):
+                    raise ValueError("account quantity must be exact")
+                quantity = Decimal(quantity)
+                if not quantity.is_finite():
+                    raise ValueError("account quantity must be finite")
+                positions.append((instrument, quantity))
+                seen.add(instrument)
+            orders = tuple(tuple(row) for row in self.account_open_orders)
+            if any(len(row) != 2 or any(not isinstance(v, str) or not v for v in row) for row in orders):
+                raise ValueError("invalid account order identity")
+            object.__setattr__(self, "account_positions", tuple(positions))
+            object.__setattr__(self, "account_open_orders", orders)
 
 
 @dataclass(frozen=True)
@@ -119,6 +142,9 @@ class OrderIntent:
     time_in_force: str = ""
     post_only: bool = False
     reduce_only: bool = False
+    # Continuous admission checks report lost authority immediately; the optional
+    # BTC capability workflow retains its separate startup waiting semantics.
+    account_check: bool = False
 
 
 @dataclass(frozen=True)

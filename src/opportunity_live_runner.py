@@ -363,6 +363,8 @@ class LiveCoordinator:
 
     def _live_intents(self, now_ns):
         for intent in self.live.drain_intents():
+            if self.live.discard_paused_entry(intent, now_ns):
+                continue
             self.gateway.dispatch(intent, now_ns)
 
     def on_receipt(self, receipt, now_ns=None):

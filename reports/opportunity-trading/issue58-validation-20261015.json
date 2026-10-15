@@ -1,0 +1,72 @@
+{
+  "issue": "https://github.com/mmyyrroonn/Nautilus-Perps/issues/58",
+  "scope": "Local offline acceptance; not mainnet validation or publication",
+  "application_baseline": "dc5c45b78cc31483a60609d41f00502cff578a19",
+  "native_commit": "e1c0f0db9a491b2cc890ff4955af8a801317ef69",
+  "wheel_sha256": "8cc4b117c446ee83adb207f980f3750da93839b10b594f91083cd306ae80591c",
+  "integration_record": "E:\\persarb\\worktrees\\issue58-validation-20261015\\.native-cache\\issue58-acceptance.json",
+  "integration_record_sha256": "60b443b0cc16f34d5094e0a07261621dd5819efd740917cc46cf9444b0cba187",
+  "finished_at": "2026-10-15T08:55:15.197153+00:00",
+  "status": "passed",
+  "pytest_counts": {
+    "errors": 0,
+    "failed": 0,
+    "passed": 739,
+    "skipped": 0,
+    "tests": 739,
+    "warnings": 0
+  },
+  "new_account_reconciliation_tests": 25,
+  "junit": "issue58-tests-20261015.xml",
+  "junit_sha256": "a65f52ebf823833fbdc47dc7473fd1ae7d8bf6fc1aba9383ff2d86bc52ffdaac",
+  "network": {
+    "enforcement": "unknown",
+    "guard_record": null,
+    "policy": "not-enforced",
+    "verification": "deferred-to-final-audit"
+  },
+  "pure_python_ci": {
+    "passed": 426,
+    "skipped": 40,
+    "scope": "pytest-only environment; optional dependencies absent"
+  },
+  "dry_run": {
+    "risk": {
+      "max_pairs": 2,
+      "max_gross_notional_usd": "500",
+      "max_unhedged_notional_usd": "100",
+      "max_unhedged_secs": 10
+    },
+    "startup": {
+      "self_test_enabled": false,
+      "mandatory": false,
+      "symbol": "BTC",
+      "account_gate_required": true,
+      "max_notional_usd": "50",
+      "sizing": "current native instrument minimum rounded to its lot size",
+      "slippage_bps": "20",
+      "adjust_modes": {
+        "HL": "native",
+        "LIGHTER": "native",
+        "ASTER": "cancel_replace",
+        "ONDO": "cancel_replace",
+        "BACKPACK": "cancel_replace"
+      }
+    },
+    "runtime_started": false,
+    "remote_writes_allowed": false
+  },
+  "source_sha256": {
+    ".github/workflows/opportunity-scan.yml": "be917a8fe5c258c763e272e1f2f5d92223a41c2791f27d8457317d638c5437c6",
+    "docs/opportunity-trading.md": "4b5a234dccac0b8396d4a9aa8f0798639ddec121de931b770caea4e1a3e970de",
+    "src/opportunity_account_reader.py": "0532621d9695481569994032d3d83c5abb2ddcb4012e6ee3702deced7c0d47d9",
+    "src/opportunity_live.py": "b7a52421b0129f6ec71d18a511fdf36006c1372ba84f2cf33cee350d6dce7153",
+    "src/opportunity_live_runner.py": "17d55bc82ec68cfff6034a0dd71583be530e073af4c1b309799e113143e52636",
+    "src/opportunity_native_execution.py": "c0ed35fa3e3635633c1250b0139a7eb4da0d7315ae3940c42c19df52e5069730",
+    "src/opportunity_preflight.py": "f1754ea119cb7ee3f8e32944771d6bd6ec985185a2d9dff1240bbf9818eda539",
+    "tests/test_opportunity_account_reader.py": "1c9196c0eeb241892a35c4da90f72883da271ecc0b2696472f7ce35be044e8f3",
+    "tests/test_opportunity_live_runner.py": "fe42b3d1ec56c8913b7e008ff010e20c64851ea8783c3d84244373aa376dbece",
+    "tests/test_opportunity_native_account_reader.py": "27548fcc85c03f4d5f4e9bb388f69a28243053e4d3f8961c466577e8584cb3b8",
+    "tests/test_opportunity_account_reconciliation.py": "178d7e99f53a966cc47d0a7fbc1c40090500316b1885e2f83061949179bb8cc4"
+  }
+}

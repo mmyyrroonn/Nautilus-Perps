@@ -283,6 +283,12 @@ class NativeOrderGateway:
             return
         self.requests[intent.request_id] = {"intent": intent, "sent_ns": now_ns, "queried_ns": now_ns}
         if intent.action in {"connect", "reconcile"}:
+            # A timed-out worker can still be running. Retrying the state check
+            # must not enqueue another blocking read for the same instrument.
+            if intent.account_check and any(self.requests[rid]["intent"].instrument_id == intent.instrument_id
+                   for rid in (*self.reads, *self.native_reads)):
+                self._receipt(intent, "unknown")
+                return
             if intent.venue in {"ONDO", "BACKPACK"}:
                 self.native_reads[intent.request_id] = intent
                 self._start_native_read(intent, now_ns)
@@ -373,6 +379,8 @@ class NativeOrderGateway:
             complete = payload.get("coverage_complete") if intent.venue == "ONDO" else payload.get("complete")
             connected = payload.get("connected_ready") if intent.venue == "ONDO" else payload.get("connected")
             if complete is not True or connected is not True:
+                if intent.account_check:
+                    self._receipt(intent, "unknown")
                 return
             self.reader.capture_native_evidence(intent.venue, payload, native_environment=self.environment)
             market = self.markets[intent.instrument_id]
@@ -395,6 +403,8 @@ class NativeOrderGateway:
             # Startup/recovery may not yet have a complete authoritative cycle.
             # A missing response is an unresolved read, never a fabricated zero.
             self.last_error = "native account evidence is not yet complete or fresh"
+            if intent.account_check:
+                self._receipt(intent, "unknown")
 
     def restore_pending(self, intent, processed_fills, now_ns):
         """Adopt a journaled submission for queries only; never resubmit it.
@@ -558,12 +568,16 @@ class NativeOrderGateway:
                 continue
             mapping = {}
             for cid, owned in self.orders.items():
-                if owned["intent"].instrument_id != intent.instrument_id:
+                if owned["intent"].venue != intent.venue:
                     continue
                 cached = self._cached(cid)
                 if cached is not None and cached.venue_order_id is not None:
-                    mapping["venue:" + str(cached.venue_order_id)] = cid
-            snapshot = replace(snapshot, open_order_ids=tuple(mapping.get(i, i) for i in snapshot.open_order_ids))
+                    mapping[(owned["intent"].instrument_id, "venue:" + str(cached.venue_order_id))] = cid
+            snapshot = replace(snapshot, open_order_ids=tuple(
+                mapping.get((intent.instrument_id, i), i) for i in snapshot.open_order_ids),
+                account_open_orders=None if snapshot.account_open_orders is None else tuple(
+                    (instrument, mapping.get((instrument, cid), cid))
+                    for instrument, cid in snapshot.account_open_orders))
             if intent.action == "connect":
                 self._receipt(intent, "connected")
             else:

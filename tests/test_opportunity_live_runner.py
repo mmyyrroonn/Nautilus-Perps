@@ -448,6 +448,8 @@ class FakeLive(ScanState):
     def drain_intents(self):
         result, self.intents = tuple(self.intents), []
         return result
+    def discard_paused_entry(self, intent, now):
+        return False
     def stop_entries(self, now, reason):
         self.stops.append((now, reason))
     def document(self):
