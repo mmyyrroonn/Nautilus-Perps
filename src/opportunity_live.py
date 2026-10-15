@@ -99,6 +99,7 @@ class LiveTradeState(ScanState):
         self.phase, self.halt_reason = "waiting_preflight", None
         self.cleanup_allowed = True
         self.stopping = False
+        self.entry_pause_reason = None
         saved = store.load() if store else None
         if saved:
             self._restore(saved)
@@ -174,7 +175,7 @@ class LiveTradeState(ScanState):
             "orders": self.orders, "executions": self.executions, "fences": self.fences,
             "last_closed": [{"pair": list(k), "closed_ns": v} for k, v in self.last_closed.items()],
             "phase": self.phase, "halt_reason": self.halt_reason,
-            "account_pauses": self.account_pauses})
+            "account_pauses": self.account_pauses, "entry_pause_reason": self.entry_pause_reason})
 
     def emit(self, kind, now_ns, **fields):
         event = deepcopy({"event": kind, "mode": "live", "observed_ns": now_ns, **fields})
@@ -196,6 +197,33 @@ class LiveTradeState(ScanState):
         self.phase = "active"
         self.emit("strategy_enabled", now_ns)
         return True
+
+    def set_entry_pause(self, reason, now_ns):
+        """Pause new pairs without changing any existing pair's exit policy."""
+        if self.entry_pause_reason != reason:
+            self.entry_pause_reason = reason
+            self.emit("entry_pause_changed", now_ns, reason=reason)
+
+    def flat_accounts_ready(self, now_ns, after_ns):
+        """Require complete post-boundary account proof, including foreign risk."""
+        representatives = {}
+        for instrument, market in self.markets.items():
+            domain = self._account_domain(market.venue)
+            scope = self._hl_scope(instrument) if domain == "HL" else ""
+            representatives.setdefault((domain, scope), instrument)
+        ready = not self.positions and not any(o["terminal_ns"] is None for o in self.orders.values())
+        for instrument in representatives.values():
+            account = self.accounts.get(instrument)
+            valid = (account is not None and account.observed_ns >= after_ns
+                     and self._account_problem(instrument, now_ns) is None
+                     and account.account_positions is not None
+                     and not any(q for _, q in account.account_positions)
+                     and not account.account_open_orders and not account.open_order_ids
+                     and not account.position_quantity)
+            if not valid:
+                ready = False
+                self._request_account(instrument, now_ns)
+        return ready
 
     def _request_id(self, action):
         self.request_sequence += 1
@@ -519,6 +547,8 @@ class LiveTradeState(ScanState):
 
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
+        if self.entry_pause_reason:
+            return False
         key = self.pair_key(buy_id, sell_id)
         if key in self.positions or len(self.positions) >= self.max_pairs:
             return False
@@ -990,7 +1020,7 @@ class LiveTradeState(ScanState):
         for key in tuple(self.positions):
             if key[0] == symbol:
                 self.observe(key, now_ns)
-        if (self.stopping or self.halt_reason or symbol not in self.trade_symbols
+        if (self.stopping or self.entry_pause_reason or self.halt_reason or symbol not in self.trade_symbols
                 or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
                 o["terminal_ns"] is None and (o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns)
                 for o in self.orders.values())):
@@ -1033,6 +1063,7 @@ class LiveTradeState(ScanState):
 
     def document(self):
         return {"mode": "live", "phase": self.phase, "halt_reason": self.halt_reason,
+                "entry_pause_reason": self.entry_pause_reason,
                 "account_pauses": deepcopy(self.account_pauses),
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,
                 "max_gross_notional_usd": _number(self.max_gross),

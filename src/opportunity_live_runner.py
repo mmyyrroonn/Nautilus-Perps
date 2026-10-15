@@ -23,6 +23,7 @@ import uuid
 from opportunity_scan import (ScanConfigError, allowed_keys, decimal_value,
                               integer_value, load_plan)
 from opportunity_trade import TradePolicy
+from opportunity_loss_monitor import LossMonitorPolicy, SessionLossMonitor
 from opportunity_timing import add_timing_arguments, run_timed, span, timed
 
 HARD_ORDER_NOTIONAL_USD = Decimal("100")
@@ -73,6 +74,7 @@ class LiveRunPlan:
     startup_balance_check: bool = False
     max_unhedged_notional_usd: Decimal = HARD_MAX_UNHEDGED_NOTIONAL_USD
     max_unhedged_secs: int = HARD_MAX_UNHEDGED_SECS
+    loss_monitor: LossMonitorPolicy = LossMonitorPolicy()
 
     @property
     def ready(self):
@@ -114,6 +116,7 @@ class LiveRunPlan:
             "risk": {"max_pairs": self.max_pairs, "max_gross_notional_usd": self.max_gross_notional_usd,
                 "max_unhedged_notional_usd": self.max_unhedged_notional_usd,
                 "max_unhedged_secs": self.max_unhedged_secs},
+            "loss_monitor": self.loss_monitor.document(),
             "startup": {"self_test_enabled": self.startup_self_test,
                 "balance_check_enabled": self.startup_balance_check,
                 "mandatory": self.startup_self_test, "symbol": "BTC",
@@ -136,7 +139,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     with path.open("rb") as handle:
         document = tomllib.load(handle, parse_float=Decimal)
     allowed_keys(document, {"schema_version", "mode", "environment", "scan_config", "state_path",
-        "limits_path", "venues", "trade", "risk", "startup", "runtime"}, "live root")
+        "limits_path", "venues", "trade", "risk", "startup", "runtime", "loss_monitor"}, "live root")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise ScanConfigError("live schema_version must be 1")
     if document.get("mode") != "live" or document.get("environment") != "mainnet":
@@ -159,6 +162,9 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     trade = document.get("trade", {})
     allowed_keys(trade, set(TradePolicy.__dataclass_fields__), "live trade")
     policy = TradePolicy(**trade)
+    monitor = document.get("loss_monitor", {})
+    allowed_keys(monitor, set(LossMonitorPolicy.__dataclass_fields__), "loss_monitor")
+    loss_monitor = LossMonitorPolicy(**monitor)
     risk = document.get("risk", {})
     unhedged_keys = {"max_unhedged_notional_usd", "max_unhedged_secs"}
     allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"} | unhedged_keys, "live risk")
@@ -219,6 +225,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     if scan.pair_allowlist is not None:
         raise ScanConfigError("schema_version 2 pair allowlists are observation-only; use a trading market configuration")
     filtered = [m for m in scan.markets if m.venue in venues]
+    if loss_monitor.enabled and any(m.venue == "HL" and ":" in m.instrument_id for m in filtered):
+        raise ScanConfigError("loss monitor cannot value Hyperliquid DEX collateral from native balances")
     counts = Counter(m.symbol for m in filtered)
     available = {symbol for symbol, count in counts.items() if count >= 2}
     if {m.venue for m in filtered} != set(venues):
@@ -248,7 +256,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         retry_interval_ms=integer_value(runtime.get("retry_interval_ms", 1000), "retry_interval_ms", 100, 10000),
         startup_timeout_secs=startup_timeout, limits_present=limits_present,
         startup_self_test=self_test, startup_balance_check=balance_check,
-        max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs)
+        max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs, loss_monitor=loss_monitor)
 
 
 class SessionStoreProxy:
@@ -265,6 +273,7 @@ class SessionStoreProxy:
         self.native_shutdown = saved.get("native_shutdown") if saved else None
         self.account_gate = saved.get("account_gate") if saved else None
         self.balance_check = saved.get("balance_check") if saved else None
+        self.loss_monitor = saved.get("loss_monitor") if saved else None
         self.account_binding = getattr(store, "account_binding", None)
         if saved and self.account_binding is not None and saved.get("account_binding") != self.account_binding:
             raise ValueError("live envelope account binding does not match its ledger")
@@ -278,8 +287,15 @@ class SessionStoreProxy:
                          "account_binding": self.account_binding,
                          "startup": self.startup, "account_gate": self.account_gate,
                          "balance_check": self.balance_check,
+                         "loss_monitor": self.loss_monitor,
                          "native_shutdown": self.native_shutdown,
                          "live": snapshot}, events)
+
+    def checkpoint_loss_monitor(self, document, now_ns):
+        if document != self.loss_monitor:
+            self.loss_monitor = document
+            self.save(self.latest_live or {}, [{"event": "session_loss_check", "observed_ns": now_ns,
+                                               **document}])
 
     def checkpoint_balance_check(self, document):
         if document != self.balance_check:
@@ -326,9 +342,13 @@ def native_quote(state, instrument_id, now_ns):
 class LiveCoordinator:
     """Route callbacks and durable intents across startup and continuous trading."""
     def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None, balance_reporter=None,
-                 initial_balance=None):
+                 initial_balance=None, loss_reporter=None):
         from opportunity_balances import StartupBalanceCheck
         self.plan, self.live, self.proxy = plan, live, proxy
+        self.loss_monitor = SessionLossMonitor(getattr(plan, "loss_monitor", LossMonitorPolicy()),
+                                               plan.venues, plan.account_max_age_ms)
+        self.loss_reporter = loss_reporter or (lambda document: None)
+        self.stop_reason = None
         self.balance_check = StartupBalanceCheck(plan.venues, enabled=plan.startup_balance_check,
             timeout_secs=plan.startup_timeout_secs, max_age_ms=plan.account_max_age_ms)
         # Only this startup's isolated read may precede production construction.
@@ -441,6 +461,7 @@ class LiveCoordinator:
 
     def request_stop(self, now_ns, reason="operator_stop"):
         if self.stop_requested_ns is None:
+            self.stop_reason = reason
             self.stop_requested_ns = now_ns
             if self.phase == "waiting_balances":
                 self.balance_check.interrupt(now_ns)
@@ -474,6 +495,9 @@ class LiveCoordinator:
             self.request_stop(now_ns)
         if self.started_ns is None:
             self.started_ns = now_ns
+        if self.phase == "active" and self.loss_monitor.due(now_ns):
+            # Fence quote callbacks before processing any pending receipts.
+            self.live.set_entry_pause("session_loss_check", now_ns)
         self.gateway.poll(now_ns)
         if self.phase == "resume_readonly":
             # The bridge can supply readonly evidence; no startup/strategy writes.
@@ -491,7 +515,28 @@ class LiveCoordinator:
                 self.stop()
                 return
             self.phase = self.after_balance_phase
+        if (self.loss_monitor.policy.enabled and self.stop_requested_ns is None
+                and (self.phase == "active" or self.loss_monitor.baseline_usd is None)):
+            monitor = self.loss_monitor
+            if monitor.baseline_usd is None and self.phase == "recovery_reconcile" and self._has_residual():
+                self.failure = "session loss baseline requires flat startup accounts; saved inventory remains durable"
+                self.finished = True
+                self.stop()
+                return
+            monitor.tick(self.gateway, self.live, now_ns, has_residual=self._has_residual())
+            self._live_intents(now_ns)
+            document = monitor.document()
+            if document != self.proxy.loss_monitor:
+                self.proxy.checkpoint_loss_monitor(document, now_ns)
+                self.loss_reporter(document)
+            if monitor.status == "breached":
+                # tick only breaches with all accounts flat and original IDs terminal.
+                self.request_stop(now_ns, "session_loss_limit")
+            elif monitor.baseline_usd is None:
+                # No self-test or continuous entry before this run's own baseline.
+                return
         startup_wait_started_ns = max(self.balance_check.completed_ns or 0, self.started_ns)
+        startup_wait_started_ns = max(startup_wait_started_ns, self.loss_monitor.baseline_ns or 0)
         if self.phase == "recovery_reconcile":
             required = {p[f"{leg}_id"] for p in self.live.positions.values() for leg in ("buy", "sell")}
             ready = [self.live._account_ready(instrument_id, now_ns) for instrument_id in required]
@@ -580,6 +625,7 @@ class LiveCoordinator:
 
     def document(self):
         return {"phase": self.phase, "failure": self.failure, "finished": self.finished,
+                "stop_reason": self.stop_reason, "loss_monitor": self.loss_monitor.document(),
                 "account_binding": self.proxy.account_binding,
                 "last_execution_error": getattr(self.gateway, "last_error", None),
                 "native_shutdown": self.proxy.native_shutdown,
@@ -782,6 +828,8 @@ def run_live(plan, *, self_test_only=False):
                 retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
             coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,
                 initial_balance=initial_balance,
+                loss_reporter=lambda document: print(json.dumps(
+                    {"event": "session_loss_check", **document}), flush=True),
                 balance_reporter=lambda document: print(json.dumps(
                     {"event": "startup_balance_check", **document}), flush=True))
         coordinator.stop_signal = stop_signal
