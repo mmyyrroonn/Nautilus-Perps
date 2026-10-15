@@ -1,7 +1,7 @@
 """Bounded current-book state and a public-data-only Nautilus runtime."""
 from __future__ import annotations
 
-from opportunity_timing import timed
+from opportunity_timing import span, timed
 
 from copy import deepcopy
 from collections import deque
@@ -130,8 +130,9 @@ class ScanState:
                 key = (symbol, buy.venue, sell.venue) if self.allowed_pairs is None else (symbol, buy_id, sell_id)
                 result = None
                 if all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
-                    result = evaluate_opportunity(self.books[buy_id], self.metadata[buy_id],
-                        self.books[sell_id], self.metadata[sell_id], self.plan.settings, now_ns)
+                    with span("scan.evaluate_pair"):
+                        result = evaluate_opportunity(self.books[buy_id], self.metadata[buy_id],
+                            self.books[sell_id], self.metadata[sell_id], self.plan.settings, now_ns)
                 if result is None:
                     self.current.pop(key, None)
                 else:

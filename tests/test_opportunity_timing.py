@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import threading
 from types import SimpleNamespace as NS
@@ -21,6 +22,15 @@ def report(directory):
     files = list(directory.glob("timing-*.json"))
     assert len(files) == 1
     return json.loads(files[0].read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("module,path", [("src.opportunity_core", "."), ("opportunity_core", "src")])
+def test_core_import_does_not_depend_on_other_tests_bootstrapping_sys_path(module, path):
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run([sys.executable, "-I", "-B", "-c",
+        "import importlib, sys; sys.path.insert(0, sys.argv[1]); importlib.import_module(sys.argv[2])",
+        str(root / path), module], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 def test_disabled_has_no_clock_labels_directory_or_thread(monkeypatch, tmp_path):

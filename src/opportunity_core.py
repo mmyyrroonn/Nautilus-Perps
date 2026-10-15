@@ -8,8 +8,6 @@ Decimal digits. An entry estimate does not establish round-trip profitability.
 
 from __future__ import annotations
 
-from opportunity_timing import timed
-
 import json
 from dataclasses import asdict, dataclass
 from decimal import MAX_EMAX, MIN_EMIN, Context, Decimal
@@ -208,7 +206,6 @@ def _walk(
     return None
 
 
-@timed("scan.evaluate_pair")
 def evaluate_opportunity(
     buy_book: BookSnapshot,
     buy_metadata: MarketMetadata,
