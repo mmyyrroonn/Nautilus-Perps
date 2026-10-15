@@ -128,3 +128,31 @@ def test_readonly_factory_configs_do_not_create_production_writers(tmp_path):
             assert isinstance(factory, bp.BackpackExecutionClientFactory)
             assert isinstance(config, bp.BackpackExecutionClientConfig)
             assert not isinstance(config, bp.BackpackProductionExecutionClientConfig)
+
+
+@pytest.mark.parametrize("role", ["user", "agent"])
+def test_balance_account_discovery_resolves_agent_to_owner_without_exposing_key(role):
+    from eth_account import Account
+    from opportunity_balance_runner import prepare_balance_environment
+    key = "0x" + "11" * 32  # Public synthetic fixture, not operator material.
+    signer = Account.from_key(key).address.lower()
+    owner = "0x" + "ab" * 20
+    calls = []
+    def transport(method, url, payload):
+        calls.append(payload)
+        return {"role": role, "data": {"user": owner}}
+    env = prepare_balance_environment(("HL",), "mainnet", {"HYPERLIQUID_PRIVATE_KEY": key}, transport=transport)
+    assert env["HYPERLIQUID_ACCOUNT_ADDRESS"] == (signer if role == "user" else owner)
+    assert calls == [{"type": "userRole", "user": signer}]
+    assert all(key not in str(call) for call in calls)
+
+
+def test_balance_account_discovery_never_guesses_owner_on_private_failure():
+    from opportunity_balance_runner import prepare_balance_environment, BalanceSetupError
+    key = "0x" + "11" * 32
+    def failed(*a):
+        raise RuntimeError("private transport payload " + key)
+    with pytest.raises(BalanceSetupError) as caught:
+        prepare_balance_environment(("HL",), "mainnet", {"HYPERLIQUID_PRIVATE_KEY": key}, transport=failed)
+    assert "account discovery failed" in str(caught.value)
+    assert key not in str(caught.value) and "private transport payload" not in str(caught.value)

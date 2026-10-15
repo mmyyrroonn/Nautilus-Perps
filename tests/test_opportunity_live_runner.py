@@ -665,8 +665,9 @@ def test_unused_session_after_config_failure_can_start_its_first_btc_check(tmp_p
 
 @pytest.mark.parametrize("native_clean,node_finished,node_raises", [
     (True, True, False), (False, True, False), (True, False, False), (True, False, True)])
+@pytest.mark.parametrize("initial_balance_enabled", [False, True])
 def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
-        tmp_path, monkeypatch, capsys, native_clean, node_finished, node_raises):
+        tmp_path, monkeypatch, capsys, native_clean, node_finished, node_raises, initial_balance_enabled):
     import dotenv
     import opportunity_live
     import opportunity_live_runner
@@ -677,7 +678,20 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
     from test_opportunity_account_scope import credentials
     path = configs(tmp_path, all_five=True,
         venues='["HL","LIGHTER","ASTER","ONDO","BACKPACK"]')
-    plan = replace(load_live_plan(path), max_unhedged_notional_usd=D(50), max_unhedged_secs=5)
+    plan = replace(load_live_plan(path), max_unhedged_notional_usd=D(50), max_unhedged_secs=5,
+                   startup_balance_check=initial_balance_enabled)
+    startup_calls = []
+    import opportunity_balance_runner
+    balance_report = {"mode": "balance_check_only", "remote_writes_allowed": False,
+        "failure": None, "shutdown_complete": True, "balance_check": {
+            "enabled": True, "result": "passed", "started_ns": NOW, "completed_ns": NOW + 1,
+            "venues": {venue: {"result": "passed"} for venue in plan.venues}}}
+    def initial_balance(received_plan, environ):
+        assert received_plan is plan and dict(environ) == credentials()
+        assert not plan.state_path.exists() and not (tmp_path / "risk").exists()
+        startup_calls.append("balance")
+        return balance_report
+    monkeypatch.setattr(opportunity_balance_runner, "run_startup_balance_session", initial_balance)
     fake_live = FakeLive(plan.scan)
     fake_live.snapshot = lambda: {"positions": [], "orders": {}}
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
@@ -696,6 +710,8 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
         return proof
     monkeypatch.setattr(opportunity_shutdown, "collect_native_shutdown", collect)
     def build(plan, live, coordinator, *, environ):
+        assert startup_calls == (["balance"] if initial_balance_enabled else [])
+        assert coordinator.phase != "waiting_balances"
         coordinator.native_controls = controls
         def run():
             if node_raises:
@@ -707,8 +723,14 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
     assert result == (0 if native_clean and node_finished and not node_raises else 1)
     with sqlite3.connect(plan.state_path) as connection:
         saved = json.loads(connection.execute("SELECT snapshot FROM state WHERE id=1").fetchone()[0])
+        if initial_balance_enabled:
+            assert connection.execute("SELECT observed_ns FROM events WHERE kind='startup_balance_check'").fetchall() == [(NOW + 1,)]
     assert calls == [controls] and saved["native_shutdown"] == proof
     output = capsys.readouterr().out
+    if initial_balance_enabled:
+        first, output = output.split("\n", 1)
+        assert json.loads(first)["balance_check"] == balance_report["balance_check"]
+        assert saved["balance_check"] == balance_report["balance_check"]
     assert json.loads(output)["native_shutdown"] == proof
     assert "private error" not in output
 
