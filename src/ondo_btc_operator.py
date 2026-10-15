@@ -37,7 +37,6 @@ def canonical_env_file(app: Path) -> Path:
 
 ENV_FILE = canonical_env_file(APP)
 MAX_CAPTURE_AGE_SECS = 60
-PHRASE = "上主网"
 
 
 class Refused(ValueError):
@@ -268,7 +267,7 @@ def make_plan(capture: Path, run_dir: Path, side: str, candidate: dict) -> dict:
             "cancel_own_orders_only": True, "confirm_cancels": True,
             "confirm_flat_position": True, "stop_budget_secs": limits.cleanup_budget_secs,
         },
-        "authorization": {"user_phrase_上主网_present": False, "approved_plan_sha256": None},
+        "authorization": {"approved_plan_sha256": None},
         "operator_context": {
             "run_id": run_dir.name, "confirmation_source": "interactive_local_operator",
             "agent_executed": False, "account_readiness_requires_live_reconciliation": True,
@@ -361,16 +360,16 @@ def execute_once(plan: dict, run_dir: Path, *, supersede: bool,
         if confirmed_plan_sha256 != plan["plan_sha256"]:
             raise Refused("The confirmed plan hash is not this plan; nothing was dispatched")
         confirmation_source = "chat_operator_confirmation"
-        print(f"Operator confirmed plan {plan['plan_sha256']} in the current conversation.")
+        print(f"Operator confirmed plan {plan['plan_sha256']}.")
     elif confirmed_policy:
         # The operator authorized the reviewed *policy*, not a hash that did not exist when they
         # spoke: the plan and its prices are the live market's, and the approved plan records both
         # the source and the exact bounds the authorization covered.
         confirmation_source = "chat_operator_confirmation"
-        print(f"Operator confirmed the reviewed policy in the current conversation; this plan "
+        print(f"Operator confirmed the reviewed policy; this plan "
               f"({plan['plan_sha256']}) is the fresh plan under it.")
     else:
-        expected = f"{PHRASE} {plan['plan_sha256']}"
+        expected = plan["plan_sha256"]
         print(f"Type exactly: {expected}\nAnything else aborts. Confirmation expires with the public capture.")
         if input("> ").strip() != expected:
             raise Refused("Confirmation did not match; nothing was dispatched")
@@ -385,7 +384,6 @@ def execute_once(plan: dict, run_dir: Path, *, supersede: bool,
     fresh(plan["public_evidence"])
     approved = copy.deepcopy(plan)
     approved["authorization"] = {
-        "user_phrase_上主网_present": True,
         "approved_plan_sha256": plan["plan_sha256"],
         "source": confirmation_source, "confirmed_at_utc": now().isoformat(),
     }
@@ -416,7 +414,7 @@ def execute_once(plan: dict, run_dir: Path, *, supersede: bool,
         [sys.executable, "-I", str(APP / "src/ondo_trade_probe.py"),
          "--mode", "production-trade", "--limits", str(LIMITS),
          "--plan", str(approved_path), "--confirm-production-trade",
-         "--acknowledge-mainnet-authorization", "--out", str(run_dir / "trade")],
+         "--out", str(run_dir / "trade")],
         cwd=APP, env=child_environment(private=True),
     )
     # Ctrl+C reaches the child through the shared console. subprocess.run would kill
@@ -450,13 +448,13 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--operator-confirmed-plan-sha256", metavar="SHA256",
-        help="dispatch after the operator confirmed this exact plan hash in the current "
-             "conversation; recorded with source=chat_operator_confirmation",
+        help="dispatch after the operator confirmed this exact plan hash; "
+             "recorded with source=chat_operator_confirmation",
     )
     parser.add_argument(
         "--operator-confirmed-policy", action="store_true",
         help="dispatch one fresh plan under the reviewed bounds after the operator authorized "
-             "that policy in the current conversation; recorded with source="
+             "that policy; recorded with source="
              "chat_operator_confirmation and the bounds the authorization covered",
     )
     parser.add_argument("--candidate-identity", type=Path,

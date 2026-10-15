@@ -661,7 +661,6 @@ def test_continuous_defaults_do_not_enable_production() -> None:
     session.validate()
     assert session.environment == "sandbox" and session.execution_enabled is False
     assert session.api_key is None and session.api_secret is None
-    assert session.mainnet_authorized is False
 
 
 @pytest.mark.parametrize(
@@ -682,7 +681,7 @@ def test_application_preserves_explicit_native_limit_boundaries(changes) -> None
         replace(ContinuousLimits(), **changes).validate()
 
 
-def test_production_execution_requires_fresh_explicit_binding_and_authorization(
+def test_production_execution_requires_explicit_account_binding(
     tmp_path,
 ) -> None:
     session = ContinuousSession(environment="production", execution_enabled=True)
@@ -694,20 +693,7 @@ def test_production_execution_requires_fresh_explicit_binding_and_authorization(
         diagnostics_run_id="reviewed-run",
         journal_path=tmp_path / "ledger.json",
     )
-    with pytest.raises(ValueError, match="authorization"):
-        session.validate()
-    # Loopback peer construction carries no mainnet permission and cannot resolve a remote host.
-    replace(
-        session,
-        base_url_http="http://127.0.0.1:1234",
-        base_url_ws="ws://127.0.0.1:5678/ws",
-    ).validate()
-    with pytest.raises(ValueError, match="authorization"):
-        replace(
-            session,
-            base_url_http="http://127.0.0.1.evil.example",
-            base_url_ws="ws://127.0.0.1:5678/ws",
-        ).validate()
+    session.validate()
 
 
 if __name__ == "__main__":

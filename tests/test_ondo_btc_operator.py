@@ -75,7 +75,7 @@ def confirm(monkeypatch, action=None):
         plan = op.read_json(latest_draft())
         if action:
             action(plan)
-        return f"{op.PHRASE} {plan['plan_sha256']}"
+        return plan["plan_sha256"]
     monkeypatch.setattr(builtins, "input", answer)
 
 
@@ -83,7 +83,7 @@ def test_default_prepares_unapproved_draft_without_private_dispatch(monkeypatch)
     monkeypatch.setattr(builtins, "input", lambda _: pytest.fail("Preparation must not prompt for authorization"))
     assert op.main(["--side", "buy"]) == 0
     plan = op.read_json(latest_draft())
-    assert plan["authorization"] == {"user_phrase_上主网_present": False, "approved_plan_sha256": None}
+    assert plan["authorization"] == {"approved_plan_sha256": None}
     assert plan["plan_sha256"] == plan_sha256(plan)
     assert plan["candidate_evidence"] == CANDIDATE
     assert not op.CLAIM.exists()
@@ -134,7 +134,7 @@ def test_public_payload_hash_is_verified(tmp_path):
         op.load_capture(tmp_path / "public")
 
 
-@pytest.mark.parametrize("answer", ["", "yes", "上主网", "上主网 wrong-hash"])
+@pytest.mark.parametrize("answer", ["", "yes", "wrong-hash"])
 def test_wrong_confirmation_never_dispatches(monkeypatch, answer):
     monkeypatch.setattr(builtins, "input", lambda _: answer)
     assert op.main(["--side", "buy", "--execute"]) == 2
@@ -181,7 +181,7 @@ def test_one_exact_approved_dispatch_and_no_retry(monkeypatch, exit_code):
         assert op.CLAIM.is_file()  # Claim must be durable BEFORE dispatch.
         assert command[1] == "-I" and command[2].endswith("ondo_trade_probe.py")
         assert "--confirm-production-trade" in command
-        assert "--acknowledge-mainnet-authorization" in command
+        assert "--acknowledge-mainnet-authorization" not in command
         assert kwargs["env"]["ONDO_PROBE_ENV_FILE"] == str(op.ENV_FILE)
         approved = op.read_json(Path(command[command.index("--plan") + 1]))
         assert approved["authorization"]["source"] == "interactive_local_operator"
@@ -289,7 +289,7 @@ def test_chat_confirmation_dispatches_without_a_tty_and_records_its_source(monke
         assert op.CLAIM.is_file()
         approved = op.read_json(Path(command[command.index("--plan") + 1]))
         assert approved["authorization"]["source"] == "chat_operator_confirmation"
-        assert approved["authorization"]["user_phrase_上主网_present"] is True
+        assert approved["authorization"]["approved_plan_sha256"] == approved["plan_sha256"]
         assert not authorization_problems(parse_trade_plan(approved, load_trade_limits(op.LIMITS)))
         return SimpleNamespace(wait=lambda: 0)
 
@@ -367,7 +367,6 @@ def test_policy_confirmation_dispatches_one_fresh_plan_and_records_the_bounds(mo
         approved = op.read_json(Path(command[command.index("--plan") + 1]))
         authorization = approved["authorization"]
         assert authorization["source"] == "chat_operator_confirmation"
-        assert authorization["user_phrase_上主网_present"] is True
         assert authorization["approved_plan_sha256"] == approved["plan_sha256"]
         assert authorization["confirmed_policy"] == op.reviewed_policy(approved)
         assert authorization["confirmed_policy"]["instrument_id"] == "BTC-USD-PERP.ONDO"
