@@ -35,7 +35,7 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                       state_directory=None, run_id=None, order_notional_usd="100",
                       max_gross_notional_usd="500", duration_secs=0,
                       backpack_public_config=None, backpack_quota=None,
-                      native_controls=None):
+                      native_controls=None, read_only=False):
     """Construct configs only; credentials are resolved when explicitly called.
 
     Aster has a separate application mainnet namespace. Lighter and HL use their
@@ -43,6 +43,8 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
     with durable identity/economic state and explicit continuous admission limits.
     Backpack shares the registered public config and quota; a replacement config
     cannot stand in for the public owner's actual telemetry.
+    Read-only sessions use Ondo account_read_only and Backpack's account factory,
+    without constructing either venue's production writer or trading authority.
     """
     if environment not in {"mainnet", "testnet"}:
         raise ValueError("environment must be mainnet or testnet")
@@ -54,11 +56,12 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
         groups.setdefault("HYPERLIQUID" if market.venue in {"HL", "HYPERLIQUID"} else market.venue, []).append(market)
     if groups.keys() & {"ONDO", "BACKPACK"}:
         if state_directory is None or not Path(state_directory).is_absolute() or not run_id:
-            raise ValueError("native continuous writers require an absolute state directory and durable run ID")
+            raise ValueError("native account clients require an absolute state directory and durable run ID")
         directory = Path(state_directory)
-        order_cap, gross_cap = _decimal(order_notional_usd), _decimal(max_gross_notional_usd)
-        if not 0 < order_cap <= 100 or not order_cap <= gross_cap <= 500:
-            raise ValueError("native continuous caps must fit USD 100 per order and USD 500 gross")
+        if not read_only:
+            order_cap, gross_cap = _decimal(order_notional_usd), _decimal(max_gross_notional_usd)
+            if not 0 < order_cap <= 100 or not order_cap <= gross_cap <= 500:
+                raise ValueError("native continuous caps must fit USD 100 per order and USD 500 gross")
         if type(duration_secs) is not int or duration_secs < 0:
             raise ValueError("native session durations must be exact nonnegative seconds")
     model = _native()
@@ -109,9 +112,9 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
         elif client == "ONDO":
             from nautilus_trader.adapters import ondo
             factory = ondo.OndoExecutionClientFactory()
-            if not getattr(factory, "supports_continuous_execution", False) or getattr(factory, "supports_native_amend", True):
+            if not read_only and (not getattr(factory, "supports_continuous_execution", False) or getattr(factory, "supports_native_amend", True)):
                 raise ValueError("install the source-bound Ondo continuous execution wheel")
-            if not getattr(factory, "supports_complete_account_snapshots", False):
+            if not read_only and not getattr(factory, "supports_complete_account_snapshots", False):
                 raise ValueError("install the source-bound Ondo complete account snapshot wheel")
             prefix = "ONDO_MAINNET_" if environment == "mainnet" else "ONDO_SANDBOX_"
             names = [prefix + suffix for suffix in ("API_KEY", "API_SECRET", "ACCOUNT_ID")]
@@ -121,11 +124,11 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                 instrument_ids=[model.InstrumentId.from_str(m.instrument_id) for m in markets],
                 max_notional_per_order_usd=format(order_cap, "f"),
                 max_gross_exposure_usd=format(gross_cap, "f"), min_available_margin_usdc="25",
-                max_live_orders=16, max_requests_per_second=8, max_unresolved_orders=1)
+                max_live_orders=16, max_requests_per_second=8, max_unresolved_orders=1) if not read_only else None
             config = ondo.OndoExecutionClientConfig(account_id=account_id,
                 environment=ondo.OndoEnvironment.PRODUCTION if environment == "mainnet" else ondo.OndoEnvironment.SANDBOX,
                 api_key=env[names[0]], api_secret=env[names[1]], expected_venue_account_id=env[names[2]],
-                account_read_only=False, allow_production_orders=environment == "mainnet",
+                account_read_only=read_only, allow_production_orders=not read_only and environment == "mainnet",
                 diagnostics_run_id=str(run_id), journal_path=str(directory / "ondo" / "execution.jsonl"),
                 continuous_execution=continuous, dms_timeout_secs=30, reconcile_interval_secs=1,
                 http_timeout_secs=15)
@@ -133,9 +136,9 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
             if environment != "mainnet":
                 raise ValueError("Backpack has no configured native testnet writer")
             from nautilus_trader.adapters import backpack as bp
-            if not hasattr(bp, "BackpackProductionExecutionClientConfig"):
+            if not read_only and not hasattr(bp, "BackpackProductionExecutionClientConfig"):
                 raise ValueError("install the source-bound Backpack production execution wheel")
-            if backpack_public_config is None or backpack_quota is None:
+            if not read_only and (backpack_public_config is None or backpack_quota is None):
                 raise ValueError("Backpack requires its registered public config and shared native quota")
             if not env.get("BACKPACK_MAINNET_API_SECRET") or not env.get("BACKPACK_MAINNET_API_KEY"):
                 raise ValueError("explicit Backpack mainnet seed and public key are required")
@@ -154,8 +157,12 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
             symbols = [m.instrument_id.removesuffix(".BACKPACK") for m in markets]
             account = bp.BackpackExecutionClientConfig(symbols, credential, str(account_id),
                 env["BACKPACK_MAINNET_API_KEY"], str(directory / "backpack" / "identity"),
-                quota=backpack_quota, connect_timeout_ms=60000, recovery_interval_ms=1000,
+                quota=backpack_quota if backpack_quota is not None else bp.BackpackQuota(),
+                connect_timeout_ms=60000, recovery_interval_ms=1000,
                 recovery_lookback_ms=86400000)
+            if read_only:
+                result.append((client, bp.BackpackExecutionClientFactory(), account))
+                continue
             authority = bp.BackpackProductionExecutionAuthority(
                 expires_at_ms=time.time_ns() // 1_000_000 + 300_000,
                 max_account_age_ms=15000, max_market_age_ms=2000,
@@ -235,6 +242,15 @@ class NativeOrderGateway:
 
     def _client(self, venue):
         return self.model.ClientId.from_str("HYPERLIQUID" if venue in {"HL", "HYPERLIQUID"} else venue)
+
+    def query_balance(self, venue):
+        """Request native account refresh without any order mutation."""
+        from opportunity_balances import NativeBalanceReader
+        NativeBalanceReader(self.strategy, self.model).query_balance(venue)
+
+    def read_balance(self, venue, now_ns, max_age_ms):
+        from opportunity_balances import NativeBalanceReader
+        return NativeBalanceReader(self.strategy, self.model).read_balance(venue, now_ns, max_age_ms)
 
     def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0)):
         key = (intent.request_id, kind, execution_id)
