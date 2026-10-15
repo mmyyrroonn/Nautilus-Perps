@@ -15,6 +15,7 @@ import re
 import sqlite3
 
 from opportunity_trade_store import FileLock
+from opportunity_timing import span, timed
 
 
 def digest(value):
@@ -54,6 +55,7 @@ class AccountBinding:
                 "accounts": dict(self.accounts), "risk_domains": dict(self.risk_domains)}
 
 
+@timed("account_lock.resolve_binding")
 def resolve_account_binding(venues, environment, environ):
     """Resolve the exact execution scope, never the agent/signer or API-key slot.
 
@@ -109,6 +111,7 @@ def account_registry_directory():
     return Path.home() / ".nautilus-perps" / "account-risk-v1"
 
 
+@timed("account_lock.verify_identity")
 def verify_execution_identity(binding, environ, *, transport=None):
     """Prove that an HL agent signs for the account being locked and queried.
 
@@ -147,6 +150,7 @@ def verify_execution_identity(binding, environ, *, transport=None):
 
 
 class AccountRiskGuard:
+    @timed("account_lock.open")
     def __init__(self, binding):
         self.binding = binding
         self.directory = account_registry_directory()
@@ -156,16 +160,20 @@ class AccountRiskGuard:
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
             for domain in sorted(set(dict(binding.risk_domains).values())):
-                self.locks.append(FileLock(self.directory / (domain + ".lock")))
-            self.connection = sqlite3.connect(self.directory / "claims.sqlite3", timeout=10)
-            self.connection.execute("PRAGMA synchronous=FULL")
-            self.connection.execute("CREATE TABLE IF NOT EXISTS claims ("
-                "domain TEXT PRIMARY KEY, owner TEXT NOT NULL, path_digest TEXT NOT NULL, "
-                "fingerprint TEXT NOT NULL)")
+                venue = next(venue for venue, value in binding.risk_domains if value == domain)
+                with span("account_lock.acquire", venue=venue):
+                    self.locks.append(FileLock(self.directory / (domain + ".lock")))
+            with span("account_lock.registry_open"):
+                self.connection = sqlite3.connect(self.directory / "claims.sqlite3", timeout=10)
+                self.connection.execute("PRAGMA synchronous=FULL")
+                self.connection.execute("CREATE TABLE IF NOT EXISTS claims ("
+                    "domain TEXT PRIMARY KEY, owner TEXT NOT NULL, path_digest TEXT NOT NULL, "
+                    "fingerprint TEXT NOT NULL)")
         except BaseException:
             self.close()
             raise
 
+    @timed("account_lock.claim")
     def claim(self, store):
         """Commit before creating any native client or startup order intent."""
         if store.account_binding != self.binding.document() or not store.owner_id:
@@ -183,6 +191,7 @@ class AccountRiskGuard:
                 self.connection.execute("INSERT OR IGNORE INTO claims VALUES (?, ?, ?, ?)", (domain, *owner))
         self.owner = owner
 
+    @timed("account_lock.release_clean")
     def release_clean(self):
         """Caller must have persisted clean proof and disposed every native writer."""
         if self.owner is None:
@@ -193,6 +202,7 @@ class AccountRiskGuard:
                     "AND path_digest=? AND fingerprint=?", (domain, *self.owner))
         self.owner = None
 
+    @timed("account_lock.close")
     def close(self):
         try:
             if self.connection is not None:

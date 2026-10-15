@@ -7,6 +7,8 @@ command is initiated here.
 """
 from __future__ import annotations
 
+from opportunity_timing import timed
+
 from collections.abc import Mapping
 from decimal import Decimal
 import json
@@ -98,6 +100,7 @@ def _ondo(control):
             "requests_drained": drained}
 
 
+@timed("shutdown.native_proof")
 def collect_native_shutdown(native_controls):
     """Require complete clean proof from every supplied Ondo/Backpack owner.
 

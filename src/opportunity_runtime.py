@@ -1,6 +1,8 @@
 """Bounded current-book state and a public-data-only Nautilus runtime."""
 from __future__ import annotations
 
+from opportunity_timing import span, timed
+
 from copy import deepcopy
 from collections import deque
 from decimal import Decimal, InvalidOperation
@@ -116,6 +118,7 @@ class ScanState:
         return first != second and (self.allowed_pairs is None or
                                     frozenset((first, second)) in self.allowed_pairs)
 
+    @timed("scan.evaluate_symbol")
     def evaluate_symbol(self, symbol: str, now_ns: int, *, changed_id: str | None = None):
         for buy_id in self.groups[symbol]:
             for sell_id in self.groups[symbol]:
@@ -127,8 +130,9 @@ class ScanState:
                 key = (symbol, buy.venue, sell.venue) if self.allowed_pairs is None else (symbol, buy_id, sell_id)
                 result = None
                 if all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
-                    result = evaluate_opportunity(self.books[buy_id], self.metadata[buy_id],
-                        self.books[sell_id], self.metadata[sell_id], self.plan.settings, now_ns)
+                    with span("scan.evaluate_pair"):
+                        result = evaluate_opportunity(self.books[buy_id], self.metadata[buy_id],
+                            self.books[sell_id], self.metadata[sell_id], self.plan.settings, now_ns)
                 if result is None:
                     self.current.pop(key, None)
                 else:
@@ -187,6 +191,7 @@ class ScanState:
         stream.flush()
 
 
+@timed("startup.data_clients")
 def data_clients(plan, *, backpack_quota=None):
     """Reuse public factories; constructing this list never registers execution."""
     from spread_watch import (
@@ -259,6 +264,7 @@ def create_observer(plan, state, stop, client_configs):
             print(f"[scan] stopped: {message}", file=sys.stderr, flush=True)
             stop()
 
+        @timed("startup.market_observer")
         def on_start(self):
             self.running = True
             try:
@@ -324,6 +330,7 @@ def create_observer(plan, state, stop, client_configs):
             self.dirty.pop(instrument_id, None)
             state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata)
 
+        @timed("market.backpack_health")
         def check_backpack(self):
             config = client_configs.get("BACKPACK")
             if config is None:
@@ -345,6 +352,7 @@ def create_observer(plan, state, stop, client_configs):
                     self.backpack_unhealthy.add(instrument_id)
                 self.epochs[instrument_id] = epoch
 
+        @timed("market.book_deltas", labels=lambda self, batch: (self.markets[batch.instrument_id].venue, ""))
         def on_book_deltas(self, batch):
             if not self.running or batch.instrument_id not in self.markets:
                 return
@@ -402,6 +410,7 @@ def create_observer(plan, state, stop, client_configs):
             except Exception as exc:
                 self.fail(f"book processing: {type(exc).__name__}: {exc}")
 
+        @timed("market.publish_book", labels=lambda self, instrument_id, *a, **kw: (self.markets[instrument_id].venue, ""))
         def publish_book(self, instrument_id, stamp, *, evaluate=True):
             market = self.markets[instrument_id]
             if market.instrument_id not in state.metadata:
@@ -436,6 +445,7 @@ def create_observer(plan, state, stop, client_configs):
                        "sequence": sequence}
             state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw, evaluate=evaluate)
 
+        @timed("market.instrument")
         def on_instrument(self, instrument):
             if not self.running or instrument.id not in self.markets:
                 return
@@ -487,6 +497,7 @@ def create_observer(plan, state, stop, client_configs):
             except Exception as exc:
                 self.fail(f"instrument status: {type(exc).__name__}: {exc}")
 
+        @timed("market.timer")
         def on_time_event(self, event):
             if not self.running:
                 return

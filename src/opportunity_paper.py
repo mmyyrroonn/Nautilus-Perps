@@ -17,6 +17,7 @@ from opportunity_core import (_book_valid, _budget_quantity, _metadata_valid, _n
                               _walk, evaluate_opportunity, exact_decimal)
 from opportunity_runtime import ScanState
 from opportunity_trade import TradePolicy
+from opportunity_timing import span
 
 
 class PaperTradeState(ScanState):
@@ -122,7 +123,8 @@ class PaperTradeState(ScanState):
             return None
         books, metadata = pair
         settings = self.plan.settings
-        entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1], settings, now_ns)
+        with span("scan.evaluate_pair"):
+            entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1], settings, now_ns)
         if entry is None:
             return None
         slip = F(self.policy.slippage_bps) / 10000
@@ -140,8 +142,9 @@ class PaperTradeState(ScanState):
             return None
         if quantity != F(entry["sizing"]["base_quantity"]):
             budget = _walk(books[0].asks, F(metadata[0].multiplier), quantity)
-            entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1],
-                replace(settings, target_notional=exact_decimal(budget)), now_ns)
+            with span("scan.evaluate_pair"):
+                entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1],
+                    replace(settings, target_notional=exact_decimal(budget)), now_ns)
             if entry is None:
                 return None
         buy_cash = F(entry["sizing"]["buy_notional"]) * (1 + slip)

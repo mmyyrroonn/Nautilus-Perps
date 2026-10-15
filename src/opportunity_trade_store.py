@@ -7,6 +7,8 @@ from pathlib import Path
 import sqlite3
 import uuid
 
+from opportunity_timing import timed
+
 
 class FileLock:
     """Stable advisory OS lock; never unlink its inode on release."""
@@ -48,6 +50,7 @@ class FileLock:
 
 
 class TradeStore:
+    @timed("store.open")
     def __init__(self, path: Path, fingerprint: str, *, account_binding=None):
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,10 +92,12 @@ class TradeStore:
             self.close()
             raise
 
+    @timed("store.load")
     def load(self) -> dict | None:
         row = self.connection.execute("SELECT snapshot FROM state WHERE id=1").fetchone()
         return json.loads(row[0]) if row else None
 
+    @timed("store.save")
     def save(self, snapshot: dict, events: list[dict]) -> None:
         with self.connection:
             for event in events:
@@ -104,6 +109,7 @@ class TradeStore:
                 "fingerprint=excluded.fingerprint, snapshot=excluded.snapshot",
                 (self.fingerprint, json.dumps(snapshot, sort_keys=True)))
 
+    @timed("store.close")
     def close(self) -> None:
         try:
             if self.connection is not None:

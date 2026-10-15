@@ -6,6 +6,8 @@ omit request URLs, response bodies and credentials.
 """
 from __future__ import annotations
 
+from opportunity_timing import span, timed
+
 from decimal import Decimal
 from fractions import Fraction
 import json
@@ -118,6 +120,7 @@ class ReadOnlyAccountReader:
                 if key[0] == venue:
                     self._cache.pop(key)
 
+    @timed("account.capture_native", labels=lambda self, venue, *a, **kw: (venue, ""))
     def capture_native_evidence(self, venue, payload, *, native_environment=None):
         """Copy a native owner's complete account observation on its owner thread.
 
@@ -307,7 +310,8 @@ class ReadOnlyAccountReader:
             previous = self._cache.get(scope)
             if previous and 0 <= now_ns - previous[0] < self.cache_ttl_ns:
                 return previous[2], previous[1]
-        payload = fetch()
+        with span("account.fetch", venue=scope[0]):
+            payload = fetch()
         with self._cache_lock:
             if self._epochs.get(scope[0], 0) == epoch:
                 self._cache[scope] = (now_ns, observed_ns, payload)
@@ -319,6 +323,7 @@ class ReadOnlyAccountReader:
             raise AccountReadError(f"missing credential reference {name}")
         return value.strip()
 
+    @timed("account.read", labels=lambda self, market, *a, **kw: (market.venue, ""))
     def read(self, market, bid, ask, observed_ns):
         venue = market.venue
         if venue in {"HL", "HYPERLIQUID"}:
