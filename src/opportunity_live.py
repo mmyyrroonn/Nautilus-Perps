@@ -80,6 +80,12 @@ class LiveTradeState(ScanState):
         self.store, self.event_sink = store, event_sink
         self.positions, self.orders, self.executions, self.last_closed = {}, {}, {}, {}
         self.instruments, self.accounts, self.account_requests = {}, {}, {}
+        self.account_request_ids, self.account_last_reads, self.account_pauses = {}, {}, {}
+        # The runner binds exactly one locked account per venue. Every configured
+        # market on that venue shares its admission and recovery domain.
+        self.account_domains = {}
+        for market in self.markets.values():
+            self.account_domains.setdefault(self._account_domain(market.venue), []).append(market.instrument_id)
         self.fences, self.last_attempt = {}, {}
         self.outbox = []
         self.session_id = uuid.uuid4().hex[:16]
@@ -114,6 +120,7 @@ class LiveTradeState(ScanState):
         self.event_counts.update(saved["event_counts"])
         self.orders, self.executions = deepcopy(saved["orders"]), deepcopy(saved["executions"])
         self.fences = dict(saved["fences"])
+        self.account_pauses = deepcopy(saved.get("account_pauses", {}))
         self.last_closed = {tuple(row["pair"]): row["closed_ns"] for row in saved["last_closed"]}
         for position in deepcopy(saved["positions"]):
             key = self.pair_key(position["buy_id"], position["sell_id"])
@@ -163,7 +170,8 @@ class LiveTradeState(ScanState):
             "event_counts": dict(self.event_counts), "positions": list(self.positions.values()),
             "orders": self.orders, "executions": self.executions, "fences": self.fences,
             "last_closed": [{"pair": list(k), "closed_ns": v} for k, v in self.last_closed.items()],
-            "phase": self.phase, "halt_reason": self.halt_reason})
+            "phase": self.phase, "halt_reason": self.halt_reason,
+            "account_pauses": self.account_pauses})
 
     def emit(self, kind, now_ns, **fields):
         event = deepcopy({"event": kind, "mode": "live", "observed_ns": now_ns, **fields})
@@ -213,6 +221,29 @@ class LiveTradeState(ScanState):
                     result += sign * F(position[f"remaining_{leg}_base"]) / multiplier
         return result
 
+    def discard_paused_entry(self, intent, now_ns):
+        """Called by the coordinator immediately before each unsent dispatch.
+
+        An earlier dispatch in the same drained batch can synchronously report
+        an account failure. Both entry legs share the pair's admission domains;
+        already-sent IDs and all reductions retain their original lifecycle.
+        """
+        order = self.orders.get(intent.client_order_id)
+        if (intent.action != "submit" or order is None or order["purpose"] != "entry"
+                or order["status"] != "dispatch_released"):
+            return False
+        position = self._position(order["position_id"])
+        domains = {self._account_domain(self.markets[position[f"{leg}_id"]].venue)
+                   for leg in ("buy", "sell")}
+        paused = sorted(domains & self.account_pauses.keys())
+        if not paused:
+            return False
+        order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
+        instrument_id = order["instrument_id"]
+        self.fences[instrument_id] = max(self.fences.get(instrument_id, 0), now_ns)
+        self.emit("entry_dispatch_blocked", now_ns, client_order_id=intent.client_order_id, domains=paused)
+        return True
+
     def gross_exposure(self, *, reserve=False):
         total = F(0)
         for position in self.positions.values():
@@ -243,11 +274,119 @@ class LiveTradeState(ScanState):
         last = self.account_requests.get(instrument_id, 0)
         if last and now_ns - last < max(self.retry_ns, self.order_timeout_ns):
             return
+        if now_ns - self.account_last_reads.get(instrument_id, 0) < self.retry_ns:
+            return
         self.account_requests[instrument_id] = now_ns
+        self.account_last_reads[instrument_id] = now_ns
         request = OrderIntent("reconcile", self.markets[instrument_id].venue, instrument_id,
-                              self._request_id("R"))
+                              self._request_id("R"), account_check=True)
+        self.account_request_ids[instrument_id] = request.request_id
         self.emit("account_read_requested", now_ns, instrument_id=instrument_id, request_id=request.request_id)
         self.outbox.append(request)
+
+    @staticmethod
+    def _account_domain(venue):
+        return "HL" if venue == "HYPERLIQUID" else venue
+
+    @staticmethod
+    def _hl_scope(instrument_id):
+        return instrument_id.split(":", 1)[0] if ":" in instrument_id else ""
+
+    def _account_coverage(self, account):
+        if account.account_positions is None:
+            return (account.instrument_id,)
+        domain = self._account_domain(account.venue)
+        return tuple(i for i in self.account_domains[domain]
+                     if domain != "HL" or self._hl_scope(i) == self._hl_scope(account.instrument_id))
+
+    def _account_problem(self, instrument_id, now_ns):
+        account = self.accounts.get(instrument_id)
+        if account is None:
+            return "missing"
+        if not account.authoritative or not account.connected:
+            return "not_authoritative"
+        if not 0 <= now_ns - account.observed_ns <= self.account_max_age_ns:
+            return "stale_or_future"
+        coverage = self._account_coverage(account)
+        if any(account.observed_ns < self.fences.get(i, 0) for i in coverage):
+            return "predates_activity"
+        positions = dict(account.account_positions) if account.account_positions is not None else {
+            instrument_id: account.position_quantity}
+        if F(positions.get(instrument_id, 0)) != F(account.position_quantity):
+            return "inconsistent_coverage"
+        if any(F(positions.get(i, 0)) != self.expected_native(i) for i in set(coverage) | positions.keys()):
+            return "position_mismatch"
+        orders = account.account_open_orders if account.account_open_orders is not None else tuple(
+            (instrument_id, cid) for cid in account.open_order_ids)
+        for instrument, cid in orders:
+            owned = self.orders.get(cid)
+            if (owned is None or owned["instrument_id"] != instrument or owned["terminal_ns"] is not None):
+                return "unowned_order"
+        return None
+
+    def _pause_account(self, instrument_id, now_ns, reason, *, new_evidence=False):
+        domain = self._account_domain(self.markets[instrument_id].venue)
+        previous = self.account_pauses.get(domain)
+        if previous is not None and not new_evidence:
+            return
+        barrier = max(now_ns, previous["recovery_after_ns"] if previous else 0)
+        pause = {"since_ns": previous["since_ns"] if previous else now_ns,
+                 "recovery_after_ns": barrier, "reason": reason, "instrument_id": instrument_id}
+        if previous == pause:
+            return
+        self.account_pauses[domain] = pause
+        # An account update can arrive after preparation but before dispatch.
+        # Retire both unsent legs of each affected pair atomically.
+        owners = {o["position_id"] for o in self.orders.values() if o["purpose"] == "entry"
+                  and o["status"] == "prepared" and o["instrument_id"] in self.account_domains[domain]}
+        canceled, retained = [], []
+        for intent in self.outbox:
+            order = self.orders.get(intent.client_order_id)
+            if (intent.action == "submit" and order and order["purpose"] == "entry"
+                    and order["status"] == "prepared" and order["position_id"] in owners):
+                order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
+                self.fences[order["instrument_id"]] = now_ns
+                canceled.append(intent.client_order_id)
+            else:
+                retained.append(intent)
+        self.outbox = retained
+        self.emit("account_domain_paused", now_ns, domain=domain, **pause, local_not_dispatched=canceled)
+
+    def _account_domain_ready(self, domain, now_ns):
+        instruments = self.account_domains[domain]
+        problems = [(i, self._account_problem(i, now_ns)) for i in instruments]
+        for instrument_id, reason in problems:
+            if reason and reason != "predates_activity":
+                self._pause_account(instrument_id, now_ns, reason)
+            if reason:
+                self._request_account(instrument_id, now_ns)
+        pause = self.account_pauses.get(domain)
+        if pause is None:
+            return not any(reason for _, reason in problems)
+        # Every market needs a fresh observation begun after the failure, and all
+        # original IDs must be terminal. An empty response alone cannot resolve
+        # an unknown submission or an ambiguous external order.
+        ready = all(reason is None and self.accounts[i].observed_ns > pause["recovery_after_ns"]
+                    for i, reason in problems) and not any(self._pending(i) for i in instruments)
+        if ready:
+            del self.account_pauses[domain]
+            self.emit("account_domain_recovered", now_ns, domain=domain,
+                      recovery_after_ns=pause["recovery_after_ns"],
+                      read_started_ns={i: self.accounts[i].observed_ns for i in instruments})
+        else:
+            for i, reason in problems:
+                if reason or self.accounts[i].observed_ns <= pause["recovery_after_ns"]:
+                    self._request_account(i, now_ns)
+        return ready
+
+    def reconcile_accounts(self, now_ns):
+        """Schedule read-only work; never wait for a network read on the scan loop."""
+        for domain in self.account_domains:
+            self._account_domain_ready(domain, now_ns)
+        for instrument_id in self.markets:
+            account = self.accounts.get(instrument_id)
+            if account is None or now_ns - account.observed_ns >= self.account_max_age_ns // 2:
+                self._request_account(instrument_id, now_ns)
 
     def _account_ready(self, instrument_id, now_ns, *, pending_entry_owner=None):
         account = self.accounts.get(instrument_id)
@@ -271,12 +410,25 @@ class LiveTradeState(ScanState):
             return
         instrument_id = account.instrument_id
         self.account_requests.pop(instrument_id, None)
-        if account.observed_ns > now_ns or not account.authoritative or not account.connected:
-            return
+        self.account_request_ids.pop(instrument_id, None)
         old = self.accounts.get(instrument_id)
+        if account.observed_ns > now_ns or not account.authoritative or not account.connected:
+            # Untrusted timestamps must not poison the monotonic-success fence.
+            # Neither entries nor reductions can reuse the invalidated target's
+            # old observation, even if it arrives after this failure.
+            self.accounts.pop(instrument_id, None)
+            self.fences[instrument_id] = max(self.fences.get(instrument_id, 0), now_ns + 1)
+            self._pause_account(instrument_id, now_ns, "not_authoritative", new_evidence=True)
+            return
         if old is not None and account.observed_ns < old.observed_ns:
             return
         self.accounts[instrument_id] = account
+        problem = self._account_problem(instrument_id, now_ns)
+        if problem and problem != "predates_activity":
+            self._pause_account(instrument_id, now_ns, problem, new_evidence=account != old)
+        domain = self._account_domain(account.venue)
+        if domain in self.account_pauses and problem is None:
+            self._account_domain_ready(domain, now_ns)
         if not self._pending(instrument_id) and account.observed_ns >= self.fences.get(instrument_id, 0):
             expected = self.expected_native(instrument_id)
             self.emit("account_reconciled" if F(account.position_quantity) == expected and not account.open_order_ids
@@ -393,6 +545,8 @@ class LiveTradeState(ScanState):
         if net * 10000 < F(self.policy.entry_edge_bps) * buy["cash"]:
             return False
         ready = [self._account_ready(i, now_ns) for i in (buy_id, sell_id)]
+        ready.extend(self._account_domain_ready(domain, now_ns) for domain in sorted({
+            self._account_domain(self.markets[i].venue) for i in (buy_id, sell_id)}))
         if not all(ready):
             return False
         self.sequence += 1
@@ -507,8 +661,16 @@ class LiveTradeState(ScanState):
                   fee_usd=_number(fee) if known_fee else None, fee_confirmed=known_fee,
                   estimated_fee_usd=_number(estimated_fee) if estimated_fee is not None else None,
                   latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
+        self._request_account(instrument_id, now_ns)
 
     def on_receipt(self, receipt, now_ns):
+        if receipt.kind in {"unknown", "rejected"}:
+            for instrument_id, request_id in tuple(self.account_request_ids.items()):
+                if receipt.request_id == request_id:
+                    self.accounts.pop(instrument_id, None)
+                    self.fences[instrument_id] = max(self.fences.get(instrument_id, 0), now_ns + 1)
+                    self._pause_account(instrument_id, now_ns, "read_failed", new_evidence=True)
+                    return
         order = self.orders.get(receipt.client_order_id)
         if order is None or receipt.request_id != order["request_id"] or receipt.kind == "fill":
             return
@@ -833,6 +995,7 @@ class LiveTradeState(ScanState):
     def on_evaluation_timer(self, now_ns):
         if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
             return
+        self.reconcile_accounts(now_ns)
         for key in tuple(self.positions):
             self.observe(key, now_ns)
 
@@ -859,6 +1022,7 @@ class LiveTradeState(ScanState):
 
     def document(self):
         return {"mode": "live", "phase": self.phase, "halt_reason": self.halt_reason,
+                "account_pauses": deepcopy(self.account_pauses),
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,
                 "max_gross_notional_usd": _number(self.max_gross),
                 "max_unhedged_notional_usd": _number(self.max_unhedged_notional),

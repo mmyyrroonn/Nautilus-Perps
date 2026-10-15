@@ -24,6 +24,8 @@ def test_hyperliquid_reads_external_positions_and_orders_without_cache():
     result = reader.read(market("HL", "BTC-USD-PERP.HYPERLIQUID"), D("100"), D("101"), 50)
     assert result.authoritative and result.position_quantity == D("-.002")
     assert result.open_order_ids == ("venue:123",)
+    assert result.account_positions == (("BTC-USD-PERP.HYPERLIQUID", D("-.002")),)
+    assert ("ETH-USD-PERP.HYPERLIQUID", "venue:99") in result.account_open_orders
     assert len(calls) == 2 and {c[2]["type"] for c in calls} == {"clearinghouseState", "openOrders"}
 
 
@@ -54,6 +56,8 @@ def test_lighter_nonzero_order_count_never_becomes_false_clean():
     result = reader.read(market("LIGHTER", "BTC-USD-PERP.LIGHTER"), D(100), D(101), 50)
     assert result.position_quantity == D("-.002")
     assert result.open_order_ids == ("unidentified:Lighter:BTC:1",)
+    assert result.account_positions == (("BTC-USD-PERP.LIGHTER", D("-.002")),)
+    assert result.account_open_orders == (("BTC-USD-PERP.LIGHTER", "unidentified:Lighter:BTC:1"),)
 
 
 @pytest.mark.parametrize("payload", [
@@ -84,6 +88,8 @@ def test_aster_only_signed_read_endpoints_and_monotonic_nonce():
         transport=transport, aster_signer=sign, clock_ns=lambda: 10_000)
     result = reader.read(market("ASTER", "ETHUSDT-PERP.ASTER"), D(100), D(101), 50)
     assert result.position_quantity == D("-.01") and result.open_order_ids == ("owned-1",)
+    assert result.account_positions == (("ETHUSDT-PERP.ASTER", D("-.01")),)
+    assert result.account_open_orders == (("ETHUSDT-PERP.ASTER", "owned-1"),)
     assert all(method == "GET" and body is None for method, _, body in calls)
     assert signed[0].startswith("nonce=10&user=") and signed[1].startswith("nonce=11&user=")
     assert all("symbol=" not in message for message in signed)

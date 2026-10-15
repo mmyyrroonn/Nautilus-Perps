@@ -293,7 +293,10 @@ class ReadOnlyAccountReader:
             return AccountSnapshot(venue, market.instrument_id, bid, ask,
                                    evidence["started"], quantity, orders,
                                    connected=True, authoritative=evidence["unknown"] == 0,
-                                   book_observed_ns=observed_ns)
+                                   book_observed_ns=observed_ns,
+                                   account_positions=tuple(evidence["positions"].items()),
+                                   account_open_orders=tuple((instrument, client_id or "venue:" + venue_id)
+                                       for instrument, client_id, venue_id in evidence["orders"]))
 
     def _cached_read(self, scope, fetch, observed_ns):
         # Whole-account evidence serves every market, with its original start
@@ -319,18 +322,19 @@ class ReadOnlyAccountReader:
     def read(self, market, bid, ask, observed_ns):
         venue = market.venue
         if venue in {"HL", "HYPERLIQUID"}:
-            position, orders, started_ns = self._hyperliquid(market.instrument_id, observed_ns)
+            position, orders, started_ns, positions, all_orders = self._hyperliquid(market.instrument_id, observed_ns)
         elif venue == "LIGHTER":
-            position, orders, started_ns = self._lighter(market.instrument_id, observed_ns)
+            position, orders, started_ns, positions, all_orders = self._lighter(market.instrument_id, observed_ns)
         elif venue == "ASTER":
-            position, orders, started_ns = self._aster(market.instrument_id, observed_ns)
+            position, orders, started_ns, positions, all_orders = self._aster(market.instrument_id, observed_ns)
         elif venue in {"ONDO", "BACKPACK"}:
             return self.read_native(market, bid, ask, observed_ns)
         else:
             raise AccountReadError(f"{venue} continuous execution/account evidence is unsupported")
         return AccountSnapshot(venue, market.instrument_id, exact(bid), exact(ask), started_ns,
                                position, tuple(orders), connected=True, authoritative=True,
-                               book_observed_ns=observed_ns)
+                               book_observed_ns=observed_ns, account_positions=tuple(positions.items()),
+                               account_open_orders=tuple(all_orders))
 
     def _hyperliquid(self, instrument_id, observed_ns):
         prefix = "HYPERLIQUID_" if self.environment == "mainnet" else "HYPERLIQUID_TESTNET_"
@@ -354,11 +358,16 @@ class ReadOnlyAccountReader:
             raise AccountReadError("incomplete Hyperliquid position evidence")
         position = Decimal(0)
         seen = False
+        positions, all_orders = {}, []
         for row in _rows(state["assetPositions"], "Hyperliquid positions"):
             item = row.get("position")
             if not isinstance(item, dict) or not isinstance(item.get("coin"), str):
                 raise AccountReadError("invalid Hyperliquid position row")
             amount = exact(item.get("szi"))
+            instrument = item["coin"] + "-USD-PERP.HYPERLIQUID"
+            if instrument in positions:
+                raise AccountReadError("duplicate Hyperliquid position row")
+            positions[instrument] = amount
             if item["coin"] == symbol:
                 if seen:
                     raise AccountReadError("duplicate Hyperliquid position row")
@@ -367,10 +376,11 @@ class ReadOnlyAccountReader:
         for row in _rows(orders, "Hyperliquid open orders"):
             if not isinstance(row.get("coin"), str) or "oid" not in row:
                 raise AccountReadError("invalid Hyperliquid open order row")
+            all_orders.append((row["coin"] + "-USD-PERP.HYPERLIQUID", "venue:" + str(row["oid"])))
             if row["coin"] == symbol:
                 # Venue IDs intentionally remain different from owned client IDs.
                 ids.append("venue:" + str(row["oid"]))
-        return position, ids, started_ns
+        return position, ids, started_ns, positions, all_orders
 
     def _lighter(self, instrument_id, observed_ns):
         prefix = "LIGHTER_" if self.environment == "mainnet" else "LIGHTER_TESTNET_"
@@ -391,6 +401,7 @@ class ReadOnlyAccountReader:
             raise AccountReadError("Lighter account identity mismatch")
         symbol = instrument_id.removesuffix(".LIGHTER").removesuffix("-USD-PERP")
         position, seen, ids = Decimal(0), False, []
+        positions, all_orders = {}, []
         for row in _rows(account.get("positions"), "Lighter positions"):
             if not isinstance(row.get("symbol"), str) or "open_order_count" not in row:
                 raise AccountReadError("incomplete Lighter position/order row")
@@ -406,6 +417,12 @@ class ReadOnlyAccountReader:
                 if type(extra) is not int or extra < 0:
                     raise AccountReadError("incomplete Lighter pending/conditional order evidence")
                 count += extra
+            instrument = row["symbol"] + "-USD-PERP.LIGHTER"
+            if instrument in positions:
+                raise AccountReadError("duplicate Lighter position row")
+            positions[instrument] = quantity.copy_negate() if sign < 0 else quantity
+            if count:
+                all_orders.append((instrument, f"unidentified:Lighter:{row['symbol']}:{count}"))
             if row["symbol"] == symbol:
                 if seen:
                     raise AccountReadError("duplicate Lighter position row")
@@ -424,7 +441,15 @@ class ReadOnlyAccountReader:
                 counts.append(count)
             if any(counts):
                 ids.append("unidentified:Lighter:account-orders:" + str(sum(counts)))
-        return position, ids, started_ns
+        # Global counts can include orders not represented in position rows.
+        for name in ("total_order_count", "total_isolated_order_count", "pending_order_count"):
+            if name in account:
+                count = account[name]
+                if type(count) is not int or count < 0:
+                    raise AccountReadError("invalid Lighter global order count")
+                if count:
+                    all_orders.append(("account.LIGHTER", f"unidentified:Lighter:{name}:{count}"))
+        return position, ids, started_ns, positions, all_orders
 
     def _signed_aster_query(self, symbol=None):
         prefix = "ASTER_MAINNET_" if self.environment == "mainnet" else "ASTER_"
@@ -453,10 +478,19 @@ class ReadOnlyAccountReader:
         if len(matching) != 1 or matching[0].get("positionSide", "BOTH") != "BOTH":
             raise AccountReadError("Aster one-way target position coverage is missing or ambiguous")
         quantity = exact(matching[0].get("positionAmt"))
-        ids = []
+        ids, all_orders, all_positions = [], [], {}
+        for row in positions:
+            symbol_name = row.get("symbol")
+            if not isinstance(symbol_name, str) or not symbol_name or row.get("positionSide", "BOTH") != "BOTH":
+                raise AccountReadError("Aster one-way account coverage is missing or ambiguous")
+            instrument = symbol_name + "-PERP.ASTER"
+            if instrument in all_positions:
+                raise AccountReadError("duplicate Aster account position")
+            all_positions[instrument] = exact(row.get("positionAmt"))
         for row in _rows(orders, "Aster open orders"):
             if not isinstance(row.get("symbol"), str) or not isinstance(row.get("clientOrderId"), str) or not row["clientOrderId"]:
                 raise AccountReadError("Aster open order identity mismatch")
+            all_orders.append((row["symbol"] + "-PERP.ASTER", row["clientOrderId"]))
             if row["symbol"] == symbol:
                 ids.append(row["clientOrderId"])
-        return quantity, ids, started_ns
+        return quantity, ids, started_ns, all_positions, all_orders

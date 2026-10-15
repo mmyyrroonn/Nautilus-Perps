@@ -54,6 +54,9 @@ def test_native_account_shares_whole_account_fence_and_copies_mutable_payload(ve
     assert first.observed_ns == second.observed_ns == 50
     assert first.book_observed_ns == 90 and second.book_observed_ns == 95
     assert first.authoritative and second.authoritative
+    assert first.account_positions == second.account_positions == ((btc.instrument_id, D("-.002")),)
+    assert first.account_open_orders == second.account_open_orders == (
+        (btc.instrument_id, "owned-1"), (eth.instrument_id, "venue:2"))
 
 
 @pytest.mark.parametrize("venue", ["ONDO", "BACKPACK"])
