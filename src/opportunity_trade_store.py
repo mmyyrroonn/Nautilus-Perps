@@ -5,14 +5,13 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import uuid
 
 
-class TradeStore:
-    def __init__(self, path: Path, fingerprint: str):
-        self.path = Path(path).resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = self.path.with_suffix(self.path.suffix + ".lock").open("a+b")
-        self.connection = None
+class FileLock:
+    """Stable advisory OS lock; never unlink its inode on release."""
+    def __init__(self, path):
+        self._lock = Path(path).open("a+b")
         self._locked = False
         try:
             self._lock.seek(0, os.SEEK_END)
@@ -27,6 +26,36 @@ class TradeStore:
                 import fcntl
                 fcntl.flock(self._lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._locked = True
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        if self._lock.closed:
+            return
+        try:
+            if self._locked:
+                self._lock.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(self._lock.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self._lock.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._locked = False
+            self._lock.close()
+
+
+class TradeStore:
+    def __init__(self, path: Path, fingerprint: str, *, account_binding=None):
+        self.path = Path(path).resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = FileLock(self.path.with_suffix(self.path.suffix + ".lock"))
+        self.connection = None
+        self.owner_id = None
+        self.account_binding = account_binding
+        try:
             self.connection = sqlite3.connect(self.path)
             self.connection.execute("PRAGMA synchronous=FULL")
             self.connection.execute(
@@ -36,11 +65,27 @@ class TradeStore:
                 "CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY, "
                 "observed_ns INTEGER NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL)")
             row = self.connection.execute("SELECT fingerprint, snapshot FROM state WHERE id=1").fetchone()
+            self.connection.execute("CREATE TABLE IF NOT EXISTS ownership ("
+                "id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, "
+                "binding TEXT NOT NULL, fingerprint TEXT NOT NULL)")
+            ownership = self.connection.execute(
+                "SELECT owner, binding, fingerprint FROM ownership WHERE id=1").fetchone()
+            if ownership:
+                if account_binding != json.loads(ownership[1]) or fingerprint != ownership[2]:
+                    raise ValueError("state belongs to a different account or configuration; use the original identity")
+                self.owner_id = ownership[0]
+            elif account_binding is not None:
+                if row or self.connection.execute("SELECT 1 FROM events LIMIT 1").fetchone():
+                    raise ValueError("legacy state has no proven account binding; reconcile it before migration")
+                self.owner_id = uuid.uuid4().hex
+                with self.connection:
+                    self.connection.execute("INSERT INTO ownership VALUES (1, ?, ?, ?)",
+                        (self.owner_id, json.dumps(account_binding, sort_keys=True), fingerprint))
             if row and row[0] != fingerprint:
                 raise ValueError("state belongs to a different policy or market configuration; "
                                  "resume with the original configuration and reconcile its owned positions")
             self.fingerprint = fingerprint
-        except Exception:
+        except BaseException:
             self.close()
             raise
 
@@ -65,14 +110,4 @@ class TradeStore:
                 self.connection.close()
                 self.connection = None
         finally:
-            if not self._lock.closed:
-                if self._locked:
-                    self._lock.seek(0)
-                    if os.name == "nt":
-                        import msvcrt
-                        msvcrt.locking(self._lock.fileno(), msvcrt.LK_UNLCK, 1)
-                    else:
-                        import fcntl
-                        fcntl.flock(self._lock.fileno(), fcntl.LOCK_UN)
-                    self._locked = False
-                self._lock.close()
+            self._lock.close()

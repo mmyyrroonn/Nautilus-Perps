@@ -669,16 +669,19 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
     import opportunity_live
     import opportunity_live_runner
     import opportunity_shutdown
-    import opportunity_trade_store
+    import opportunity_account_scope
+    import os
+    import sqlite3
+    from test_opportunity_account_scope import credentials
     path = configs(tmp_path, all_five=True,
         venues='["HL","LIGHTER","ASTER","ONDO","BACKPACK"]')
     plan = replace(load_live_plan(path), max_unhedged_notional_usd=D(50), max_unhedged_secs=5)
-    store = MemoryStore()
-    store.close = lambda: None
     fake_live = FakeLive(plan.scan)
     fake_live.snapshot = lambda: {"positions": [], "orders": {}}
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
-    monkeypatch.setattr(opportunity_trade_store, "TradeStore", lambda *args: store)
+    monkeypatch.setattr(os, "environ", credentials())
+    monkeypatch.setattr(opportunity_account_scope, "account_registry_directory", lambda: tmp_path / "risk")
+    monkeypatch.setattr(opportunity_account_scope, "verify_execution_identity", lambda *args: None)
     def create_live(*args, **kwargs):
         assert kwargs["max_unhedged_notional_usd"] == D(50) and kwargs["max_unhedged_secs"] == 5
         return fake_live
@@ -690,7 +693,7 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
         calls.append(received)
         return proof
     monkeypatch.setattr(opportunity_shutdown, "collect_native_shutdown", collect)
-    def build(plan, live, coordinator):
+    def build(plan, live, coordinator, *, environ):
         coordinator.native_controls = controls
         def run():
             if node_raises:
@@ -700,7 +703,9 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
     monkeypatch.setattr(opportunity_live_runner, "build_live_node", build)
     result = run_live(plan)
     assert result == (0 if native_clean and node_finished and not node_raises else 1)
-    assert calls == [controls] and store.saved["native_shutdown"] == proof
+    with sqlite3.connect(plan.state_path) as connection:
+        saved = json.loads(connection.execute("SELECT snapshot FROM state WHERE id=1").fetchone()[0])
+    assert calls == [controls] and saved["native_shutdown"] == proof
     output = capsys.readouterr().out
     assert json.loads(output)["native_shutdown"] == proof
     assert "private error" not in output

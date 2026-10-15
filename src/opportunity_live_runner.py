@@ -13,6 +13,7 @@ from decimal import Decimal
 from fractions import Fraction
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -75,7 +76,7 @@ class LiveRunPlan:
     def ready(self):
         return self.limits_present and self.max_pairs > 0 and self.max_gross_notional_usd > 0
 
-    def fingerprint(self):
+    def fingerprint(self, account_binding=None):
         document = {"schema_version": 1, "mode": "live", "environment": self.environment,
             "policy": self.policy.document(), "markets": self.scan.document()["markets"],
             "settings": self.scan.document()["settings"], "venues": self.venues,
@@ -88,6 +89,9 @@ class LiveRunPlan:
         if self.max_unhedged_notional_usd != Decimal("100") or self.max_unhedged_secs != 10:
             document["max_unhedged_notional_usd"] = str(self.max_unhedged_notional_usd)
             document["max_unhedged_secs"] = self.max_unhedged_secs
+        if account_binding is not None:
+            document["schema_version"] = 2
+            document["account_binding"] = account_binding
         return hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
 
     def document(self):
@@ -117,7 +121,9 @@ class LiveRunPlan:
                 "adjust_modes": {v: "cancel_replace" if v in CANCEL_REPLACE_VENUES else "native" for v in self.venues}},
             "state_path": self.state_path, "limits_path": self.limits_path,
             "duration_secs": self.duration_secs, "drain_timeout_secs": self.drain_timeout_secs,
-            "fingerprint": self.fingerprint(), "scan": self.scan.document()})
+            "fingerprint": self.fingerprint(), "fingerprint_scope": "configuration_only",
+            "account_binding": "resolved and locked at execution startup",
+            "scan": self.scan.document()})
 
 
 def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd=None,
@@ -248,6 +254,9 @@ class SessionStoreProxy:
         self.latest_live = saved.get("live") if saved else None
         self.native_shutdown = saved.get("native_shutdown") if saved else None
         self.account_gate = saved.get("account_gate") if saved else None
+        self.account_binding = getattr(store, "account_binding", None)
+        if saved and self.account_binding is not None and saved.get("account_binding") != self.account_binding:
+            raise ValueError("live envelope account binding does not match its ledger")
 
     def load(self):
         return self.latest_live
@@ -255,6 +264,7 @@ class SessionStoreProxy:
     def save(self, snapshot, events):
         self.latest_live = snapshot
         self.store.save({"schema_version": 1, "mode": "live", "startup_complete": self.startup_complete,
+                         "account_binding": self.account_binding,
                          "startup": self.startup, "account_gate": self.account_gate,
                          "native_shutdown": self.native_shutdown,
                          "live": snapshot}, events)
@@ -507,6 +517,7 @@ class LiveCoordinator:
 
     def document(self):
         return {"phase": self.phase, "failure": self.failure, "finished": self.finished,
+                "account_binding": self.proxy.account_binding,
                 "last_execution_error": getattr(self.gateway, "last_error", None),
                 "native_shutdown": self.proxy.native_shutdown,
                 "startup_self_test_enabled": self.startup_self_test,
@@ -517,7 +528,7 @@ class LiveCoordinator:
                 "live": self.live.document()}
 
 
-def build_live_node(plan, live, coordinator):
+def build_live_node(plan, live, coordinator, *, environ=None):
     """Build native data/execution clients and one continuous Strategy, without run()."""
     from datetime import timedelta
     from nautilus_trader.common import CacheConfig, Environment, LoggerConfig, LogLevel
@@ -555,6 +566,7 @@ def build_live_node(plan, live, coordinator):
     native_controls = {}
     coordinator.native_controls = native_controls
     for client_id, factory, config in execution_clients(plan.scan, plan.environment,
+            environ=environ,
             state_directory=plan.state_path.parent / (plan.state_path.stem + ".native"),
             run_id=live.session_id,
             order_notional_usd=max(plan.policy.order_notional_usd, plan.startup_max_notional_usd),
@@ -615,6 +627,7 @@ def build_live_node(plan, live, coordinator):
                     max_account_age_ms=plan.account_max_age_ms) if coordinator.startup_self_test else None
                 gateway = NativeOrderGateway(self, plan.scan.markets, coordinator.on_receipt,
                     coordinator.on_account, coordinator.on_fill, environment=plan.environment,
+                    environ=environ,
                     native_controls=native_controls,
                     timeout_secs=plan.order_timeout_secs,
                     account_timeout_secs=plan.startup_timeout_secs,
@@ -664,16 +677,27 @@ def run_live(plan, *, self_test_only=False):
     from dotenv import load_dotenv
     from opportunity_live import LiveTradeState
     from opportunity_trade_store import TradeStore
+    from opportunity_account_scope import AccountRiskGuard, resolve_account_binding, verify_execution_identity
     from opportunity_shutdown import collect_native_shutdown
     import signal
     import threading
     load_dotenv(Path(__file__).resolve().parents[1]/".env", override=False)
-    store = TradeStore(plan.state_path, plan.fingerprint())
+    # The identity resolver, writers and independent reader share one immutable
+    # startup credential snapshot. No later environment fallback may change scope.
+    from types import MappingProxyType
+    environ = MappingProxyType(dict(os.environ))
+    binding = resolve_account_binding(plan.venues, plan.environment, environ)
+    guard = AccountRiskGuard(binding)
+    store = None
     coordinator = None
     node = None
     previous_signal = None
     stop_signal = threading.Event()
+    release_claim = False
     try:
+        store = TradeStore(plan.state_path, plan.fingerprint(binding.document()),
+                           account_binding=binding.document())
+        guard.claim(store)
         proxy = SessionStoreProxy(store)
         live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
             max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
@@ -682,7 +706,12 @@ def run_live(plan, *, self_test_only=False):
             retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
         coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only)
         coordinator.stop_signal = stop_signal
-        node, observer, strategy = build_live_node(plan, live, coordinator)
+        verify_execution_identity(binding, environ)
+        node, observer, strategy = build_live_node(plan, live, coordinator, environ=environ)
+        # Some native optional settings (notably an absent HL vault) still have
+        # environment fallback. Refuse a changed scope before starting clients.
+        if resolve_account_binding(plan.venues, plan.environment, os.environ) != binding:
+            raise ValueError("execution account environment changed during native construction")
         previous_signal = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, lambda *_: stop_signal.set())
         # A native stop can fail without leaving an application-owned pair. Keep
@@ -701,18 +730,31 @@ def run_live(plan, *, self_test_only=False):
         if coordinator.preflight and coordinator.phase != "resume_readonly" and coordinator.preflight.stage != "not_started":
             proxy.checkpoint_startup(coordinator.preflight)
         proxy.save(live.snapshot(), [])
+        release_claim = not (coordinator.failure or coordinator._has_residual() or observer.failure)
         print(json.dumps(coordinator.document(), default=str, indent=2))
-        return 1 if coordinator.failure or coordinator._has_residual() or observer.failure else 0
+        return 0 if release_claim else 1
     finally:
-        if previous_signal is not None:
-            signal.signal(signal.SIGINT, previous_signal)
-        if coordinator and coordinator.gateway:
-            coordinator.gateway.close()
         try:
-            if node is not None:
-                node.dispose()
+            try:
+                if previous_signal is not None:
+                    signal.signal(signal.SIGINT, previous_signal)
+            finally:
+                try:
+                    if coordinator and coordinator.gateway:
+                        coordinator.gateway.close()
+                finally:
+                    if node is not None:
+                        node.dispose()
+            # Never release a durable claim on crash, incomplete drain, failed
+            # persistence, failed gateway close or failed native disposal.
+            if release_claim:
+                guard.release_clean()
         finally:
-            store.close()
+            try:
+                if store is not None:
+                    store.close()
+            finally:
+                guard.close()
 
 
 def main(argv=None):

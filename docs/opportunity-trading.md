@@ -62,6 +62,44 @@ Backpack 数据与执行共享同一个公开行情状态、额度对象；程�
 
 ## 环境与凭证
 
+### 账户锁、身份绑定与异常恢复（issue 51）
+
+实盘执行先解析账户身份，再获取风险域进程锁、绑定 SQLite 账本、持久登记风险归属，
+最后才创建原生客户端。风险域相交的会话互斥：即使只有一个账户重叠，或更换了
+`state_path`、工作树、交易品种、预算配置，也不能同时领取新开仓预算。
+本机当前 OS 用户的所有工作树共用 `~/.nautilus-perps/account-risk-v1/`；该目录不能随
+SQLite 归档删除，不提供通过 TOML/CLI 更改锁目录的选项。
+
+| 交易所 | 风险域与账本身份 |
+|---|---|
+| Hyperliquid | 环境 + 实际交易地址，忽略地址大小写；vault/subaccount 必须让 `HYPERLIQUID_VAULT` 与 `HYPERLIQUID_ACCOUNT_ADDRESS` 一致。不同实际交易地址独立。普通账户通过 `userRole` 只读查询核对签名者所属用户，agent 地址不作为账户身份。 |
+| Lighter | 环境 + `LIGHTER_ACCOUNT_INDEX` 的整数值；不同索引独立，前导零和 API key index 不产生新风险域。账户索引与凭证显式传给原生执行配置。 |
+| Aster | 环境 + `ASTER_MAINNET_USER_ADDRESS`；不同用户地址独立，轮换 signer 不产生新风险域。 |
+| Ondo | 环境 + `ONDO_MAINNET_ACCOUNT_ID`；不同 venue account ID 独立，API key 轮换不产生新风险域。原生客户端继续核对 expected account ID。 |
+| Backpack | 当前所有账户/子账户保守共享一个 mainnet 风险域。账本另绑定 API 公钥摘要，换 key 不继承旧账本，也不能绕过共享锁。 |
+
+Backpack 的[官方账户查询](https://docs.backpack.exchange/#tag/Account)没有可用于空仓账户
+稳定身份核对的 user ID；因此本实现不把 key 或未经核验的子账户标签当成独立预算域，
+暂不支持 Backpack 不同子账户并发。Hyperliquid 签名者核对使用官方
+[`userRole`](https://hyperliquid.gitbook.io/Hyperliquid-docs/for-developers/api/info-endpoint#query-a-users-role)
+响应中的用户角色/agent 所属账户；查询失败或不匹配时停止启动。
+
+账本 `ownership`、会话 `account_binding`、实际运行指纹及共享登记只保留身份摘要，
+不保存地址、公钥或密钥明文。dry-run 不读取凭证、不创建锁；其指纹明确标为
+`configuration_only`，执行时才加入账户绑定。已有账户绑定的账本即使尚未写入第一张
+状态快照，也不能用另一个账户打开；没有账户绑定的旧账本拒绝自动认领。
+
+正常退出且应用无残仓/未决订单、原生停止证明完整、状态落盘成功、客户端释放成功后，
+共享风险归属才释放。崩溃或强制结束会由 OS 释放进程锁，但不会删除持久风险归属。
+恢复时保留原 SQLite、配套 `.native` 目录和共享登记，使用原路径、账户与配置启动。
+原未决订单 ID 和两腿预算继续保留；未完成原 ID 核对时仍禁止新开仓，后续自动仅减仓
+恢复属于 issue 52。换文件、删文件重建或复制旧账本到另一条路径不能解除该阻塞。
+无账户绑定的历史账本需先完成原账户/订单归属核对与清理后再迁移，不能直接加摘要
+宣称已验证。锁适用于当前 OS 用户、本机、使用本入口的会话；旧版进程、其他用户或
+其他主机需要先停止并完成统一部署，不能将它当作分布式交易所账户锁。
+
+### 原生依赖与凭证配置
+
 必须使用项目源绑定流程安装的 fork wheel，而不是同版本的 PyPI 包；安装记录在
 `.native-cache/installed.json`，具体流程见 [native-candidate.md](native-candidate.md)。
 实盘启动前检查 Ondo 连续接口、两所完整账户快照接口、Backpack 权限续期接口。

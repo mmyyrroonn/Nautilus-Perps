@@ -69,16 +69,24 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
             address = env.get(prefix + "ACCOUNT_ADDRESS")
             if not address:
                 raise ValueError("explicit Hyperliquid ACCOUNT_ADDRESS is required for independent account reconciliation")
+            if not env.get(prefix + "PK"):
+                raise ValueError("explicit Hyperliquid signing key is required")
             config = HyperliquidExecutionClientConfig(account_id=account_id,
                 environment=HyperliquidEnvironment.MAINNET if environment == "mainnet" else HyperliquidEnvironment.TESTNET,
-                private_key=env.get(prefix + "PK"), vault_address=env.get(prefix + "VAULT"),
+                private_key=env[prefix + "PK"], vault_address=env.get(prefix + "VAULT"),
                 account_address=address, include_builder_attribution=False)
             factory = HyperliquidExecutionClientFactory()
         elif client == "LIGHTER":
             from nautilus_trader.adapters.lighter import (
                 LighterEnvironment, LighterExecutionClientConfig, LighterExecutionClientFactory)
+            from opportunity_account_scope import lighter_account_index
+            prefix = "LIGHTER_" if environment == "mainnet" else "LIGHTER_TESTNET_"
+            if any(not env.get(prefix + suffix) for suffix in ("API_SECRET", "API_KEY_INDEX")):
+                raise ValueError("explicit Lighter execution credentials are required")
             config = LighterExecutionClientConfig(account_id=account_id,
                 environment=LighterEnvironment.MAINNET if environment == "mainnet" else LighterEnvironment.TESTNET,
+                account_index=lighter_account_index(env, environment),
+                api_key_index=int(env[prefix + "API_KEY_INDEX"]), private_key=env[prefix + "API_SECRET"],
                 sendtx_quota_per_min=36)
             factory = LighterExecutionClientFactory()
         elif client == "ASTER":
@@ -193,12 +201,12 @@ def _fill_signature(fill):
 class NativeOrderGateway:
     def __init__(self, strategy, markets, on_receipt, on_account, on_fill, *,
                  reader=None, environment="mainnet", model=None, timeout_secs=10,
-                 quote_provider=None, native_controls=None, account_timeout_secs=None):
+                 quote_provider=None, native_controls=None, account_timeout_secs=None, environ=None):
         self.strategy = strategy
         rows = markets.values() if isinstance(markets, dict) else markets
         self.markets = {m.instrument_id: m for m in rows}
         self.on_receipt, self.on_account, self.on_fill = on_receipt, on_account, on_fill
-        self.reader = reader or ReadOnlyAccountReader(environment=environment)
+        self.reader = reader or ReadOnlyAccountReader(environment=environment, environ=environ)
         self.environment = environment
         self.model = model or _native()
         self.timeout_ns = timeout_secs * 1_000_000_000
