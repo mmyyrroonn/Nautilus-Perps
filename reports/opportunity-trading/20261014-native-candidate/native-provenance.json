@@ -1,0 +1,351 @@
+{
+  "build": {
+    "build_warnings_override": "allow",
+    "builder_sha256": "7f94cb247ddbc432779b03e97f87a75703df882fa39bee359413ae2e69d98b70",
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+    "cargo_target_dir": "E:/persarb/nautilus_trader/target",
+    "command": [
+      "build",
+      "--profile",
+      "nextest",
+      "--locked",
+      "--interpreter",
+      "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+      "--out",
+      "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\f0d34e6f8d-five-controls-v2-20261014",
+      "--offline"
+    ],
+    "completed_at": "2026-10-13T18:23:14.636682+00:00",
+    "conda_path_entries_removed": true,
+    "finished_source": {
+      "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+      "commit": "f0d34e6f8da875f79c37db079ce201f866a90576",
+      "dirty": [
+        "M crates/adapters/backpack/src/account/client.rs",
+        " M crates/adapters/backpack/src/execution/guard.rs",
+        " M crates/adapters/backpack/src/execution/owner.rs",
+        " M crates/adapters/backpack/src/execution_client/client.rs",
+        " M crates/adapters/backpack/src/execution_client/production_control.rs",
+        " M crates/adapters/backpack/src/python/production.rs",
+        " M crates/adapters/ondo/src/continuous.rs",
+        " M crates/adapters/ondo/src/python/factories.rs",
+        " M python/nautilus_trader/__init__.pyi",
+        " M python/nautilus_trader/_libnautilus/__init__.pyi",
+        " M python/nautilus_trader/adapters/__init__.pyi",
+        " M python/nautilus_trader/adapters/architect_ax/__init__.pyi",
+        " M python/nautilus_trader/adapters/aster/__init__.pyi",
+        " M python/nautilus_trader/adapters/backpack/__init__.pyi",
+        " M python/nautilus_trader/adapters/betfair/__init__.pyi",
+        " M python/nautilus_trader/adapters/binance/__init__.pyi",
+        " M python/nautilus_trader/adapters/bitmex/__init__.pyi",
+        " M python/nautilus_trader/adapters/blockchain/__init__.pyi",
+        " M python/nautilus_trader/adapters/bybit/__init__.pyi",
+        " M python/nautilus_trader/adapters/coinbase/__init__.pyi",
+        " M python/nautilus_trader/adapters/databento/__init__.pyi",
+        " M python/nautilus_trader/adapters/deribit/__init__.pyi",
+        " M python/nautilus_trader/adapters/derive/__init__.pyi",
+        " M python/nautilus_trader/adapters/dydx/__init__.pyi",
+        " M python/nautilus_trader/adapters/hyperliquid/__init__.pyi",
+        " M python/nautilus_trader/adapters/interactive_brokers/__init__.pyi",
+        " M python/nautilus_trader/adapters/kraken/__init__.pyi",
+        " M python/nautilus_trader/adapters/lighter/__init__.pyi",
+        " M python/nautilus_trader/adapters/okx/__init__.pyi",
+        " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+        " M python/nautilus_trader/adapters/polymarket/__init__.pyi",
+        " M python/nautilus_trader/adapters/sandbox/__init__.pyi",
+        " M python/nautilus_trader/adapters/tardis/__init__.pyi",
+        " M python/nautilus_trader/analysis/__init__.pyi",
+        " M python/nautilus_trader/backtest/__init__.pyi",
+        " M python/nautilus_trader/common/__init__.pyi",
+        " M python/nautilus_trader/config/__init__.pyi",
+        " M python/nautilus_trader/core/__init__.pyi",
+        " M python/nautilus_trader/cryptography/__init__.pyi",
+        " M python/nautilus_trader/data/__init__.pyi",
+        " M python/nautilus_trader/execution/__init__.pyi",
+        " M python/nautilus_trader/indicators/__init__.pyi",
+        " M python/nautilus_trader/infrastructure/__init__.pyi",
+        " M python/nautilus_trader/live/__init__.pyi",
+        " M python/nautilus_trader/model/__init__.pyi",
+        " M python/nautilus_trader/network/__init__.pyi",
+        " M python/nautilus_trader/persistence/__init__.pyi",
+        " M python/nautilus_trader/portfolio/__init__.pyi",
+        " M python/nautilus_trader/risk/__init__.pyi",
+        " M python/nautilus_trader/serialization/__init__.pyi",
+        " M python/nautilus_trader/testkit/__init__.pyi",
+        " M python/nautilus_trader/trading/__init__.pyi"
+      ],
+      "dirty_count": 52,
+      "tracked_diff_sha256": "de286fe11b2d1536dc3223e9cbf7ef04389412e05141333e4f9dc6e6650f97b3",
+      "tree": "4d43d4f2969d97de2ab08c9e1eaf5c4c032a858a",
+      "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "interpreter": "E:\\persarb\\nautilus_trader\\.venv\\Scripts\\python.exe",
+    "machine": "AMD64",
+    "maturin_config_sha256": "51288a9b821361cdfa6a915ca3048c2e5daf92e9793edd1b8514c0767e666018",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python_uv_lock_sha256": "5bf016c9fa06ee5ecad7d3d346e148793a205bb186e56bfb5d30106a57be7a55",
+    "started_source": {
+      "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+      "commit": "f0d34e6f8da875f79c37db079ce201f866a90576",
+      "dirty": [
+        "M crates/adapters/backpack/src/account/client.rs",
+        " M crates/adapters/backpack/src/execution/guard.rs",
+        " M crates/adapters/backpack/src/execution/owner.rs",
+        " M crates/adapters/backpack/src/execution_client/client.rs",
+        " M crates/adapters/backpack/src/execution_client/production_control.rs",
+        " M crates/adapters/backpack/src/python/production.rs",
+        " M crates/adapters/ondo/src/continuous.rs",
+        " M crates/adapters/ondo/src/python/factories.rs",
+        " M python/nautilus_trader/__init__.pyi",
+        " M python/nautilus_trader/_libnautilus/__init__.pyi",
+        " M python/nautilus_trader/adapters/__init__.pyi",
+        " M python/nautilus_trader/adapters/architect_ax/__init__.pyi",
+        " M python/nautilus_trader/adapters/aster/__init__.pyi",
+        " M python/nautilus_trader/adapters/backpack/__init__.pyi",
+        " M python/nautilus_trader/adapters/betfair/__init__.pyi",
+        " M python/nautilus_trader/adapters/binance/__init__.pyi",
+        " M python/nautilus_trader/adapters/bitmex/__init__.pyi",
+        " M python/nautilus_trader/adapters/blockchain/__init__.pyi",
+        " M python/nautilus_trader/adapters/bybit/__init__.pyi",
+        " M python/nautilus_trader/adapters/coinbase/__init__.pyi",
+        " M python/nautilus_trader/adapters/databento/__init__.pyi",
+        " M python/nautilus_trader/adapters/deribit/__init__.pyi",
+        " M python/nautilus_trader/adapters/derive/__init__.pyi",
+        " M python/nautilus_trader/adapters/dydx/__init__.pyi",
+        " M python/nautilus_trader/adapters/hyperliquid/__init__.pyi",
+        " M python/nautilus_trader/adapters/interactive_brokers/__init__.pyi",
+        " M python/nautilus_trader/adapters/kraken/__init__.pyi",
+        " M python/nautilus_trader/adapters/lighter/__init__.pyi",
+        " M python/nautilus_trader/adapters/okx/__init__.pyi",
+        " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+        " M python/nautilus_trader/adapters/polymarket/__init__.pyi",
+        " M python/nautilus_trader/adapters/sandbox/__init__.pyi",
+        " M python/nautilus_trader/adapters/tardis/__init__.pyi",
+        " M python/nautilus_trader/analysis/__init__.pyi",
+        " M python/nautilus_trader/backtest/__init__.pyi",
+        " M python/nautilus_trader/common/__init__.pyi",
+        " M python/nautilus_trader/config/__init__.pyi",
+        " M python/nautilus_trader/core/__init__.pyi",
+        " M python/nautilus_trader/cryptography/__init__.pyi",
+        " M python/nautilus_trader/data/__init__.pyi",
+        " M python/nautilus_trader/execution/__init__.pyi",
+        " M python/nautilus_trader/indicators/__init__.pyi",
+        " M python/nautilus_trader/infrastructure/__init__.pyi",
+        " M python/nautilus_trader/live/__init__.pyi",
+        " M python/nautilus_trader/model/__init__.pyi",
+        " M python/nautilus_trader/network/__init__.pyi",
+        " M python/nautilus_trader/persistence/__init__.pyi",
+        " M python/nautilus_trader/portfolio/__init__.pyi",
+        " M python/nautilus_trader/risk/__init__.pyi",
+        " M python/nautilus_trader/serialization/__init__.pyi",
+        " M python/nautilus_trader/testkit/__init__.pyi",
+        " M python/nautilus_trader/trading/__init__.pyi"
+      ],
+      "dirty_count": 52,
+      "tracked_diff_sha256": "de286fe11b2d1536dc3223e9cbf7ef04389412e05141333e4f9dc6e6650f97b3",
+      "tree": "4d43d4f2969d97de2ab08c9e1eaf5c4c032a858a",
+      "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools": {
+      "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+      "maturin": "maturin 1.15.0",
+      "python": "Python 3.12.9",
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+      "uv": "uv 0.12.6 (7938ca5d5 2026-08-25 x86_64-pc-windows-msvc)"
+    }
+  },
+  "collector": {
+    "machine": "AMD64",
+    "platform": "Windows-11-10.0.26300-SP0"
+  },
+  "declared_build": {
+    "features": "extension-module,arrow,betfair,high-precision,mimalloc,redis,postgres,defi,hypersync,tracing-bridge",
+    "profile": "nextest"
+  },
+  "declared_by": "evidence_file",
+  "declared_evidence": {
+    "path": "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\f0d34e6f8d-five-controls-v2-20261014\\native-build-input.json",
+    "sha256": "543f0fc697933afe0b9820bdc8346b9e7e33ec1a5bbd88b5aa66c62d3ec49f5b"
+  },
+  "declared_native": {
+    "cargo_lock_sha256": "cfdc6a69eb9cfe897c46e99f4638043249b9bb709e2c9af9d1bd7d7d7a45c24c",
+    "commit": "f0d34e6f8da875f79c37db079ce201f866a90576",
+    "dirty": [
+      "M crates/adapters/backpack/src/account/client.rs",
+      " M crates/adapters/backpack/src/execution/guard.rs",
+      " M crates/adapters/backpack/src/execution/owner.rs",
+      " M crates/adapters/backpack/src/execution_client/client.rs",
+      " M crates/adapters/backpack/src/execution_client/production_control.rs",
+      " M crates/adapters/backpack/src/python/production.rs",
+      " M crates/adapters/ondo/src/continuous.rs",
+      " M crates/adapters/ondo/src/python/factories.rs",
+      " M python/nautilus_trader/__init__.pyi",
+      " M python/nautilus_trader/_libnautilus/__init__.pyi",
+      " M python/nautilus_trader/adapters/__init__.pyi",
+      " M python/nautilus_trader/adapters/architect_ax/__init__.pyi",
+      " M python/nautilus_trader/adapters/aster/__init__.pyi",
+      " M python/nautilus_trader/adapters/backpack/__init__.pyi",
+      " M python/nautilus_trader/adapters/betfair/__init__.pyi",
+      " M python/nautilus_trader/adapters/binance/__init__.pyi",
+      " M python/nautilus_trader/adapters/bitmex/__init__.pyi",
+      " M python/nautilus_trader/adapters/blockchain/__init__.pyi",
+      " M python/nautilus_trader/adapters/bybit/__init__.pyi",
+      " M python/nautilus_trader/adapters/coinbase/__init__.pyi",
+      " M python/nautilus_trader/adapters/databento/__init__.pyi",
+      " M python/nautilus_trader/adapters/deribit/__init__.pyi",
+      " M python/nautilus_trader/adapters/derive/__init__.pyi",
+      " M python/nautilus_trader/adapters/dydx/__init__.pyi",
+      " M python/nautilus_trader/adapters/hyperliquid/__init__.pyi",
+      " M python/nautilus_trader/adapters/interactive_brokers/__init__.pyi",
+      " M python/nautilus_trader/adapters/kraken/__init__.pyi",
+      " M python/nautilus_trader/adapters/lighter/__init__.pyi",
+      " M python/nautilus_trader/adapters/okx/__init__.pyi",
+      " M python/nautilus_trader/adapters/ondo/__init__.pyi",
+      " M python/nautilus_trader/adapters/polymarket/__init__.pyi",
+      " M python/nautilus_trader/adapters/sandbox/__init__.pyi",
+      " M python/nautilus_trader/adapters/tardis/__init__.pyi",
+      " M python/nautilus_trader/analysis/__init__.pyi",
+      " M python/nautilus_trader/backtest/__init__.pyi",
+      " M python/nautilus_trader/common/__init__.pyi",
+      " M python/nautilus_trader/config/__init__.pyi",
+      " M python/nautilus_trader/core/__init__.pyi",
+      " M python/nautilus_trader/cryptography/__init__.pyi",
+      " M python/nautilus_trader/data/__init__.pyi",
+      " M python/nautilus_trader/execution/__init__.pyi",
+      " M python/nautilus_trader/indicators/__init__.pyi",
+      " M python/nautilus_trader/infrastructure/__init__.pyi",
+      " M python/nautilus_trader/live/__init__.pyi",
+      " M python/nautilus_trader/model/__init__.pyi",
+      " M python/nautilus_trader/network/__init__.pyi",
+      " M python/nautilus_trader/persistence/__init__.pyi",
+      " M python/nautilus_trader/portfolio/__init__.pyi",
+      " M python/nautilus_trader/risk/__init__.pyi",
+      " M python/nautilus_trader/serialization/__init__.pyi",
+      " M python/nautilus_trader/testkit/__init__.pyi",
+      " M python/nautilus_trader/trading/__init__.pyi"
+    ],
+    "dirty_count": 52,
+    "tracked_diff_sha256": "de286fe11b2d1536dc3223e9cbf7ef04389412e05141333e4f9dc6e6650f97b3",
+    "tree": "4d43d4f2969d97de2ab08c9e1eaf5c4c032a858a",
+    "untracked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "embedded_adapter_stubs": [
+    {
+      "path": "nautilus_trader/adapters/__init__.pyi",
+      "sha256": "a011d4e65f6676eb86a7083bd96f4e223fe7f3f293cf1aef696c295b0e935a81"
+    },
+    {
+      "path": "nautilus_trader/adapters/architect_ax/__init__.pyi",
+      "sha256": "184dcd5a4cb37d6bf3257bbf87f64bedc4eca31dc109e2f6e85cd31909de1922"
+    },
+    {
+      "path": "nautilus_trader/adapters/aster/__init__.pyi",
+      "sha256": "4bb7248b01f2880df49072e189213d4c450d5044ee33f6495aecb470f5e38722"
+    },
+    {
+      "path": "nautilus_trader/adapters/backpack/__init__.pyi",
+      "sha256": "c864c10b7bc9b329ba375f4ef5d765a8551f3ca1bb7765edb67fb64cdb84d9cc"
+    },
+    {
+      "path": "nautilus_trader/adapters/betfair/__init__.pyi",
+      "sha256": "7c111e91c272a082571cb15870b1dd7da3068fa90f37618f441accb4f8eaa6b6"
+    },
+    {
+      "path": "nautilus_trader/adapters/binance/__init__.pyi",
+      "sha256": "f6cd189f8dbed67a281bea8e7f0ac650cd780a48c1d607040e33d036f22e509e"
+    },
+    {
+      "path": "nautilus_trader/adapters/bitmex/__init__.pyi",
+      "sha256": "04c21c9d82054836efd81cfdd947a944422167e255d4d68575521aedbb85840c"
+    },
+    {
+      "path": "nautilus_trader/adapters/blockchain/__init__.pyi",
+      "sha256": "6803e0efa7dd88a9a31c402a0180384fba6401cc4ac7164eaa23c087d8bf5570"
+    },
+    {
+      "path": "nautilus_trader/adapters/bybit/__init__.pyi",
+      "sha256": "47ffaf8f9c9977b0cc03c1712409d5dd3ab96bad82d7a023cd89f7b805b66a13"
+    },
+    {
+      "path": "nautilus_trader/adapters/coinbase/__init__.pyi",
+      "sha256": "968f2ca07a663b8a2e2cd33c50cea8d6c77cd5e27e709e15d5abb72efdedc284"
+    },
+    {
+      "path": "nautilus_trader/adapters/databento/__init__.pyi",
+      "sha256": "6122cadb0b2bbd5a07fad219e6355aa9e5299195326f71bd15360fb9057f7936"
+    },
+    {
+      "path": "nautilus_trader/adapters/deribit/__init__.pyi",
+      "sha256": "b685258f8e7d680a31c26d1e4e413c1610af56732f33ad5d880ae12305328ea6"
+    },
+    {
+      "path": "nautilus_trader/adapters/derive/__init__.pyi",
+      "sha256": "636b43f0cdf1987ef12c311787b19dccfd191cc7f9d6845da74cd8cebc063590"
+    },
+    {
+      "path": "nautilus_trader/adapters/dydx/__init__.pyi",
+      "sha256": "265e43641c25aa3aaea598a5f1f75ee60ae54261c25507fa4518edc2bb63e7ed"
+    },
+    {
+      "path": "nautilus_trader/adapters/hyperliquid/__init__.pyi",
+      "sha256": "539a1c95077077ad411c07908186ff0d7e38f377a7791f078a8a874da5281bf8"
+    },
+    {
+      "path": "nautilus_trader/adapters/interactive_brokers/__init__.pyi",
+      "sha256": "3f46d5f5034297ed4b8a27a998e6fc5be150eb55f501f2c344725e82300c1ee1"
+    },
+    {
+      "path": "nautilus_trader/adapters/kraken/__init__.pyi",
+      "sha256": "52d81aa9d7b1abdfd2e6ec197d31c4b6be4b4e789aa5ebea49cc6ad209a28231"
+    },
+    {
+      "path": "nautilus_trader/adapters/lighter/__init__.pyi",
+      "sha256": "0de97d3a5edede8ed89c2d85e88537d262a26e4179571dbdb7a5840cf1d027a4"
+    },
+    {
+      "path": "nautilus_trader/adapters/okx/__init__.pyi",
+      "sha256": "1494165a2d59f137a6ace7b630017ed3535d7c23c1b14be9db924f33e5a8818e"
+    },
+    {
+      "path": "nautilus_trader/adapters/ondo/__init__.pyi",
+      "sha256": "5656437263997be6902b5e28d2b50b07ea1cc96a5ba37bb02011b1baff2126a5"
+    },
+    {
+      "path": "nautilus_trader/adapters/polymarket/__init__.pyi",
+      "sha256": "1869ba5ae47480837bcab031d78dea1e4f6356fb439d94df9f6b8c8e7e2dda77"
+    },
+    {
+      "path": "nautilus_trader/adapters/sandbox/__init__.pyi",
+      "sha256": "741f9cf97677d418753fe67cd15f0336eea5b1cff25541c4493312ce72cba067"
+    },
+    {
+      "path": "nautilus_trader/adapters/tardis/__init__.pyi",
+      "sha256": "64d7cb5da6dfa6513b963d88797bd3ba7dd37b114d25968fd9751d71f7287893"
+    }
+  ],
+  "embedded_native_objects": [
+    {
+      "path": "nautilus_trader/_libnautilus.cp312-win_amd64.pyd",
+      "sha256": "2d1ae6939a907103d715fe79142db68f653d2d0dedcfc951b1a8e791ecacabcd",
+      "size": 388580352
+    }
+  ],
+  "generated_at": "2026-10-13T18:23:14.511421+00:00",
+  "purpose": "name the binary an installed wheel actually is (issue #11)",
+  "reference_stubs": [],
+  "schema_version": 1,
+  "source_binding": "verified",
+  "source_binding_note": "single controlled build from matching pre/post source fingerprints",
+  "source_fingerprint_sha256": "51c790c761fc5544d54cf463a9a086cc944155bbbf53a08589b8f3362c37d57f",
+  "wheel": {
+    "filename": "nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "name": "nautilus-trader",
+    "path": "E:\\persarb\\worktrees\\opportunity-scan\\.native-cache\\f0d34e6f8d-five-controls-v2-20261014\\nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+    "sha256": "05c69d748e0d7f12ffe23eaa9801f386fcaf9f490360481ff70619e9e482055f",
+    "size": 109067450,
+    "tags": [
+      "cp312-cp312-win_amd64"
+    ],
+    "version": "2.0.0rc4"
+  }
+}

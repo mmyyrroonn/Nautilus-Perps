@@ -1,0 +1,20 @@
+# Public market data with local simulated fills; never registers execution clients.
+schema_version = 1
+mode = "paper"
+scan_config = "opportunity-scan.universe.toml"
+state_path = "../reports/opportunity-trading/paper.sqlite3"
+
+[trade]
+# Each leg is capped at this notional; both legs use equal canonical quantity.
+order_notional_usd = "100"
+# Reuse the scanner's entry edge after opening taker fees and its reserve.
+entry_edge_bps = "30"
+take_profit_bps = "5"
+# Provisional paper-test value, pending the user's data analysis.
+max_loss_bps = "20"
+# Disable only the price-loss trigger; the 300-second reduction deadline remains.
+loss_stop_enabled = true
+breakeven_after_secs = 180
+force_close_after_secs = 300
+# Extra adverse slippage per fill, in addition to walking visible L2 depth.
+slippage_bps = "0"

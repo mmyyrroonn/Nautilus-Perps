@@ -2414,22 +2414,6 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
-symbol = "PRL"
-venue = "LIGHTER"
-instrument_id = "PRL-PERP.LIGHTER"
-quote_to_usd = "1"
-valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
-
-[[markets]]
-symbol = "PRL"
-venue = "ASTER"
-instrument_id = "PRLUSDT-PERP.ASTER"
-quote_to_usd = "1"
-valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
-taker_fee_bps = "4"
-fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
-
-[[markets]]
 symbol = "PROVE"
 venue = "HL"
 instrument_id = "PROVE-USD-PERP.HYPERLIQUID"

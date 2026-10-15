@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "wheel_sha256": "05c69d748e0d7f12ffe23eaa9801f386fcaf9f490360481ff70619e9e482055f",
+  "native_commit": "f0d34e6f8da875f79c37db079ce201f866a90576",
+  "native_dirty": true,
+  "profile": "nextest",
+  "source_fingerprint_sha256": "51c790c761fc5544d54cf463a9a086cc944155bbbf53a08589b8f3362c37d57f",
+  "ondo_passed": 27,
+  "ondo_failed": 0,
+  "backpack_controls_passed": 2,
+  "rust_unit_passed": 2,
+  "mainnet_requests": 0,
+  "source_binding_verified": true,
+  "installed_identity_verified": true,
+  "note": "Initial controls-only deadline assertion failures corrected without native changes; original JUnit retained."
+}

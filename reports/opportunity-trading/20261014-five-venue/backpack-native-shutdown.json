@@ -1,0 +1,15 @@
+{
+  "clean": true,
+  "venues": {
+    "BACKPACK": {
+      "clean": true,
+      "reason": "clean",
+      "dirty": false,
+      "positions_unknown_or_nonzero": false,
+      "unsent": 0,
+      "unknown": 0,
+      "observed_unreconciled": 0,
+      "pending_cancellations": 0
+    }
+  }
+}

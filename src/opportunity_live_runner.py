@@ -1,0 +1,728 @@
+"""Operator-started multi-venue execution with optional BTC trading self-tests.
+
+Importing or inspecting a plan does not import native code, load credentials,
+connect an account, create state, or submit orders. Default CLI operation is a
+dry run. The execution path requires an explicit --execute-live flag.
+"""
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+from dataclasses import dataclass, replace
+from decimal import Decimal
+from fractions import Fraction
+import hashlib
+import json
+from pathlib import Path
+import sys
+import time
+import tomllib
+import uuid
+
+from opportunity_scan import (ScanConfigError, allowed_keys, decimal_value,
+                              integer_value, load_plan)
+from opportunity_trade import TradePolicy
+
+HARD_ORDER_NOTIONAL_USD = Decimal("100")
+HARD_MAX_PAIRS = 16
+HARD_GROSS_NOTIONAL_USD = Decimal("500")
+HARD_STARTUP_NOTIONAL_USD = Decimal("50")
+SUPPORTED_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
+VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in SUPPORTED_VENUES}}
+CANCEL_REPLACE_VENUES = {"ASTER", "ONDO", "BACKPACK"}
+
+
+
+
+def _plain(value):
+    if isinstance(value, (Decimal, Path)):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True)
+class LiveRunPlan:
+    scan: object
+    policy: TradePolicy
+    state_path: Path
+    limits_path: Path
+    venues: tuple[str, ...]
+    trade_symbols: tuple[str, ...]
+    max_pairs: int
+    max_gross_notional_usd: Decimal
+    startup_max_notional_usd: Decimal
+    startup_slippage_bps: Decimal
+    duration_secs: int
+    drain_timeout_secs: int = 30
+    timer_interval_ms: int = 100
+    account_max_age_ms: int = 15000
+    order_timeout_secs: int = 10
+    retry_interval_ms: int = 1000
+    startup_timeout_secs: int = 20
+    limits_present: bool = True
+    environment: str = "mainnet"
+    startup_self_test: bool = False
+
+    @property
+    def ready(self):
+        return self.limits_present and self.max_pairs > 0 and self.max_gross_notional_usd > 0
+
+    def fingerprint(self):
+        document = {"schema_version": 1, "mode": "live", "environment": self.environment,
+            "policy": self.policy.document(), "markets": self.scan.document()["markets"],
+            "settings": self.scan.document()["settings"], "venues": self.venues,
+            "trade_symbols": self.trade_symbols, "max_pairs": self.max_pairs,
+            "max_gross_notional_usd": str(self.max_gross_notional_usd),
+            "startup_max_notional_usd": str(self.startup_max_notional_usd)}
+        return hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
+
+    def document(self):
+        missing = []
+        if not self.limits_present:
+            missing.append("limits.toml [opportunity_trade]")
+        if self.max_pairs <= 0:
+            missing.append("risk.max_pairs")
+        if self.max_gross_notional_usd <= 0:
+            missing.append("risk.max_gross_notional_usd")
+        return _plain({"schema_version": 1, "mode": "live", "environment": self.environment,
+            "runtime_started": False, "remote_writes_allowed": False,
+            "execution_requires_flag": "--execute-live", "ready_for_operator_start": self.ready,
+            "required_configuration": missing, "venues": self.venues,
+            "execution_route": "Nautilus LiveNode / Strategy / native ExecutionClientFactory",
+            "native_dependency_check": "required at execution startup; dry-run only validates configuration",
+            "trade_symbols": self.trade_symbols, "policy": self.policy.document(),
+            "risk": {"max_pairs": self.max_pairs, "max_gross_notional_usd": self.max_gross_notional_usd},
+            "startup": {"self_test_enabled": self.startup_self_test,
+                "mandatory": self.startup_self_test, "symbol": "BTC",
+                "account_gate_required": True,
+                "max_notional_usd": self.startup_max_notional_usd,
+                "sizing": "current native instrument minimum rounded to its lot size",
+                "slippage_bps": self.startup_slippage_bps,
+                "adjust_modes": {v: "cancel_replace" if v in CANCEL_REPLACE_VENUES else "native" for v in self.venues}},
+            "state_path": self.state_path, "limits_path": self.limits_path,
+            "duration_secs": self.duration_secs, "drain_timeout_secs": self.drain_timeout_secs,
+            "fingerprint": self.fingerprint(), "scan": self.scan.document()})
+
+
+def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd=None,
+                   duration_secs=None, startup_self_test=None):
+    path = Path(path).resolve()
+    with path.open("rb") as handle:
+        document = tomllib.load(handle, parse_float=Decimal)
+    allowed_keys(document, {"schema_version", "mode", "environment", "scan_config", "state_path",
+        "limits_path", "venues", "trade", "risk", "startup", "runtime"}, "live root")
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+        raise ScanConfigError("live schema_version must be 1")
+    if document.get("mode") != "live" or document.get("environment") != "mainnet":
+        raise ScanConfigError("live runner requires mode=live and environment=mainnet")
+    paths = {}
+    for name in ("scan_config", "state_path", "limits_path"):
+        value = document.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise ScanConfigError(f"{name} must be an explicit path")
+        paths[name] = (path.parent/value).resolve()
+    if paths["state_path"].suffix != ".sqlite3":
+        raise ScanConfigError("live state_path must name a .sqlite3 file")
+    raw_venues = document.get("venues")
+    if not isinstance(raw_venues, list) or not 2 <= len(raw_venues) <= len(SUPPORTED_VENUES) or any(
+            not isinstance(v, str) or v not in VENUE_ALIASES for v in raw_venues):
+        raise ScanConfigError("live venues require two to five of HYPERLIQUID, LIGHTER, ASTER, ONDO and BACKPACK")
+    venues = tuple(VENUE_ALIASES[v] for v in raw_venues)
+    if len(set(venues)) != len(venues):
+        raise ScanConfigError("live venues must be unique")
+    trade = document.get("trade", {})
+    allowed_keys(trade, set(TradePolicy.__dataclass_fields__), "live trade")
+    policy = TradePolicy(**trade)
+    risk = document.get("risk", {})
+    allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"}, "live risk")
+    if set(risk) != {"max_pairs", "max_gross_notional_usd"}:
+        raise ScanConfigError("risk requires explicit max_pairs and max_gross_notional_usd")
+    pairs = integer_value(risk["max_pairs"] if max_pairs is None else max_pairs, "max_pairs", 0, 100000)
+    gross = decimal_value(risk["max_gross_notional_usd"] if max_gross_notional_usd is None else max_gross_notional_usd,
+                          "max_gross_notional_usd", nonnegative=True)
+    startup = document.get("startup", {})
+    allowed_keys(startup, {"mandatory", "self_test_enabled", "max_notional_usd", "slippage_bps", "timeout_secs"}, "live startup")
+    for key in ("mandatory", "self_test_enabled"):
+        if key in startup and type(startup[key]) is not bool:
+            raise ScanConfigError(f"startup.{key} must be a boolean")
+    if "mandatory" in startup and "self_test_enabled" in startup and startup["mandatory"] != startup["self_test_enabled"]:
+        raise ScanConfigError("startup.mandatory and startup.self_test_enabled conflict")
+    # Keep explicit legacy opt-ins working while new configurations default off.
+    self_test = startup.get("self_test_enabled", startup.get("mandatory", False))
+    if startup_self_test is not None:
+        if type(startup_self_test) is not bool:
+            raise ScanConfigError("startup_self_test override must be a boolean")
+        self_test = startup_self_test
+    startup_cap = decimal_value(startup.get("max_notional_usd", "50"), "startup.max_notional_usd", positive=True)
+    startup_slip = decimal_value(startup.get("slippage_bps", "20"), "startup.slippage_bps", nonnegative=True)
+    if startup_slip > 20:
+        raise ScanConfigError("startup slippage cannot exceed 20 bps")
+    startup_timeout = integer_value(startup.get("timeout_secs", 20), "startup.timeout_secs", 1, 30)
+    limits = {}
+    limits_present = False
+    if paths["limits_path"].exists():
+        with paths["limits_path"].open("rb") as handle:
+            limits_document = tomllib.load(handle, parse_float=Decimal)
+        if "opportunity_trade" in limits_document:
+            limits = limits_document["opportunity_trade"]
+            allowed_keys(limits, {"order_notional_usd", "max_pairs", "max_gross_notional_usd",
+                                  "startup_max_notional_usd"}, "opportunity_trade limits")
+            if set(limits) != {"order_notional_usd", "max_pairs", "max_gross_notional_usd", "startup_max_notional_usd"}:
+                raise ScanConfigError("opportunity_trade limits require all four limits")
+            limits_present = True
+    order_cap = decimal_value(limits.get("order_notional_usd", "100"), "limit.order_notional_usd", positive=True)
+    pairs_cap = integer_value(limits.get("max_pairs", 16), "limit.max_pairs", 0, 100000)
+    gross_cap = decimal_value(limits.get("max_gross_notional_usd", "500"), "limit.max_gross_notional_usd", nonnegative=True)
+    startup_limit = decimal_value(limits.get("startup_max_notional_usd", "50"), "limit.startup_max_notional_usd", positive=True)
+    policy = replace(policy, order_notional_usd=min(policy.order_notional_usd, order_cap, HARD_ORDER_NOTIONAL_USD))
+    pairs, gross = min(pairs, pairs_cap, HARD_MAX_PAIRS), min(gross, gross_cap, HARD_GROSS_NOTIONAL_USD)
+    startup_cap = min(startup_cap, startup_limit, HARD_STARTUP_NOTIONAL_USD)
+    scan = load_plan(paths["scan_config"])
+    if scan.pair_allowlist is not None:
+        raise ScanConfigError("schema_version 2 pair allowlists are observation-only; use a trading market configuration")
+    filtered = [m for m in scan.markets if m.venue in venues]
+    counts = Counter(m.symbol for m in filtered)
+    available = {symbol for symbol, count in counts.items() if count >= 2}
+    if {m.venue for m in filtered} != set(venues):
+        raise ScanConfigError("each requested venue needs a configured market for account checks")
+    if self_test and {m.venue for m in filtered if m.symbol == "BTC"} != set(venues):
+        raise ScanConfigError("each requested venue needs an explicit BTC market for startup checks")
+    requested = sorted(available) if symbols is None else symbols.split(",") if isinstance(symbols, str) else list(symbols)
+    if not requested or any(not s or s not in available for s in requested) or len(set(requested)) != len(requested):
+        raise ScanConfigError("formal trading symbols must have two configured supported venues")
+    runtime = document.get("runtime", {})
+    allowed_keys(runtime, {"duration_secs", "drain_timeout_secs", "timer_interval_ms", "account_max_age_ms",
+                           "order_timeout_secs", "retry_interval_ms"}, "live runtime")
+    duration = integer_value(runtime.get("duration_secs", scan.duration_secs) if duration_secs is None else duration_secs,
+                             "duration_secs", 0, 2678400)
+    anchors = {min((m for m in filtered if m.venue == venue),
+                   key=lambda m: (m.symbol != "BTC", m.symbol not in requested, m.instrument_id)).instrument_id for venue in venues}
+    scan = replace(scan, markets=tuple(m for m in filtered if m.symbol in set(requested) or m.instrument_id in anchors), output_path=None,
+        evaluation_interval_ms=100, duration_secs=duration,
+        settings=replace(scan.settings, target_notional=policy.order_notional_usd,
+                         min_entry_edge_bps=policy.entry_edge_bps))
+    return LiveRunPlan(scan, policy, paths["state_path"], paths["limits_path"], venues, tuple(requested), pairs, gross,
+        startup_cap, startup_slip, duration,
+        drain_timeout_secs=integer_value(runtime.get("drain_timeout_secs", 30), "drain_timeout_secs", 1, 30),
+        timer_interval_ms=integer_value(runtime.get("timer_interval_ms", 100), "timer_interval_ms", 50, 1000),
+        account_max_age_ms=integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 15000),
+        order_timeout_secs=integer_value(runtime.get("order_timeout_secs", 10), "order_timeout_secs", 1, 30),
+        retry_interval_ms=integer_value(runtime.get("retry_interval_ms", 1000), "retry_interval_ms", 100, 10000),
+        startup_timeout_secs=startup_timeout, limits_present=limits_present,
+        startup_self_test=self_test)
+
+
+class SessionStoreProxy:
+    """Keep startup evidence and live ownership in one transactional state row."""
+    def __init__(self, store):
+        self.store = store
+        saved = store.load()
+        if saved and (saved.get("schema_version") != 1 or saved.get("mode", "live") != "live"):
+            raise ValueError("unknown live session envelope version")
+        self.saved = saved
+        self.startup = saved.get("startup") if saved else None
+        self.startup_complete = bool(saved and saved.get("startup_complete"))
+        self.latest_live = saved.get("live") if saved else None
+        self.native_shutdown = saved.get("native_shutdown") if saved else None
+        self.account_gate = saved.get("account_gate") if saved else None
+
+    def load(self):
+        return self.latest_live
+
+    def save(self, snapshot, events):
+        self.latest_live = snapshot
+        self.store.save({"schema_version": 1, "mode": "live", "startup_complete": self.startup_complete,
+                         "startup": self.startup, "account_gate": self.account_gate,
+                         "native_shutdown": self.native_shutdown,
+                         "live": snapshot}, events)
+
+    def checkpoint_account_gate(self, result, markets, now_ns):
+        self.account_gate = {"result": result, "observed_ns": now_ns,
+                             "instrument_ids": [m.instrument_id for m in markets]}
+        self.save(self.latest_live or {}, [{"event": "startup_account_gate",
+                  "result": result, "observed_ns": now_ns,
+                  "instrument_ids": self.account_gate["instrument_ids"]}])
+
+    def checkpoint_startup(self, preflight):
+        document = preflight.document()
+        if document == self.startup:
+            return
+        old_timings = {row["request_id"]: row for row in (self.startup or {}).get("operation_timings", [])}
+        events = []
+        for row in document.get("operation_timings", []):
+            if row.get("completed_ns") and row != old_timings.get(row["request_id"]):
+                events.append({"event": "startup_operation", "mode": "live",
+                               "observed_ns": row["completed_ns"], **row})
+        self.startup = document
+        self.startup_complete = self.startup.get("result") == "passed"
+        self.save(self.latest_live, events)
+
+
+def native_quote(state, instrument_id, now_ns):
+    from opportunity_core import _book_valid, exact_decimal
+    book, market = state.books.get(instrument_id), state.markets.get(instrument_id)
+    if book is None or market is None or not _book_valid(book, state.plan.settings, now_ns):
+        raise ValueError("fresh source book is unavailable")
+    # Normalized price = native price * quote_to_usd / canonical_multiplier.
+    factor = Fraction(market.canonical_multiplier)/Fraction(market.quote_to_usd)
+    return (exact_decimal(Fraction(book.bids[0][0])*factor),
+            exact_decimal(Fraction(book.asks[0][0])*factor), book.ts_event_ns)
+
+
+
+
+class LiveCoordinator:
+    """Route callbacks and durable intents across startup and continuous trading."""
+    def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None):
+        self.plan, self.live, self.proxy = plan, live, proxy
+        self.self_test_only, self.stop = self_test_only, stop or (lambda: None)
+        self.startup_self_test = self_test_only or plan.startup_self_test
+        self.preflight = None
+        self.account_markets = ()
+        self.gateway = None
+        self.native_controls = {}
+        self.phase = "waiting_books"
+        self.failure = None
+        self.started_ns = None
+        self.stop_requested_ns = None
+        self.finished = False
+        if proxy.saved:
+            # Native pending-order recovery needs original-ID execution evidence.
+            # Never rerun a risk-creating BTC test on an interrupted session.
+            self.phase = "resume_readonly"
+            self.failure = "saved session requires original-ID account/order reconciliation before execution"
+            startup = proxy.startup or {}
+            clean_startup = (proxy.startup_complete and startup.get("result") == "passed"
+                and Decimal(startup.get("owned_quantity", "0")) == 0
+                and not startup.get("unresolved_client_order_ids")
+                and not any(Decimal(q) for q in startup.get("late_residuals_by_venue", {}).values()))
+            known_orders = all(order.get("terminal_ns") is not None
+                               for order in (proxy.latest_live or {}).get("orders", {}).values())
+            native_clean = proxy.native_shutdown is None or proxy.native_shutdown.get("clean") is True
+            saved_live = proxy.latest_live or {}
+            # Config/credential failures can persist a session before a native
+            # client or startup intent ever ran. Such an unused session is safe
+            # to start; an interrupted startup journal still requires review.
+            unused = (proxy.startup is None and not proxy.startup_complete
+                and proxy.native_shutdown is None and not saved_live.get("orders")
+                and not saved_live.get("positions") and not saved_live.get("executions")
+                and saved_live.get("request_sequence", 0) == 0)
+            # Readonly startup checks create no BTC orders. Interrupted reads
+            # can be retried, but any trading self-test journal still fences risk.
+            account_only = (proxy.startup is None and not proxy.startup_complete and
+                ((proxy.account_gate or {}).get("result") == "passed" or
+                 not any(saved_live.get(key) for key in ("orders", "positions", "executions"))))
+            if (clean_startup or unused or account_only) and known_orders and native_clean and not saved_live.get("halt_reason"):
+                self.failure = None
+                self.phase = "recovery_reconcile" if (proxy.latest_live or {}).get("positions") else "waiting_books"
+
+    def attach(self, gateway, preflight=None):
+        self.gateway, self.preflight = gateway, preflight
+        self.account_markets = tuple(min((m for m in self.plan.scan.markets if m.venue == venue),
+            key=lambda m: (m.symbol != "BTC", m.symbol not in self.plan.trade_symbols, m.instrument_id)) for venue in self.plan.venues)
+        if self.startup_self_test and preflight is None:
+            raise ValueError("explicit BTC self-test needs its preflight controller")
+
+    def _startup_intents(self, intents, now_ns):
+        self.proxy.checkpoint_startup(self.preflight)
+        for intent in intents:
+            self.gateway.dispatch(intent, now_ns)
+
+    def _live_intents(self, now_ns):
+        for intent in self.live.drain_intents():
+            self.gateway.dispatch(intent, now_ns)
+
+    def on_receipt(self, receipt, now_ns=None):
+        now_ns = time.time_ns() if now_ns is None else now_ns
+        if self.preflight and receipt.request_id in self.preflight.requests:
+            snapshot = getattr(self.preflight, "snapshot", None)
+            if snapshot is not None:
+                try:
+                    bid, ask, stamp = native_quote(self.live, snapshot.instrument_id, now_ns)
+                    self.preflight.snapshot = replace(snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
+                except ValueError:
+                    pass  # The preflight's own freshness check still fails closed.
+            self._startup_intents(self.preflight.on_receipt(receipt, now_ns), now_ns)
+        else:
+            self.live.on_receipt(receipt, now_ns)
+            self._live_intents(now_ns)
+
+    def on_fill(self, fill, now_ns=None):
+        now_ns = time.time_ns() if now_ns is None else now_ns
+        if self.preflight and fill["client_order_id"] in self.preflight.orders:
+            return  # The preflight receives distinct incremental fill receipts.
+        self.live.on_fill(fill, now_ns)
+        self._live_intents(now_ns)
+
+    def on_account(self, snapshot, now_ns=None):
+        now_ns = time.time_ns() if now_ns is None else now_ns
+        self.live.on_account(snapshot, now_ns)
+        if self.phase in {"preflight", "preflight_draining"}:
+            self._startup_intents(self.preflight.on_account(snapshot, now_ns), now_ns)
+        self._live_intents(now_ns)
+
+    def request_stop(self, now_ns, reason="operator_stop"):
+        if self.stop_requested_ns is None:
+            self.stop_requested_ns = now_ns
+            if self.phase == "preflight":
+                self.phase = "preflight_draining"
+                self.failure = self.failure or "startup interrupted; owned BTC orders/residuals require cleanup"
+                self._startup_intents(self.preflight._fail(reason, now_ns), now_ns)
+                return
+            self.phase = "draining"
+            self.live.stop_entries(now_ns, reason=reason)
+            self._live_intents(now_ns)
+
+    def _has_residual(self):
+        document = self.live.document()
+        startup = self.preflight.document() if self.preflight else self.proxy.startup or {}
+        return bool(document.get("active_pairs", len(document.get("positions", []))) or
+                    document.get("pending_orders", document.get("unresolved_orders", 0)) or
+                    Decimal(startup.get("owned_quantity", "0")) or
+                    startup.get("unresolved_client_order_ids", []) or
+                    any(Decimal(value) for value in startup.get("late_residuals_by_venue", {}).values()))
+
+    def tick(self, now_ns):
+        if self.finished:
+            return
+        signal_flag = getattr(self, "stop_signal", None)
+        if signal_flag is not None and signal_flag.is_set() and self.stop_requested_ns is None:
+            self.request_stop(now_ns)
+        if self.started_ns is None:
+            self.started_ns = now_ns
+        self.gateway.poll(now_ns)
+        if self.phase == "resume_readonly":
+            # The bridge can supply readonly evidence; no startup/strategy writes.
+            self.finished = True
+            self.stop()
+            return
+        if self.phase == "recovery_reconcile":
+            required = {p[f"{leg}_id"] for p in self.live.positions.values() for leg in ("buy", "sell")}
+            ready = [self.live._account_ready(instrument_id, now_ns) for instrument_id in required]
+            self._live_intents(now_ns)
+            if all(ready) and self.live.activate(now_ns):
+                self.phase = "active"
+            elif now_ns - self.started_ns >= self.plan.scan.connection_timeout_secs * 1_000_000_000:
+                self.phase, self.finished = "resume_readonly", True
+                self.failure = "persisted inventory did not match authoritative account evidence; no new orders dispatched"
+                self.stop()
+                return
+        if self.phase == "waiting_books":
+            try:
+                for market in self.preflight.markets if self.startup_self_test else self.account_markets:
+                    native_quote(self.live, market.instrument_id, now_ns)
+            except ValueError:
+                if now_ns-self.started_ns > self.plan.scan.connection_timeout_secs*1_000_000_000:
+                    self.failure, self.finished = "fresh startup books were unavailable before deadline", True
+                    self.stop()
+                return
+            if self.startup_self_test:
+                self.phase = "preflight"
+                self._startup_intents(self.preflight.start(now_ns), now_ns)
+            else:
+                self.phase = "waiting_accounts"
+                self.proxy.checkpoint_account_gate("checking", self.account_markets, now_ns)
+        if self.phase == "waiting_accounts":
+            ready = [self.live._account_ready(m.instrument_id, now_ns) for m in self.account_markets]
+            self._live_intents(now_ns)
+            if all(ready):
+                self.proxy.checkpoint_account_gate("passed", self.account_markets, now_ns)
+                if self.live.activate(now_ns) is False:
+                    self.failure, self.finished = "live ledger refused activation after account checks", True
+                    self.stop()
+                    return
+                self.phase = "active"
+            elif now_ns-self.started_ns >= self.plan.scan.connection_timeout_secs*1_000_000_000:
+                self.proxy.checkpoint_account_gate("failed", self.account_markets, now_ns)
+                self.failure, self.finished = "authoritative startup accounts did not reconcile before deadline", True
+                self.stop()
+                return
+        if self.phase in {"preflight", "preflight_draining"}:
+            if self.phase == "preflight" and self.plan.duration_secs and now_ns-self.started_ns >= self.plan.duration_secs*1_000_000_000:
+                self.request_stop(now_ns, "duration_elapsed")
+            self._startup_intents(self.preflight.on_timer(now_ns), now_ns)
+            if self.preflight.result == "passed":
+                if self.stop_requested_ns is not None:
+                    self.finished = True
+                    self.stop()
+                    return
+                if self.self_test_only:
+                    self.finished, self.phase = True, "self_test_complete"
+                    self.stop()
+                    return
+                if self.live.activate(now_ns) is False:
+                    self.failure, self.finished = "live ledger refused activation after startup checks", True
+                    self.stop()
+                    return
+                self.phase = "active"
+                self._live_intents(now_ns)
+            elif self.preflight.result in {"failed", "blocked"}:
+                self.failure = "BTC startup checks did not pass; trading remains inactive"
+                # Do not stop cleanup while its confirmed owned residual is draining.
+                expired = (self.stop_requested_ns is not None and
+                    now_ns-self.stop_requested_ns >= self.plan.drain_timeout_secs*1_000_000_000)
+                if self.preflight.stage in {"blocked", "finished"} or expired:
+                    self.finished = True
+                    self.stop()
+                return
+            if self.phase == "preflight_draining" and now_ns-self.stop_requested_ns >= self.plan.drain_timeout_secs*1_000_000_000:
+                self.failure, self.finished = "startup cleanup deadline reached; BTC ownership remains durable", True
+                self.stop()
+                return
+        if self.phase in {"active", "draining"}:
+            if self.phase == "active" and self.plan.duration_secs and now_ns-self.started_ns >= self.plan.duration_secs*1_000_000_000:
+                self.request_stop(now_ns, "duration_elapsed")
+            self.live.on_evaluation_timer(now_ns)
+            self._live_intents(now_ns)
+        if self.phase == "draining":
+            if not self._has_residual():
+                self.finished = True
+                self.stop()
+            elif now_ns-self.stop_requested_ns >= self.plan.drain_timeout_secs*1_000_000_000:
+                self.failure, self.finished = "drain deadline reached; residual ownership remains durable", True
+                self.stop()
+
+    def document(self):
+        return {"phase": self.phase, "failure": self.failure, "finished": self.finished,
+                "last_execution_error": getattr(self.gateway, "last_error", None),
+                "native_shutdown": self.proxy.native_shutdown,
+                "startup_self_test_enabled": self.startup_self_test,
+                "account_gate": self.proxy.account_gate,
+                "startup": self.proxy.startup if self.phase in {"resume_readonly", "recovery_reconcile"} or (
+                    self.preflight and self.preflight.stage == "not_started" and self.proxy.startup_complete) else
+                    self.preflight.document() if self.preflight else self.proxy.startup,
+                "live": self.live.document()}
+
+
+def build_live_node(plan, live, coordinator):
+    """Build native data/execution clients and one continuous Strategy, without run()."""
+    from datetime import timedelta
+    from nautilus_trader.common import CacheConfig, Environment, LoggerConfig, LogLevel
+    from nautilus_trader.config import LiveRiskEngineConfig
+    from nautilus_trader.live import LiveDataEngineConfig, LiveExecutionEngineConfig, LiveNode
+    from nautilus_trader.model import InstrumentId, OmsType, StrategyId, TraderId
+    from nautilus_trader.trading import Strategy, StrategyConfig
+    from opportunity_native_execution import NativeOrderGateway, execution_clients
+    from opportunity_preflight import BtcPreflight, PreflightMarket
+    from opportunity_runtime import create_observer, data_clients, instrument_decimal
+
+    builder = (LiveNode.builder("OPPORTUNITY-TRADE", TraderId.from_str("OPPORTUNITY-001"), Environment.LIVE)
+        .with_logging(LoggerConfig(stdout_level=LogLevel.WARNING, fileout_level=LogLevel.OFF, print_config=False))
+        .with_cache_config(CacheConfig(tick_capacity=1, bar_capacity=1, save_market_data=False, persist_account_events=False))
+        .with_data_engine_config(LiveDataEngineConfig(emit_quotes_from_book=False, emit_quotes_from_book_depths=False))
+        .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=False,
+            generate_missing_orders=False, inflight_check_interval_ms=0,
+            filter_unclaimed_external_orders=True))
+        .with_reconciliation(False)
+        .with_risk_engine_config(LiveRiskEngineConfig(bypass=False,
+            max_notional_per_order={m.instrument_id: str(max(plan.policy.order_notional_usd, plan.startup_max_notional_usd)
+                if m.symbol == "BTC" else plan.policy.order_notional_usd) for m in plan.scan.markets}))
+        .with_load_state(False).with_save_state(False)
+        .with_timeout_connection(plan.scan.connection_timeout_secs)
+        .with_timeout_reconciliation(0).with_timeout_portfolio(0)
+        .with_timeout_disconnection_secs(30).with_delay_post_stop_secs(0).with_delay_shutdown_secs(0))
+    configs = {}
+    backpack_quota = None
+    if "BACKPACK" in plan.venues:
+        from nautilus_trader.adapters.backpack import BackpackQuota
+        backpack_quota = BackpackQuota()
+    for client_id, factory, config in data_clients(plan.scan, backpack_quota=backpack_quota):
+        builder = builder.add_data_client(client_id, factory, config)
+        configs[client_id] = config
+    native_controls = {}
+    coordinator.native_controls = native_controls
+    for client_id, factory, config in execution_clients(plan.scan, plan.environment,
+            state_directory=plan.state_path.parent / (plan.state_path.stem + ".native"),
+            run_id=live.session_id,
+            order_notional_usd=max(plan.policy.order_notional_usd, plan.startup_max_notional_usd),
+            max_gross_notional_usd=plan.max_gross_notional_usd,
+            duration_secs=plan.duration_secs,
+            backpack_public_config=configs.get("BACKPACK"), backpack_quota=backpack_quota,
+            native_controls=native_controls):
+        builder = builder.add_exec_client(client_id, factory, config)
+    node = builder.build()
+    handle = node.handle()
+    coordinator.stop = handle.stop
+
+    class ContinuousStrategy(Strategy):
+        def __init__(self):
+            super().__init__(StrategyConfig(strategy_id=StrategyId.from_str("OPPORTUNITY-TRADE"),
+                                            oms_type=OmsType.NETTING,
+                                            log_events=False, log_commands=False))
+
+        def on_start(self):
+            try:
+                startup_markets = {}
+                for market in plan.scan.markets:
+                    instrument = self.cache.instrument(InstrumentId.from_str(market.instrument_id))
+                    if instrument is None or getattr(instrument, "is_inverse", False):
+                        raise ValueError("live instrument is unavailable or inverse")
+                    price_step, multiplier = instrument_decimal(instrument.price_increment), instrument_decimal(instrument.multiplier)
+                    live.register_instrument(market.instrument_id, price_step, multiplier, str(instrument.quote_currency))
+                    if market.symbol == "BTC" and coordinator.startup_self_test:
+                        minima = [instrument_decimal(getattr(instrument, name, None)) for name in ("min_quantity", "min_notional")]
+                        size_step = instrument_decimal(instrument.size_increment)
+                        # A missing separate minimum quantity imposes no larger
+                        # floor than the actual published native lot increment.
+                        # The native quote-notional floor must remain explicit.
+                        if minima[0] is None:
+                            minima[0] = size_step
+                        if minima[1] is None and market.venue == "ONDO":
+                            # Ondo publishes baseIncrement; its continuous native
+                            # writer enforces an extra notional floor if published.
+                            minima[1] = Decimal(0)
+                        if minima[1] is None and market.venue == "BACKPACK":
+                            # Backpack /market publishes quantity/price filters,
+                            # not a separate notional filter. The native parser
+                            # validates minQuantity and stepSize from that response.
+                            # https://docs.backpack.exchange/#tag/Markets
+                            if instrument_decimal(getattr(instrument, "min_quantity", None)) is None:
+                                raise ValueError("Backpack BTC quantity minimum is unavailable")
+                            minima[1] = Decimal(0)
+                        if any(value is None for value in minima):
+                            raise ValueError("BTC venue minimum metadata must be explicit")
+                        startup_markets[market.venue] = PreflightMarket(market.venue, market.instrument_id,
+                            instrument_decimal(instrument.size_increment), price_step, minima[0], minima[1],
+                            multiplier=multiplier, quote_to_usd=market.quote_to_usd,
+                            supports_modify=market.venue not in CANCEL_REPLACE_VENUES,
+                            modify_mode="cancel_replace" if market.venue in CANCEL_REPLACE_VENUES else "native")
+                preflight = BtcPreflight(tuple(startup_markets[v] for v in plan.venues),
+                    session_id="btc"+uuid.uuid4().hex[:12], max_notional_usd=plan.startup_max_notional_usd,
+                    slippage_bps=plan.startup_slippage_bps, timeout_secs=plan.startup_timeout_secs,
+                    max_account_age_ms=plan.account_max_age_ms) if coordinator.startup_self_test else None
+                gateway = NativeOrderGateway(self, plan.scan.markets, coordinator.on_receipt,
+                    coordinator.on_account, coordinator.on_fill, environment=plan.environment,
+                    native_controls=native_controls,
+                    timeout_secs=plan.order_timeout_secs,
+                    account_timeout_secs=plan.startup_timeout_secs,
+                    quote_provider=lambda instrument_id, now_ns: native_quote(live, instrument_id, now_ns))
+                coordinator.attach(gateway, preflight)
+                self.clock.set_timer("opportunity-trade", timedelta(milliseconds=plan.timer_interval_ms))
+            except Exception as exc:
+                coordinator.failure = "native strategy startup failed: "+type(exc).__name__
+                coordinator.finished = True
+                handle.stop()
+
+        def on_time_event(self, event):
+            if coordinator.gateway is None:
+                return
+            try:
+                coordinator.tick(time.time_ns())
+            except Exception as exc:
+                coordinator.failure = "execution callback failed: "+type(exc).__name__
+                coordinator.request_stop(time.time_ns(), "execution_callback_failed")
+
+        def on_stop(self):
+            if coordinator.gateway:
+                coordinator.gateway.close()
+
+    def native_callback(kind):
+        def callback(self, event):
+            try:
+                coordinator.gateway.on_native_event(kind, event, time.time_ns())
+            except Exception as exc:
+                coordinator.failure = "native order callback failed: "+type(exc).__name__
+                coordinator.request_stop(time.time_ns(), "order_callback_failed")
+        return callback
+    for kind in ("accepted", "updated", "filled", "canceled", "expired", "rejected", "denied",
+                 "modify_rejected", "cancel_rejected"):
+        setattr(ContinuousStrategy, "on_order_"+kind, native_callback(kind))
+    strategy = ContinuousStrategy()
+    node.add_strategy(strategy)
+    observer = create_observer(plan.scan, live,
+        lambda: coordinator.request_stop(time.time_ns(), "market_data_failure"), configs)
+    node.add_actor(observer)
+    return node, observer, strategy
+
+
+def run_live(plan, *, self_test_only=False):
+    if not plan.ready:
+        raise ScanConfigError("set explicit positive risk limits and complete limits.toml before starting execution")
+    from dotenv import load_dotenv
+    from opportunity_live import LiveTradeState
+    from opportunity_trade_store import TradeStore
+    from opportunity_shutdown import collect_native_shutdown
+    import signal
+    import threading
+    load_dotenv(Path(__file__).resolve().parents[1]/".env", override=False)
+    store = TradeStore(plan.state_path, plan.fingerprint())
+    coordinator = None
+    node = None
+    previous_signal = None
+    stop_signal = threading.Event()
+    try:
+        proxy = SessionStoreProxy(store)
+        live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
+            max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
+            account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
+            retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
+        coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only)
+        coordinator.stop_signal = stop_signal
+        node, observer, strategy = build_live_node(plan, live, coordinator)
+        previous_signal = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, lambda *_: stop_signal.set())
+        # A native stop can fail without leaving an application-owned pair. Keep
+        # its independent account/order/economics proof in the durable envelope.
+        try:
+            node.run()
+        except Exception as exc:
+            coordinator.failure = "native node failed: " + type(exc).__name__
+        proxy.native_shutdown = collect_native_shutdown({
+            venue: coordinator.native_controls.get(venue)
+            for venue in plan.venues if venue in {"ONDO", "BACKPACK"}})
+        if not proxy.native_shutdown["clean"]:
+            coordinator.failure = coordinator.failure or "native shutdown lacks complete clean account/order proof"
+        if not coordinator.finished:
+            coordinator.failure = coordinator.failure or "native node stopped before strategy shutdown completed"
+        if coordinator.preflight and coordinator.phase != "resume_readonly" and coordinator.preflight.stage != "not_started":
+            proxy.checkpoint_startup(coordinator.preflight)
+        proxy.save(live.snapshot(), [])
+        print(json.dumps(coordinator.document(), default=str, indent=2))
+        return 1 if coordinator.failure or coordinator._has_residual() or observer.failure else 0
+    finally:
+        if previous_signal is not None:
+            signal.signal(signal.SIGINT, previous_signal)
+        if coordinator and coordinator.gateway:
+            coordinator.gateway.close()
+        try:
+            if node is not None:
+                node.dispose()
+        finally:
+            store.close()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--execute-live", action="store_true")
+    mode.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--self-test-only", action="store_true")
+    parser.add_argument("--startup-self-test", action="store_true",
+                        help="opt in to one BTC trading self-test per venue before continuous trading")
+    parser.add_argument("--symbols")
+    parser.add_argument("--max-pairs", type=int)
+    parser.add_argument("--max-gross-notional-usd")
+    parser.add_argument("--duration-secs", type=int)
+    args = parser.parse_args(argv)
+    try:
+        plan = load_live_plan(args.config, symbols=args.symbols, max_pairs=args.max_pairs,
+            max_gross_notional_usd=args.max_gross_notional_usd, duration_secs=args.duration_secs,
+            startup_self_test=True if args.startup_self_test or args.self_test_only else None)
+        if not args.execute_live:
+            document = plan.document()
+            document["self_test_only"] = args.self_test_only
+            print(json.dumps(document, indent=2))
+            return 0
+        return run_live(plan, self_test_only=args.self_test_only)
+    except (OSError, ValueError, ImportError, RuntimeError) as exc:
+        print("[live-trade] refused: "+type(exc).__name__+"; inspect the validated configuration and durable state", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

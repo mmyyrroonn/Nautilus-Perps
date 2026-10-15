@@ -12,6 +12,7 @@ import sys
 import tomllib
 
 from opportunity_core import ScanSettings
+from opportunity_identity import identity_quarantine_reason
 
 
 CLIENTS = {
@@ -83,6 +84,15 @@ class ScanPlan:
     evaluation_interval_ms: int = 0
     aster_snapshot_depth: int = 1000
     aster_subscription_interval_ms: int = 500
+    hyperliquid_fast_book: bool = False
+    pair_allowlist: tuple[tuple[str, str], ...] | None = None
+
+    def select_symbols(self, symbols: set[str]) -> ScanPlan:
+        markets = tuple(m for m in self.markets if m.symbol in symbols)
+        ids = {m.instrument_id for m in markets}
+        pairs = None if self.pair_allowlist is None else tuple(
+            pair for pair in self.pair_allowlist if set(pair) <= ids)
+        return replace(self, markets=markets, pair_allowlist=pairs)
 
     def document(self) -> dict:
         def plain(value):
@@ -94,16 +104,22 @@ class ScanPlan:
                 return [plain(v) for v in value]
             return value
         result = plain(asdict(self))
-        result.update(schema_version=1, runtime_started=False, remote_writes_allowed=False,
+        result.update(schema_version=2 if self.pair_allowlist is not None else 1,
+                      runtime_started=False, remote_writes_allowed=False,
                       record_opportunities=self.output_path is not None,
                       historical_samples_retained=0)
         return result
 
 
 def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
-    allowed_keys(document, {"schema_version", "scan", "recording", "runtime", "markets"}, "root")
-    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
-        raise ScanConfigError("schema_version must be 1")
+    allowed_keys(document, {"schema_version", "scan", "recording", "runtime", "markets", "pairs"}, "root")
+    version = document.get("schema_version")
+    if type(version) is not int or version not in (1, 2):
+        raise ScanConfigError("schema_version must be 1 or 2")
+    if version == 1 and "pairs" in document:
+        raise ScanConfigError("explicit pairs require schema_version 2")
+    if version == 2 and (not isinstance(document.get("pairs"), list) or not document["pairs"]):
+        raise ScanConfigError("schema_version 2 requires a nonempty explicit pairs allowlist")
     scan = document.get("scan", {})
     allowed_keys(scan, {"target_notional", "min_entry_edge_bps", "reserve_bps", "max_age_ms",
                         "max_skew_ms", "max_receive_age_ms"}, "scan")
@@ -132,7 +148,10 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
     runtime = document.get("runtime", {})
     allowed_keys(runtime, {"depth_levels", "max_levels_per_side", "refresh_ms", "top_n",
                           "duration_secs", "connection_timeout_secs", "evaluation_interval_ms",
-                          "aster_snapshot_depth", "aster_subscription_interval_ms"}, "runtime")
+                          "aster_snapshot_depth", "aster_subscription_interval_ms", "hyperliquid_fast_book"}, "runtime")
+    fast_book = runtime.get("hyperliquid_fast_book", False)
+    if type(fast_book) is not bool:
+        raise ScanConfigError("runtime.hyperliquid_fast_book must be boolean")
     cap = integer_value(runtime.get("max_levels_per_side", 2000), "max_levels_per_side", 1, 20000)
     depth = integer_value(runtime.get("depth_levels", 20), "depth_levels", 1, cap)
     aster_depth = integer_value(runtime.get("aster_snapshot_depth", 1000), "aster_snapshot_depth", 5, 1000)
@@ -157,9 +176,12 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
             raise ScanConfigError("instrument_id does not match its venue")
         if len(instrument_id) > 120 or any(c.isspace() for c in instrument_id) or instrument_id in ids:
             raise ScanConfigError("duplicate or invalid instrument_id")
+        quarantine_reason = identity_quarantine_reason(venue, symbol, instrument_id)
+        if quarantine_reason:
+            raise ScanConfigError(f"{quarantine_reason}: {symbol} / {instrument_id}")
         ids.add(instrument_id)
         group = groups.setdefault(symbol, set())
-        if venue in group:
+        if venue in group and version == 1:
             raise ScanConfigError("each symbol may have only one market per logical venue")
         group.add(venue)
         valuation = market.get("valuation_source")
@@ -198,6 +220,28 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
             valuation, fee, source, canonical_multiplier, economics))
     if any(len(group) < 2 for group in groups.values()):
         raise ScanConfigError("every underlying needs at least two venue mappings")
+    pairs = None
+    if version == 2:
+        by_id = {m.instrument_id: m for m in markets}
+        pairs, seen, used = [], set(), set()
+        platforms = {"HL": "HL", "ENTROPY": "HL", "LIGHTER": "LIGHTER", "LIGHTER_RH": "LIGHTER"}
+        for row in document["pairs"]:
+            allowed_keys(row, {"instrument_a", "instrument_b"}, "pair")
+            first, second = row.get("instrument_a"), row.get("instrument_b")
+            if not all(isinstance(i, str) and i in by_id for i in (first, second)) or first == second:
+                raise ScanConfigError("each pair needs two different configured instruments")
+            a, b = by_id[first], by_id[second]
+            if a.symbol != b.symbol or platforms.get(a.venue, a.venue) == platforms.get(b.venue, b.venue):
+                raise ScanConfigError("each pair needs one underlying on different exchange platforms")
+            key = tuple(sorted((first, second)))
+            if key in seen:
+                raise ScanConfigError("duplicate unordered pair")
+            seen.add(key)
+            used.update(key)
+            pairs.append(key)
+        if used != ids:
+            raise ScanConfigError("every configured market must belong to an explicit pair")
+        pairs = tuple(pairs)
     if any(m.venue == "BACKPACK" for m in markets) and cap < 5:
         raise ScanConfigError("Backpack requires max_levels_per_side of at least 5")
     if any(m.venue == "ASTER" for m in markets) and depth > aster_depth:
@@ -212,7 +256,8 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
         integer_value(runtime.get("connection_timeout_secs", 30), "connection_timeout_secs", 1, 300),
         integer_value(runtime.get("evaluation_interval_ms", 0), "evaluation_interval_ms", 0, 60000),
         aster_depth,
-        integer_value(runtime.get("aster_subscription_interval_ms", 500), "aster_subscription_interval_ms", 1, 60000))
+        integer_value(runtime.get("aster_subscription_interval_ms", 500), "aster_subscription_interval_ms", 1, 60000),
+        fast_book, pairs)
 
 
 def load_plan(path: Path) -> ScanPlan:
@@ -244,7 +289,7 @@ def main(argv=None) -> int:
             known = {m.symbol for m in plan.markets}
             if not requested <= known or "" in requested:
                 raise ScanConfigError("--symbols contains an unconfigured underlying")
-            plan = replace(plan, markets=tuple(m for m in plan.markets if m.symbol in requested))
+            plan = plan.select_symbols(requested)
         if args.dry_run:
             print(json.dumps(plan.document(), indent=2))
             return 0

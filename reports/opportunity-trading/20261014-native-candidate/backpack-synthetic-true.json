@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "venue": "BACKPACK",
+  "account_id": "BACKPACK-SIGNED-PEER",
+  "snapshot_started_ns": 1791915934522000000,
+  "snapshot_completed_ns": 1791915934678000000,
+  "complete": true,
+  "connected": true,
+  "epoch": 0,
+  "positions": [
+    {
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "quantity": "0"
+    },
+    {
+      "instrument_id": "SOL_USDC_PERP.BACKPACK",
+      "quantity": "0"
+    }
+  ],
+  "own_open_orders": 0,
+  "foreign_open_orders": 1,
+  "open_orders": [
+    {
+      "instrument_id": "BTC_USDC_PERP.BACKPACK",
+      "venue_order_id": "external-untouchable",
+      "client_order_id": null,
+      "wire_client_id": 424242
+    }
+  ],
+  "unknown_submissions": 0
+}
