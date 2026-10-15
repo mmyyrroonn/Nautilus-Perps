@@ -33,3 +33,6 @@ jobs:
           tests/test_opportunity_core.py tests/test_opportunity_scan.py tests/test_opportunity_native.py
           tests/test_opportunity_universe.py tests/test_opportunity_connections.py
           tests/test_opportunity_coalescing.py
+          tests/test_opportunity_trade.py tests/test_opportunity_live.py
+          tests/test_opportunity_live_rebalance.py tests/test_opportunity_forced_reduction.py
+          tests/test_opportunity_live_flow.py

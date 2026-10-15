@@ -110,19 +110,29 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _metadata_valid(metadata: MarketMetadata) -> bool:
+def _execution_metadata_valid(metadata: MarketMetadata) -> bool:
+    """Validate instrument identity and quantity rules independently of fees."""
     return (
         isinstance(metadata.instrument_id, str)
         and bool(metadata.instrument_id)
         and _positive(metadata.size_increment)
         and _positive(metadata.multiplier)
-        and _nonnegative(metadata.taker_fee_bps)
-        and isinstance(metadata.fee_source, str)
-        and bool(metadata.fee_source.strip())
-        and metadata.fee_source.strip().lower() != "unknown"
         and (metadata.min_quantity is None or _nonnegative(metadata.min_quantity))
         and (metadata.min_notional is None or _nonnegative(metadata.min_notional))
     )
+
+
+def _fee_metadata_valid(metadata: MarketMetadata) -> bool:
+    return (
+        _nonnegative(metadata.taker_fee_bps)
+        and isinstance(metadata.fee_source, str)
+        and bool(metadata.fee_source.strip())
+        and metadata.fee_source.strip().lower() != "unknown"
+    )
+
+
+def _metadata_valid(metadata: MarketMetadata) -> bool:
+    return _execution_metadata_valid(metadata) and _fee_metadata_valid(metadata)
 
 
 def _book_valid(book: BookSnapshot, settings: ScanSettings, now_ns: int) -> bool:
