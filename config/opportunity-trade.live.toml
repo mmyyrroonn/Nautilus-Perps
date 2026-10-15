@@ -28,6 +28,14 @@ max_gross_notional_usd = "500"
 max_unhedged_notional_usd = "100"
 max_unhedged_secs = 10
 
+[loss_monitor]
+enabled = true
+max_loss_usd = "200"
+interval_secs = 600
+read_timeout_secs = 60
+# Pause new pairs when due; let existing pairs finish normally, then value flat accounts.
+# Each process captures its own baseline before any startup trading or strategy entry.
+
 [startup]
 self_test_enabled = false
 # Independently read and report native balances before trading; failure blocks startup.
