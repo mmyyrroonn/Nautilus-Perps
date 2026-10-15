@@ -18,7 +18,6 @@ from test_opportunity_live_runner import configs, NOW
 def test_initial_balance_failure_never_constructs_live_clients_or_claims_a_ledger(
         tmp_path, monkeypatch, capsys, fault):
     from dataclasses import replace
-    import dotenv
     import opportunity_account_scope as scope
     import opportunity_live_runner as live_runner
     from test_opportunity_account_scope import credentials
@@ -35,7 +34,7 @@ def test_initial_balance_failure_never_constructs_live_clients_or_claims_a_ledge
         report["balance_check"]["venues"].pop(plan.venues[0])
     else:
         report["balance_check"] = None
-    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **kw: None)
+    monkeypatch.setitem(sys.modules, "dotenv", NS(load_dotenv=lambda *a, **kw: None))
     monkeypatch.setattr(live_runner.os, "environ", credentials())
     monkeypatch.setattr(runner, "run_startup_balance_session", lambda *a: report)
     monkeypatch.setattr(scope, "AccountRiskGuard", lambda *a: pytest.fail("claimed live account"))

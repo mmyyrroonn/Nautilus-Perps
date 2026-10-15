@@ -155,7 +155,6 @@ def build_balance_node(plan, environ, state_directory):
 
 
 def collect_balance_check(plan, *, environ=None):
-    from dotenv import load_dotenv
     from opportunity_account_scope import resolve_account_binding
 
     root = Path(__file__).resolve().parents[1]
@@ -169,6 +168,7 @@ def collect_balance_check(plan, *, environ=None):
     stage = "credentials"
     try:
         if environ is None:
+            from dotenv import load_dotenv
             load_dotenv(root / ".env", override=False)
             environ = os.environ
         original_settings = _account_settings(os.environ)
