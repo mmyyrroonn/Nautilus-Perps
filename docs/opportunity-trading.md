@@ -37,10 +37,28 @@ $TradePython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 Backpack 的最低下单单位来自公开市场 `quantity` 过滤器，见[官方市场接口](https://docs.backpack.exchange/#tag/Markets)。
 账户证据过期、不权威、净仓不符、存在外部挂单或历史未决提交时，不会跳过该所开启正式交易。
 
+### Linux PM2 启动
+
+在部署目录中手动执行：
+
+```bash
+pm2 start deploy/opportunity-live.config.js --only persarb-live
+pm2 logs persarb-live
+pm2 stop persarb-live
+```
+
+该定义使用部署目录的 `.venv/bin/python` 和 `config/opportunity-trade.live.toml`，
+启动时启用独立余额检查，使用配置中所有符合条件的品种；凭证仍由程序从 `.env` 加载。
+仅运行一个实例，不自动重启、不监听文件变化；停止时最多等待 120 秒处理退出。
+`pm2 online` 仅表示进程存活，账户门禁通过后才会进入交易阶段。
+
 ### 可选启动余额检测
 
 `startup.balance_check_enabled = false` 默认关闭。设为 `true`，或在原启动命令后追加
-`--startup-balance-check`，即可在等待盘口、账户门禁及 BTC 交易自检之前，单独读取各所余额。
+`--startup-balance-check`，会先启动独立的只读余额检查进程，确认五所结果完整且检查进程
+正常退出后，才创建交易账本和连接实盘行情、执行客户端。失败时不会进入实盘客户端启动。
+余额阶段只加载各所 BTC 等一个账户读取所需的品种，不加载整个交易品种表；
+后续实盘客户端仍会核对完整元数据、账户持仓和订单历史。首次启动本进程也可能读到账户旧记录。
 `--no-startup-balance-check` 可临时覆盖配置并关闭；该开关与 `startup.self_test_enabled`
 彼此独立，不改变账本指纹、交易额度或原有账户门禁。重启时重新读取，不复用上次成功结果。
 
@@ -81,6 +99,14 @@ HL 为原生合约/现货合并口径，不能当作所有 DEX 抵押品总额�
 独立模式不订阅盘口、不启动配对策略、不打开交易 SQLite 或登记风险占用；原生只读
 客户端的本地状态放在已忽略的 `.native-cache/balance-check/<run-id>/`。
 Ondo 使用 `account_read_only=true`，Backpack 使用只读执行工厂，均不创建生产写入权限。
+独立只读模式兼容旧变量 `HYPERLIQUID_PRIVATE_KEY`（显式 `HYPERLIQUID_PK` 优先）。
+未设置 `HYPERLIQUID_ACCOUNT_ADDRESS` 时，通过 `userRole` 查询主账户；API agent
+使用其所属主账户，不能把 agent 签名地址填作账户地址。显式账户地址仍会验证，不会
+被自动覆盖；vault 配置继续绑定其显式目标。兼容处理只存在于本次只读会话内，不改写
+`.env`，也不改变实盘交易的显式账户配置要求。初始化错误报告包含 `failure_stage`。
+原生客户端连接超时或未就绪时，报告分别给出 `connection_timeout` 或 `clients_not_ready`
+的 `failure_code`；检查尚未开始的交易所标记为 `not_run`，不表示五家余额接口都失败。
+`clients_not_ready` 本身不能区分网络、交易所服务和 API 权限问题。
 
 | 交易所 | 下单路径 | 启动改价检查 |
 |---|---|---|
@@ -221,14 +247,14 @@ Backpack 的[官方账户查询](https://docs.backpack.exchange/#tag/Account)没
 
 ## 已确认的规则
 
-所有参数集中在 live / paper 配置的 `[trade]`：
+所有参数集中在 live / paper 配置的 `[trade]`；下表当前值以 live 配置为准：
 
 | 变量 | 当前值 | 行为 |
 |---|---:|---|
 | `order_notional_usd` | 100 | 每腿开仓名义金额上限，按数量步长配平，两腿标准标的数量相等 |
 | `entry_edge_bps` | 30 | 沿用监控的深度加权净入场价差：扣开仓双腿手续费和扫描配置的 reserve |
 | `take_profit_bps` | 5 | 预计完整开平仓净收益达到此值即退出 |
-| `max_loss_bps` | 20 | 预计完整开平仓净收益 ≤ −20bp 即触发强平；暂定测试值，等待数据分析 |
+| `max_loss_bps` | 150 | 预计完整开平仓净收益 ≤ −150bp 即触发强平 |
 | `loss_stop_enabled` | true | 独立亏损止损开关；设为 false 禁用亏损线，保留止盈与两个时间规则 |
 | `breakeven_after_secs` | 180 | 满 3 分钟后，净收益严格大于 0 即退出；等于 0 继续等待 |
 | `force_close_after_secs` | 300 | 满 5 分钟立即开始持续强制减仓，有多少可成交深度就减多少 |
@@ -236,10 +262,10 @@ Backpack 的[官方账户查询](https://docs.backpack.exchange/#tag/Account)没
 
 开仓时先检查监控口径的 30bp，再检查配置滑点后的净价差仍达标。卖出高价腿与买入低价腿保持等量，
 因此实际名义金额会不同；按步长向下取整，保证两边均不超过 100 美元（手续费另计）。
-禁用暂定的 20bp 止损时，把 `loss_stop_enabled = false`；`max_loss_bps = "20"` 可以保留，方便以后重新启用。
+禁用亏损止损时，把 `loss_stop_enabled = false`；`max_loss_bps = "150"` 可以保留，方便以后重新启用。
 
 平仓 bp 的分母固定为该对仓位**开仓买腿成交本金**；live 使用真实成交回报。它不随当前价格、杠杆或保证金变化。
-若本金恰为 100 美元，5bp 是 0.05 美元，20bp 是 0.20 美元。
+若本金恰为 100 美元，5bp 是 0.05 美元，150bp 是 1.50 美元。
 
 ```
 gross = opening_short_proceeds - opening_long_cost

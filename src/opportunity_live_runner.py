@@ -284,7 +284,8 @@ class SessionStoreProxy:
     def checkpoint_balance_check(self, document):
         if document != self.balance_check:
             self.balance_check = document
-            self.save(self.latest_live or {}, [{"event": "startup_balance_check", **document}])
+            self.save(self.latest_live or {}, [{"event": "startup_balance_check", **document,
+                "observed_ns": document.get("completed_ns") or document.get("started_ns") or time.time_ns()}])
 
     def checkpoint_account_gate(self, result, markets, now_ns):
         self.account_gate = {"result": result, "observed_ns": now_ns,
@@ -324,13 +325,26 @@ def native_quote(state, instrument_id, now_ns):
 
 class LiveCoordinator:
     """Route callbacks and durable intents across startup and continuous trading."""
-    def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None, balance_reporter=None):
+    def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None, balance_reporter=None,
+                 initial_balance=None):
         from opportunity_balances import StartupBalanceCheck
         self.plan, self.live, self.proxy = plan, live, proxy
         self.balance_check = StartupBalanceCheck(plan.venues, enabled=plan.startup_balance_check,
             timeout_secs=plan.startup_timeout_secs, max_age_ms=plan.account_max_age_ms)
-        # A previous process's read is never a result for this startup.
-        self.proxy.balance_check = self.balance_check.document()
+        # Only this startup's isolated read may precede production construction.
+        # A saved ledger's balance report is never reused as current evidence.
+        if initial_balance is not None:
+            from opportunity_balance_runner import balance_session_passed
+            if not plan.startup_balance_check or not balance_session_passed(initial_balance, plan.venues):
+                raise ValueError("startup balance session lacks complete read-only proof")
+            check = initial_balance["balance_check"]
+            self.balance_check.result = "passed"
+            self.balance_check.started_ns = check["started_ns"]
+            self.balance_check.completed_ns = check["completed_ns"]
+            self.balance_check.venues = {venue: dict(row) for venue, row in check["venues"].items()}
+            self.proxy.checkpoint_balance_check(self.balance_check.document())
+        else:
+            self.proxy.balance_check = self.balance_check.document()
         self.balance_reporter = balance_reporter or (lambda document: None)
         self.self_test_only, self.stop = self_test_only, stop or (lambda: None)
         self.startup_self_test = self_test_only or plan.startup_self_test
@@ -372,7 +386,7 @@ class LiveCoordinator:
             if (clean_startup or unused or account_only) and known_orders and native_clean and not saved_live.get("halt_reason"):
                 self.failure = None
                 self.phase = "recovery_reconcile" if (proxy.latest_live or {}).get("positions") else "waiting_books"
-        if plan.startup_balance_check and self.phase != "resume_readonly":
+        if plan.startup_balance_check and self.balance_check.result != "passed" and self.phase != "resume_readonly":
             self.after_balance_phase, self.phase = self.phase, "waiting_balances"
 
     def attach(self, gateway, preflight=None):
@@ -477,7 +491,7 @@ class LiveCoordinator:
                 self.stop()
                 return
             self.phase = self.after_balance_phase
-        startup_wait_started_ns = self.balance_check.completed_ns or self.started_ns
+        startup_wait_started_ns = max(self.balance_check.completed_ns or 0, self.started_ns)
         if self.phase == "recovery_reconcile":
             required = {p[f"{leg}_id"] for p in self.live.positions.values() for leg in ("buy", "sell")}
             ready = [self.live._account_ready(instrument_id, now_ns) for instrument_id in required]
@@ -741,6 +755,13 @@ def run_live(plan, *, self_test_only=False):
     from types import MappingProxyType
     environ = MappingProxyType(dict(os.environ))
     binding = resolve_account_binding(plan.venues, plan.environment, environ)
+    initial_balance = None
+    if plan.startup_balance_check:
+        from opportunity_balance_runner import balance_session_passed, run_startup_balance_session
+        initial_balance = run_startup_balance_session(plan, environ)
+        print(json.dumps({"event": "startup_balance_check", **initial_balance}), flush=True)
+        if not balance_session_passed(initial_balance, plan.venues):
+            return 1
     guard = AccountRiskGuard(binding)
     store = None
     coordinator = None
@@ -760,6 +781,7 @@ def run_live(plan, *, self_test_only=False):
                 account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
                 retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
             coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,
+                initial_balance=initial_balance,
                 balance_reporter=lambda document: print(json.dumps(
                     {"event": "startup_balance_check", **document}), flush=True))
         coordinator.stop_signal = stop_signal
