@@ -9,13 +9,15 @@ from __future__ import annotations
 from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from fractions import Fraction as F
 from itertools import combinations
 import sys
 import uuid
 
-from opportunity_core import _book_valid, _metadata_valid, _number, exact_decimal
+from opportunity_core import (
+    _book_valid, _execution_metadata_valid, _fee_metadata_valid, _number, exact_decimal,
+)
 from opportunity_paper import PaperTradeState
 from opportunity_preflight import OrderIntent
 from opportunity_runtime import ScanState
@@ -72,6 +74,8 @@ class LiveTradeState(ScanState):
         self.session_id = uuid.uuid4().hex[:16]
         self.sequence = self.request_sequence = self.completed = 0
         self.realized_net = F(0)
+        self.pending_economics = {}
+        self.legacy_realized_net = None
         self.event_counts = Counter()
         self.phase, self.halt_reason = "waiting_preflight", None
         self.cleanup_allowed = True
@@ -83,12 +87,19 @@ class LiveTradeState(ScanState):
             store.save(self.snapshot(), [])
 
     def _restore(self, saved):
-        if saved.get("schema_version") != 1 or saved.get("mode") != "live":
+        if saved.get("schema_version") not in {1, 2} or saved.get("mode") != "live":
             raise ValueError("unknown live ledger version")
         self.session_id = saved["session_id"]
         self.sequence, self.request_sequence = saved["sequence"], saved["request_sequence"]
         self.completed = saved["completed"]
-        self.realized_net = F(saved["realized_net_usd"])
+        if saved["schema_version"] == 2:
+            self.realized_net = F(saved["realized_net_usd"])
+            self.pending_economics = deepcopy(saved["pending_economics"])
+            self.legacy_realized_net = saved.get("legacy_realized_net_usd")
+        elif self.completed:
+            # V1 aggregates can include estimated fees and have no per-pair
+            # confirmation proof. Preserve them separately, never promote them.
+            self.legacy_realized_net = saved["realized_net_usd"]
         self.event_counts.update(saved["event_counts"])
         self.orders, self.executions = deepcopy(saved["orders"]), deepcopy(saved["executions"])
         self.fences = dict(saved["fences"])
@@ -99,6 +110,9 @@ class LiveTradeState(ScanState):
                 raise ValueError("duplicate or invalid live pair ownership")
             if any(F(position[f"remaining_{s}_base"]) < 0 for s in ("buy", "sell")):
                 raise ValueError("negative live owned quantity")
+            if saved["schema_version"] == 1 and position["unknown_commission"]:
+                position["legacy_fee_accounting"] = True
+            position.setdefault("pending_commissions", {})
             self.positions[key] = position
         # Process-local account evidence and pending dispatches are never replayed.
         if any(o["terminal_ns"] is None for o in self.orders.values()):
@@ -126,9 +140,11 @@ class LiveTradeState(ScanState):
         self.instruments[instrument_id] = value
 
     def snapshot(self):
-        return deepcopy({"schema_version": 1, "mode": "live", "session_id": self.session_id,
+        return deepcopy({"schema_version": 2, "mode": "live", "session_id": self.session_id,
             "sequence": self.sequence, "request_sequence": self.request_sequence,
             "completed": self.completed, "realized_net_usd": _number(self.realized_net),
+            "pending_economics": self.pending_economics,
+            "legacy_realized_net_usd": self.legacy_realized_net,
             "event_counts": dict(self.event_counts), "positions": list(self.positions.values()),
             "orders": self.orders, "executions": self.executions, "fences": self.fences,
             "last_closed": [{"pair": list(k), "closed_ns": v} for k, v in self.last_closed.items()],
@@ -247,12 +263,19 @@ class LiveTradeState(ScanState):
                       expected_native=_number(expected), observed_native=str(account.position_quantity),
                       open_orders=len(account.open_order_ids), read_started_ns=account.observed_ns)
 
-    def _limit(self, instrument_id, side, base_quantity, now_ns, *, partial=False, reduce_only=False):
+    def _limit(self, instrument_id, side, base_quantity, now_ns, *, partial=False,
+               reduce_only=False, require_fees=True):
         book, meta = self.books.get(instrument_id), self.metadata.get(instrument_id)
         native = self.instruments.get(instrument_id)
-        if book is None or meta is None or native is None or not _metadata_valid(meta) or not _book_valid(book, self.plan.settings, now_ns):
+        if (book is None or meta is None or native is None or meta.instrument_id != instrument_id
+                or not _execution_metadata_valid(meta) or not _book_valid(book, self.plan.settings, now_ns)):
+            return None
+        fees_ready = _fee_metadata_valid(meta)
+        if require_fees and not fees_ready:
             return None
         market = self.markets[instrument_id]
+        if book.venue != market.venue or book.symbol != market.symbol:
+            return None
         if F(meta.multiplier) != F(native["native_multiplier"]) * F(market.canonical_multiplier):
             return None
         step, multiplier = F(meta.size_increment), F(meta.multiplier)
@@ -289,7 +312,8 @@ class LiveTradeState(ScanState):
             return None
         return {"quantity": exact_decimal(quantity), "price": exact_decimal(px),
                 "base_quantity": quantity * multiplier, "cash": cash,
-                "fee": cash * F(meta.taker_fee_bps) / 10000, "reduce_only": reduce_only}
+                "fee": cash * F(meta.taker_fee_bps) / 10000 if fees_ready else None,
+                "reduce_only": reduce_only}
 
     def _make_order(self, position, leg, purpose, bound, now_ns):
         instrument_id = position[f"{leg}_id"]
@@ -361,6 +385,9 @@ class LiveTradeState(ScanState):
             "closing_long_cash_usd": "0", "closing_short_cash_usd": "0", "closing_fees_usd": "0",
             "actual_entry": {"buy_notional_usd": "0", "sell_notional_usd": "0",
                              "buy_fee_usd": "0", "sell_fee_usd": "0"},
+            "pending_commissions": {},
+            "native_rules": {leg: {name: str(value) for name, value in self.instruments[i].items()}
+                             for leg, i in (("buy", buy_id), ("sell", sell_id))},
             "unknown_commission": False, "reserved_gross_usd": str(2 * self.policy.order_notional_usd)}
         self.positions[key] = position
         intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
@@ -398,16 +425,38 @@ class LiveTradeState(ScanState):
         market, native = self.markets[instrument_id], self.instruments[instrument_id]
         base = quantity * F(position["entry"][f"{leg}_metadata"]["multiplier"])
         cash = quantity * price * F(native["native_multiplier"]) * F(market.quote_to_usd)
+        remaining_field = f"remaining_{leg}_base"
+        if order["purpose"] != "entry" and base > F(position[remaining_field]):
+            self.halt_reason = "exit fill exceeds confirmed pair inventory"
+            self.emit("invalid_exit_fill", now_ns, client_order_id=cid)
+            return
         fee_amount, fee_currency = fill.get("commission_amount"), fill.get("commission_currency")
         stable_parity = (market.quote_to_usd == 1 and
             {fee_currency, native["quote_currency"]} <= {"USD", "USDC", "USDT"})
-        known_fee = fee_amount is not None and (fee_currency == native["quote_currency"] or stable_parity)
+        try:
+            amount = Decimal(str(fee_amount)) if fee_amount is not None else None
+        except InvalidOperation:
+            amount = None
+        known_fee = (amount is not None and amount.is_finite()
+                     and (fee_currency == native["quote_currency"] or stable_parity))
+        estimated_fee = None
         if known_fee:
-            fee = F(Decimal(str(fee_amount))) * F(market.quote_to_usd)
+            fee = F(amount) * F(market.quote_to_usd)
         else:
-            fee = cash * F(self.metadata[instrument_id].taker_fee_bps) / 10000
+            # Only actual commissions enter fee totals. Missing economics must
+            # never prevent a valid fill from retiring confirmed inventory.
+            fee = F(0)
+            meta = self.metadata.get(instrument_id)
+            if meta is not None and meta.instrument_id == instrument_id and _fee_metadata_valid(meta):
+                estimated_fee = cash * F(meta.taker_fee_bps) / 10000
             position["unknown_commission"] = True
-        remaining_field = f"remaining_{leg}_base"
+            position["pending_commissions"][identity] = {
+                "client_order_id": cid, "instrument_id": instrument_id, "purpose": order["purpose"],
+                "commission_amount": None if fee_amount is None else str(fee_amount),
+                "commission_currency": fee_currency, "notional_usd": _number(cash),
+                "estimated_fee_usd": _number(estimated_fee) if estimated_fee is not None else None,
+                "fee_source": meta.fee_source if estimated_fee is not None else None,
+            }
         if order["purpose"] == "entry":
             position[remaining_field] = _number(F(position[remaining_field]) + base)
             position[f"entry_{leg}_base"] = _number(F(position[f"entry_{leg}_base"]) + base)
@@ -417,10 +466,6 @@ class LiveTradeState(ScanState):
             if position["opened_ns"] is None:
                 position["opened_ns"] = now_ns
         else:
-            if base > F(position[remaining_field]):
-                self.halt_reason = "exit fill exceeds confirmed pair inventory"
-                self.emit("invalid_exit_fill", now_ns, client_order_id=cid)
-                return
             position[remaining_field] = _number(F(position[remaining_field]) - base)
             field = "closing_long_cash_usd" if leg == "buy" else "closing_short_cash_usd"
             position[field] = _number(F(position[field]) + cash)
@@ -435,7 +480,8 @@ class LiveTradeState(ScanState):
             self.halt_reason = "late fill after order terminal requires reconciliation"
         self.emit("fill", now_ns, execution_id=identity, position_id=position["position_id"],
                   client_order_id=cid, native_quantity=_number(quantity), native_price=_number(price),
-                  fee_usd=_number(fee), fee_confirmed=known_fee,
+                  fee_usd=_number(fee) if known_fee else None, fee_confirmed=known_fee,
+                  estimated_fee_usd=_number(estimated_fee) if estimated_fee is not None else None,
                   latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
 
     def on_receipt(self, receipt, now_ns):
@@ -469,6 +515,27 @@ class LiveTradeState(ScanState):
         fees = F(actual["buy_fee_usd"]) + F(actual["sell_fee_usd"]) + F(position["closing_fees_usd"])
         return gross - fees
 
+    def _economics(self, position):
+        """Keep incomplete fee evidence after inventory is reconciled flat."""
+        accounted_net = self._pnl(position)
+        pending = position["pending_commissions"]
+        confirmed = not position["unknown_commission"]
+        estimated_net = None
+        if confirmed:
+            estimated_net = accounted_net
+        elif pending and not position.get("legacy_fee_accounting") and all(
+                row["estimated_fee_usd"] is not None for row in pending.values()):
+            estimated_net = accounted_net - sum((F(row["estimated_fee_usd"]) for row in pending.values()), F(0))
+        return {"position_id": position["position_id"], "pair": position["pair"],
+                "net_usd": _number(accounted_net) if confirmed else None,
+                "provisional_net_usd": _number(estimated_net) if estimated_net is not None else None,
+                "fee_confirmed": confirmed, "pending_commissions": deepcopy(pending),
+                "actual_entry": deepcopy(position["actual_entry"]),
+                "closing_long_cash_usd": position["closing_long_cash_usd"],
+                "closing_short_cash_usd": position["closing_short_cash_usd"],
+                "closing_fees_usd": position["closing_fees_usd"],
+                "legacy_fee_accounting": position.get("legacy_fee_accounting", False)}
+
     def _exit_reason(self, position, now_ns):
         if position["opened_ns"] is None:
             return None
@@ -483,7 +550,13 @@ class LiveTradeState(ScanState):
             return "max_hold"
         if F(position["actual_entry"]["buy_notional_usd"]) <= 0:
             return "entry_imbalance"
-        mark = self.pricer.measure(position, now_ns)
+        # Keep available fee estimates in loss decisions without booking them
+        # as actual commissions. Unknown fees still forbid every soft exit.
+        estimated_fees = sum((F(row["estimated_fee_usd"]) for row in position["pending_commissions"].values()
+                              if row["estimated_fee_usd"] is not None), F(0))
+        pricing_position = {**position, "closing_fees_usd":
+                            _number(F(position["closing_fees_usd"]) + estimated_fees)}
+        mark = self.pricer.measure(pricing_position, now_ns)
         if mark is None:
             return None
         net, capital = F(mark["net_usd"]), F(mark["capital_usd"])
@@ -497,7 +570,7 @@ class LiveTradeState(ScanState):
             return "positive_after_wait"
         return None
 
-    def _reduction_bound(self, position, leg, qty, now_ns):
+    def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True):
         instrument_id = position[f"{leg}_id"]
         if not qty or now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
             return None
@@ -505,15 +578,24 @@ class LiveTradeState(ScanState):
             return None
         current = self.metadata.get(instrument_id)
         original = position["entry"][f"{leg}_metadata"]
-        if current is None or F(current.multiplier) != F(original["multiplier"]) or (
-                F(current.size_increment) != F(original["size_increment"])):
+        if current is None or current.instrument_id != instrument_id or not _execution_metadata_valid(current):
+            return None
+        for name in ("multiplier", "size_increment", "min_quantity", "min_notional"):
+            old_value = original.get(name)
+            if getattr(current, name) != (Decimal(old_value) if old_value is not None else None):
+                return None
+        original_native = position.get("native_rules", {}).get(leg)
+        native = self.instruments.get(instrument_id, {})
+        if original_native is not None and any(
+                native.get(name) != (value if name == "quote_currency" else Decimal(value))
+                for name, value in original_native.items()):
             return None
         native_remaining = qty / F(original["multiplier"])
         delta = -native_remaining if leg == "buy" else native_remaining
         net = self.expected_native(instrument_id)
         reducing = net * delta < 0 and abs(delta) <= abs(net)
         return self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
-                           now_ns, partial=True, reduce_only=reducing)
+                           now_ns, partial=True, reduce_only=reducing, require_fees=require_fees)
 
     def _rebalance_entry(self, position, now_ns):
         """Trim only the excess leg; never increase either confirmed entry leg."""
@@ -541,7 +623,7 @@ class LiveTradeState(ScanState):
         instrument_id = position[f"{leg}_id"]
         if now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
             return
-        bound = self._reduction_bound(position, leg, excess, now_ns)
+        bound = self._reduction_bound(position, leg, excess, now_ns, require_fees=False)
         if bound is None:
             if not position.get("rebalance_blocked"):
                 position["rebalance_blocked"] = True
@@ -575,13 +657,18 @@ class LiveTradeState(ScanState):
             ready = [self._account_ready(i, now_ns) for i in ids]
             if not all(ready):
                 return
-            net = self._pnl(position)
+            economics = self._economics(position)
             self.positions.pop(key)
             self.last_closed[key] = now_ns
             self.completed += 1
-            self.realized_net += net
+            if economics["fee_confirmed"]:
+                self.realized_net += F(economics["net_usd"])
+            else:
+                self.pending_economics[str(position["position_id"])] = {
+                    **economics, "closed_ns": now_ns, "reason": position["exit_reason"]}
             self.emit("closed", now_ns, position_id=position["position_id"], pair=list(key),
-                      net_usd=_number(net), fee_confirmed=not position["unknown_commission"],
+                      net_usd=economics["net_usd"], fee_confirmed=economics["fee_confirmed"],
+                      provisional_net_usd=economics["provisional_net_usd"],
                       reason=position["exit_reason"] or "entry_unfilled")
             return
         if position["status"] == "entering" and entry_done:
@@ -622,7 +709,7 @@ class LiveTradeState(ScanState):
         hard = position["exit_reason"] in HARD_EXITS
         bounds = {}
         for leg, qty in zip(("buy", "sell"), remains):
-            bound = self._reduction_bound(position, leg, qty, now_ns)
+            bound = self._reduction_bound(position, leg, qty, now_ns, require_fees=not hard)
             if bound is not None:
                 bounds[leg] = bound
         if not bounds or (not hard and len(bounds) != sum(q > 0 for q in remains)):
@@ -704,6 +791,9 @@ class LiveTradeState(ScanState):
                 "reserved_gross_usd": _number(self.gross_exposure(reserve=True)),
                 "active_pairs": len(self.positions), "closed_pairs": self.completed,
                 "realized_net_usd": _number(self.realized_net), "positions": deepcopy(list(self.positions.values())),
+                "realized_net_scope": "closed pairs with confirmed commissions",
+                "pending_economics": deepcopy(self.pending_economics),
+                "legacy_realized_net_usd": self.legacy_realized_net,
                 "pending_orders": sum(o["terminal_ns"] is None for o in self.orders.values()),
                 "event_counts": dict(self.event_counts),
                 "net_native_by_instrument": {i: _number(self.expected_native(i)) for i in self.markets
@@ -712,6 +802,7 @@ class LiveTradeState(ScanState):
 
     def display(self, stream=sys.stdout):
         stream.write(f"[live-trade] phase={self.phase} pairs={len(self.positions)}/{self.max_pairs} "
-                     f"closed={self.completed} net=${float(self.realized_net):.6f} "
+                     f"closed={self.completed} confirmed_net=${float(self.realized_net):.6f} "
+                     f"pending_economics={len(self.pending_economics)} "
                      f"halt={self.halt_reason or '-'}\n")
         stream.flush()
