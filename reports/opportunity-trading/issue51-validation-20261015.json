@@ -1,0 +1,38 @@
+{
+  "app_commit": "d0b5b3828a7493656c1d2adaba341ad4b1f78858",
+  "full_suite": {
+    "errors": 0,
+    "failed": 0,
+    "passed": 714,
+    "skipped": 0,
+    "tests": 714,
+    "warnings": 0
+  },
+  "integration_record": "E:\\persarb\\worktrees\\issue51-validation-20261015\\.native-cache\\issue51-integration.json",
+  "integration_record_sha256": "36709165354f00fbe8f5050944377d122793f86d4abbe8f0a951e4567996f540",
+  "issue": "https://github.com/mmyyrroonn/Nautilus-Perps/issues/51",
+  "junit_file": "issue51-tests-20261015.xml",
+  "junit_sha256": "92b57cfa28a061030fd412e316c81d8ab9be204873a2c0e5ae1e7295277b187c",
+  "mainnet_validation": false,
+  "native_commit": "e1c0f0db9a491b2cc890ff4955af8a801317ef69",
+  "new_account_scope_tests": 43,
+  "pure_python_ci": {
+    "passed": 401,
+    "skipped_optional_dependencies": 40
+  },
+  "python_version": "3.12.9",
+  "schema_version": 1,
+  "status": "passed_offline",
+  "tested_changes_sha256": {
+    ".github/workflows/opportunity-scan.yml": "2b558a85b706fc7aa9aa6814779ff12eb19d0d87e98f07cfcd2eb33664af4e8d",
+    "docs/opportunity-trading.md": "5c37542c731897138ff5b4365762dbc8ac25560f18695754290acb9f30ab8d3b",
+    "src/opportunity_account_scope.py": "e4069f72eaf87d8be37b6b1eadaed51c57e848ded1437b263e44f17560aacff7",
+    "src/opportunity_live_runner.py": "b7ffd92b214809470f00e7b415a77ee2e0dd06437bcac6843af4bbd500cf9c19",
+    "src/opportunity_native_execution.py": "747705f506935cb8bdb851ef329c528d7958d093d0ee4c9bea037b2f8ff3b7a0",
+    "src/opportunity_trade_store.py": "71dd62ce31a0bfaeb171620595e2d1bf919fba1871e29382effb7ddadc07a8ab",
+    "tests/test_opportunity_account_scope.py": "015b9d7105cf9b4c49877c466eea035e312d73269c9387edf6f2689cc3a898cb",
+    "tests/test_opportunity_live_runner.py": "987a22a6a719968223f859fc9353f1fbb07f11bdeeeb48316a3ea0ad53cdabd9"
+  },
+  "validated_worktree": "E:\\persarb\\worktrees\\issue51-validation-20261015",
+  "wheel_sha256": "8cc4b117c446ee83adb207f980f3750da93839b10b594f91083cd306ae80591c"
+}
