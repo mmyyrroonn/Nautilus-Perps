@@ -5,6 +5,8 @@ strategies/transports and do not execute any financial requests.
 """
 from __future__ import annotations
 
+from opportunity_timing import record_latency, start_latency, timed
+
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
@@ -28,6 +30,7 @@ def _native():
     return model
 
 
+@timed("startup.execution_clients")
 def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                       state_directory=None, run_id=None, order_notional_usd="100",
                       max_gross_notional_usd="500", duration_secs=0,
@@ -238,7 +241,20 @@ class NativeOrderGateway:
         if key in self.emitted:
             return
         self.emitted.add(key)
+        self._record_outcome(intent, kind)
         self.on_receipt(ExecutionReceipt(intent.request_id, intent.client_order_id, kind, execution_id, quantity))
+
+    def _record_outcome(self, intent, kind):
+        request = self.requests.get(intent.request_id)
+        if request is None or request.get("timing_start") is None:
+            return
+        seen = request.setdefault("timing_outcomes", set())
+        if kind not in seen:
+            seen.add(kind)
+            action = intent.action if intent.action in {"connect", "reconcile", "submit", "modify", "cancel"} else "other"
+            record_latency(request["timing_start"], "gateway." + action + ".response",
+                           venue=intent.venue, outcome=kind,
+                           error=kind in {"unknown", "rejected", "denied", "modify_rejected", "cancel_rejected"})
 
     def _reject(self, intent, reason):
         self.last_error = reason
@@ -267,6 +283,7 @@ class NativeOrderGateway:
             raise ValueError("native quote is invalid")
         return bid, ask, stamp
 
+    @timed("gateway.dispatch", labels=lambda self, intent, *a, **kw: (intent.venue, intent.action))
     def dispatch(self, intent, now_ns):
         if self.closed:
             raise RuntimeError("native gateway is closed")
@@ -282,6 +299,9 @@ class NativeOrderGateway:
             self._reject(intent, "unsupported venue")
             return
         self.requests[intent.request_id] = {"intent": intent, "sent_ns": now_ns, "queried_ns": now_ns}
+        marker = start_latency()
+        if marker is not None:
+            self.requests[intent.request_id]["timing_start"] = marker
         if intent.action in {"connect", "reconcile"}:
             # A timed-out worker can still be running. Retrying the state check
             # must not enqueue another blocking read for the same instrument.
@@ -358,6 +378,7 @@ class NativeOrderGateway:
             self.last_error = "native dispatch outcome is unknown; original ID retained"
             self._receipt(intent, "unknown")
 
+    @timed("account.native_read", labels=lambda self, intent, *a, **kw: (intent.venue, ""))
     def _start_native_read(self, intent, now_ns):
         """Wait for a complete native cycle begun after this request's send fence."""
         try:
@@ -449,6 +470,7 @@ class NativeOrderGateway:
         self._receipt(intent, "unknown")
         return True
 
+    @timed("gateway.native_event", labels=lambda self, kind, *a, **kw: ("", kind))
     def on_native_event(self, kind, event, now_ns):
         cid = str(event.client_order_id)
         owned = self.orders.get(cid)
@@ -526,6 +548,7 @@ class NativeOrderGateway:
         if kind != "rejected" and intent.request_id != owned["intent"].request_id:
             self._receipt(owned["intent"], "terminal")
 
+    @timed("gateway.poll")
     def poll(self, now_ns):
         if self.closed:
             return
@@ -581,6 +604,7 @@ class NativeOrderGateway:
             if intent.action == "connect":
                 self._receipt(intent, "connected")
             else:
+                self._record_outcome(intent, "account")
                 self.on_account(snapshot)
         for cid, owned in tuple(self.orders.items()):
             cached = self._cached(cid)
@@ -613,6 +637,7 @@ class NativeOrderGateway:
                 except Exception:
                     self.last_error = "original-ID order query failed; submission remains unresolved"
 
+    @timed("shutdown.gateway_close")
     def close(self):
         if self.closed:
             return

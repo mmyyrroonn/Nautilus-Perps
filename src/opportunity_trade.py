@@ -16,6 +16,7 @@ import tomllib
 
 from opportunity_scan import (ScanConfigError, ScanPlan, allowed_keys, decimal_value,
                               integer_value, load_plan)
+from opportunity_timing import add_timing_arguments, run_timed, timed
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class TradePlan:
                 "scan": self.scan.document()}
 
 
+@timed("config.paper_plan")
 def load_trade_plan(path: Path) -> TradePlan:
     path = Path(path).resolve()
     with path.open("rb") as handle:
@@ -99,6 +101,7 @@ def load_trade_plan(path: Path) -> TradePlan:
     return TradePlan(scan, policy, (path.parent / document["state_path"]).resolve())
 
 
+@timed("run.paper")
 def run_paper(plan: TradePlan) -> int:
     from opportunity_paper import PaperTradeState
     from opportunity_runtime import build_node
@@ -147,7 +150,12 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--duration-secs", type=int)
     parser.add_argument("--symbols")
+    add_timing_arguments(parser)
     args = parser.parse_args(raw_args)
+    return run_timed(lambda: _run(args), enabled=args.timing, directory=args.timing_dir)
+
+
+def _run(args):
     try:
         plan = load_trade_plan(args.config)
         if args.duration_secs is not None:

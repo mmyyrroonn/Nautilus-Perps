@@ -37,5 +37,6 @@ jobs:
           tests/test_opportunity_live_rebalance.py tests/test_opportunity_forced_reduction.py
           tests/test_opportunity_unhedged_risk.py
           tests/test_opportunity_account_scope.py
+          tests/test_opportunity_timing.py
           tests/test_opportunity_account_reconciliation.py
           tests/test_opportunity_live_flow.py

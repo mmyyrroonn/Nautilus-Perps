@@ -322,8 +322,12 @@ def test_only_digests_are_persisted_in_binding_registry_and_envelope(registry, t
 
 
 @pytest.mark.parametrize("failure", [None, "identity", "environment", "build", "run", "dispose", "gateway_close", "dirty", "pending", "save"])
+@pytest.mark.parametrize("timing_enabled", [False, True])
 def test_runner_holds_claim_through_cleanup_and_only_releases_clean_sessions(
-        registry, tmp_path, monkeypatch, capsys, failure):
+        registry, tmp_path, monkeypatch, capsys, failure, timing_enabled):
+    if timing_enabled:
+        import opportunity_timing
+        monkeypatch.setattr(opportunity_timing, "_active", opportunity_timing.TimingRecorder())
     dotenv = pytest.importorskip("dotenv")
     import opportunity_live_runner as runner
     import opportunity_shutdown

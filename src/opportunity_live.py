@@ -6,6 +6,8 @@ every instrument between orders. Pair inventory is separate from venue netting.
 """
 from __future__ import annotations
 
+from opportunity_timing import timed
+
 from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
@@ -161,6 +163,7 @@ class LiveTradeState(ScanState):
             self.halt_reason = "native instrument economics changed with owned inventory"
         self.instruments[instrument_id] = value
 
+    @timed("strategy.snapshot")
     def snapshot(self):
         return deepcopy({"schema_version": 2, "mode": "live", "session_id": self.session_id,
             "sequence": self.sequence, "request_sequence": self.request_sequence,
@@ -379,6 +382,7 @@ class LiveTradeState(ScanState):
                     self._request_account(i, now_ns)
         return ready
 
+    @timed("strategy.reconcile_accounts")
     def reconcile_accounts(self, now_ns):
         """Schedule read-only work; never wait for a network read on the scan loop."""
         for domain in self.account_domains:
@@ -405,6 +409,7 @@ class LiveTradeState(ScanState):
             self._request_account(instrument_id, now_ns)
         return bool(ready)
 
+    @timed("strategy.account", labels=lambda self, account, *a, **kw: (account.venue, ""))
     def on_account(self, account, now_ns):
         if account.instrument_id not in self.markets or self.markets[account.instrument_id].venue != account.venue:
             return
@@ -512,6 +517,7 @@ class LiveTradeState(ScanState):
                   client_order_ids=[i.client_order_id for i in intents])
         self.outbox.extend(intents)
 
+    @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
         key = self.pair_key(buy_id, sell_id)
         if key in self.positions or len(self.positions) >= self.max_pairs:
@@ -574,6 +580,7 @@ class LiveTradeState(ScanState):
     def _position(self, position_id):
         return next((p for p in self.positions.values() if p["position_id"] == position_id), None)
 
+    @timed("strategy.fill")
     def on_fill(self, fill, now_ns):
         cid = fill["client_order_id"]
         order = self.orders.get(cid)
@@ -663,6 +670,7 @@ class LiveTradeState(ScanState):
                   latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
         self._request_account(instrument_id, now_ns)
 
+    @timed("strategy.receipt")
     def on_receipt(self, receipt, now_ns):
         if receipt.kind in {"unknown", "rejected"}:
             for instrument_id, request_id in tuple(self.account_request_ids.items()):
@@ -870,6 +878,7 @@ class LiveTradeState(ScanState):
         intent = self._make_order(position, leg, "rebalance", bound, now_ns)
         self._publish_orders([intent], now_ns, position)
 
+    @timed("strategy.position_risk_and_exit")
     def observe(self, key, now_ns):
         position = self.positions[key]
         self._update_unhedged(position, now_ns)
@@ -974,6 +983,7 @@ class LiveTradeState(ScanState):
         intents = [self._make_order(position, leg, "exit", bound, now_ns) for leg, bound in bounds.items()]
         self._publish_orders(intents, now_ns, position)
 
+    @timed("strategy.evaluate_symbol")
     def evaluate_symbol(self, symbol, now_ns, *, changed_id=None):
         if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
             return
@@ -992,6 +1002,7 @@ class LiveTradeState(ScanState):
                 if self._entry(buy_id, sell_id, now_ns):
                     break
 
+    @timed("strategy.evaluation_timer")
     def on_evaluation_timer(self, now_ns):
         if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
             return

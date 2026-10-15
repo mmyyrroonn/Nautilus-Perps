@@ -60,6 +60,56 @@ Backpack 数据与执行共享同一个公开行情状态、额度对象；程�
 `startup.timeout_secs = 20` 也用于完整账户读取的等待预算，订单回报仍按
 `runtime.order_timeout_secs = 10` 判定超时；原生客户端另有 30 秒关停核对窗口。
 
+## 可选耗时记录
+
+在 `E:\persarb\Nautilus-Perps`，给原有启动命令追加 `--timing` 即可开启；不加则关闭。
+live 和 paper 入口共用此开关。下例只验证配置和报告生成，不连接账户：
+
+```powershell
+.\.venv\Scripts\python.exe -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --dry-run --timing
+```
+
+实际交易沿用原有参数，在已使用的 `--execute-live` 命令末尾加上 `--timing`。
+开关不改变交易参数、账本指纹、账户锁或恢复规则。dry-run 报告仅有配置阶段，
+实际运行后才有行情、账户和交易模块数据。
+
+报告默认保存在 `E:\persarb\Nautilus-Perps\reports\opportunity-trading\timings\`，
+每次生成独立的 `timing-<UTC时间>-<运行ID>.json`；可用 `--timing-dir E:\persarb\tmp\timings`
+另选目录。启动时在 stderr 显示路径，每 10 秒原子更新一次，正常或异常退出时写最终报告，
+并在 stderr 打印自身累计耗时最高的 10 项。stdout 原有 JSON 输出保持可解析。
+报告记录 UTC 起止时间、总运行毫秒、退出码和状态。`completed` 表示入口返回 0，
+不等于完成实盘验收；强制杀进程只保留最后一次快照，仍标为 `running`。
+
+| 记录项 | 含义 |
+|---|---|
+| `account_lock.*` | 身份解析/验证、各所进程锁获取、共享登记打开、认领、干净释放和关锁 |
+| `startup.*` / `store.*` | 原生客户端配置/构建、策略启动、状态恢复、SQLite 读写和关闭 |
+| `market.*` / `scan.*` | 各所盘口处理/发布、市场状态检查和机会扫描 |
+| `strategy.*` / `coordinator.*` | 开仓判断、仓位风险与退出判断、账户对账、成交/回报处理和定时循环 |
+| `account.*` | 各所账户读取、缓存未命中时的实际拉取，以及 Ondo/Backpack 原生证据处理，含后台线程 |
+| `gateway.*` / `shutdown.*` | 各所订单派发、事件轮询、收到回报前的延迟、原生停止证明和退出清理 |
+
+`operations` 中 `span` 为函数执行耗时，`latency` 为请求派发至首次对应回报的端到端延迟。
+例如 `gateway.submit.response` 按交易所及 `accepted` / `fill` / `terminal` 分开统计；
+同一请求重复回报不重复计时。`reconcile/account` 包含排队、原生快照等待及新鲜报价等待。
+重启前已发出的订单没有本次派发计时起点，不伪造其延迟。
+
+每项包含 `count`、`errors`、`total_ms`、`self_ms`、`mean_ms`、`min_ms`、`max_ms` 和
+最近 1024 次完成调用的 `recent_p50_ms` / `recent_p95_ms`。累计值覆盖整次运行，
+近期分位值不是全程分位值。`errors` 对函数表示向外抛出的异常，对延迟表示拒绝/未知回报；
+业务内部捕获的失败仍以原有交易报告为准。
+
+优化时先看 `span` 的 `self_ms`，再看慢模块的平均值、P95 和最大值；`total_ms` 包含嵌套调用，
+不能把各行直接相加。`run.*` / `runtime.native_node` 是外层总时间，包含事件循环等待；
+它们自身耗时高不代表 CPU 瓶颈。全部采用 `perf_counter_ns()` 单调时钟，记录墙钟耗时，
+不替换策略和订单超时时钟；并发线程的时间可能重叠。尚未返回的调用不计入聚合，
+Rust 适配器内部及命令行参数解析前的 Python 导入不在计时范围内。
+
+记录只包含固定模块名、交易所和操作标签，不包含账户身份、订单 ID、请求参数、
+响应或异常正文。统计保留有界的近期样本；后台线程写独立报告，不写交易账本。
+目录/文件写入失败会提示并继续交易，退出时仍打印内存统计。开启计时会带来额外开销，
+比较优化效果时应使用相同开关、配置和负载。
+
 ## 环境与凭证
 
 ### 账户锁、身份绑定与异常恢复（issue 51）

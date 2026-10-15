@@ -23,6 +23,7 @@ import uuid
 from opportunity_scan import (ScanConfigError, allowed_keys, decimal_value,
                               integer_value, load_plan)
 from opportunity_trade import TradePolicy
+from opportunity_timing import add_timing_arguments, run_timed, span, timed
 
 HARD_ORDER_NOTIONAL_USD = Decimal("100")
 HARD_MAX_PAIRS = 16
@@ -126,6 +127,7 @@ class LiveRunPlan:
             "scan": self.scan.document()})
 
 
+@timed("config.live_plan")
 def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd=None,
                    duration_secs=None, startup_self_test=None):
     path = Path(path).resolve()
@@ -276,6 +278,7 @@ class SessionStoreProxy:
                   "result": result, "observed_ns": now_ns,
                   "instrument_ids": self.account_gate["instrument_ids"]}])
 
+    @timed("startup.checkpoint")
     def checkpoint_startup(self, preflight):
         document = preflight.document()
         if document == self.startup:
@@ -367,6 +370,7 @@ class LiveCoordinator:
                 continue
             self.gateway.dispatch(intent, now_ns)
 
+    @timed("coordinator.receipt")
     def on_receipt(self, receipt, now_ns=None):
         now_ns = time.time_ns() if now_ns is None else now_ns
         if self.preflight and receipt.request_id in self.preflight.requests:
@@ -382,6 +386,7 @@ class LiveCoordinator:
             self.live.on_receipt(receipt, now_ns)
             self._live_intents(now_ns)
 
+    @timed("coordinator.fill")
     def on_fill(self, fill, now_ns=None):
         now_ns = time.time_ns() if now_ns is None else now_ns
         if self.preflight and fill["client_order_id"] in self.preflight.orders:
@@ -389,6 +394,7 @@ class LiveCoordinator:
         self.live.on_fill(fill, now_ns)
         self._live_intents(now_ns)
 
+    @timed("coordinator.account", labels=lambda self, snapshot, *a, **kw: (snapshot.venue, ""))
     def on_account(self, snapshot, now_ns=None):
         now_ns = time.time_ns() if now_ns is None else now_ns
         self.live.on_account(snapshot, now_ns)
@@ -417,6 +423,7 @@ class LiveCoordinator:
                     startup.get("unresolved_client_order_ids", []) or
                     any(Decimal(value) for value in startup.get("late_residuals_by_venue", {}).values()))
 
+    @timed("coordinator.tick")
     def tick(self, now_ns):
         if self.finished:
             return
@@ -530,6 +537,7 @@ class LiveCoordinator:
                 "live": self.live.document()}
 
 
+@timed("startup.build_live_node")
 def build_live_node(plan, live, coordinator, *, environ=None):
     """Build native data/execution clients and one continuous Strategy, without run()."""
     from datetime import timedelta
@@ -577,7 +585,8 @@ def build_live_node(plan, live, coordinator, *, environ=None):
             backpack_public_config=configs.get("BACKPACK"), backpack_quota=backpack_quota,
             native_controls=native_controls):
         builder = builder.add_exec_client(client_id, factory, config)
-    node = builder.build()
+    with span("startup.native_builder"):
+        node = builder.build()
     handle = node.handle()
     coordinator.stop = handle.stop
 
@@ -587,6 +596,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                                             oms_type=OmsType.NETTING,
                                             log_events=False, log_commands=False))
 
+        @timed("startup.strategy")
         def on_start(self):
             try:
                 startup_markets = {}
@@ -673,6 +683,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
     return node, observer, strategy
 
 
+@timed("run.live")
 def run_live(plan, *, self_test_only=False):
     if not plan.ready:
         raise ScanConfigError("set explicit positive risk limits and complete limits.toml before starting execution")
@@ -700,13 +711,14 @@ def run_live(plan, *, self_test_only=False):
         store = TradeStore(plan.state_path, plan.fingerprint(binding.document()),
                            account_binding=binding.document())
         guard.claim(store)
-        proxy = SessionStoreProxy(store)
-        live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
-            max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
-            max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
-            account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
-            retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
-        coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only)
+        with span("startup.restore_session"):
+            proxy = SessionStoreProxy(store)
+            live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
+                max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
+                max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
+                account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
+                retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
+            coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only)
         coordinator.stop_signal = stop_signal
         verify_execution_identity(binding, environ)
         node, observer, strategy = build_live_node(plan, live, coordinator, environ=environ)
@@ -719,7 +731,8 @@ def run_live(plan, *, self_test_only=False):
         # A native stop can fail without leaving an application-owned pair. Keep
         # its independent account/order/economics proof in the durable envelope.
         try:
-            node.run()
+            with span("runtime.native_node"):
+                node.run()
         except Exception as exc:
             coordinator.failure = "native node failed: " + type(exc).__name__
         proxy.native_shutdown = collect_native_shutdown({
@@ -746,7 +759,8 @@ def run_live(plan, *, self_test_only=False):
                         coordinator.gateway.close()
                 finally:
                     if node is not None:
-                        node.dispose()
+                        with span("shutdown.native_dispose"):
+                            node.dispose()
             # Never release a durable claim on crash, incomplete drain, failed
             # persistence, failed gateway close or failed native disposal.
             if release_claim:
@@ -772,7 +786,12 @@ def main(argv=None):
     parser.add_argument("--max-pairs", type=int)
     parser.add_argument("--max-gross-notional-usd")
     parser.add_argument("--duration-secs", type=int)
+    add_timing_arguments(parser)
     args = parser.parse_args(argv)
+    return run_timed(lambda: _run(args), enabled=args.timing, directory=args.timing_dir)
+
+
+def _run(args):
     try:
         plan = load_live_plan(args.config, symbols=args.symbols, max_pairs=args.max_pairs,
             max_gross_notional_usd=args.max_gross_notional_usd, duration_secs=args.duration_secs,
