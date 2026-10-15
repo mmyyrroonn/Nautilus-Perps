@@ -35,4 +35,5 @@ jobs:
           tests/test_opportunity_coalescing.py
           tests/test_opportunity_trade.py tests/test_opportunity_live.py
           tests/test_opportunity_live_rebalance.py tests/test_opportunity_forced_reduction.py
+          tests/test_opportunity_unhedged_risk.py
           tests/test_opportunity_live_flow.py

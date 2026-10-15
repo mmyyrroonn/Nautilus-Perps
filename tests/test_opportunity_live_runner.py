@@ -2,6 +2,7 @@
 import builtins
 from dataclasses import replace
 from decimal import Decimal as D
+import hashlib
 import json
 from pathlib import Path
 import socket
@@ -97,7 +98,8 @@ def test_default_cli_is_dry_run_without_credentials_native_socket_or_state(tmp_p
     assert document["runtime_started"] is False and document["remote_writes_allowed"] is False
     assert document["trade_symbols"] == ["ETH"]
     assert {m["symbol"] for m in document["scan"]["markets"]} == {"BTC", "ETH"}
-    assert document["risk"] == {"max_pairs": 2, "max_gross_notional_usd": "500"}
+    assert document["risk"] == {"max_pairs": 2, "max_gross_notional_usd": "500",
+                                "max_unhedged_notional_usd": "100", "max_unhedged_secs": 10}
     assert not (tmp_path/"state").exists()
 
 
@@ -172,6 +174,56 @@ startup_max_notional_usd = "1000"
     plan = load_live_plan(path)
     assert plan.policy.order_notional_usd == 100 and plan.max_pairs == 16
     assert plan.max_gross_notional_usd == 500 and plan.startup_max_notional_usd == 50
+
+
+@pytest.mark.parametrize("requested,cap,expected", [
+    (("75", 8), ("60", 6), (D(60), 6)),
+    (("40", 3), ("60", 6), (D(40), 3)),
+    (("9000", 300), ("9000", 300), (D(100), 10)),
+])
+def test_unhedged_risk_configuration_can_only_tighten_caps(tmp_path, requested, cap, expected):
+    path = configs(tmp_path)
+    baseline = load_live_plan(path)
+    path.write_text(path.read_text().replace("[startup]", f'''max_unhedged_notional_usd = "{requested[0]}"
+max_unhedged_secs = {requested[1]}
+[startup]'''), encoding="utf-8")
+    limits = tmp_path / "limits.toml"
+    limits.write_text(limits.read_text() + f'''max_unhedged_notional_usd = "{cap[0]}"
+max_unhedged_secs = {cap[1]}
+''', encoding="utf-8")
+    plan = load_live_plan(path)
+    assert (plan.max_unhedged_notional_usd, plan.max_unhedged_secs) == expected
+    assert (plan.fingerprint() == baseline.fingerprint()) == (expected == (D(100), 10))
+    assert plan.document()["risk"]["max_unhedged_secs"] == expected[1]
+
+
+def test_default_unhedged_limits_preserve_legacy_live_fingerprint(tmp_path):
+    plan = load_live_plan(configs(tmp_path))
+    legacy = {"schema_version": 1, "mode": "live", "environment": plan.environment,
+        "policy": plan.policy.document(), "markets": plan.scan.document()["markets"],
+        "settings": plan.scan.document()["settings"], "venues": plan.venues,
+        "trade_symbols": plan.trade_symbols, "max_pairs": plan.max_pairs,
+        "max_gross_notional_usd": str(plan.max_gross_notional_usd),
+        "startup_max_notional_usd": str(plan.startup_max_notional_usd)}
+    assert plan.fingerprint() == hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()
+
+
+@pytest.mark.parametrize("section", ["risk", "limits"])
+@pytest.mark.parametrize("setting", [
+    'max_unhedged_notional_usd = "0"', 'max_unhedged_notional_usd = "-1"',
+    'max_unhedged_notional_usd = "NaN"', 'max_unhedged_notional_usd = "Infinity"',
+    'max_unhedged_notional_usd = true', 'max_unhedged_secs = 0',
+    'max_unhedged_secs = true', 'max_unhedged_secs = 1.5',
+])
+def test_unhedged_config_rejects_invalid_thresholds(tmp_path, section, setting):
+    path = configs(tmp_path)
+    if section == "risk":
+        path.write_text(path.read_text().replace("[startup]", setting + "\n[startup]"), encoding="utf-8")
+    else:
+        limits = tmp_path / "limits.toml"
+        limits.write_text(limits.read_text() + setting + "\n", encoding="utf-8")
+    with pytest.raises(ScanConfigError):
+        load_live_plan(path)
 
 
 def test_missing_limits_section_can_be_inspected_but_is_not_ready(tmp_path):
@@ -620,14 +672,17 @@ def test_operator_run_persists_native_shutdown_and_fails_on_missing_stop_proof(
     import opportunity_trade_store
     path = configs(tmp_path, all_five=True,
         venues='["HL","LIGHTER","ASTER","ONDO","BACKPACK"]')
-    plan = load_live_plan(path)
+    plan = replace(load_live_plan(path), max_unhedged_notional_usd=D(50), max_unhedged_secs=5)
     store = MemoryStore()
     store.close = lambda: None
     fake_live = FakeLive(plan.scan)
     fake_live.snapshot = lambda: {"positions": [], "orders": {}}
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setattr(opportunity_trade_store, "TradeStore", lambda *args: store)
-    monkeypatch.setattr(opportunity_live, "LiveTradeState", lambda *args, **kwargs: fake_live)
+    def create_live(*args, **kwargs):
+        assert kwargs["max_unhedged_notional_usd"] == D(50) and kwargs["max_unhedged_secs"] == 5
+        return fake_live
+    monkeypatch.setattr(opportunity_live, "LiveTradeState", create_live)
     controls = {"ONDO": object(), "BACKPACK": object()}
     calls = []
     proof = {"clean": native_clean, "venues": {"ONDO": {"clean": native_clean}, "BACKPACK": {"clean": True}}}

@@ -23,6 +23,10 @@ slippage_bps = "0"
 # Zero refuses all execution; values can only tighten the total USD 500 hard cap.
 max_pairs = 2
 max_gross_notional_usd = "500"
+# Per-pair confirmed canonical delta. Either limit triggers a latched hard exit.
+# Independent of order queries and maximum holding time; may only be tightened.
+max_unhedged_notional_usd = "100"
+max_unhedged_secs = 10
 
 [startup]
 self_test_enabled = false

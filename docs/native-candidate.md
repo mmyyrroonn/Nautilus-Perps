@@ -7,6 +7,16 @@ from native commit `eeeb8eefc7921b7f81cb611cb3c851c665cd1ff1`. Neither
 `uv sync` nor an equal `2.0.0rc4` version is permission to substitute PyPI's
 upstream wheel. A missing candidate is an installation failure.
 
+The published `eeeb8eefc7` candidate predates Backpack and Ondo continuous
+execution/account-proof support. It does not satisfy the current five-venue
+runtime. For local five-venue validation, build the current native fork and
+install it with the explicit local override below, including
+`--additional-adapter backpack`. The local build and integration results for
+native `e1c0f0db9a491b2cc890ff4955af8a801317ef69` are recorded in
+[the Issue 57 report](../reports/opportunity-trading/issue57-unhedged-risk-20261015.md).
+Updating the published portable lock requires newly published artifacts for
+both platforms; a local Windows build does not replace that release process.
+
 ## Toolchain and source
 
 - Native source: `mmyyrroonn/nautilus_trader` at a full commit SHA and tree.
@@ -66,6 +76,22 @@ A local build has no published URL. To test it, explicitly pass
 <native-provenance.json> --sha256 <wheel-sha256>` instead of `--lock`.
 The local source fingerprint is checked at install time; changing the native
 source requires a new build.
+
+On Windows, select the pinned Rust toolchain explicitly when invoking the
+delegating build script from the application directory. The native repository's
+`rust-toolchain.toml` does not select the toolchain for an application-directory
+version check. For example, from `E:\persarb\Nautilus-Perps`:
+
+```powershell
+$env:RUSTUP_TOOLCHAIN = "1.98.0"
+.venv/Scripts/python.exe scripts/build_native.py --native-root E:/persarb/nautilus_trader --native-python E:/persarb/nautilus_trader/.venv/Scripts/python.exe --output-dir .native-cache/local-five-venue --profile release
+$wheel = Get-Item .native-cache/local-five-venue/nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl
+$wheelHash = (Get-FileHash -LiteralPath $wheel.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+.venv/Scripts/python.exe scripts/install_native.py --python .venv/Scripts/python.exe --local-override --native-root E:/persarb/nautilus_trader --wheel $wheel.FullName --provenance .native-cache/local-five-venue/native-provenance.json --sha256 $wheelHash --additional-adapter backpack --output .native-cache/installed.json
+```
+
+Use an empty output directory for each controlled build. Keep the resulting
+wheel, provenance and installed identity together when reproducing tests.
 
 To create the formal input lock after publishing *both* platform artifacts,
 run `scripts/lock_native_candidate.py` with one `--artifact

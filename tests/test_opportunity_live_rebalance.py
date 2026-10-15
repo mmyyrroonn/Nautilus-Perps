@@ -94,8 +94,11 @@ def test_unknown_trim_never_replaced_and_blocks_restart_activation():
     position, _ = enter(live)
     trim, = refresh(live, NOW+SECOND)
     live.on_receipt(receipt(trim, "unknown"), NOW+SECOND+1)
-    for seconds in (2, 11, 25):
-        assert not refresh(live, NOW+seconds*SECOND)
+    assert not refresh(live, NOW+2*SECOND)
+    exit_order, = refresh(live, NOW+11*SECOND)
+    assert exit_order.instrument_id == "BTC.ASTER" and exit_order.quantity == D("0.5")
+    assert position["exit_reason"] == "unhedged_timeout"
+    assert not refresh(live, NOW+25*SECOND)
     assert position["rebalance_ids"] == [trim.client_order_id]
     restored, _ = state(store=store, activate=False)
     assert restored.phase == "recovery_blocked" and not restored.activate(NOW+26*SECOND)
