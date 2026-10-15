@@ -27,6 +27,8 @@ HARD_ORDER_NOTIONAL_USD = Decimal("100")
 HARD_MAX_PAIRS = 16
 HARD_GROSS_NOTIONAL_USD = Decimal("500")
 HARD_STARTUP_NOTIONAL_USD = Decimal("50")
+HARD_MAX_UNHEDGED_NOTIONAL_USD = Decimal("100")
+HARD_MAX_UNHEDGED_SECS = 10
 SUPPORTED_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
 VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in SUPPORTED_VENUES}}
 CANCEL_REPLACE_VENUES = {"ASTER", "ONDO", "BACKPACK"}
@@ -66,6 +68,8 @@ class LiveRunPlan:
     limits_present: bool = True
     environment: str = "mainnet"
     startup_self_test: bool = False
+    max_unhedged_notional_usd: Decimal = HARD_MAX_UNHEDGED_NOTIONAL_USD
+    max_unhedged_secs: int = HARD_MAX_UNHEDGED_SECS
 
     @property
     def ready(self):
@@ -78,6 +82,12 @@ class LiveRunPlan:
             "trade_symbols": self.trade_symbols, "max_pairs": self.max_pairs,
             "max_gross_notional_usd": str(self.max_gross_notional_usd),
             "startup_max_notional_usd": str(self.startup_max_notional_usd)}
+        # The mandatory 100 USD / 10 second defaults also protect legacy
+        # ledgers without breaking their ownership/recovery fingerprint.
+        # Explicit tightening is bound to the ledger like other risk limits.
+        if self.max_unhedged_notional_usd != Decimal("100") or self.max_unhedged_secs != 10:
+            document["max_unhedged_notional_usd"] = str(self.max_unhedged_notional_usd)
+            document["max_unhedged_secs"] = self.max_unhedged_secs
         return hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
 
     def document(self):
@@ -95,7 +105,9 @@ class LiveRunPlan:
             "execution_route": "Nautilus LiveNode / Strategy / native ExecutionClientFactory",
             "native_dependency_check": "required at execution startup; dry-run only validates configuration",
             "trade_symbols": self.trade_symbols, "policy": self.policy.document(),
-            "risk": {"max_pairs": self.max_pairs, "max_gross_notional_usd": self.max_gross_notional_usd},
+            "risk": {"max_pairs": self.max_pairs, "max_gross_notional_usd": self.max_gross_notional_usd,
+                "max_unhedged_notional_usd": self.max_unhedged_notional_usd,
+                "max_unhedged_secs": self.max_unhedged_secs},
             "startup": {"self_test_enabled": self.startup_self_test,
                 "mandatory": self.startup_self_test, "symbol": "BTC",
                 "account_gate_required": True,
@@ -138,12 +150,15 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     allowed_keys(trade, set(TradePolicy.__dataclass_fields__), "live trade")
     policy = TradePolicy(**trade)
     risk = document.get("risk", {})
-    allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"}, "live risk")
-    if set(risk) != {"max_pairs", "max_gross_notional_usd"}:
+    unhedged_keys = {"max_unhedged_notional_usd", "max_unhedged_secs"}
+    allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"} | unhedged_keys, "live risk")
+    if not {"max_pairs", "max_gross_notional_usd"} <= risk.keys():
         raise ScanConfigError("risk requires explicit max_pairs and max_gross_notional_usd")
     pairs = integer_value(risk["max_pairs"] if max_pairs is None else max_pairs, "max_pairs", 0, 100000)
     gross = decimal_value(risk["max_gross_notional_usd"] if max_gross_notional_usd is None else max_gross_notional_usd,
                           "max_gross_notional_usd", nonnegative=True)
+    unhedged = decimal_value(risk.get("max_unhedged_notional_usd", "100"), "max_unhedged_notional_usd", positive=True)
+    unhedged_secs = integer_value(risk.get("max_unhedged_secs", 10), "max_unhedged_secs", 1, 86400)
     startup = document.get("startup", {})
     allowed_keys(startup, {"mandatory", "self_test_enabled", "max_notional_usd", "slippage_bps", "timeout_secs"}, "live startup")
     for key in ("mandatory", "self_test_enabled"):
@@ -170,14 +185,18 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         if "opportunity_trade" in limits_document:
             limits = limits_document["opportunity_trade"]
             allowed_keys(limits, {"order_notional_usd", "max_pairs", "max_gross_notional_usd",
-                                  "startup_max_notional_usd"}, "opportunity_trade limits")
-            if set(limits) != {"order_notional_usd", "max_pairs", "max_gross_notional_usd", "startup_max_notional_usd"}:
+                                  "startup_max_notional_usd"} | unhedged_keys, "opportunity_trade limits")
+            if not {"order_notional_usd", "max_pairs", "max_gross_notional_usd", "startup_max_notional_usd"} <= limits.keys():
                 raise ScanConfigError("opportunity_trade limits require all four limits")
             limits_present = True
     order_cap = decimal_value(limits.get("order_notional_usd", "100"), "limit.order_notional_usd", positive=True)
     pairs_cap = integer_value(limits.get("max_pairs", 16), "limit.max_pairs", 0, 100000)
     gross_cap = decimal_value(limits.get("max_gross_notional_usd", "500"), "limit.max_gross_notional_usd", nonnegative=True)
     startup_limit = decimal_value(limits.get("startup_max_notional_usd", "50"), "limit.startup_max_notional_usd", positive=True)
+    unhedged_cap = decimal_value(limits.get("max_unhedged_notional_usd", "100"), "limit.max_unhedged_notional_usd", positive=True)
+    unhedged_secs_cap = integer_value(limits.get("max_unhedged_secs", 10), "limit.max_unhedged_secs", 1, 86400)
+    unhedged = min(unhedged, unhedged_cap, HARD_MAX_UNHEDGED_NOTIONAL_USD)
+    unhedged_secs = min(unhedged_secs, unhedged_secs_cap, HARD_MAX_UNHEDGED_SECS)
     policy = replace(policy, order_notional_usd=min(policy.order_notional_usd, order_cap, HARD_ORDER_NOTIONAL_USD))
     pairs, gross = min(pairs, pairs_cap, HARD_MAX_PAIRS), min(gross, gross_cap, HARD_GROSS_NOTIONAL_USD)
     startup_cap = min(startup_cap, startup_limit, HARD_STARTUP_NOTIONAL_USD)
@@ -213,7 +232,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         order_timeout_secs=integer_value(runtime.get("order_timeout_secs", 10), "order_timeout_secs", 1, 30),
         retry_interval_ms=integer_value(runtime.get("retry_interval_ms", 1000), "retry_interval_ms", 100, 10000),
         startup_timeout_secs=startup_timeout, limits_present=limits_present,
-        startup_self_test=self_test)
+        startup_self_test=self_test, max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs)
 
 
 class SessionStoreProxy:
@@ -658,6 +677,7 @@ def run_live(plan, *, self_test_only=False):
         proxy = SessionStoreProxy(store)
         live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
             max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
+            max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
             account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
             retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
         coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only)

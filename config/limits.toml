@@ -216,3 +216,6 @@ order_notional_usd = "100"
 max_pairs = 16
 max_gross_notional_usd = "500"
 startup_max_notional_usd = "50"
+# Per-pair unhedged risk: code caps USD 100 and 10 seconds, either limit fires.
+max_unhedged_notional_usd = "100"
+max_unhedged_secs = 10

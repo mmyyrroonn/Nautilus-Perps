@@ -26,8 +26,11 @@ from opportunity_runtime import ScanState
 HARD_MAX_ORDER_USD = Decimal("100")
 HARD_MAX_GROSS_USD = Decimal("500")
 HARD_MAX_PAIRS = 16
+HARD_MAX_UNHEDGED_NOTIONAL_USD = Decimal("100")
+HARD_MAX_UNHEDGED_SECS = 10
 TERMINALS = {"terminal", "canceled", "rejected", "denied", "expired"}
-HARD_EXITS = {"max_hold", "max_loss", "entry_imbalance", "exit_imbalance", "operator_stop", "execution_halt", "exposure_limit"}
+HARD_EXITS = {"max_hold", "max_loss", "entry_imbalance", "exit_imbalance", "operator_stop", "execution_halt", "exposure_limit",
+              "unhedged_notional", "unhedged_timeout"}
 
 
 def _positive(value, name):
@@ -42,12 +45,18 @@ def _positive(value, name):
 class LiveTradeState(ScanState):
     def __init__(self, plan, policy, *, max_pairs, max_gross_notional_usd,
                  store=None, event_sink=None, account_max_age_ms=5000,
-                 order_timeout_secs=10, retry_interval_ms=1000, trade_symbols=None):
+                 order_timeout_secs=10, retry_interval_ms=1000, trade_symbols=None,
+                 max_unhedged_notional_usd=HARD_MAX_UNHEDGED_NOTIONAL_USD,
+                 max_unhedged_secs=HARD_MAX_UNHEDGED_SECS):
         if type(max_pairs) is not int or not 1 <= max_pairs <= HARD_MAX_PAIRS:
             raise ValueError("max_pairs is outside the live hard cap")
         gross = _positive(max_gross_notional_usd, "max_gross_notional_usd")
         if gross > HARD_MAX_GROSS_USD or policy.order_notional_usd > HARD_MAX_ORDER_USD:
             raise ValueError("live risk exceeds the operator-authorized hard cap")
+        unhedged = _positive(max_unhedged_notional_usd, "max_unhedged_notional_usd")
+        if (unhedged > HARD_MAX_UNHEDGED_NOTIONAL_USD or type(max_unhedged_secs) is not int
+                or not 1 <= max_unhedged_secs <= HARD_MAX_UNHEDGED_SECS):
+            raise ValueError("unhedged risk exceeds the operator-authorized hard cap")
         for value, name in ((account_max_age_ms, "account_max_age_ms"),
                             (order_timeout_secs, "order_timeout_secs"),
                             (retry_interval_ms, "retry_interval_ms")):
@@ -59,6 +68,8 @@ class LiveTradeState(ScanState):
         self.policy, self.max_pairs, self.max_gross = policy, max_pairs, F(gross)
         self.account_max_age_ns = account_max_age_ms * 1_000_000
         self.order_timeout_ns = order_timeout_secs * 1_000_000_000
+        self.max_unhedged_notional = F(unhedged)
+        self.max_unhedged_ns = max_unhedged_secs * 1_000_000_000
         self.retry_ns = retry_interval_ms * 1_000_000
         self.trade_symbols = frozenset(trade_symbols if trade_symbols is not None else self.groups)
         if not self.trade_symbols <= self.groups.keys():
@@ -113,6 +124,10 @@ class LiveTradeState(ScanState):
             if saved["schema_version"] == 1 and position["unknown_commission"]:
                 position["legacy_fee_accounting"] = True
             position.setdefault("pending_commissions", {})
+            # Legacy ledgers must not receive a new grace period on restart.
+            delta = F(position["remaining_buy_base"]) - F(position["remaining_sell_base"])
+            position.setdefault("unhedged_since_ns", position["opened_ns"] if delta else None)
+            position.setdefault("unhedged_base", _number(delta))
             self.positions[key] = position
         # Process-local account evidence and pending dispatches are never replayed.
         if any(o["terminal_ns"] is None for o in self.orders.values()):
@@ -234,12 +249,18 @@ class LiveTradeState(ScanState):
         self.emit("account_read_requested", now_ns, instrument_id=instrument_id, request_id=request.request_id)
         self.outbox.append(request)
 
-    def _account_ready(self, instrument_id, now_ns):
+    def _account_ready(self, instrument_id, now_ns, *, pending_entry_owner=None):
         account = self.accounts.get(instrument_id)
+        pending = self._pending(instrument_id)
+        # A still-live entry can only add to this pair's owned leg. A hard
+        # risk exit may retire confirmed fills after a fresh account proof;
+        # pending reductions or orders owned by another pair remain barriers.
+        allowed = {o["client_order_id"] for o in pending if pending_entry_owner is not None
+                   and o["position_id"] == pending_entry_owner and o["purpose"] == "entry"}
         ready = (account is not None and account.authoritative and account.connected
             and 0 <= now_ns - account.observed_ns <= self.account_max_age_ns
             and account.observed_ns >= self.fences.get(instrument_id, 0)
-            and not account.open_order_ids and not self._pending(instrument_id)
+            and set(account.open_order_ids) <= allowed and len(allowed) == len(pending)
             and F(account.position_quantity) == self.expected_native(instrument_id))
         if not ready:
             self._request_account(instrument_id, now_ns)
@@ -382,6 +403,8 @@ class LiveTradeState(ScanState):
             "entry_ids": [], "exit_ids": [], "rebalance_ids": [],
             "entry_buy_base": "0", "entry_sell_base": "0",
             "remaining_buy_base": "0", "remaining_sell_base": "0",
+            "unhedged_since_ns": None, "unhedged_base": "0", "unhedged_notional_usd": "0",
+            "unhedged_duration_ms": "0",
             "closing_long_cash_usd": "0", "closing_short_cash_usd": "0", "closing_fees_usd": "0",
             "actual_entry": {"buy_notional_usd": "0", "sell_notional_usd": "0",
                              "buy_fee_usd": "0", "sell_fee_usd": "0"},
@@ -478,6 +501,7 @@ class LiveTradeState(ScanState):
             # Preserve the late inventory, stop admission and demand a new read.
             position["status"], position["exit_reason"] = "exit_pending", "entry_imbalance"
             self.halt_reason = "late fill after order terminal requires reconciliation"
+        self._update_unhedged(position, now_ns)
         self.emit("fill", now_ns, execution_id=identity, position_id=position["position_id"],
                   client_order_id=cid, native_quantity=_number(quantity), native_price=_number(price),
                   fee_usd=_number(fee) if known_fee else None, fee_confirmed=known_fee,
@@ -536,7 +560,7 @@ class LiveTradeState(ScanState):
                 "closing_fees_usd": position["closing_fees_usd"],
                 "legacy_fee_accounting": position.get("legacy_fee_accounting", False)}
 
-    def _exit_reason(self, position, now_ns):
+    def _hard_exit_reason(self, position, now_ns):
         if position["opened_ns"] is None:
             return None
         age = now_ns - position["opened_ns"]
@@ -548,6 +572,53 @@ class LiveTradeState(ScanState):
             return "exposure_limit"
         if age >= self.policy.force_close_after_secs * 1_000_000_000:
             return "max_hold"
+        if position.get("unhedged_breach"):
+            return position["unhedged_breach"]["reason"]
+        return None
+
+    def _update_unhedged(self, position, now_ns):
+        """Measure confirmed canonical inventory; unknown orders are never zero fills."""
+        previous_since = position.get("unhedged_since_ns")
+        elapsed = max(0, now_ns - previous_since) if previous_since is not None else 0
+        previous_delta = position.get("unhedged_base", "0")
+        previous_notional = position.get("unhedged_notional_usd", "0")
+        delta = F(position["remaining_buy_base"]) - F(position["remaining_sell_base"])
+        notional = F(0)
+        if delta:
+            leg = "buy" if delta > 0 else "sell"
+            # Books are already in canonical base/USD units. Keep the actual
+            # entry VWAP as a floor/fallback when the book is absent or stale.
+            price = F(position["actual_entry"][f"{leg}_notional_usd"]) / F(position[f"entry_{leg}_base"])
+            book = self.books.get(position[f"{leg}_id"])
+            if book and _book_valid(book, self.plan.settings, now_ns):
+                price = max(price, F(book.asks[0][0]))
+            notional = abs(delta) * price
+        position.update(unhedged_base=_number(delta), unhedged_notional_usd=_number(notional),
+                        unhedged_duration_ms=_number(F(elapsed, 1_000_000)) if delta else "0",
+                        unhedged_since_ns=(previous_since if previous_since is not None else now_ns) if delta else None)
+        reason = ("unhedged_notional" if notional >= self.max_unhedged_notional else
+                  "unhedged_timeout" if previous_since is not None and elapsed >= self.max_unhedged_ns else None)
+        if reason and not position.get("unhedged_breach"):
+            # Latch even if a fill arriving at the deadline balances inventory.
+            # Clearing the current delta must not undo an already expired episode.
+            breach = {"reason": reason, "triggered_ns": now_ns,
+                      "since_ns": previous_since if previous_since is not None else now_ns,
+                      "base": _number(delta) if delta else previous_delta,
+                      "notional_usd": _number(notional) if delta else previous_notional,
+                      "duration_ms": _number(F(elapsed, 1_000_000)),
+                      "max_notional_usd": _number(self.max_unhedged_notional),
+                      "max_duration_secs": self.max_unhedged_ns // 1_000_000_000}
+            position["unhedged_breach"] = breach
+            if position["exit_reason"] not in HARD_EXITS:
+                position.update(status="exit_pending", exit_reason=self._hard_exit_reason(position, now_ns),
+                                exit_requested_ns=now_ns)
+            self.emit("unhedged_limit_breached", now_ns, position_id=position["position_id"], **breach)
+
+    def _exit_reason(self, position, now_ns):
+        hard = self._hard_exit_reason(position, now_ns)
+        if hard or position["opened_ns"] is None:
+            return hard
+        age = now_ns - position["opened_ns"]
         if F(position["actual_entry"]["buy_notional_usd"]) <= 0:
             return "entry_imbalance"
         # Keep available fee estimates in loss decisions without booking them
@@ -570,11 +641,13 @@ class LiveTradeState(ScanState):
             return "positive_after_wait"
         return None
 
-    def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True):
+    def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True,
+                         allow_pending_entry=False):
         instrument_id = position[f"{leg}_id"]
         if not qty or now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
             return None
-        if not self._account_ready(instrument_id, now_ns):
+        if not self._account_ready(instrument_id, now_ns,
+                pending_entry_owner=position["position_id"] if allow_pending_entry else None):
             return None
         current = self.metadata.get(instrument_id)
         original = position["entry"][f"{leg}_metadata"]
@@ -637,14 +710,13 @@ class LiveTradeState(ScanState):
 
     def observe(self, key, now_ns):
         position = self.positions[key]
+        self._update_unhedged(position, now_ns)
         ids = (position["buy_id"], position["sell_id"])
         entry_done = all(self.orders[cid]["terminal_ns"] is not None for cid in position["entry_ids"])
         if not entry_done:
             # An unknown other venue must not prevent time-based reduction of a
             # separately confirmed leg. Its original ID and pair lock stay live.
-            age = now_ns - position["opened_ns"] if position["opened_ns"] is not None else 0
-            hard_reason = "operator_stop" if self.stopping else "execution_halt" if self.halt_reason else (
-                "max_hold" if age >= self.policy.force_close_after_secs * 1_000_000_000 else None)
+            hard_reason = self._hard_exit_reason(position, now_ns)
             if hard_reason:
                 if position["exit_reason"] != hard_reason:
                     position.update(status="exit_pending", exit_reason=hard_reason, exit_requested_ns=now_ns)
@@ -691,7 +763,7 @@ class LiveTradeState(ScanState):
                 position["exit_requested_ns"] = now_ns
                 self.emit("entry_imbalance", now_ns, position_id=position["position_id"],
                           buy_base=_number(remains[0]), sell_base=_number(remains[1]))
-        if position["exit_ids"] and remains[0] != remains[1]:
+        if position["exit_ids"] and remains[0] != remains[1] and position["exit_reason"] not in HARD_EXITS:
             position["exit_reason"] = "exit_imbalance"
             position["status"] = "exit_pending"
         reason = self._exit_reason(position, now_ns)
@@ -709,7 +781,8 @@ class LiveTradeState(ScanState):
         hard = position["exit_reason"] in HARD_EXITS
         bounds = {}
         for leg, qty in zip(("buy", "sell"), remains):
-            bound = self._reduction_bound(position, leg, qty, now_ns, require_fees=not hard)
+            bound = self._reduction_bound(position, leg, qty, now_ns, require_fees=not hard,
+                                          allow_pending_entry=bool(position.get("unhedged_breach")))
             if bound is not None:
                 bounds[leg] = bound
         if not bounds or (not hard and len(bounds) != sum(q > 0 for q in remains)):
@@ -745,9 +818,10 @@ class LiveTradeState(ScanState):
         for key in tuple(self.positions):
             if key[0] == symbol:
                 self.observe(key, now_ns)
-        if self.stopping or self.halt_reason or symbol not in self.trade_symbols or any(
+        if (self.stopping or self.halt_reason or symbol not in self.trade_symbols
+                or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
                 o["terminal_ns"] is None and (o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns)
-                for o in self.orders.values()):
+                for o in self.orders.values())):
             return
         for first, second in combinations(sorted(self.groups[symbol]), 2):
             if self.markets[first].venue == self.markets[second].venue:
@@ -787,6 +861,8 @@ class LiveTradeState(ScanState):
         return {"mode": "live", "phase": self.phase, "halt_reason": self.halt_reason,
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,
                 "max_gross_notional_usd": _number(self.max_gross),
+                "max_unhedged_notional_usd": _number(self.max_unhedged_notional),
+                "max_unhedged_secs": self.max_unhedged_ns // 1_000_000_000,
                 "gross_exposure_usd": _number(self.gross_exposure()),
                 "reserved_gross_usd": _number(self.gross_exposure(reserve=True)),
                 "active_pairs": len(self.positions), "closed_pairs": self.completed,

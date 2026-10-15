@@ -26,10 +26,10 @@ class MemoryStore:
 
 
 def state(plan=None, policy=None, *, max_pairs=2, gross="500", store=None, activate=True,
-          price_increment="0.01"):
+          price_increment="0.01", **risk_kwargs):
     events = []
     result = LiveTradeState(plan or make_plan(), policy or TradePolicy(), max_pairs=max_pairs,
-        max_gross_notional_usd=D(gross), store=store, event_sink=events.append)
+        max_gross_notional_usd=D(gross), store=store, event_sink=events.append, **risk_kwargs)
     for market in result.plan.markets:
         result.register_instrument(market.instrument_id, D(price_increment), D(1), "USD")
         result.update_metadata(market.instrument_id, MarketMetadata(market.instrument_id, D("0.01"),

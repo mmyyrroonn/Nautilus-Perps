@@ -1,0 +1,52 @@
+{
+  "build_profile": "release",
+  "build_tools": {
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "maturin": "maturin 1.15.0",
+    "python": "Python 3.12.9",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "uv": "uv 0.12.6 (7938ca5d5 2026-08-25 x86_64-pc-windows-msvc)"
+  },
+  "installation_mode": "local-override",
+  "integration_counts": {
+    "errors": 0,
+    "failed": 0,
+    "passed": 671,
+    "skipped": 0,
+    "tests": 671,
+    "warnings": 0
+  },
+  "integration_finished_at": "2026-10-15T06:11:42.427747+00:00",
+  "integration_run_id": "3990dcbbd6134b938ce8b86b352e93b0",
+  "issue": 57,
+  "mainnet_validation": false,
+  "native_commit": "e1c0f0db9a491b2cc890ff4955af8a801317ef69",
+  "native_dirty_count": 0,
+  "native_tree": "30444203aeaddc8dcd4778d5dcf952e34938b19f",
+  "network_enforcement": "not-enforced; Windows firewall probe denied with error 5",
+  "portable_candidate_lock_updated": false,
+  "previously_failing_tests": {
+    "test_actual_five_venue_builder_preserves_native_config_and_caps_offline": "passed",
+    "test_complete_live_node_builds_with_installed_five_venue_factories_without_connecting": "passed",
+    "test_ondo_native_account_gateway_drives_automatic_btc_preflight": "passed",
+    "test_ondo_native_gateway_startup_cancel_replace_and_multisymbol_continuation": "passed"
+  },
+  "schema_version": 1,
+  "source_binding": "verified",
+  "source_fingerprint_sha256": "e7c5878d9a91ea8686965d8ae595c861c3c4122e8e1db028e6a0184c5fa1f95d",
+  "tested_source_sha256_lf_normalized": {
+    ".github/workflows/opportunity-scan.yml": "03bbb9143047397f03a1023876befb33cdfdb54619c3d9848f1c6b02d92e37c2",
+    "config/limits.toml": "35900ef0659367fcfd905c9d42185636f7438a537e58a28bd0dda6d2f2f2c473",
+    "config/opportunity-trade.live.toml": "872dc1279b8f862a3129469e6c128acb1ceea4db08c7aee99684f60ec4207aee",
+    "src/opportunity_live.py": "07c6179ef84276f756983d2e3dbc2adf6dc897d64befada1d4df9a61a087eb27",
+    "src/opportunity_live_runner.py": "ae9d05cb595685b74dc63adddec02cb14d5200354f7f755210194c6c7e9dca3d",
+    "tests/test_opportunity_live.py": "276f41cac9fd90fdfbd775c1a8479f775aa6c061bea098c51a942498235e6bc4",
+    "tests/test_opportunity_live_rebalance.py": "52b28ea1faf85a3a11fd71406f4568cc77833f3985d3b3fe22f245ce75887711",
+    "tests/test_opportunity_live_runner.py": "2b91d2f77b504be06f8f14c0dfd1ee2817096f40ca9d91b9732fe7781dbb0f46",
+    "tests/test_opportunity_unhedged_risk.py": "afd910548b7c0f27ec6f5260bb5aecbb44d9fe6768591af82f3367041e00d2dd"
+  },
+  "venue_test_endpoints": "local loopback peers with synthetic credentials",
+  "wheel_bytes": 161517286,
+  "wheel_file": "nautilus_trader-2.0.0rc4-cp312-cp312-win_amd64.whl",
+  "wheel_sha256": "8cc4b117c446ee83adb207f980f3750da93839b10b594f91083cd306ae80591c"
+}
