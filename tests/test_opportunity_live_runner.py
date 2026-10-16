@@ -279,11 +279,12 @@ def test_disabling_trading_self_test_does_not_require_btc_markets(tmp_path):
         load_live_plan(path, symbols="ETH", startup_self_test=True)
 
 
-def readonly_coordinator(tmp_path, *, saved=None):
+def readonly_coordinator(tmp_path, *, saved=None, all_five=False):
     from opportunity_live import LiveTradeState
-    plan = load_live_plan(configs(tmp_path, mandatory="false"))
+    plan = load_live_plan(configs(tmp_path, mandatory="false", all_five=all_five,
+        venues='["HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"]' if all_five else '["HL", "LIGHTER", "ASTER"]'))
     store = MemoryStore(saved)
-    proxy = SessionStoreProxy(store)
+    proxy = SessionStoreProxy(store, restart_from_flat=True)
     live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
                          max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
                          account_max_age_ms=plan.account_max_age_ms)
@@ -346,15 +347,15 @@ def test_bad_account_proof_cannot_be_skipped_when_trading_self_test_is_off(tmp_p
     {"result": "blocked", "owned_quantity": "0.001"},
     {"result": "running", "owned_quantity": "0", "unresolved_client_order_ids": ["original-btc-id"]},
 ])
-def test_switching_off_self_test_does_not_bypass_interrupted_btc_journal(tmp_path, journal):
+def test_interrupted_btc_journal_waits_for_current_account_proof(tmp_path, journal):
     saved = {"schema_version": 1, "startup_complete": False, "startup": journal,
              "account_gate": {"result": "passed"}, "live": {"positions": [], "orders": {}}}
     path = configs(tmp_path, mandatory="false")
     state, live, preflight, gateway, store, stopped = coordinator(tmp_path, saved=saved, plan_path=path)
     state.tick(NOW)
-    assert state.phase == "resume_readonly" and state.failure and stopped
+    assert state.phase == "waiting_account_recovery" and not state.failure and not stopped
     assert not gateway.sent and not live.activated and preflight.started == 0
-    assert state.document()["startup"] == journal and store.saved == saved
+    assert state.document()["startup"] == journal and store.saved["startup"] == journal
 
 
 @pytest.mark.parametrize("gate_result", ["checking", "passed"])
@@ -366,7 +367,7 @@ def test_readonly_startup_can_restart_without_trading_self_test(tmp_path, gate_r
     state, live, preflight, gateway, _, stopped = coordinator(tmp_path, saved=saved, plan_path=path)
     live._account_ready = lambda instrument_id, now_ns: False
     state.tick(NOW)
-    assert state.phase == "waiting_accounts" and not state.failure and not stopped
+    assert state.phase == "waiting_account_recovery" and not state.failure and not stopped
     assert preflight.started == 0 and not live.activated and not gateway.sent
 
 
@@ -379,14 +380,14 @@ def test_readonly_session_restart_requires_new_process_account_evidence(tmp_path
     assert state.phase == "active" and store.saved["account_gate"]["result"] == "passed"
     resumed, resumed_live, gateway, _, stopped = readonly_coordinator(tmp_path, saved=store.saved)
     resumed.tick(NOW + 2)
-    assert resumed.phase == "waiting_accounts" and resumed_live.phase != "active"
+    assert resumed.phase == "waiting_account_recovery" and resumed_live.phase != "active"
     assert len(gateway.sent) == len(resumed.plan.venues)
     assert all(i.action == "reconcile" for i in gateway.sent)
     assert not stopped and resumed.preflight is None
 
 
 @pytest.mark.parametrize("blocker", ["pending_order", "dirty_native", "halted_ledger"])
-def test_readonly_gate_never_overrides_execution_recovery_blockers(tmp_path, blocker):
+def test_historical_execution_blockers_wait_for_current_account_proof(tmp_path, blocker):
     saved = {"schema_version": 1, "startup_complete": False, "startup": None,
              "account_gate": {"result": "passed"}, "live": {"positions": [], "orders": {}}}
     if blocker == "pending_order":
@@ -398,7 +399,7 @@ def test_readonly_gate_never_overrides_execution_recovery_blockers(tmp_path, blo
     path = configs(tmp_path, mandatory="false")
     state, live, preflight, gateway, _, stopped = coordinator(tmp_path, saved=saved, plan_path=path)
     state.tick(NOW)
-    assert state.phase == "resume_readonly" and state.failure and stopped
+    assert state.phase == "waiting_account_recovery" and not state.failure and not stopped
     assert not live.activated and not gateway.sent and preflight.started == 0
 
 
@@ -435,6 +436,13 @@ class FakeLive(ScanState):
         self.active_pairs = 0
         self.stops = []
         self.instruments = []
+        self.account_scopes = {}
+        self.flat_account_problems = {}
+        self.halt_reason = None
+    def set_entry_pause(self, reason, now):
+        self.entry_pause_reason = reason
+    def flat_accounts_ready(self, now, after):
+        return False
     def register_instrument(self, *args):
         self.instruments.append(args)
     def activate(self, now):
@@ -504,7 +512,7 @@ def coordinator(tmp_path, *, saved=None, self_test_only=False, plan_path=None):
             live.update_book(market.instrument_id, BookSnapshot(market.venue, "BTC",
                 ((D(100), D(10)),), ((D("100.02"), D(10)),), NOW, NOW), NOW, evaluate=False)
     store = MemoryStore(saved)
-    proxy = SessionStoreProxy(store)
+    proxy = SessionStoreProxy(store, restart_from_flat=True)
     stopped = []
     result = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only, stop=lambda: stopped.append(True))
     preflight = FakePreflight(tuple(m for m in plan.scan.markets if m.symbol == "BTC"))
@@ -565,7 +573,7 @@ def test_restart_never_repeats_btc_risk_creation_before_reconciliation(tmp_path,
     state, live, preflight, gateway, _, stopped = coordinator(tmp_path, saved=saved)
     state.tick(NOW)
     assert preflight.started == 0 and not gateway.sent and not live.activated
-    assert state.failure and stopped
+    assert state.phase == "waiting_account_recovery" and not state.failure and not stopped
 
 
 def test_stop_drains_owned_residuals_and_keeps_nonzero_result_on_deadline(tmp_path):
@@ -642,25 +650,24 @@ def test_receipt_uses_current_bbo_without_retimestamping_native_account(tmp_path
     assert preflight.snapshot.bid == 101
 
 
-def test_dirty_native_shutdown_blocks_restart_even_with_flat_application_ledger(tmp_path):
+def test_dirty_native_shutdown_waits_for_current_accounts_even_with_flat_ledger(tmp_path):
     saved = {"schema_version": 1, "startup_complete": True,
         "startup": {"result": "passed", "owned_quantity": "0"},
         "native_shutdown": {"clean": False, "venues": {"BACKPACK": {"clean": False}}},
         "live": {"positions": [], "orders": {}}}
     state, live, preflight, gateway, _, stopped = coordinator(tmp_path, saved=saved)
     state.tick(NOW)
-    assert state.phase == "resume_readonly" and state.failure and stopped
+    assert state.phase == "waiting_account_recovery" and not state.failure and not stopped
     assert not gateway.sent and not live.activated and preflight.started == 0
 
 
-def test_unused_session_after_config_failure_can_start_its_first_btc_check(tmp_path):
+def test_unused_session_after_config_failure_waits_for_current_accounts(tmp_path):
     saved = {"schema_version": 1, "startup_complete": False, "startup": None,
         "live": {"positions": [], "orders": {}, "executions": {}, "request_sequence": 0}}
     state, live, preflight, gateway, _, stopped = coordinator(tmp_path, saved=saved)
     state.tick(NOW)
-    assert state.phase == "preflight" and not state.failure and not stopped
-    assert [intent.action for intent in gateway.sent] == ["connect"]
-    assert preflight.started == 1 and not live.activated
+    assert state.phase == "waiting_account_recovery" and not state.failure and not stopped
+    assert not gateway.sent and preflight.started == 0 and not live.activated
 
 
 @pytest.mark.parametrize("native_clean,node_finished,node_raises", [

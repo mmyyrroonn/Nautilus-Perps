@@ -65,7 +65,7 @@ def setup(tmp_path, *, saved=None):
         venues='["HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"]')),
         loss_monitor=LossMonitorPolicy(enabled=True))
     store = MemoryStore(saved)
-    proxy = SessionStoreProxy(store)
+    proxy = SessionStoreProxy(store, restart_from_flat=True)
     live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
                          max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
                          account_max_age_ms=plan.account_max_age_ms)

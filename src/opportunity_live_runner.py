@@ -261,17 +261,19 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
 
 class SessionStoreProxy:
     """Keep startup evidence and live ownership in one transactional state row."""
-    def __init__(self, store):
+    def __init__(self, store, *, restart_from_flat=False):
         self.store = store
         saved = store.load()
         if saved and (saved.get("schema_version") != 1 or saved.get("mode", "live") != "live"):
             raise ValueError("unknown live session envelope version")
         self.saved = saved
+        self.restart_pending = bool(saved and restart_from_flat)
         self.startup = saved.get("startup") if saved else None
         self.startup_complete = bool(saved and saved.get("startup_complete"))
         self.latest_live = saved.get("live") if saved else None
         self.native_shutdown = saved.get("native_shutdown") if saved else None
         self.account_gate = saved.get("account_gate") if saved else None
+        self.account_recovery = saved.get("account_recovery") if saved else None
         self.balance_check = saved.get("balance_check") if saved else None
         self.loss_monitor = saved.get("loss_monitor") if saved else None
         self.account_binding = getattr(store, "account_binding", None)
@@ -279,17 +281,41 @@ class SessionStoreProxy:
             raise ValueError("live envelope account binding does not match its ledger")
 
     def load(self):
-        return self.latest_live
+        # Keep the prior ledger durable while a fresh, inactive state reads the
+        # exchange accounts. Never replay old trading intents during this check.
+        return None if self.restart_pending else self.latest_live
 
     def save(self, snapshot, events):
         self.latest_live = snapshot
-        self.store.save({"schema_version": 1, "mode": "live", "startup_complete": self.startup_complete,
+        if self.restart_pending:
+            self.store.save({**self.saved, "account_recovery": self.account_recovery}, events)
+            return
+        self.store.save(self._document(snapshot), events)
+
+    def _document(self, snapshot):
+        return {"schema_version": 1, "mode": "live", "startup_complete": self.startup_complete,
                          "account_binding": self.account_binding,
                          "startup": self.startup, "account_gate": self.account_gate,
+                         "account_recovery": self.account_recovery,
                          "balance_check": self.balance_check,
                          "loss_monitor": self.loss_monitor,
                          "native_shutdown": self.native_shutdown,
-                         "live": snapshot}, events)
+                         "live": snapshot}
+
+    def complete_restart(self, snapshot, now_ns):
+        if not self.restart_pending or (self.account_recovery or {}).get("result") != "passed":
+            raise ValueError("restart requires fresh complete flat-account proof")
+        document = {**self._document(snapshot), "startup_complete": False, "startup": None,
+                    "native_shutdown": None, "account_gate": None, "loss_monitor": None}
+        # Archive and replace in the same SQLite transaction. Historical fills
+        # and unresolved economics stay evidence, not fabricated closing trades.
+        self.store.save(document, [{"event": "previous_session_archived", "observed_ns": now_ns,
+            "reason": "current_accounts_confirmed_flat", "previous_session": self.saved,
+            "account_recovery": self.account_recovery}])
+        self.restart_pending = False
+        self.startup_complete = False
+        self.startup = self.native_shutdown = self.account_gate = self.loss_monitor = None
+        self.latest_live = snapshot
 
     def checkpoint_loss_monitor(self, document, now_ns):
         if document != self.loss_monitor:
@@ -309,6 +335,12 @@ class SessionStoreProxy:
         self.save(self.latest_live or {}, [{"event": "startup_account_gate",
                   "result": result, "observed_ns": now_ns,
                   "instrument_ids": self.account_gate["instrument_ids"]}])
+
+    def checkpoint_account_recovery(self, document, now_ns):
+        if document != self.account_recovery:
+            self.account_recovery = document
+            self.save(self.latest_live or {}, [{"event": "startup_account_recovery",
+                                               "observed_ns": now_ns, **document}])
 
     @timed("startup.checkpoint")
     def checkpoint_startup(self, preflight):
@@ -342,12 +374,13 @@ def native_quote(state, instrument_id, now_ns):
 class LiveCoordinator:
     """Route callbacks and durable intents across startup and continuous trading."""
     def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None, balance_reporter=None,
-                 initial_balance=None, loss_reporter=None):
+                 initial_balance=None, loss_reporter=None, account_reporter=None):
         from opportunity_balances import StartupBalanceCheck
         self.plan, self.live, self.proxy = plan, live, proxy
         self.loss_monitor = SessionLossMonitor(getattr(plan, "loss_monitor", LossMonitorPolicy()),
                                                plan.venues, plan.account_max_age_ms)
         self.loss_reporter = loss_reporter or (lambda document: None)
+        self.account_reporter = account_reporter or (lambda document: None)
         self.stop_reason = None
         self.balance_check = StartupBalanceCheck(plan.venues, enabled=plan.startup_balance_check,
             timeout_secs=plan.startup_timeout_secs, max_age_ms=plan.account_max_age_ms)
@@ -375,38 +408,15 @@ class LiveCoordinator:
         self.phase = "waiting_books"
         self.failure = None
         self.started_ns = None
+        self.account_recovery_completed_ns = None
+        self.account_recovery_after_ns = None
         self.stop_requested_ns = None
         self.finished = False
         if proxy.saved:
-            # Native pending-order recovery needs original-ID execution evidence.
-            # Never rerun a risk-creating BTC test on an interrupted session.
-            self.phase = "resume_readonly"
-            self.failure = "saved session requires original-ID account/order reconciliation before execution"
-            startup = proxy.startup or {}
-            clean_startup = (proxy.startup_complete and startup.get("result") == "passed"
-                and Decimal(startup.get("owned_quantity", "0")) == 0
-                and not startup.get("unresolved_client_order_ids")
-                and not any(Decimal(q) for q in startup.get("late_residuals_by_venue", {}).values()))
-            known_orders = all(order.get("terminal_ns") is not None
-                               for order in (proxy.latest_live or {}).get("orders", {}).values())
-            native_clean = proxy.native_shutdown is None or proxy.native_shutdown.get("clean") is True
-            saved_live = proxy.latest_live or {}
-            # Config/credential failures can persist a session before a native
-            # client or startup intent ever ran. Such an unused session is safe
-            # to start; an interrupted startup journal still requires review.
-            unused = (proxy.startup is None and not proxy.startup_complete
-                and proxy.native_shutdown is None and not saved_live.get("orders")
-                and not saved_live.get("positions") and not saved_live.get("executions")
-                and saved_live.get("request_sequence", 0) == 0)
-            # Readonly startup checks create no BTC orders. Interrupted reads
-            # can be retried, but any trading self-test journal still fences risk.
-            account_only = (proxy.startup is None and not proxy.startup_complete and
-                ((proxy.account_gate or {}).get("result") == "passed" or
-                 not any(saved_live.get(key) for key in ("orders", "positions", "executions"))))
-            if (clean_startup or unused or account_only) and known_orders and native_clean and not saved_live.get("halt_reason"):
-                self.failure = None
-                self.phase = "recovery_reconcile" if (proxy.latest_live or {}).get("positions") else "waiting_books"
-        if plan.startup_balance_check and self.balance_check.result != "passed" and self.phase != "resume_readonly":
+            if not proxy.restart_pending:
+                raise ValueError("live restart must stage a fresh state before account reconciliation")
+            self.phase = "waiting_account_recovery"
+        if plan.startup_balance_check and self.balance_check.result != "passed":
             self.after_balance_phase, self.phase = self.phase, "waiting_balances"
 
     def attach(self, gateway, preflight=None):
@@ -423,6 +433,8 @@ class LiveCoordinator:
 
     def _live_intents(self, now_ns):
         for intent in self.live.drain_intents():
+            if self.proxy.restart_pending and intent.action != "reconcile":
+                raise RuntimeError("startup account recovery cannot dispatch financial intents")
             if self.live.discard_paused_entry(intent, now_ns):
                 continue
             self.gateway.dispatch(intent, now_ns)
@@ -430,6 +442,9 @@ class LiveCoordinator:
     @timed("coordinator.receipt")
     def on_receipt(self, receipt, now_ns=None):
         now_ns = time.time_ns() if now_ns is None else now_ns
+        if self.proxy.restart_pending and receipt.request_id not in self.live.account_request_ids.values():
+            self._restart_activity(now_ns)
+            return
         if self.preflight and receipt.request_id in self.preflight.requests:
             snapshot = getattr(self.preflight, "snapshot", None)
             if snapshot is not None:
@@ -446,10 +461,19 @@ class LiveCoordinator:
     @timed("coordinator.fill")
     def on_fill(self, fill, now_ns=None):
         now_ns = time.time_ns() if now_ns is None else now_ns
+        if self.proxy.restart_pending:
+            self._restart_activity(now_ns)
+            return
         if self.preflight and fill["client_order_id"] in self.preflight.orders:
             return  # The preflight receives distinct incremental fill receipts.
         self.live.on_fill(fill, now_ns)
         self._live_intents(now_ns)
+
+    def _restart_activity(self, now_ns):
+        # A private order/fill callback invalidates earlier flat observations.
+        # Re-read current state instead of replaying an archived order lifecycle.
+        self.account_recovery_after_ns = max(self.account_recovery_after_ns or 0, now_ns + 1)
+        self.live.emit("startup_account_activity", now_ns)
 
     @timed("coordinator.account", labels=lambda self, snapshot, *a, **kw: (snapshot.venue, ""))
     def on_account(self, snapshot, now_ns=None):
@@ -463,6 +487,11 @@ class LiveCoordinator:
         if self.stop_requested_ns is None:
             self.stop_reason = reason
             self.stop_requested_ns = now_ns
+            if self.proxy.restart_pending:
+                self.failure = self.failure or "startup account recovery interrupted; previous session retained"
+                self.finished = True
+                self.stop()
+                return
             if self.phase == "waiting_balances":
                 self.balance_check.interrupt(now_ns)
                 self.proxy.checkpoint_balance_check(self.balance_check.document())
@@ -493,17 +522,14 @@ class LiveCoordinator:
         signal_flag = getattr(self, "stop_signal", None)
         if signal_flag is not None and signal_flag.is_set() and self.stop_requested_ns is None:
             self.request_stop(now_ns)
+            if self.finished:
+                return
         if self.started_ns is None:
             self.started_ns = now_ns
         if self.phase == "active" and self.loss_monitor.due(now_ns):
             # Fence quote callbacks before processing any pending receipts.
             self.live.set_entry_pause("session_loss_check", now_ns)
         self.gateway.poll(now_ns)
-        if self.phase == "resume_readonly":
-            # The bridge can supply readonly evidence; no startup/strategy writes.
-            self.finished = True
-            self.stop()
-            return
         if self.phase == "waiting_balances":
             self.balance_check.tick(self.gateway, now_ns)
             self.proxy.checkpoint_balance_check(self.balance_check.document())
@@ -515,14 +541,34 @@ class LiveCoordinator:
                 self.stop()
                 return
             self.phase = self.after_balance_phase
+        if self.phase == "waiting_account_recovery":
+            self.live.set_entry_pause("startup_account_recovery", now_ns)
+            after_ns = max(self.started_ns, self.account_recovery_after_ns or 0)
+            ready = self.live.flat_accounts_ready(now_ns, after_ns) and not self.live.halt_reason
+            self._live_intents(now_ns)
+            document = {
+                "result": "passed" if ready else "checking", "started_ns": self.started_ns,
+                "completed_ns": now_ns if ready else None,
+                "required_after_ns": after_ns,
+                "account_problems": dict(self.live.flat_account_problems),
+                "read_started_ns": {scope[0] + (":" + scope[1] if scope[1] else ""):
+                    self.live.accounts[self.live._account_representative(instruments)].observed_ns
+                    for scope, instruments in self.live.account_scopes.items()
+                    if self.live._account_representative(instruments) in self.live.accounts},
+            }
+            if document != self.proxy.account_recovery:
+                self.proxy.checkpoint_account_recovery(document, now_ns)
+                self.account_reporter(document)
+            if not ready:
+                # Reuse account backoff/Retry-After; no timeout can certify flatness.
+                return
+            self.account_recovery_completed_ns = now_ns
+            self.proxy.complete_restart(self.live.snapshot(), now_ns)
+            self.live.set_entry_pause(None, now_ns)
+            self.phase = "waiting_books"
         if (self.loss_monitor.policy.enabled and self.stop_requested_ns is None
                 and (self.phase == "active" or self.loss_monitor.baseline_usd is None)):
             monitor = self.loss_monitor
-            if monitor.baseline_usd is None and self.phase == "recovery_reconcile" and self._has_residual():
-                self.failure = "session loss baseline requires flat startup accounts; saved inventory remains durable"
-                self.finished = True
-                self.stop()
-                return
             monitor.tick(self.gateway, self.live, now_ns, has_residual=self._has_residual())
             self._live_intents(now_ns)
             document = monitor.document()
@@ -536,18 +582,8 @@ class LiveCoordinator:
                 # No self-test or continuous entry before this run's own baseline.
                 return
         startup_wait_started_ns = max(self.balance_check.completed_ns or 0, self.started_ns)
+        startup_wait_started_ns = max(startup_wait_started_ns, self.account_recovery_completed_ns or 0)
         startup_wait_started_ns = max(startup_wait_started_ns, self.loss_monitor.baseline_ns or 0)
-        if self.phase == "recovery_reconcile":
-            required = {p[f"{leg}_id"] for p in self.live.positions.values() for leg in ("buy", "sell")}
-            ready = [self.live._account_ready(instrument_id, now_ns) for instrument_id in required]
-            self._live_intents(now_ns)
-            if all(ready) and self.live.activate(now_ns):
-                self.phase = "active"
-            elif now_ns - startup_wait_started_ns >= self.plan.scan.connection_timeout_secs * 1_000_000_000:
-                self.phase, self.finished = "resume_readonly", True
-                self.failure = "persisted inventory did not match authoritative account evidence; no new orders dispatched"
-                self.stop()
-                return
         if self.phase == "waiting_books":
             try:
                 for market in self.preflight.markets if self.startup_self_test else self.account_markets:
@@ -632,7 +668,8 @@ class LiveCoordinator:
                 "startup_self_test_enabled": self.startup_self_test,
                 "balance_check": self.balance_check.document(),
                 "account_gate": self.proxy.account_gate,
-                "startup": self.proxy.startup if self.phase in {"resume_readonly", "recovery_reconcile"} or (
+                "account_recovery": self.proxy.account_recovery,
+                "startup": self.proxy.startup if self.proxy.restart_pending or (
                     self.preflight and self.preflight.stage == "not_started" and self.proxy.startup_complete) else
                     self.preflight.document() if self.preflight else self.proxy.startup,
                 "live": self.live.document()}
@@ -820,7 +857,7 @@ def run_live(plan, *, self_test_only=False):
                            account_binding=binding.document())
         guard.claim(store)
         with span("startup.restore_session"):
-            proxy = SessionStoreProxy(store)
+            proxy = SessionStoreProxy(store, restart_from_flat=True)
             live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
                 max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
                 max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
@@ -830,6 +867,8 @@ def run_live(plan, *, self_test_only=False):
                 initial_balance=initial_balance,
                 loss_reporter=lambda document: print(json.dumps(
                     {"event": "session_loss_check", **document}), flush=True),
+                account_reporter=lambda document: print(json.dumps(
+                    {"event": "startup_account_recovery", **document}), flush=True),
                 balance_reporter=lambda document: print(json.dumps(
                     {"event": "startup_balance_check", **document}), flush=True))
         coordinator.stop_signal = stop_signal
@@ -855,7 +894,7 @@ def run_live(plan, *, self_test_only=False):
             coordinator.failure = coordinator.failure or "native shutdown lacks complete clean account/order proof"
         if not coordinator.finished:
             coordinator.failure = coordinator.failure or "native node stopped before strategy shutdown completed"
-        if coordinator.preflight and coordinator.phase != "resume_readonly" and coordinator.preflight.stage != "not_started":
+        if coordinator.preflight and not proxy.restart_pending and coordinator.preflight.stage != "not_started":
             proxy.checkpoint_startup(coordinator.preflight)
         proxy.save(live.snapshot(), [])
         release_claim = not (coordinator.failure or coordinator._has_residual() or observer.failure)

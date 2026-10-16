@@ -118,6 +118,7 @@ def test_synchronous_account_failure_blocks_remaining_entries_in_drained_batch(f
     sent = []
     coordinator = LiveCoordinator.__new__(LiveCoordinator)
     coordinator.live = live
+    coordinator.proxy = NS(restart_pending=False)
     def dispatch(intent, timestamp):
         if intent.action == "submit":
             sent.append(intent)
