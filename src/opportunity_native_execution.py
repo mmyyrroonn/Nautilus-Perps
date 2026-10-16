@@ -421,6 +421,13 @@ class NativeOrderGateway:
             started = payload.get("snapshot_started_ns", 0)
             if type(started) is not int or started < self.requests[intent.request_id]["sent_ns"]:
                 return
+            completed = payload.get("snapshot_completed_ns")
+            if type(completed) is int and 0 < started <= completed and completed > now_ns:
+                # The native clock can advance past this poll's sampled wall time
+                # (notably CPython 3.12's coarser Windows clock). Keep the original
+                # request pending until time catches up; never relabel or admit a
+                # future snapshot. The existing account deadline remains in force.
+                return
             complete = payload.get("coverage_complete") if intent.venue == "ONDO" else payload.get("complete")
             connected = payload.get("connected_ready") if intent.venue == "ONDO" else payload.get("connected")
             if connected is False:

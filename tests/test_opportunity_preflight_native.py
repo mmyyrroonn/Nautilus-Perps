@@ -93,6 +93,7 @@ class AutomaticCheck:
         self.commands = []
         self.accounts = []
         self.receipts = []
+        self.receipt_times = []
         self.fills = []
         market = SimpleNamespace(venue=venue, instrument_id=instrument_id,
             quote_to_usd=Decimal(1), canonical_multiplier=Decimal(1))
@@ -116,6 +117,7 @@ class AutomaticCheck:
     def receipt(self, receipt):
         now_ns = time.time_ns()
         self.receipts.append(receipt)
+        self.receipt_times.append((now_ns, receipt.request_id, receipt.kind))
         if self.preflight.snapshot is not None:
             bid, ask, stamp = self.quote(self.instrument_id, now_ns)
             self.preflight.snapshot = replace(self.preflight.snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
@@ -328,6 +330,7 @@ def test_ondo_native_account_gateway_drives_automatic_btc_preflight(tmp_path):
             watchdog.cancel()
             handle.stop()
             (tmp_path / "ondo-debug.json").write_text(json.dumps({"requests": peer.requests, "frames": peer.frames,
+                "gateway_error": check.gateway.last_error, "receipt_times": check.receipt_times,
                 "readonly": factory.read_only_snapshot(), "native": factory.production_trade_snapshot(),
                 "preflight": None if check.preflight is None else check.preflight.document(), "errors": errors,
                 "receipts": [(r.request_id, r.kind, str(r.filled_quantity)) for r in check.receipts]}, default=str, indent=2))

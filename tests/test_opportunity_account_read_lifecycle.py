@@ -225,3 +225,38 @@ def test_invalid_native_evidence_fails_without_reusing_the_old_request(recovery)
     assert not state.gateway.native_reads and not state.accounts and not state.worker.jobs
     state.gateway.poll(state.now + SECOND)
     assert len(state.receipts) == 1
+
+
+def test_snapshot_completed_after_poll_time_waits_without_restarting_read(recovery):
+    state = recovery
+    original = request_account(state)
+    started = NOW + 74_000_000
+    snapshot(state, started)
+    state.now = NOW + 146_000_000
+    completed = state.now + 1_000_000
+    state.snapshot["snapshot_completed_ns"] = completed
+    state.gateway.poll(state.now)
+    assert not state.receipts and not state.accounts and not state.worker.jobs
+    assert state.live.account_request_ids[state.instrument] == original.request_id
+    state.now = completed + 50_000_000
+    state.gateway.poll(state.now)
+    state.worker.finish()
+    state.gateway.poll(state.now)
+    assert state.accounts[0].observed_ns == started
+    assert state.captured["snapshot_completed_ns"] == completed
+    assert state.live.flat_accounts_ready(state.now, NOW)
+    assert not state.receipts and not state.live.drain_intents()
+
+
+def test_persistent_future_snapshot_still_expires_original_account_request(recovery):
+    state = recovery
+    original = request_account(state)
+    snapshot(state, NOW + SECOND)
+    state.snapshot["snapshot_completed_ns"] = NOW + 60 * SECOND
+    state.now = NOW + 2 * SECOND
+    state.gateway.poll(state.now)
+    assert not state.worker.jobs and not state.receipts
+    state.now = NOW + 20 * SECOND
+    state.gateway.poll(state.now)
+    assert [(r.request_id, r.kind) for r in state.receipts] == [(original.request_id, "unknown")]
+    assert not state.accounts and not state.worker.jobs and not state.gateway.native_reads
