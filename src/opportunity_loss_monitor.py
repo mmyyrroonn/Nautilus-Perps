@@ -49,7 +49,8 @@ def flat_equity(snapshot, venue, now_ns, max_age_ms, activity_ns, required_curre
     """
     stamp = snapshot.get("observed_ns")
     if (snapshot.get("venue") != venue or type(stamp) is not int or stamp <= 0
-            or stamp < activity_ns or not 0 <= now_ns - stamp <= max_age_ms * 1_000_000):
+            or stamp < activity_ns or stamp > now_ns
+            or (max_age_ms is not None and now_ns - stamp > max_age_ms * 1_000_000)):
         raise BalanceUnavailable("equity_stale_or_before_activity")
     rows = snapshot.get("balances")
     if not isinstance(rows, list) or not rows:
@@ -89,8 +90,31 @@ class SessionLossMonitor:
         self.baseline_usd = self.current_usd = self.loss_usd = None
         self.baseline_ns = self.checked_ns = self.next_check_ns = None
         self.flat_since_ns = self.read_started_ns = None
+        self.attempt_started_ns = None
+        self.balance_epoch_ns = None
+        self.invalidated_after_ns = 0
+        self.collected_venues, self.queried_ns = {}, {}
         self.baseline_venues, self.latest_venues, self.reasons = {}, {}, {}
         self.required_currencies = {venue: set() for venue in venues}
+
+    def seed_startup_balances(self, check):
+        """Reuse only the validated balance precheck from this invocation."""
+        if self.baseline_usd is not None or check.get("result") != "passed":
+            return
+        for venue in self.venues:
+            snapshot = check["venues"][venue]
+            try:
+                self.collected_venues[venue] = flat_equity(
+                    snapshot, venue, snapshot["read_ns"], self.max_age_ms, self.invalidated_after_ns)
+            except BalanceUnavailable:
+                # A successful raw read can still contain unvalued currencies.
+                # Leave that venue pending for the normal baseline diagnostics.
+                continue
+
+    def invalidate(self, after_ns):
+        self.invalidated_after_ns = max(self.invalidated_after_ns, after_ns)
+        self.collected_venues.clear()
+        self.queried_ns.clear()
 
     def due(self, now_ns):
         return (self.policy.enabled and self.status != "breached"
@@ -100,23 +124,31 @@ class SessionLossMonitor:
         self.status = "paused"
         self.next_check_ns = now_ns + self.policy.retry_interval_secs * 1_000_000_000
 
-    def tick(self, gateway, live, now_ns, *, has_residual):
+    def tick(self, gateway, live, now_ns, *, has_residual, account_after_ns=None):
         if not self.due(now_ns):
             return
         live.set_entry_pause("session_loss_check", now_ns)
         if self.status in {"baseline_pending", "ready", "paused"}:
+            if self.status == "ready":
+                self.flat_since_ns = None
+                self.collected_venues.clear()
+                self.queried_ns.clear()
             self.status = "waiting_flat"
-            self.flat_since_ns = self.read_started_ns = None
+            self.attempt_started_ns = now_ns
+            self.read_started_ns = None
             self.reasons = {}
         if has_residual:
             # Entry receipts, normal exits and existing risk exits keep running.
             self.flat_since_ns = self.read_started_ns = None
+            self.collected_venues.clear()
+            self.queried_ns.clear()
+            self.attempt_started_ns = now_ns
             self.status = "waiting_flat"
             return
         if self.flat_since_ns is None:
-            self.flat_since_ns = now_ns
-        if now_ns - self.flat_since_ns >= self.policy.read_timeout_secs * 1_000_000_000:
-            self.reasons.setdefault("account", "flat_equity_read_timeout")
+            self.flat_since_ns = account_after_ns if account_after_ns is not None else now_ns
+        if now_ns - self.attempt_started_ns >= self.policy.read_timeout_secs * 1_000_000_000:
+            self.reasons["timeout"] = "flat_equity_read_timeout"
             self._pause(now_ns)
             return
         if not live.flat_accounts_ready(now_ns, self.flat_since_ns):
@@ -126,30 +158,42 @@ class SessionLossMonitor:
         self.reasons.clear()
         if self.read_started_ns is None:
             self.read_started_ns, self.status = now_ns, "checking"
-            for venue in self.venues:
+        for venue in self.venues:
+            activity_ns = max(self.invalidated_after_ns, max(
+                (stamp for instrument, stamp in live.fences.items()
+                 if live.markets[instrument].venue == venue), default=0))
+            row = self.collected_venues.get(venue)
+            if row is not None and row["observed_ns"] >= activity_ns:
+                continue
+            self.collected_venues.pop(venue, None)
+            if (venue not in self.queried_ns or now_ns - self.queried_ns[venue]
+                    >= self.policy.retry_interval_secs * 1_000_000_000):
                 try:
                     gateway.query_balance(venue)
+                    self.queried_ns[venue] = now_ns
                 except Exception:
-                    # Native errors may contain private URLs or response data.
                     self.reasons[venue] = "equity_query_failed"
-            if self.reasons:
-                self._pause(now_ns)
-                return
-        rows = {}
-        for venue in self.venues:
+                    self._pause(now_ns)
+                    return
             try:
-                snapshot = gateway.read_balance(venue, now_ns, self.max_age_ms)
-                activity_ns = max((stamp for instrument, stamp in live.fences.items()
-                                   if live.markets[instrument].venue == venue), default=0)
-                rows[venue] = flat_equity(snapshot, venue, now_ns, self.max_age_ms,
-                                         activity_ns, self.required_currencies[venue])
+                read_since = getattr(gateway, "read_balance_since", None)
+                if self.balance_epoch_ns is not None and callable(read_since):
+                    boundary = max(activity_ns, self.balance_epoch_ns)
+                    snapshot = read_since(venue, now_ns, boundary)
+                    max_age_ms = None
+                else:
+                    boundary, max_age_ms = activity_ns, self.max_age_ms
+                    snapshot = gateway.read_balance(venue, now_ns, max_age_ms)
+                self.collected_venues[venue] = flat_equity(snapshot, venue, now_ns, max_age_ms,
+                                                          boundary, self.required_currencies[venue])
                 self.reasons.pop(venue, None)
             except BalanceUnavailable as exc:
                 self.reasons[venue] = str(exc)
             except Exception:
                 self.reasons[venue] = "equity_read_invalid"
-        if len(rows) != len(self.venues):
+        if len(self.collected_venues) != len(self.venues):
             return
+        rows = dict(self.collected_venues)
         self.latest_venues = rows
         total = sum((Fraction(row["equity_usd"]) for row in rows.values()), Fraction(0))
         self.current_usd, self.checked_ns = str(exact_decimal(total)), now_ns
@@ -171,4 +215,5 @@ class SessionLossMonitor:
                 "loss_usd": self.loss_usd, "baseline_ns": self.baseline_ns,
                 "checked_ns": self.checked_ns, "next_check_ns": self.next_check_ns,
                 "baseline_venues": self.baseline_venues, "venues": self.latest_venues,
+                "collected_venues": dict(self.collected_venues),
                 "reasons": dict(self.reasons)}

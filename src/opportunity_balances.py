@@ -46,8 +46,19 @@ class NativeBalanceReader:
     def read_balance(self, venue, now_ns, max_age_ms):
         return native_balance_snapshot(self.strategy.cache, venue, self._account_id(venue), now_ns, max_age_ms)
 
+    def read_balance_since(self, venue, now_ns, after_ns):
+        """Read this session's event after own activity, preserving its timestamp.
 
-def native_balance_snapshot(cache, venue, account_id, now_ns, max_age_ms):
+        Quiet account streams need not publish unchanged balances periodically.
+        This path is used only together with a complete flat-account check.
+        """
+        if type(after_ns) is not int or after_ns <= 0:
+            raise ValueError("balance observation boundary must be positive")
+        return native_balance_snapshot(self.strategy.cache, venue, self._account_id(venue),
+                                       now_ns, None, after_ns=after_ns)
+
+
+def native_balance_snapshot(cache, venue, account_id, now_ns, max_age_ms, *, after_ns=0):
     """Read the latest reported event, never relabel older cache rows as fresh.
 
     Some native adapters have no venue timestamp (ts_event=0). Freshness uses the
@@ -62,7 +73,8 @@ def native_balance_snapshot(cache, venue, account_id, now_ns, max_age_ms):
     if account.id != account_id or event.account_id != account_id:
         raise BalanceUnavailable("balance_account_mismatch")
     stamp = event.ts_init
-    if type(stamp) is not int or stamp <= 0 or not 0 <= now_ns - stamp <= max_age_ms * 1_000_000:
+    if (type(stamp) is not int or stamp <= 0 or stamp > now_ns or stamp < after_ns
+            or (max_age_ms is not None and now_ns - stamp > max_age_ms * 1_000_000)):
         raise BalanceUnavailable("balance_stale_or_invalid_time")
     rows, seen = [], set()
     for balance in event.balances:

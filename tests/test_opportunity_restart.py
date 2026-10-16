@@ -228,7 +228,9 @@ def test_traded_restart_takes_new_loss_baseline_after_manual_cleanup(tmp_path):
     coordinator.tick(NOW + 5 * SECOND + 1)
     coordinator.tick(NOW + 5 * SECOND + 2)
     assert coordinator.loss_monitor.baseline_usd == "5000" and not stopped
-    assert coordinator.loss_monitor.next_check_ns == NOW + 605 * SECOND + 2
+    # Recovery and baseline now reuse the same completed account proof.
+    assert coordinator.loss_monitor.checked_ns == NOW + 5 * SECOND + 1
+    assert coordinator.loss_monitor.next_check_ns == coordinator.loss_monitor.checked_ns + 600 * SECOND
     assert store.saved["live"]["realized_net_usd"] == "0"
     assert all(i.action == "reconcile" for i in gateway.sent)
 

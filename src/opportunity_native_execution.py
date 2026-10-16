@@ -211,12 +211,14 @@ def _fill_signature(fill):
 class NativeOrderGateway:
     def __init__(self, strategy, markets, on_receipt, on_account, on_fill, *,
                  reader=None, environment="mainnet", model=None, timeout_secs=10,
-                 quote_provider=None, native_controls=None, account_timeout_secs=None, environ=None):
+                 quote_provider=None, native_controls=None, account_timeout_secs=None, environ=None,
+                 account_max_age_ms=15000):
         self.strategy = strategy
         rows = markets.values() if isinstance(markets, dict) else markets
         self.markets = {m.instrument_id: m for m in rows}
         self.on_receipt, self.on_account, self.on_fill = on_receipt, on_account, on_fill
-        self.reader = reader or ReadOnlyAccountReader(environment=environment, environ=environ)
+        self.reader = reader or ReadOnlyAccountReader(environment=environment, environ=environ,
+            max_native_snapshot_age_ms=account_max_age_ms)
         self.environment = environment
         self.model = model or _native()
         self.timeout_ns = timeout_secs * 1_000_000_000
@@ -251,6 +253,10 @@ class NativeOrderGateway:
     def read_balance(self, venue, now_ns, max_age_ms):
         from opportunity_balances import NativeBalanceReader
         return NativeBalanceReader(self.strategy, self.model).read_balance(venue, now_ns, max_age_ms)
+
+    def read_balance_since(self, venue, now_ns, after_ns):
+        from opportunity_balances import NativeBalanceReader
+        return NativeBalanceReader(self.strategy, self.model).read_balance_since(venue, now_ns, after_ns)
 
     def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0), retry_after_secs=0):
         key = (intent.request_id, kind, execution_id)
