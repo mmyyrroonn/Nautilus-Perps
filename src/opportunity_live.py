@@ -317,8 +317,9 @@ class LiveTradeState(ScanState):
         # query per market. Legacy instrument-only readers retain their scope.
         if not observations or any(a.account_positions is not None for a in observations):
             instrument_id = self._account_representative(instruments)
-        last = self.account_requests.get(instrument_id, 0)
-        if last and now_ns - last < max(self.retry_ns, self.order_timeout_ns):
+        # The gateway owns the account-read deadline, which can exceed the
+        # order timeout. Do not replace a still-pending request with a new ID.
+        if instrument_id in self.account_request_ids:
             return
         if now_ns - self.account_last_reads.get(instrument_id, 0) < self.retry_ns:
             return

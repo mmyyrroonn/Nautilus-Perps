@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 import time
 
-from opportunity_account_reader import ReadOnlyAccountReader
+from opportunity_account_reader import AccountReadError, ReadOnlyAccountReader
 from opportunity_preflight import ExecutionReceipt
 
 
@@ -417,9 +417,12 @@ class NativeOrderGateway:
                 return
             complete = payload.get("coverage_complete") if intent.venue == "ONDO" else payload.get("complete")
             connected = payload.get("connected_ready") if intent.venue == "ONDO" else payload.get("connected")
+            if connected is False:
+                self.native_reads.pop(intent.request_id, None)
+                self.last_error = "native account connection is not ready"
+                self._receipt(intent, "unknown")
+                return
             if complete is not True or connected is not True:
-                if intent.account_check:
-                    self._receipt(intent, "unknown")
                 return
             self.reader.capture_native_evidence(intent.venue, payload, native_environment=self.environment)
             market = self.markets[intent.instrument_id]
@@ -438,12 +441,32 @@ class NativeOrderGateway:
                 multiplier=_decimal(getattr(instrument, "multiplier", Decimal(1))))
             self.reads[intent.request_id] = self.worker.submit(self.reader.read, market, bid, ask, now_ns)
             self.native_reads.pop(intent.request_id, None)
+        except AccountReadError as exc:
+            # A rejected observation is a failed read, not a cycle still being
+            # assembled. Retire it before publishing failure to the strategy.
+            self.native_reads.pop(intent.request_id, None)
+            self.last_error = str(exc)
+            self._receipt(intent, "unknown", retry_after_secs=exc.retry_after_secs)
         except (RuntimeError, ValueError, KeyError):
             # Startup/recovery may not yet have a complete authoritative cycle.
-            # A missing response is an unresolved read, never a fabricated zero.
+            # Keep the request pending until its account deadline. Reporting a
+            # failure here would invalidate the cycle we are still waiting for.
             self.last_error = "native account evidence is not yet complete or fresh"
-            if intent.account_check:
-                self._receipt(intent, "unknown")
+
+    def _expire_account_reads(self, now_ns):
+        for request_id in tuple(self.native_reads) + tuple(self.reads):
+            request = self.requests[request_id]
+            if request.get("read_timed_out") or now_ns - request["sent_ns"] < self.account_timeout_ns:
+                continue
+            request["read_timed_out"] = True
+            self.native_reads.pop(request_id, None)
+            future = self.reads.get(request_id)
+            # A running worker cannot be canceled. Retain it only to prevent
+            # overlapping reads, and discard its result when it finishes.
+            if future is not None and (future.cancel() or future.done()):
+                self.reads.pop(request_id)
+            self.last_error = "account read timed out; late result will not be used"
+            self._receipt(request["intent"], "unknown")
 
     def restore_pending(self, intent, processed_fills, now_ns):
         """Adopt a journaled submission for queries only; never resubmit it.
@@ -570,6 +593,9 @@ class NativeOrderGateway:
     def poll(self, now_ns):
         if self.closed:
             return
+        # Expire before consuming a newly available result: completion after
+        # the deadline cannot revive a failed request or satisfy a newer one.
+        self._expire_account_reads(now_ns)
         control = self.native_controls.get("BACKPACK")
         if control is not None:
             # Native fill consumption durably checkpoints real cache/receipt facts.
@@ -588,6 +614,9 @@ class NativeOrderGateway:
             self._start_native_read(intent, now_ns)
         for request_id, future in tuple(self.reads.items()):
             if not future.done():
+                continue
+            if self.requests[request_id].get("read_timed_out"):
+                self.reads.pop(request_id)
                 continue
             intent = self.requests[request_id]["intent"]
             try:
@@ -640,8 +669,6 @@ class NativeOrderGateway:
         for request in tuple(self.requests.values()):
             intent = request["intent"]
             if intent.action in {"connect", "reconcile"}:
-                if (intent.request_id in self.reads or intent.request_id in self.native_reads) and now_ns - request["sent_ns"] >= self.account_timeout_ns:
-                    self._receipt(intent, "unknown")
                 continue
             passive_accepted = intent.action == "submit" and intent.time_in_force == "GTC" and (intent.request_id, "accepted", "") in self.emitted
             if passive_accepted or (intent.request_id, "updated", "") in self.emitted or any(
