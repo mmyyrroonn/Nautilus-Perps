@@ -488,7 +488,7 @@ def _aster_client(instrument_ids: Sequence[str]) -> tuple[object, object]:
         AsterDataClientConfig(
             environment=AsterEnvironment.MAINNET,
             # Aster rate-limits exchangeInfo hard: never load_all, only what we watch.
-            instrument_provider=BinanceInstrumentProviderConfig(load_ids=list(instrument_ids)),
+            instrument_provider=BinanceInstrumentProviderConfig(load_all=False, load_ids=list(instrument_ids)),
         ),
     )
 

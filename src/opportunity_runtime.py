@@ -277,6 +277,8 @@ def create_observer(plan, state, stop, client_configs):
                         self.pending_aster.append(instrument_id)
                     else:
                         self.subscribe_market(instrument_id)
+                self.pending_aster = deque(sorted(self.pending_aster,
+                    key=lambda i: (self.markets[i].symbol != "BTC", str(i))))
                 self.advance_subscriptions(time.time_ns())
                 self.last_display_ns = time.time_ns()
                 self.last_evaluation_ns = self.last_display_ns

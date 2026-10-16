@@ -252,13 +252,14 @@ class NativeOrderGateway:
         from opportunity_balances import NativeBalanceReader
         return NativeBalanceReader(self.strategy, self.model).read_balance(venue, now_ns, max_age_ms)
 
-    def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0)):
+    def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0), retry_after_secs=0):
         key = (intent.request_id, kind, execution_id)
         if key in self.emitted:
             return
         self.emitted.add(key)
         self._record_outcome(intent, kind)
-        self.on_receipt(ExecutionReceipt(intent.request_id, intent.client_order_id, kind, execution_id, quantity))
+        self.on_receipt(ExecutionReceipt(intent.request_id, intent.client_order_id, kind, execution_id, quantity,
+                                        retry_after_secs=retry_after_secs))
 
     def _record_outcome(self, intent, kind):
         request = self.requests.get(intent.request_id)
@@ -330,12 +331,13 @@ class NativeOrderGateway:
                 self._start_native_read(intent, now_ns)
                 return
             try:
-                bid, ask, _ = self._quote(intent.instrument_id, now_ns)
+                bid, ask = (None, None) if intent.account_check else self._quote(intent.instrument_id, now_ns)[:2]
                 # Snapshot time is the read's start fence, not the older quote's
                 # event time and never the response completion time.
                 self.reads[intent.request_id] = self.worker.submit(self.reader.read, market, bid, ask, now_ns)
             except Exception:
-                self._reject(intent, "account read could not start with a valid current quote")
+                self._reject(intent, "account read could not start" if intent.account_check else
+                             "account read could not start with a valid current quote")
             return
         if intent.action not in {"submit", "modify", "cancel"}:
             self._reject(intent, "unsupported gateway action")
@@ -398,7 +400,7 @@ class NativeOrderGateway:
     def _start_native_read(self, intent, now_ns):
         """Wait for a complete native cycle begun after this request's send fence."""
         try:
-            bid, ask, _ = self._quote(intent.instrument_id, now_ns)
+            bid, ask = (None, None) if intent.account_check else self._quote(intent.instrument_id, now_ns)[:2]
             control = self.native_controls[intent.venue]
             # PyO3 handles are unsendable. Capture evidence on the node thread,
             # then validate detached JSON through the independent reader.
@@ -590,8 +592,9 @@ class NativeOrderGateway:
             intent = self.requests[request_id]["intent"]
             try:
                 snapshot = future.result()
-                bid, ask, stamp = self._quote(intent.instrument_id, now_ns)
-                snapshot = replace(snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
+                if not intent.account_check:
+                    bid, ask, stamp = self._quote(intent.instrument_id, now_ns)
+                    snapshot = replace(snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
             except Exception as exc:
                 if future.exception() is None:
                     # Retain the completed account read until a current BBO is
@@ -599,7 +602,7 @@ class NativeOrderGateway:
                     continue
                 self.reads.pop(request_id)
                 self.last_error = str(exc) if type(exc).__name__ == "AccountReadError" else "authoritative account read failed"
-                self._receipt(intent, "unknown")
+                self._receipt(intent, "unknown", retry_after_secs=getattr(exc, "retry_after_secs", 0))
                 continue
             self.reads.pop(request_id)
             if not snapshot.authoritative or not snapshot.connected or snapshot.venue != intent.venue or snapshot.instrument_id != intent.instrument_id:

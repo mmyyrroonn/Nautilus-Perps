@@ -72,6 +72,15 @@ def test_native_absent_target_is_flat_only_after_complete_account_capture(venue)
 
 
 @pytest.mark.parametrize("venue", ["ONDO", "BACKPACK"])
+def test_whole_native_account_evidence_does_not_need_quotes(venue):
+    r = reader()
+    r.capture_native_evidence(venue, evidence(venue))
+    snapshot = r.read(market(venue), None, None, 90)
+    assert snapshot.authoritative and snapshot.bid is None and snapshot.book_observed_ns is None
+    assert snapshot.account_positions == () and snapshot.account_open_orders == ()
+
+
+@pytest.mark.parametrize("venue", ["ONDO", "BACKPACK"])
 def test_native_unknown_submit_never_certifies_flat(venue):
     r = reader()
     r.capture_native_evidence(venue, evidence(venue, unknown_submissions=1))

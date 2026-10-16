@@ -18,7 +18,7 @@ quantity_change_fraction = "0.1"
 
 [runtime]
 hyperliquid_fast_book = true
-connection_timeout_secs = 120
+connection_timeout_secs = 300
 duration_secs = 3600
 depth_levels = 20
 max_levels_per_side = 20000
@@ -26,7 +26,7 @@ refresh_ms = 1000
 top_n = 20
 evaluation_interval_ms = 100
 aster_snapshot_depth = 100
-aster_subscription_interval_ms = 500
+aster_subscription_interval_ms = 1000
 
 [[markets]]
 symbol = "0G"

@@ -164,3 +164,52 @@ def test_lighter_pending_and_conditional_orders_are_not_ignored():
             pending_order_count=1, position_tied_order_count=2))
     snapshot = reader.read(market("LIGHTER", "BTC-USD-PERP.LIGHTER"), D(100), D(101), 50)
     assert snapshot.position_quantity == 0 and snapshot.open_order_ids == ("unidentified:Lighter:BTC:3",)
+
+
+def test_lighter_complete_account_uses_configured_instrument_suffix_without_quotes():
+    reader = ReadOnlyAccountReader(environ={"LIGHTER_ACCOUNT_INDEX": "42"},
+        transport=lambda *args: lighter_payload())
+    snapshot = reader.read(market("LIGHTER", "BTC-PERP.LIGHTER"), None, None, 50)
+    assert snapshot.position_quantity == D("-.002")
+    assert snapshot.account_positions == (("BTC-PERP.LIGHTER", D("-.002")),)
+    assert snapshot.account_open_orders == (("BTC-PERP.LIGHTER", "unidentified:Lighter:BTC:1"),)
+    assert snapshot.bid is None and snapshot.ask is None and snapshot.book_observed_ns is None
+
+
+@pytest.mark.parametrize("status,header,expected", [
+    (429, "45", 45), (429, "Thu, 01 Jan 1970 00:02:25 GMT", 45),
+    (429, "invalid", 10), (418, "", 120), (500, "45", 0),
+])
+def test_http_failure_preserves_retry_after_without_private_response(monkeypatch, status, header, expected):
+    import opportunity_account_reader as module
+    from urllib.error import HTTPError
+    def fail(*args, **kwargs):
+        raise HTTPError("https://private.invalid/secret", status, "private message", {"Retry-After": header}, None)
+    monkeypatch.setattr(module, "build_opener", lambda *args: NS(open=fail))
+    monkeypatch.setattr(module.time, "time", lambda: 100)
+    with pytest.raises(AccountReadError) as caught:
+        module.http_json("GET", "https://private.invalid/secret")
+    assert caught.value.retry_after_secs == expected
+    assert str(caught.value) == f"account read HTTP {status}; private response omitted"
+
+
+def test_rate_limit_cooldown_survives_cache_invalidation_and_market_changes():
+    now, calls = [1_000_000_000], []
+    def transport(*args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise AccountReadError("rate limited", retry_after_secs=45)
+        return {"code": 200, "accounts": [{"index": 42, "positions": [],
+            "total_order_count": 0, "pending_order_count": 0, "total_isolated_order_count": 0}]}
+    reader = ReadOnlyAccountReader(environ={"LIGHTER_ACCOUNT_INDEX": "42"}, transport=transport,
+                                   clock_ns=lambda: now[0])
+    with pytest.raises(AccountReadError):
+        reader.read(market("LIGHTER", "BTC-PERP.LIGHTER"), None, None, now[0])
+    reader.invalidate("LIGHTER")
+    now[0] += 5_000_000_000
+    with pytest.raises(AccountReadError) as caught:
+        reader.read(market("LIGHTER", "ETH-PERP.LIGHTER"), None, None, now[0])
+    assert caught.value.retry_after_secs == 40 and len(calls) == 1
+    now[0] += 40_000_000_000
+    snapshot = reader.read(market("LIGHTER", "ETH-PERP.LIGHTER"), None, None, now[0])
+    assert snapshot.account_positions == () and len(calls) == 2

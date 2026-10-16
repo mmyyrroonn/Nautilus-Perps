@@ -180,9 +180,12 @@ def test_missing_or_unsafe_evidence_holds_admission_and_retries_without_false_lo
         setattr(gateway, fault, "ASTER")
     checked = coordinator.loss_monitor.checked_ns
     now = check_due(coordinator)
-    coordinator.tick(now + 60 * SECOND)
     monitor = coordinator.loss_monitor
+    if monitor.status != "paused":
+        now += 60 * SECOND
+        coordinator.tick(now)
     assert monitor.status == "paused" and live.entry_pause_reason and not stopped
+    assert monitor.next_check_ns == now + 5 * SECOND
     assert monitor.checked_ns == checked and monitor.loss_usd == "0"
     assert "PRIVATE" not in json.dumps(store.saved["loss_monitor"])
     queries = list(gateway.queries)
@@ -192,6 +195,7 @@ def test_missing_or_unsafe_evidence_holds_admission_and_retries_without_false_lo
     gateway.query_error = False
     check_due(coordinator)
     assert monitor.status == "ready" and not live.entry_pause_reason
+    assert monitor.next_check_ns == monitor.checked_ns + 600 * SECOND
 
 
 def test_failed_initial_read_never_activates_and_restart_takes_new_baseline(tmp_path):
@@ -207,6 +211,28 @@ def test_failed_initial_read_never_activates_and_restart_takes_new_baseline(tmp_
     coordinator, live, gateway, store, _, _ = setup(tmp_path, saved=saved)
     start(coordinator)
     assert coordinator.loss_monitor.baseline_usd == "5000"
+
+
+@pytest.mark.parametrize("fault", ["balance", "query", "account"])
+def test_failed_baseline_retries_in_five_seconds_then_keeps_ten_minute_period(tmp_path, fault):
+    coordinator, live, gateway, _, stopped, _ = setup(tmp_path)
+    gateway.bad_balance = "LIGHTER" if fault == "balance" else None
+    gateway.query_error = fault == "query"
+    gateway.foreign_order = "ASTER" if fault == "account" else None
+    coordinator.tick(NOW)
+    coordinator.tick(NOW + 1)
+    monitor = coordinator.loss_monitor
+    if monitor.status != "paused":
+        coordinator.tick(NOW + 60 * SECOND)
+    assert monitor.status == "paused" and monitor.baseline_usd is None
+    paused_at = NOW + 1 if fault == "query" else NOW + 60 * SECOND
+    assert monitor.next_check_ns == paused_at + 5 * SECOND
+    gateway.bad_balance = gateway.foreign_order = None
+    gateway.query_error = False
+    checked = check_due(coordinator)
+    assert monitor.status == "ready" and monitor.baseline_usd == "5000"
+    assert monitor.next_check_ns == checked + 600 * SECOND
+    assert not stopped and all(i.action == "reconcile" for i in gateway.sent)
 
 
 @pytest.mark.parametrize("fault", ["empty", "nonfinite", "unknown_currency", "missing_currency",
