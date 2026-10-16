@@ -231,7 +231,9 @@ def test_failed_baseline_retries_in_five_seconds_then_keeps_ten_minute_period(tm
     gateway.query_error = False
     checked = check_due(coordinator)
     assert monitor.status == "ready" and monitor.baseline_usd == "5000"
-    assert monitor.next_check_ns == checked + 600 * SECOND
+    # Reusing this round's complete account reads can finish on the first tick.
+    assert checked - 1 <= monitor.checked_ns <= checked
+    assert monitor.next_check_ns == monitor.checked_ns + 600 * SECOND
     assert not stopped and all(i.action == "reconcile" for i in gateway.sent)
 
 

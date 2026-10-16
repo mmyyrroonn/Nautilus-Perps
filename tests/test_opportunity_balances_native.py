@@ -35,6 +35,8 @@ def test_real_native_account_amounts_and_query_routing(venue):
         assert Decimal(snapshot["balances"][0]["total"]) == Decimal("123.456789")
         assert snapshot["observed_ns"] == stamp
         assert snapshot == native_balance_snapshot(cache, venue, account_id, stamp + 1, 15000)
+        quiet = gateway.read_balance_since(venue, stamp + 180_000_000_000, stamp)
+        assert quiet["observed_ns"] == stamp and quiet["balances"] == snapshot["balances"]
         if venue == "ONDO":
             assert queries == []  # Its continuous account cycle supplies updates.
         else:

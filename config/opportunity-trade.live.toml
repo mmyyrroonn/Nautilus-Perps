@@ -52,6 +52,6 @@ duration_secs = 0
 drain_timeout_secs = 30
 timer_interval_ms = 100
 # Complete native account reads may take several seconds; BBO freshness is separate.
-account_max_age_ms = 15000
+account_max_age_ms = 60000
 order_timeout_secs = 10
 retry_interval_ms = 1000

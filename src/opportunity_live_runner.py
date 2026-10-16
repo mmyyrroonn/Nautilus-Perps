@@ -251,7 +251,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         startup_cap, startup_slip, duration,
         drain_timeout_secs=integer_value(runtime.get("drain_timeout_secs", 30), "drain_timeout_secs", 1, 30),
         timer_interval_ms=integer_value(runtime.get("timer_interval_ms", 100), "timer_interval_ms", 50, 1000),
-        account_max_age_ms=integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 15000),
+        account_max_age_ms=integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 60000),
         order_timeout_secs=integer_value(runtime.get("order_timeout_secs", 10), "order_timeout_secs", 1, 30),
         retry_interval_ms=integer_value(runtime.get("retry_interval_ms", 1000), "retry_interval_ms", 100, 10000),
         startup_timeout_secs=startup_timeout, limits_present=limits_present,
@@ -413,6 +413,8 @@ class LiveCoordinator:
             self.balance_check.started_ns = check["started_ns"]
             self.balance_check.completed_ns = check["completed_ns"]
             self.balance_check.venues = {venue: dict(row) for venue, row in check["venues"].items()}
+            if self.loss_monitor.policy.enabled:
+                self.loss_monitor.seed_startup_balances(check)
             self.proxy.checkpoint_balance_check(self.balance_check.document())
         else:
             self.proxy.balance_check = self.balance_check.document()
@@ -423,7 +425,7 @@ class LiveCoordinator:
         self.account_markets = ()
         self.gateway = None
         self.native_controls = {}
-        self.phase = "waiting_books"
+        self.phase = "waiting_baseline" if self.loss_monitor.policy.enabled else "waiting_books"
         self.failure = None
         self.started_ns = None
         self.account_recovery_completed_ns = None
@@ -491,6 +493,7 @@ class LiveCoordinator:
         # A private order/fill callback invalidates earlier flat observations.
         # Re-read current state instead of replaying an archived order lifecycle.
         self.account_recovery_after_ns = max(self.account_recovery_after_ns or 0, now_ns + 1)
+        self.loss_monitor.invalidate(now_ns + 1)
         self.live.emit("startup_account_activity", now_ns)
 
     @timed("coordinator.account", labels=lambda self, snapshot, *a, **kw: (snapshot.venue, ""))
@@ -558,6 +561,8 @@ class LiveCoordinator:
                 self.failure, self.finished = "startup balance reads failed; trading remains inactive", True
                 self.stop()
                 return
+            if self.loss_monitor.policy.enabled:
+                self.loss_monitor.seed_startup_balances(self.balance_check.document())
             self.phase = self.after_balance_phase
         if self.phase == "waiting_account_recovery":
             self.live.set_entry_pause("startup_account_recovery", now_ns)
@@ -583,11 +588,13 @@ class LiveCoordinator:
             self.account_recovery_completed_ns = now_ns
             self.proxy.complete_restart(self.live.snapshot(), now_ns)
             self.live.set_entry_pause(None, now_ns)
-            self.phase = "waiting_books"
+            self.phase = "waiting_baseline" if self.loss_monitor.policy.enabled else "waiting_books"
         if (self.loss_monitor.policy.enabled and self.stop_requested_ns is None
                 and (self.phase == "active" or self.loss_monitor.baseline_usd is None)):
             monitor = self.loss_monitor
-            monitor.tick(self.gateway, self.live, now_ns, has_residual=self._has_residual())
+            monitor.tick(self.gateway, self.live, now_ns, has_residual=self._has_residual(),
+                account_after_ns=max(self.started_ns, self.account_recovery_after_ns or 0)
+                if monitor.baseline_usd is None else None)
             self._live_intents(now_ns)
             document = monitor.document()
             if document != self.proxy.loss_monitor:
@@ -599,6 +606,8 @@ class LiveCoordinator:
             elif monitor.baseline_usd is None:
                 # No self-test or continuous entry before this run's own baseline.
                 return
+            elif self.phase == "waiting_baseline":
+                self.phase = "waiting_books"
         startup_wait_started_ns = max(self.balance_check.completed_ns or 0, self.started_ns)
         startup_wait_started_ns = max(startup_wait_started_ns, self.account_recovery_completed_ns or 0)
         startup_wait_started_ns = max(startup_wait_started_ns, self.loss_monitor.baseline_ns or 0)
@@ -618,7 +627,11 @@ class LiveCoordinator:
                 self.phase = "waiting_accounts"
                 self.proxy.checkpoint_account_gate("checking", self.account_markets, now_ns)
         if self.phase == "waiting_accounts":
-            ready = [self.live._account_ready(m.instrument_id, now_ns) for m in self.account_markets]
+            if self.loss_monitor.baseline_usd is not None or self.account_recovery_completed_ns is not None:
+                ready = [self.live.flat_accounts_ready(now_ns,
+                    max(self.started_ns, self.account_recovery_after_ns or 0))]
+            else:
+                ready = [self.live._account_ready(m.instrument_id, now_ns) for m in self.account_markets]
             self._live_intents(now_ns)
             if all(ready):
                 self.proxy.checkpoint_account_gate("passed", self.account_markets, now_ns)
@@ -804,6 +817,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                     native_controls=native_controls,
                     timeout_secs=plan.order_timeout_secs,
                     account_timeout_secs=plan.startup_timeout_secs,
+                    account_max_age_ms=plan.account_max_age_ms,
                     quote_provider=lambda instrument_id, now_ns: native_quote(live, instrument_id, now_ns))
                 coordinator.attach(gateway, preflight)
                 self.clock.set_timer("opportunity-trade", timedelta(milliseconds=plan.timer_interval_ms))
@@ -895,6 +909,9 @@ def run_live(plan, *, self_test_only=False):
                 balance_reporter=lambda document: print(json.dumps(
                     {"event": "startup_balance_check", **document}), flush=True))
         coordinator.stop_signal = stop_signal
+        # Native caches are created after this boundary. Quiet streams may keep
+        # their first event until trading changes the balance; never retimestamp it.
+        coordinator.loss_monitor.balance_epoch_ns = time.time_ns()
         verify_execution_identity(binding, environ)
         try:
             node, observer, strategy = build_live_node(plan, live, coordinator, environ=environ)

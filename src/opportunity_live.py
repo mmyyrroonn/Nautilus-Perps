@@ -210,14 +210,20 @@ class LiveTradeState(ScanState):
             self.emit("entry_pause_changed", now_ns, reason=reason)
 
     def flat_accounts_ready(self, now_ns, after_ns):
-        """Require complete post-boundary account proof, including foreign risk."""
+        """Collect complete proofs for one flat check, retaining completed reads.
+
+        A proof begun after this check's boundary remains usable while the
+        other venues finish. Own activity and invalid account observations
+        still invalidate it; elapsed time alone does not restart the check.
+        """
         representatives = [self._account_representative(instruments) for instruments in self.account_scopes.values()]
         self.flat_account_problems = {}
         ready = not self.positions and not any(o["terminal_ns"] is None for o in self.orders.values())
         for instrument in representatives:
             account = self.accounts.get(instrument)
+            reason = self._account_problem(instrument, now_ns, check_age=False)
             valid = (account is not None and account.observed_ns >= after_ns
-                     and self._account_problem(instrument, now_ns) is None
+                     and reason is None
                      and account.account_positions is not None
                      and not any(q for _, q in account.account_positions)
                      and not account.account_open_orders and not account.open_order_ids
@@ -225,7 +231,6 @@ class LiveTradeState(ScanState):
             if not valid:
                 ready = False
                 domain, scope = self._account_scope(instrument)
-                reason = self._account_problem(instrument, now_ns)
                 self.flat_account_problems[domain + (":" + scope if scope else "")] = (
                     reason or ("before_check" if account.observed_ns < after_ns else "account_not_flat_or_incomplete"))
                 self._request_account(instrument, now_ns)
@@ -353,13 +358,14 @@ class LiveTradeState(ScanState):
         return tuple(i for i in self.account_domains[domain]
                      if domain != "HL" or self._hl_scope(i) == self._hl_scope(account.instrument_id))
 
-    def _account_problem(self, instrument_id, now_ns):
+    def _account_problem(self, instrument_id, now_ns, *, check_age=True):
         account = self.accounts.get(instrument_id)
         if account is None:
             return "missing"
         if not account.authoritative or not account.connected:
             return "not_authoritative"
-        if not 0 <= now_ns - account.observed_ns <= self.account_max_age_ns:
+        age = now_ns - account.observed_ns
+        if age < 0 or (check_age and age > self.account_max_age_ns):
             return "stale_or_future"
         coverage = self._account_coverage(account)
         if any(account.observed_ns < self.fences.get(i, 0) for i in coverage):
