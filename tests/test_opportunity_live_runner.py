@@ -832,7 +832,8 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
     assert exec_arguments["run_id"] == live.session_id
     assert exec_arguments["order_notional_usd"] == D(100)
     assert exec_arguments["max_gross_notional_usd"] == D(500)
-    assert exec_arguments["state_directory"] == plan.state_path.parent / "live.native"
+    assert exec_arguments["state_directory"] == plan.state_path.parent / "live.native" / "sessions" / live.session_id
+    assert state.proxy.native_session["state_directory"] == str(exec_arguments["state_directory"])
     if five_venues:
         assert exec_arguments["backpack_public_config"] == "data-config"
     engine = node.options["with_exec_engine_config"][0][0].values
@@ -862,25 +863,29 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
     assert timers and not state.gateway.sent and not live.activated
 
 
-def test_complete_live_node_builds_with_installed_five_venue_factories_without_connecting(tmp_path):
+def native_build_credentials():
     import base64
-    import os
-    from unittest.mock import patch
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     from eth_account import Account
-    from opportunity_live import LiveTradeState
     key = "0x" + "11" * 32
     address = Account.from_key(key).address
     seed = bytes(range(32))
     public = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-    fake = {"HYPERLIQUID_PK": key, "HYPERLIQUID_ACCOUNT_ADDRESS": address,
+    return {"HYPERLIQUID_PK": key, "HYPERLIQUID_ACCOUNT_ADDRESS": address,
         "LIGHTER_API_SECRET": "01" + "00" * 39, "LIGHTER_API_KEY_INDEX": "2", "LIGHTER_ACCOUNT_INDEX": "42",
         "ASTER_MAINNET_SIGNER_PRIVATE_KEY": key, "ASTER_MAINNET_SIGNER_ADDRESS": address,
         "ASTER_MAINNET_USER_ADDRESS": address, "ONDO_MAINNET_API_KEY": "ondoKeyId_BUILD_TEST_ONLY",
         "ONDO_MAINNET_API_SECRET": "ondoApiSecret_BUILD_TEST_ONLY", "ONDO_MAINNET_ACCOUNT_ID": "fixture-account",
         "BACKPACK_MAINNET_API_SECRET": base64.b64encode(seed).decode(),
         "BACKPACK_MAINNET_API_KEY": base64.b64encode(public).decode()}
+
+
+def test_complete_live_node_builds_with_installed_five_venue_factories_without_connecting(tmp_path):
+    import os
+    from unittest.mock import patch
+    from opportunity_live import LiveTradeState
+    fake = native_build_credentials()
     plan = replace(load_live_plan(ROOT / "config/opportunity-trade.live.toml", symbols="BTC,ETH"),
         state_path=tmp_path / "live.sqlite3")
     proxy = SessionStoreProxy(MemoryStore())
@@ -897,3 +902,61 @@ def test_complete_live_node_builds_with_installed_five_venue_factories_without_c
             assert live.phase == "waiting_preflight" and not live.orders
         finally:
             node.dispose()
+
+
+@pytest.mark.parametrize("legacy_layout", [False, True])
+def test_native_restart_with_existing_bound_journals_uses_fresh_session_directory(tmp_path, legacy_layout):
+    import os
+    from unittest.mock import patch
+    import opportunity_native_execution
+    from opportunity_live import LiveTradeState
+    plan = replace(load_live_plan(ROOT / "config/opportunity-trade.live.toml", symbols="BTC,ETH"),
+                   state_path=tmp_path / "live.sqlite3")
+    store = MemoryStore()
+    original_clients = opportunity_native_execution.execution_clients
+    def legacy_clients(*args, **kwargs):
+        kwargs["state_directory"] = tmp_path / "live.native"
+        return original_clients(*args, **kwargs)
+    with patch.dict(os.environ, native_build_credentials(), clear=True):
+        for attempt in range(2):
+            proxy = SessionStoreProxy(store, restart_from_flat=True)
+            live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
+                                 max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy)
+            coordinator = LiveCoordinator(plan, live, proxy)
+            with patch.object(opportunity_native_execution, "execution_clients",
+                              legacy_clients if legacy_layout and attempt == 0 else original_clients):
+                node, _, _ = build_live_node(plan, live, coordinator)
+            try:
+                directory = tmp_path / "live.native"
+                if not (legacy_layout and attempt == 0):
+                    directory = directory / "sessions" / live.session_id
+                binding = json.loads((directory / "ondo/execution.jsonl.production-run").read_text().splitlines()[0])
+                assert binding["run_id"] == live.session_id
+                assert coordinator.gateway is None and not live.orders
+                if attempt == 0:
+                    first_id = live.session_id
+                else:
+                    assert live.session_id != first_id
+                    assert coordinator.phase == "waiting_account_recovery"
+                    assert store.saved["live"]["session_id"] == first_id
+                    assert store.saved["pending_native_session"]["run_id"] == live.session_id
+                    assert all(hashlib.sha256(path.read_bytes()).hexdigest() == value for path, value in old_files.items())
+            finally:
+                node.dispose()
+            if attempt == 0:
+                old_files = {path: hashlib.sha256(path.read_bytes()).hexdigest()
+                             for path in directory.rglob("*") if path.is_file() and path.suffix != ".lock"}
+
+
+@pytest.mark.parametrize("message,code", [
+    ("continuous recovery binding differs from configured run", "native_session_binding_mismatch"),
+    ("SECRET_CREDENTIAL_WITH_PRIVATE_RESPONSE", "native_node_construction_failed")])
+def test_native_build_refusal_reports_safe_stage_and_code(tmp_path, monkeypatch, capsys, message, code):
+    import opportunity_live_runner as runner
+    def fail(*args, **kwargs):
+        raise runner.NativeBuildError(RuntimeError(message))
+    monkeypatch.setattr(runner, "run_live", fail)
+    assert main(["--config", str(configs(tmp_path)), "--execute-live"]) == 2
+    output = capsys.readouterr().err
+    assert "stage=native_build" in output and f"code={code}" in output
+    assert "error_type=RuntimeError" in output and "SECRET_CREDENTIAL" not in output

@@ -117,7 +117,11 @@ Ondo 使用 `account_read_only=true`，Backpack 使用只读执行工厂，均�
 | Backpack | Native ProductionExecutionClientFactory | 确认撤单后新 ID 重挂 |
 
 五所共用 `LiveNode → Strategy → NativeOrderGateway`，没有 Python REST 下单旁路。
-Ondo/Backpack 的原生身份日志与执行状态保存在 `state_path` 同目录的 `live.native/` 内。
+Ondo/Backpack 的原生身份日志与执行状态按本次会话保存在 `state_path` 同目录的
+`live.native/sessions/<session_id>/` 内，每次启动使用新的会话目录，与本次原生客户端的 run ID 一致。
+旧版直接放在 `live.native/` 下的日志和历史会话目录保留归档，不需要删除。
+当前目录通过 `native_session` 记录；账户恢复检查尚未通过时，SQLite 以 `pending_native_session`
+记录本次目录并保留旧会话，`native_session_prepared` 事件记录每次准备。独立目录不会跳过五所当前空仓和挂单检查。
 Backpack 数据与执行共享同一个公开行情状态、额度对象；程序运行时每 30 秒续期原生执行权限，
 只延长有效期，不扩大金额、账户或交易权限。
 

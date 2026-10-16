@@ -259,6 +259,16 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs, loss_monitor=loss_monitor)
 
 
+class NativeBuildError(RuntimeError):
+    """Expose a fixed startup stage/code without leaking native error payloads."""
+    def __init__(self, error):
+        self.error_type = type(error).__name__
+        self.code = ("native_session_binding_mismatch"
+                     if str(error) == "continuous recovery binding differs from configured run"
+                     else "native_node_construction_failed")
+        super().__init__(self.code)
+
+
 class SessionStoreProxy:
     """Keep startup evidence and live ownership in one transactional state row."""
     def __init__(self, store, *, restart_from_flat=False):
@@ -272,6 +282,7 @@ class SessionStoreProxy:
         self.startup_complete = bool(saved and saved.get("startup_complete"))
         self.latest_live = saved.get("live") if saved else None
         self.native_shutdown = saved.get("native_shutdown") if saved else None
+        self.native_session = None
         self.account_gate = saved.get("account_gate") if saved else None
         self.account_recovery = saved.get("account_recovery") if saved else None
         self.balance_check = saved.get("balance_check") if saved else None
@@ -288,7 +299,8 @@ class SessionStoreProxy:
     def save(self, snapshot, events):
         self.latest_live = snapshot
         if self.restart_pending:
-            self.store.save({**self.saved, "account_recovery": self.account_recovery}, events)
+            self.store.save({**self.saved, "account_recovery": self.account_recovery,
+                             "pending_native_session": self.native_session}, events)
             return
         self.store.save(self._document(snapshot), events)
 
@@ -300,6 +312,7 @@ class SessionStoreProxy:
                          "balance_check": self.balance_check,
                          "loss_monitor": self.loss_monitor,
                          "native_shutdown": self.native_shutdown,
+                         "native_session": self.native_session,
                          "live": snapshot}
 
     def complete_restart(self, snapshot, now_ns):
@@ -341,6 +354,11 @@ class SessionStoreProxy:
             self.account_recovery = document
             self.save(self.latest_live or {}, [{"event": "startup_account_recovery",
                                                "observed_ns": now_ns, **document}])
+
+    def checkpoint_native_session(self, run_id, directory):
+        self.native_session = {"run_id": run_id, "state_directory": str(directory)}
+        self.save(self.latest_live or {}, [{"event": "native_session_prepared", "observed_ns": time.time_ns(),
+                                           **self.native_session}])
 
     @timed("startup.checkpoint")
     def checkpoint_startup(self, preflight):
@@ -665,6 +683,7 @@ class LiveCoordinator:
                 "account_binding": self.proxy.account_binding,
                 "last_execution_error": getattr(self.gateway, "last_error", None),
                 "native_shutdown": self.proxy.native_shutdown,
+                "native_session": self.proxy.native_session,
                 "startup_self_test_enabled": self.startup_self_test,
                 "balance_check": self.balance_check.document(),
                 "account_gate": self.proxy.account_gate,
@@ -713,9 +732,13 @@ def build_live_node(plan, live, coordinator, *, environ=None):
         configs[client_id] = config
     native_controls = {}
     coordinator.native_controls = native_controls
+    # Each process checks current accounts before trading. Its native owners must
+    # use the same fresh run identity, without reopening older bound journals.
+    native_directory = plan.state_path.parent / (plan.state_path.stem + ".native") / "sessions" / live.session_id
+    coordinator.proxy.checkpoint_native_session(live.session_id, native_directory)
     for client_id, factory, config in execution_clients(plan.scan, plan.environment,
             environ=environ,
-            state_directory=plan.state_path.parent / (plan.state_path.stem + ".native"),
+            state_directory=native_directory,
             run_id=live.session_id,
             order_notional_usd=max(plan.policy.order_notional_usd, plan.startup_max_notional_usd),
             max_gross_notional_usd=plan.max_gross_notional_usd,
@@ -873,7 +896,10 @@ def run_live(plan, *, self_test_only=False):
                     {"event": "startup_balance_check", **document}), flush=True))
         coordinator.stop_signal = stop_signal
         verify_execution_identity(binding, environ)
-        node, observer, strategy = build_live_node(plan, live, coordinator, environ=environ)
+        try:
+            node, observer, strategy = build_live_node(plan, live, coordinator, environ=environ)
+        except Exception as exc:
+            raise NativeBuildError(exc) from None
         # Some native optional settings (notably an absent HL vault) still have
         # environment fallback. Refuse a changed scope before starting clients.
         if resolve_account_binding(plan.venues, plan.environment, os.environ) != binding:
@@ -971,7 +997,10 @@ def _run(args):
             return 0
         return run_live(plan, self_test_only=args.self_test_only)
     except (OSError, ValueError, ImportError, RuntimeError) as exc:
-        print("[live-trade] refused: "+type(exc).__name__+"; inspect the validated configuration and durable state", file=sys.stderr)
+        if isinstance(exc, NativeBuildError):
+            print(f"[live-trade] refused: stage=native_build code={exc.code} error_type={exc.error_type}", file=sys.stderr)
+        else:
+            print("[live-trade] refused: "+type(exc).__name__+"; inspect the validated configuration and durable state", file=sys.stderr)
         return 2
 
 
