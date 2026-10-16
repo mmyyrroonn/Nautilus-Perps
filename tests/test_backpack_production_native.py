@@ -26,7 +26,7 @@ def roundtrips(cycles=2):
         for _ in range(cycles) for symbol in SYMBOLS for side in ("buy", "close")]
 
 
-def build_node(peer, directory, steps):
+def build_node(peer, directory, steps, *, account_max_age_ms=10000):
     bp = native_adapter()
     from nautilus_trader.common import Environment, LoggerConfig, LogLevel
     from nautilus_trader.live import LiveExecutionEngineConfig, LiveNode
@@ -44,7 +44,7 @@ def build_node(peer, directory, steps):
         connect_timeout_ms=10000, shutdown_timeout_ms=1000, recovery_interval_ms=1000,
         page_size=1000, max_pages=10, max_items=10000, read_timeout_ms=30000, **endpoints)
     authority = bp.BackpackProductionExecutionAuthority(expires_at_ms=time.time_ns() // 1000000 + 180000,
-        max_account_age_ms=10000, max_market_age_ms=10000, max_order_notional="5",
+        max_account_age_ms=account_max_age_ms, max_market_age_ms=10000, max_order_notional="5",
         max_reserved_notional="10", max_reserved_margin="10", max_unsettled_orders=1,
         allow_new_risk=True, allow_reduction=True, allow_owned_cancel=True)
     plan = bp.BackpackProductionExecutionClientConfig(account, public, authority=authority,
@@ -666,7 +666,13 @@ def test_app_close_only_recovers_original_entry_and_only_reduces(tmp_path):
                 assert strategy.position_quantity(SYMBOLS[0]) == Decimal("0.00005")
                 assert json.loads(control.persist_economics())["durable_receipts"] == 1
                 after = json.loads((tmp_path / "economics" / "economics.json").read_text())["state"]["fills"][0]
-                assert after == before, "coarser REST replay must preserve the original precise report and receipt"
+                assert {key: value for key, value in after.items() if key != "time_evidence"} == {
+                    key: value for key, value in before.items() if key != "time_evidence"
+                }, "coarser REST replay must preserve the original precise report and receipt"
+                # A first REST replay adds source evidence without changing the fill.
+                after_times = {row["source"]: row for row in after["time_evidence"]}
+                assert all(after_times[row["source"]] == row for row in before["time_evidence"])
+                assert after_times["RestHistory"]["first"] // 1_000_000 == original["ts_event"] // 1_000_000
             finally:
                 handle.stop()
                 try:
@@ -702,7 +708,7 @@ def test_app_close_only_recovers_original_entry_and_only_reduces(tmp_path):
             assert peer.posts[1]["clientId"] != peer.posts[0]["clientId"]
             assert second["economic_consumer"]["durable_receipts"] == 2
             restored = json.loads((tmp_path / "economics" / "economics.json").read_text())["state"]["fills"]
-            assert next(row for row in restored if row["report"]["trade_id"] == original["trade_id"]) == before
+            assert next(row for row in restored if row["report"]["trade_id"] == original["trade_id"]) == after
             assert all(not row["is_open"] for row in second["native_positions"])
             assert not second["shutdown"]["positions_unknown_or_nonzero"], second["shutdown"]
             assert second["shutdown"]["unknown"] == 0 and second["shutdown"]["pending_cancellations"] == 0
@@ -868,6 +874,81 @@ def test_native_restart_reports_exact_timestamp_conflict_without_reapplying_trad
                 handle.stop()
                 try:
                     await asyncio.wait_for(asyncio.shield(task), 12)
+                finally:
+                    node.dispose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("case", ["flat", "stale", "external", "nonzero", "invalid", "invalid_after_admission"])
+def test_idle_account_shutdown_uses_current_proof_without_trading_admission(tmp_path, case):
+    async def scenario():
+        async with ProductionPeer(external=case == "external") as peer:
+            if case == "nonzero":
+                peer.net[SYMBOLS[0]] = Decimal("0.00002")
+                peer.entry_prices[SYMBOLS[0]] = Decimal("100.1")
+            if case == "invalid":
+                original = peer.account_body
+                def invalid_body(path):
+                    body = original(path)
+                    if path == "/api/v1/account":
+                        body["liquidating"] = True
+                    return body
+                peer.account_body = invalid_body
+            node, strategy, control, _, public = build_node(peer, tmp_path, [],
+                account_max_age_ms=1 if case == "stale" else 10000)
+            # No quote subscriptions and no admission_status call: startup can stop here.
+            if case != "invalid_after_admission":
+                strategy.on_start = lambda: setattr(strategy, "started", True)
+            task = asyncio.ensure_future(node.run_async())
+            handle = node.handle()
+            try:
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    assert not task.done() and not peer.errors
+                    try:
+                        snapshot = json.loads(control.account_snapshot_json())
+                    except RuntimeError:
+                        snapshot = {}
+                    if strategy.started and snapshot.get("complete"):
+                        break
+                    await asyncio.sleep(0.02)
+                else:
+                    pytest.fail("complete signed account snapshot was not observed")
+                if case == "invalid_after_admission":
+                    while time.monotonic() < deadline:
+                        if json.loads(control.admission_status_json())["ready"]:
+                            break
+                        await asyncio.sleep(0.02)
+                    else:
+                        pytest.fail("initial valid account did not reach admission")
+                    original = peer.account_body
+                    def invalid_body(path):
+                        body = original(path)
+                        if path == "/api/v1/account":
+                            body["liquidating"] = True
+                        return body
+                    peer.account_body = invalid_body
+                    invalidated_at = time.time_ns()
+                    while time.monotonic() < deadline:
+                        snapshot = json.loads(control.account_snapshot_json())
+                        if snapshot["snapshot_started_ns"] > invalidated_at:
+                            break
+                        await asyncio.sleep(0.02)
+                    else:
+                        pytest.fail("replacement account snapshot was not observed")
+                await asyncio.sleep(0.2)
+                assert not peer.posts and not peer.deletes
+                if case != "invalid_after_admission":
+                    assert not json.loads(public.telemetry_snapshot_json())["quotes_fresh"]
+            finally:
+                handle.stop()
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), 8)
+                    report = json.loads(control.shutdown_report_json())
+                    assert report["dirty"] is (case != "flat"), report
+                    assert report["positions_unknown_or_nonzero"] is (case != "flat"), report
+                    node.dispose()
+                    assert json.loads(control.shutdown_report_json()) == report
                 finally:
                     node.dispose()
     asyncio.run(scenario())
