@@ -210,10 +210,17 @@ def test_restart_does_not_reuse_previous_balance_success_and_stop_interrupts_rea
     state, live, gateway, store, stopped = readonly_coordinator(tmp_path, saved=saved)
     state, balances, reports = enable_balances(state, live, gateway, stopped)
     state.tick(NOW + 1)
-    assert state.phase == "waiting_balances" and store.saved["balance_check"]["result"] == "running"
+    assert state.phase == "waiting_balances" and state.document()["balance_check"]["result"] == "running"
+    assert balances.queries and not gateway.sent
+    # Recovery retains the previous session until new whole-account proof passes.
+    assert store.saved["balance_check"] == saved["balance_check"]
     state.request_stop(NOW + 2)
     assert reports[0]["result"] == "interrupted" and live.phase != "active"
-    assert store.saved["balance_check"]["result"] == "interrupted"
+    assert state.finished and stopped and state.document()["balance_check"]["result"] == "interrupted"
+    assert store.saved["balance_check"] == saved["balance_check"]
+    assert store.saved["live"] == saved["live"]
+    assert not any(event["event"] == "previous_session_archived"
+                   for _, events in store.writes for event in events)
 
 
 def test_disabled_startup_never_calls_balance_gateway(tmp_path):
@@ -242,7 +249,7 @@ def test_successful_balances_still_need_all_account_proofs_before_activation(tmp
     assert store.saved["startup"] is None and not live.orders and len(reports) == 1
 
 
-def test_enabled_balances_cannot_override_blocked_trading_recovery(tmp_path):
+def test_successful_balances_cannot_bypass_current_account_recovery(tmp_path):
     saved = {"schema_version": 1, "startup_complete": False,
              "startup": {"result": "blocked", "owned_quantity": "0.001"},
              "balance_check": {"result": "passed"}, "live": {"positions": []}}
@@ -250,6 +257,10 @@ def test_enabled_balances_cannot_override_blocked_trading_recovery(tmp_path):
     state, balances, _ = enable_balances(state, live, gateway, stopped)
     balances.ready.update(state.plan.venues)
     state.tick(NOW)
-    assert state.phase == "resume_readonly" and state.failure and stopped
-    assert not balances.queries and not gateway.sent and not live.activated and preflight.started == 0
-    assert store.saved == saved
+    assert state.phase == "waiting_account_recovery" and not state.failure and not stopped
+    assert state.document()["balance_check"]["result"] == "passed" and balances.queries
+    assert not gateway.sent and not live.activated and preflight.started == 0
+    assert state.proxy.restart_pending and store.saved["account_recovery"]["result"] == "checking"
+    assert all(store.saved[key] == saved[key] for key in ("startup", "balance_check", "live"))
+    assert not any(event["event"] == "previous_session_archived"
+                   for _, events in store.writes for event in events)

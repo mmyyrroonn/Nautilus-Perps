@@ -41,6 +41,16 @@ def start_probe(state):
     return probe
 
 
+def test_account_only_proof_cannot_start_a_probe_without_market_quotes():
+    state = machine()
+    connect, = state.start(NOW)
+    state.on_receipt(receipt(connect, "connected"), NOW + MS)
+    snapshot = AccountSnapshot("HL", "BTC.HL", None, None, NOW + 2 * MS, D(0),
+                               account_positions=(), account_open_orders=())
+    assert state.on_account(snapshot, NOW + 2 * MS) == ()
+    assert state.document()["result"] != "passed"
+
+
 def reach_open(state):
     probe = start_probe(state)
     adjust, = state.on_receipt(receipt(probe, "accepted"), NOW+3*MS)

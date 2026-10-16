@@ -118,6 +118,7 @@ def test_synchronous_account_failure_blocks_remaining_entries_in_drained_batch(f
     sent = []
     coordinator = LiveCoordinator.__new__(LiveCoordinator)
     coordinator.live = live
+    coordinator.proxy = NS(restart_pending=False)
     def dispatch(intent, timestamp):
         if intent.action == "submit":
             sent.append(intent)
@@ -264,3 +265,86 @@ def test_blocking_account_worker_does_not_block_poll_or_original_id_queries():
     finally:
         release.set()
         gateway.close()
+
+
+def test_whole_account_checks_coalesce_all_symbols_and_do_not_copy_quotes():
+    live, _ = state(make_plan(symbols=("0G", "BTC", "ETH"), venues=("HL", "ASTER", "LIGHTER")))
+    live.accounts.clear()
+    now = NOW + SECOND
+    live.reconcile_accounts(now)
+    requests = live.drain_intents()
+    assert len(requests) == 3 and all(i.instrument_id.startswith("BTC.") for i in requests)
+    for intent in requests:
+        live.on_account(AccountSnapshot(intent.venue, intent.instrument_id, None, None, now + 1, D(0),
+                                       account_positions=(), account_open_orders=()), now + 1)
+    assert set(live.accounts) == set(live.markets)
+    assert all(a.bid is None and a.ask is None and a.book_observed_ns is None for a in live.accounts.values())
+    assert not live.account_pauses
+    assert live.flat_accounts_ready(now + 1, now)
+    assert not live.drain_intents()
+    live.reconcile_accounts(now + live.account_max_age_ns)
+    assert len(live.drain_intents()) == 3
+
+
+def test_full_account_read_keeps_unconfigured_risk_and_pending_original_orders():
+    live, _ = state(make_plan(symbols=("BTC", "ETH")))
+    live.accounts.clear()
+    now = NOW + SECOND
+    live.on_account(AccountSnapshot("HL", "BTC.HL", None, None, now, D(0),
+        account_positions=(("OUTSIDE.HL", D(1)),), account_open_orders=()), now)
+    assert live.account_pauses["HL"]["reason"] == "position_mismatch"
+    assert not live.flat_accounts_ready(now, now)
+    live.on_account(AccountSnapshot("HL", "BTC.HL", None, None, now + 1, D(0),
+        account_positions=(), account_open_orders=()), now + 1)
+    assert "HL" not in live.account_pauses
+
+
+def test_full_hyperliquid_snapshot_does_not_cover_another_dex():
+    live, _ = state(make_plan(symbols=("BTC", "xyz:ABC")))
+    live.accounts.clear()
+    now = NOW + SECOND
+    live.on_account(AccountSnapshot("HL", "BTC.HL", None, None, now, D(0),
+                                   account_positions=(), account_open_orders=()), now)
+    assert "xyz:ABC.HL" not in live.accounts
+    live.flat_accounts_ready(now, now)
+    assert any(i.instrument_id == "xyz:ABC.HL" for i in live.drain_intents())
+
+
+def test_account_failures_back_off_per_account_and_reset_after_recovery():
+    live, _ = state(make_plan(symbols=("BTC", "ETH")))
+    live.accounts.clear()
+    now = NOW + SECOND
+    for delay in (5, 10, 20, 40, 60, 60):
+        live._request_account("ETH.HL", now)
+        request, = live.drain_intents()
+        assert request.instrument_id == "BTC.HL"
+        live.on_receipt(ExecutionReceipt(request.request_id, "", "unknown"), now)
+        live._request_account("ETH.HL", now + delay * SECOND - 1)
+        assert not live.drain_intents()
+        now += delay * SECOND
+    live.on_account(AccountSnapshot("HL", "BTC.HL", None, None, now, D(0),
+                                   account_positions=(), account_open_orders=()), now)
+    assert ("HL", "") not in live.account_read_failures
+    assert ("HL", "") not in live.account_retry_after_ns
+    live._request_account("ETH.HL", now + SECOND)
+    request, = live.drain_intents()
+    live.on_receipt(ExecutionReceipt(request.request_id, "", "unknown"), now + SECOND)
+    assert live.account_retry_after_ns[("HL", "")] == now + 6 * SECOND
+
+
+def test_rate_limit_wait_blocks_all_symbols_but_leaves_other_venue_available():
+    live, _ = state(make_plan(symbols=("BTC", "ETH")))
+    live.accounts.clear()
+    now = NOW + SECOND
+    live._request_account("BTC.HL", now)
+    request, = live.drain_intents()
+    live.on_receipt(ExecutionReceipt(request.request_id, "", "unknown", retry_after_secs=45), now)
+    for instrument in ("BTC.HL", "ETH.HL"):
+        live._request_account(instrument, now + 45 * SECOND - 1)
+    assert not live.drain_intents()
+    live._request_account("ETH.ASTER", now + 5 * SECOND)
+    other, = live.drain_intents()
+    assert other.venue == "ASTER"
+    live._request_account("ETH.HL", now + 45 * SECOND)
+    retry, = live.drain_intents()
+    assert retry.instrument_id == "BTC.HL"

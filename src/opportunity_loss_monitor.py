@@ -19,6 +19,7 @@ class LossMonitorPolicy:
     max_loss_usd: Decimal = Decimal("200")
     interval_secs: int = 600
     read_timeout_secs: int = 60
+    retry_interval_secs: int = 5
 
     def __post_init__(self):
         if type(self.enabled) is not bool:
@@ -29,10 +30,12 @@ class LossMonitorPolicy:
         object.__setattr__(self, "max_loss_usd", loss)
         integer_value(self.interval_secs, "loss_monitor.interval_secs", 1, 86400)
         integer_value(self.read_timeout_secs, "loss_monitor.read_timeout_secs", 1, 300)
+        integer_value(self.retry_interval_secs, "loss_monitor.retry_interval_secs", 1, 60)
 
     def document(self):
         return {"enabled": self.enabled, "max_loss_usd": str(self.max_loss_usd),
                 "interval_secs": self.interval_secs, "read_timeout_secs": self.read_timeout_secs,
+                "retry_interval_secs": self.retry_interval_secs,
                 "basis": "session_start_flat_account_equity", "check_only_when_flat": True,
                 "valuation": "USD/USDC/USDT/USD1 nominal USD parity",
                 "action": "pause_entries_wait_flat_check_then_resume_or_exit"}
@@ -93,6 +96,10 @@ class SessionLossMonitor:
         return (self.policy.enabled and self.status != "breached"
                 and (self.next_check_ns is None or now_ns >= self.next_check_ns))
 
+    def _pause(self, now_ns):
+        self.status = "paused"
+        self.next_check_ns = now_ns + self.policy.retry_interval_secs * 1_000_000_000
+
     def tick(self, gateway, live, now_ns, *, has_residual):
         if not self.due(now_ns):
             return
@@ -109,14 +116,14 @@ class SessionLossMonitor:
         if self.flat_since_ns is None:
             self.flat_since_ns = now_ns
         if now_ns - self.flat_since_ns >= self.policy.read_timeout_secs * 1_000_000_000:
-            self.status = "paused"
             self.reasons.setdefault("account", "flat_equity_read_timeout")
-            self.next_check_ns = now_ns + self.policy.interval_secs * 1_000_000_000
+            self._pause(now_ns)
             return
         if not live.flat_accounts_ready(now_ns, self.flat_since_ns):
-            self.reasons["account"] = "complete_fresh_flat_accounts_required"
+            self.reasons = {"account": "complete_fresh_flat_accounts_required",
+                            **getattr(live, "flat_account_problems", {})}
             return
-        self.reasons.pop("account", None)
+        self.reasons.clear()
         if self.read_started_ns is None:
             self.read_started_ns, self.status = now_ns, "checking"
             for venue in self.venues:
@@ -126,8 +133,7 @@ class SessionLossMonitor:
                     # Native errors may contain private URLs or response data.
                     self.reasons[venue] = "equity_query_failed"
             if self.reasons:
-                self.status = "paused"
-                self.next_check_ns = now_ns + self.policy.interval_secs * 1_000_000_000
+                self._pause(now_ns)
                 return
         rows = {}
         for venue in self.venues:

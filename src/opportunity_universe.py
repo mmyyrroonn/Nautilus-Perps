@@ -314,10 +314,10 @@ def generate_document(metadata, *, venues=None, symbols=None, provenance=None, g
                  "max_age_ms": 2000, "max_skew_ms": 500, "max_receive_age_ms": 2000},
         "recording": {"enabled": True, "path": "../reports/opportunities/opportunities.jsonl",
                       "cooldown_ms": 5000, "edge_change_bps": "2", "quantity_change_fraction": "0.1"},
-        "runtime": {"connection_timeout_secs": 120, "duration_secs": 3600, "depth_levels": 20,
+        "runtime": {"connection_timeout_secs": 300, "duration_secs": 3600, "depth_levels": 20,
                     "max_levels_per_side": 20000, "refresh_ms": 1000, "top_n": 20,
                     "evaluation_interval_ms": 100, "aster_snapshot_depth": 100,
-                    "aster_subscription_interval_ms": 500},
+                    "aster_subscription_interval_ms": 1000},
         "markets": markets}
     observed_operators = Counter(str(row.get("operator_account_index", "missing"))
                                  for row in rows.get("LIGHTER", []))

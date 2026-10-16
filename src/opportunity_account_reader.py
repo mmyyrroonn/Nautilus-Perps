@@ -15,13 +15,18 @@ import os
 import threading
 import time
 from urllib.parse import quote, urlencode
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from email.utils import parsedate_to_datetime
+from math import ceil
 
 from opportunity_preflight import AccountSnapshot
 
 
 class AccountReadError(RuntimeError):
-    pass
+    def __init__(self, message, *, retry_after_secs=0):
+        super().__init__(message)
+        self.retry_after_secs = retry_after_secs
 
 
 def exact(value, name="account amount"):
@@ -83,6 +88,17 @@ def http_json(method, url, payload=None, *, timeout=10):
             if response.geturl() != url:
                 raise AccountReadError("account read redirect refused")
             return json.loads(response.read(), parse_float=Decimal)
+    except HTTPError as exc:
+        retry = 0
+        if exc.code in {429, 418}:
+            raw = exc.headers.get("Retry-After", "").strip() if exc.headers else ""
+            retry = 120 if exc.code == 418 else 10
+            try:
+                retry = max(1, int(raw) if raw.isdigit() else ceil(parsedate_to_datetime(raw).timestamp() - time.time()))
+            except (ValueError, TypeError, OverflowError):
+                pass
+        raise AccountReadError(f"account read HTTP {exc.code}; private response omitted",
+                               retry_after_secs=retry) from None
     except Exception:
         raise AccountReadError("account read failed; private response omitted") from None
 
@@ -101,6 +117,7 @@ class ReadOnlyAccountReader:
         self._nonce = 0
         self._nonce_lock = threading.Lock()
         self._cache = {}
+        self._retry_after_ns = {}
         self._epochs = {}
         self._cache_lock = threading.RLock()
         self.cache_ttl_ns = cache_ttl_ms * 1_000_000
@@ -263,8 +280,10 @@ class ReadOnlyAccountReader:
         if venue not in {"ONDO", "BACKPACK"}:
             raise AccountReadError("unsupported native account evidence venue")
         self._native_instrument(venue, market.instrument_id)
-        bid, ask = exact(bid, "native bid"), exact(ask, "native ask")
-        if (bid <= 0 or ask <= bid or type(observed_ns) is not int
+        account_only = bid is None and ask is None
+        if not account_only:
+            bid, ask = exact(bid, "native bid"), exact(ask, "native ask")
+        if ((not account_only and (bid <= 0 or ask <= bid)) or type(observed_ns) is not int
                 or not 0 < observed_ns <= self.clock_ns()):
             raise AccountReadError("native market price/timestamp is invalid")
         increments = {}
@@ -276,7 +295,7 @@ class ReadOnlyAccountReader:
             if number < 0 or (name not in {"min_quantity", "min_notional"} and number <= 0):
                 raise AccountReadError("native instrument increments/minimums are invalid")
             increments[name] = number
-        if any(Fraction(price) % Fraction(increments["price_increment"]) for price in (bid, ask)):
+        if not account_only and any(Fraction(price) % Fraction(increments["price_increment"]) for price in (bid, ask)):
             raise AccountReadError("native market prices do not align with instrument price increment")
         with self._cache_lock:
             evidence = self._native_evidence.get(venue)
@@ -296,7 +315,7 @@ class ReadOnlyAccountReader:
             return AccountSnapshot(venue, market.instrument_id, bid, ask,
                                    evidence["started"], quantity, orders,
                                    connected=True, authoritative=evidence["unknown"] == 0,
-                                   book_observed_ns=observed_ns,
+                                   book_observed_ns=None if account_only else observed_ns,
                                    account_positions=tuple(evidence["positions"].items()),
                                    account_open_orders=tuple((instrument, client_id or "venue:" + venue_id)
                                        for instrument, client_id, venue_id in evidence["orders"]))
@@ -306,12 +325,23 @@ class ReadOnlyAccountReader:
         # fence preserved. Reusing it never makes an old observation newer.
         with self._cache_lock:
             now_ns = self.clock_ns()
+            remaining_ns = self._retry_after_ns.get(scope[0], 0) - now_ns
+            if remaining_ns > 0:
+                raise AccountReadError("account read is waiting for venue cooldown",
+                                       retry_after_secs=(remaining_ns + 999_999_999) // 1_000_000_000)
             epoch = self._epochs.get(scope[0], 0)
             previous = self._cache.get(scope)
             if previous and 0 <= now_ns - previous[0] < self.cache_ttl_ns:
                 return previous[2], previous[1]
-        with span("account.fetch", venue=scope[0]):
-            payload = fetch()
+        try:
+            with span("account.fetch", venue=scope[0]):
+                payload = fetch()
+        except AccountReadError as exc:
+            if exc.retry_after_secs:
+                with self._cache_lock:
+                    self._retry_after_ns[scope[0]] = max(self._retry_after_ns.get(scope[0], 0),
+                        self.clock_ns() + exc.retry_after_secs * 1_000_000_000)
+            raise
         with self._cache_lock:
             if self._epochs.get(scope[0], 0) == epoch:
                 self._cache[scope] = (now_ns, observed_ns, payload)
@@ -336,9 +366,11 @@ class ReadOnlyAccountReader:
             return self.read_native(market, bid, ask, observed_ns)
         else:
             raise AccountReadError(f"{venue} continuous execution/account evidence is unsupported")
-        return AccountSnapshot(venue, market.instrument_id, exact(bid), exact(ask), started_ns,
+        account_only = bid is None and ask is None
+        return AccountSnapshot(venue, market.instrument_id,
+                               None if account_only else exact(bid), None if account_only else exact(ask), started_ns,
                                position, tuple(orders), connected=True, authoritative=True,
-                               book_observed_ns=observed_ns, account_positions=tuple(positions.items()),
+                               book_observed_ns=None if account_only else observed_ns, account_positions=tuple(positions.items()),
                                account_open_orders=tuple(all_orders))
 
     def _hyperliquid(self, instrument_id, observed_ns):
@@ -404,7 +436,8 @@ class ReadOnlyAccountReader:
         account = accounts[0]
         if "index" in account and str(account["index"]) != str(int(index)):
             raise AccountReadError("Lighter account identity mismatch")
-        symbol = instrument_id.removesuffix(".LIGHTER").removesuffix("-USD-PERP")
+        suffix = "-USD-PERP.LIGHTER" if instrument_id.endswith("-USD-PERP.LIGHTER") else "-PERP.LIGHTER"
+        symbol = instrument_id.removesuffix(suffix)
         position, seen, ids = Decimal(0), False, []
         positions, all_orders = {}, []
         for row in _rows(account.get("positions"), "Lighter positions"):
@@ -422,7 +455,7 @@ class ReadOnlyAccountReader:
                 if type(extra) is not int or extra < 0:
                     raise AccountReadError("incomplete Lighter pending/conditional order evidence")
                 count += extra
-            instrument = row["symbol"] + "-USD-PERP.LIGHTER"
+            instrument = row["symbol"] + suffix
             if instrument in positions:
                 raise AccountReadError("duplicate Lighter position row")
             positions[instrument] = quantity.copy_negate() if sign < 0 else quantity

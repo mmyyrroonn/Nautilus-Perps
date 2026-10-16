@@ -74,8 +74,8 @@ class PreflightMarket:
 class AccountSnapshot:
     venue: str
     instrument_id: str
-    bid: Decimal
-    ask: Decimal
+    bid: Decimal | None
+    ask: Decimal | None
     observed_ns: int
     position_quantity: Decimal
     open_order_ids: tuple[str, ...] = ()
@@ -88,8 +88,13 @@ class AccountSnapshot:
     account_open_orders: tuple[tuple[str, str], ...] | None = None
 
     def __post_init__(self):
-        object.__setattr__(self, "bid", _decimal(self.bid, "bid", positive=True))
-        object.__setattr__(self, "ask", _decimal(self.ask, "ask", positive=True))
+        account_only = self.bid is None and self.ask is None
+        if account_only:
+            if self.account_positions is None or self.account_open_orders is None or self.book_observed_ns is not None:
+                raise ValueError("account-only evidence requires complete coverage and no quote timestamp")
+        else:
+            object.__setattr__(self, "bid", _decimal(self.bid, "bid", positive=True))
+            object.__setattr__(self, "ask", _decimal(self.ask, "ask", positive=True))
         value = self.position_quantity
         if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
             raise ValueError("position_quantity must be an exact decimal")
@@ -102,9 +107,9 @@ class AccountSnapshot:
             raise ValueError("open orders require explicit client order identities")
         if type(self.observed_ns) is not int or self.observed_ns <= 0:
             raise ValueError("observed_ns must be a positive integer")
-        if self.book_observed_ns is None:
+        if not account_only and self.book_observed_ns is None:
             object.__setattr__(self, "book_observed_ns", self.observed_ns)
-        if type(self.book_observed_ns) is not int or self.book_observed_ns <= 0:
+        if not account_only and (type(self.book_observed_ns) is not int or self.book_observed_ns <= 0):
             raise ValueError("book_observed_ns must be a positive integer")
         if type(self.connected) is not bool or type(self.authoritative) is not bool:
             raise ValueError("account status must be boolean")
@@ -154,6 +159,7 @@ class ExecutionReceipt:
     kind: str
     execution_id: str = ""
     filled_quantity: Decimal = Decimal("0")
+    retry_after_secs: int = 0
 
 
 class BtcPreflight:
@@ -268,7 +274,8 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
         return self._emit("connect", now_ns)
 
     def _fresh(self, snapshot, now_ns):
-        return (snapshot.connected and snapshot.authoritative and snapshot.bid < snapshot.ask
+        return (snapshot.connected and snapshot.authoritative
+                and snapshot.bid is not None and snapshot.ask is not None and snapshot.bid < snapshot.ask
                 and 0 < snapshot.observed_ns <= now_ns
                 and now_ns-snapshot.observed_ns <= self.max_account_age_ns
                 and 0 < snapshot.book_observed_ns <= now_ns

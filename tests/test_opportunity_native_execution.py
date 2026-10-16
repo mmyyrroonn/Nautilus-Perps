@@ -173,6 +173,39 @@ def test_only_independent_account_read_produces_authoritative_snapshot(harness):
     assert accounts == [snapshot] and accounts[0].position_quantity == D("-.01")
 
 
+def test_account_check_needs_no_market_subscription_or_current_quote(harness):
+    gateway, _, receipts, accounts, _ = harness
+    def no_quote(*args):
+        raise AssertionError("whole-account queries must not read market prices")
+    gateway.quote_provider = no_quote
+    def read(market, bid, ask, now):
+        assert bid is None and ask is None
+        return AccountSnapshot(market.venue, market.instrument_id, None, None, now, D(0),
+                               account_positions=(), account_open_orders=())
+    gateway.reader = NS(read=read)
+    gateway.dispatch(intent(action="reconcile", request_id="account-only", account_check=True), 1_000_000_000)
+    for future in gateway.reads.values():
+        future.result()
+    gateway.poll(4_000_000_000)
+    assert len(accounts) == 1 and accounts[0].book_observed_ns is None
+    assert not receipts
+
+
+def test_async_account_failure_carries_venue_retry_delay(harness):
+    from opportunity_account_reader import AccountReadError
+    gateway, strategy, receipts, accounts, _ = harness
+    def read(*args):
+        raise AccountReadError("rate limited", retry_after_secs=45)
+    gateway.reader = NS(read=read)
+    gateway.dispatch(intent(action="reconcile", request_id="rate-limit", account_check=True), 1_000_000_000)
+    for future in gateway.reads.values():
+        with pytest.raises(AccountReadError):
+            future.result()
+    gateway.poll(1_000_000_001)
+    assert len(receipts) == 1 and receipts[0].kind == "unknown" and receipts[0].retry_after_secs == 45
+    assert not accounts and not strategy.calls
+
+
 def test_native_periodic_account_read_waits_for_request_fence_and_current_bbo(harness):
     import threading
     gateway, strategy, receipts, accounts, _ = harness

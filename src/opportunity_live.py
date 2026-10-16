@@ -88,6 +88,11 @@ class LiveTradeState(ScanState):
         self.account_domains = {}
         for market in self.markets.values():
             self.account_domains.setdefault(self._account_domain(market.venue), []).append(market.instrument_id)
+        self.account_scopes = {}
+        for instrument in self.markets:
+            self.account_scopes.setdefault(self._account_scope(instrument), []).append(instrument)
+        self.flat_account_problems = {}
+        self.account_read_failures, self.account_retry_after_ns = {}, {}
         self.fences, self.last_attempt = {}, {}
         self.outbox = []
         self.session_id = uuid.uuid4().hex[:16]
@@ -206,13 +211,10 @@ class LiveTradeState(ScanState):
 
     def flat_accounts_ready(self, now_ns, after_ns):
         """Require complete post-boundary account proof, including foreign risk."""
-        representatives = {}
-        for instrument, market in self.markets.items():
-            domain = self._account_domain(market.venue)
-            scope = self._hl_scope(instrument) if domain == "HL" else ""
-            representatives.setdefault((domain, scope), instrument)
+        representatives = [self._account_representative(instruments) for instruments in self.account_scopes.values()]
+        self.flat_account_problems = {}
         ready = not self.positions and not any(o["terminal_ns"] is None for o in self.orders.values())
-        for instrument in representatives.values():
+        for instrument in representatives:
             account = self.accounts.get(instrument)
             valid = (account is not None and account.observed_ns >= after_ns
                      and self._account_problem(instrument, now_ns) is None
@@ -222,6 +224,10 @@ class LiveTradeState(ScanState):
                      and not account.position_quantity)
             if not valid:
                 ready = False
+                domain, scope = self._account_scope(instrument)
+                reason = self._account_problem(instrument, now_ns)
+                self.flat_account_problems[domain + (":" + scope if scope else "")] = (
+                    reason or ("before_check" if account.observed_ns < after_ns else "account_not_flat_or_incomplete"))
                 self._request_account(instrument, now_ns)
         return ready
 
@@ -302,8 +308,18 @@ class LiveTradeState(ScanState):
                 and o["terminal_ns"] is None]
 
     def _request_account(self, instrument_id, now_ns):
-        last = self.account_requests.get(instrument_id, 0)
-        if last and now_ns - last < max(self.retry_ns, self.order_timeout_ns):
+        scope = self._account_scope(instrument_id)
+        if now_ns < self.account_retry_after_ns.get(scope, 0):
+            return
+        instruments = self.account_scopes[scope]
+        observations = [self.accounts[i] for i in instruments if i in self.accounts]
+        # Native readers return the entire account (HL: one DEX), not one HTTP
+        # query per market. Legacy instrument-only readers retain their scope.
+        if not observations or any(a.account_positions is not None for a in observations):
+            instrument_id = self._account_representative(instruments)
+        # The gateway owns the account-read deadline, which can exceed the
+        # order timeout. Do not replace a still-pending request with a new ID.
+        if instrument_id in self.account_request_ids:
             return
         if now_ns - self.account_last_reads.get(instrument_id, 0) < self.retry_ns:
             return
@@ -322,6 +338,13 @@ class LiveTradeState(ScanState):
     @staticmethod
     def _hl_scope(instrument_id):
         return instrument_id.split(":", 1)[0] if ":" in instrument_id else ""
+
+    def _account_scope(self, instrument_id):
+        domain = self._account_domain(self.markets[instrument_id].venue)
+        return domain, self._hl_scope(instrument_id) if domain == "HL" else ""
+
+    def _account_representative(self, instruments):
+        return min(instruments, key=lambda i: (self.markets[i].symbol != "BTC", i))
 
     def _account_coverage(self, account):
         if account.account_positions is None:
@@ -456,6 +479,24 @@ class LiveTradeState(ScanState):
         if old is not None and account.observed_ns < old.observed_ns:
             return
         self.accounts[instrument_id] = account
+        if account.observed_ns >= self.fences.get(instrument_id, 0):
+            scope = self._account_scope(instrument_id)
+            self.account_read_failures.pop(scope, None)
+            self.account_retry_after_ns.pop(scope, None)
+        if account.account_positions is not None:
+            positions = dict(account.account_positions)
+            if F(positions.get(instrument_id, 0)) == F(account.position_quantity):
+                # Project only account facts. Another market must never inherit
+                # the representative's quote or quote timestamp.
+                for covered in self._account_coverage(account):
+                    if covered == instrument_id:
+                        continue
+                    previous = self.accounts.get(covered)
+                    if previous is None or previous.observed_ns <= account.observed_ns:
+                        self.accounts[covered] = replace(account, instrument_id=covered,
+                            position_quantity=positions.get(covered, Decimal(0)),
+                            open_order_ids=tuple(cid for i, cid in account.account_open_orders if i == covered),
+                            bid=None, ask=None, book_observed_ns=None)
         problem = self._account_problem(instrument_id, now_ns)
         if problem and problem != "predates_activity":
             self._pause_account(instrument_id, now_ns, problem, new_evidence=account != old)
@@ -705,6 +746,13 @@ class LiveTradeState(ScanState):
         if receipt.kind in {"unknown", "rejected"}:
             for instrument_id, request_id in tuple(self.account_request_ids.items()):
                 if receipt.request_id == request_id:
+                    self.account_requests.pop(instrument_id, None)
+                    self.account_request_ids.pop(instrument_id, None)
+                    scope = self._account_scope(instrument_id)
+                    failures = min(self.account_read_failures.get(scope, 0) + 1, 5)
+                    self.account_read_failures[scope] = failures
+                    delay = max(min(5 * 2 ** (failures - 1), 60), receipt.retry_after_secs)
+                    self.account_retry_after_ns[scope] = now_ns + delay * 1_000_000_000
                     self.accounts.pop(instrument_id, None)
                     self.fences[instrument_id] = max(self.fences.get(instrument_id, 0), now_ns + 1)
                     self._pause_account(instrument_id, now_ns, "read_failed", new_evidence=True)
@@ -1083,8 +1131,13 @@ class LiveTradeState(ScanState):
                 "profit_requires_confirmed_opening_commission": True}
 
     def display(self, stream=sys.stdout):
+        monitor = getattr(self.store, "loss_monitor", None) or {}
+        startup = ""
+        if monitor.get("enabled") and monitor.get("baseline_equity_usd") is None:
+            reasons = ",".join(f"{venue}:{reason}" for venue, reason in monitor.get("reasons", {}).items())
+            startup = f" startup=equity_baseline monitor={monitor.get('status')} waiting={reasons or '-'}"
         stream.write(f"[live-trade] phase={self.phase} pairs={len(self.positions)}/{self.max_pairs} "
                      f"closed={self.completed} confirmed_net=${float(self.realized_net):.6f} "
                      f"pending_economics={len(self.pending_economics)} "
-                     f"halt={self.halt_reason or '-'}\n")
+                     f"halt={self.halt_reason or '-'}{startup}\n")
         stream.flush()

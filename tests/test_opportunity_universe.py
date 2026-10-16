@@ -68,7 +68,7 @@ def test_valid_crypto_registry_round_trips_and_validates_without_native(tmp_path
     plan = parse_plan(parsed, tmp_path)
     assert len(plan.markets) == 10
     assert summary["symbol_count"] == 2 and summary["market_count"] == 10
-    assert plan.connection_timeout_secs == 120
+    assert plan.connection_timeout_secs == 300
     assert plan.max_levels_per_side == 20000 and plan.depth_levels == 20
     assert plan.output_path.suffix == ".jsonl"
     assert summary["historical_samples_retained"] == 0
