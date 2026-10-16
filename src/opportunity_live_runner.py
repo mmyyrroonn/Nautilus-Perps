@@ -505,16 +505,16 @@ class LiveCoordinator:
         if self.stop_requested_ns is None:
             self.stop_reason = reason
             self.stop_requested_ns = now_ns
-            if self.proxy.restart_pending:
-                self.failure = self.failure or "startup account recovery interrupted; previous session retained"
-                self.finished = True
-                self.stop()
-                return
             if self.phase == "waiting_balances":
                 self.balance_check.interrupt(now_ns)
                 self.proxy.checkpoint_balance_check(self.balance_check.document())
                 self.balance_reporter(self.balance_check.document())
                 self.failure = self.failure or "startup balance checks interrupted"
+            if self.proxy.restart_pending:
+                self.failure = self.failure or "startup account recovery interrupted; previous session retained"
+                self.finished = True
+                self.stop()
+                return
             if self.phase == "preflight":
                 self.phase = "preflight_draining"
                 self.failure = self.failure or "startup interrupted; owned BTC orders/residuals require cleanup"

@@ -39,6 +39,7 @@ jobs:
           tests/test_opportunity_account_scope.py
           tests/test_opportunity_timing.py
           tests/test_opportunity_account_reconciliation.py
+          tests/test_opportunity_account_read_lifecycle.py tests/test_opportunity_restart.py
           tests/test_opportunity_live_flow.py
           tests/test_opportunity_balances.py tests/test_opportunity_balance_runner.py
           tests/test_opportunity_loss_monitor.py
