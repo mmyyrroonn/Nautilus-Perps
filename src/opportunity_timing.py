@@ -299,7 +299,8 @@ def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason
         if reason in {"valid", "missing_book", "metadata_unavailable", "metadata_changed", "stale_or_invalid_book",
                 "insufficient_depth", "price_outside_limit", "invalid_execution_rules_or_fees", "book_skew",
                 "net_edge_insufficient", "ioc_no_match", "rate_limit", "insufficient_balance", "invalid_order",
-                "post_only", "venue_other", "local_validation", "unhedged_headroom_insufficient"}:
+                "post_only", "venue_other", "local_validation", "unhedged_headroom_insufficient",
+                "entry_admission_changed", "account_admission_changed"}:
             row["reason"] = reason
         if evidence is not None:
             # The only caller constructs this fixed schema. Never accept raw

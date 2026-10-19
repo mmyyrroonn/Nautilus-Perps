@@ -13,6 +13,13 @@ def entry_dispatch_evidence(live, position, now_ns):
     a synchronous first-leg receipt changes state in the dispatch loop.
     """
     evidence, bounds = {"checked_wall_ns": now_ns}, {}
+    if (live.phase != "active" or live.stopping or not live.cleanup_allowed
+            or live.entry_pause_reason or live.halt_reason or live.order_reconciliations
+            or any(p.get("unhedged_breach") for p in live.positions.values())
+            or any(o["terminal_ns"] is None and (o["status"] == "unknown"
+                    or now_ns - o["sent_ns"] >= live.order_timeout_ns)
+                   for o in live.orders.values())):
+        return "entry_admission_changed", evidence
     reserve_bps = getattr(live, "entry_unhedged_reserve_bps", F(10))
     risk_budget = min(F(live.policy.order_notional_usd),
                       live.max_unhedged_notional * (1 - reserve_bps / 10000))
@@ -83,7 +90,20 @@ def entry_dispatch_evidence(live, position, now_ns):
     required = buy[0] * F(live.policy.entry_edge_bps) / 10000
     evidence.update(net_usd=_number(net), minimum_net_usd=_number(required),
                     net_margin_usd=_number(net - required), reserve_usd=_number(reserve))
-    return ("net_edge_insufficient" if net < required else "valid"), evidence
+    if net < required:
+        return "net_edge_insufficient", evidence
+    # Released entries belong to this durable pair and are permitted pending
+    # IDs, while freshness, post-activity fences and every foreign owner remain
+    # admission barriers. Evaluate all scopes rather than reuse creation-time
+    # account readiness after durability/coordinator waiting.
+    ready = [live._account_ready(position[f"{leg}_id"], now_ns,
+                                pending_entry_owner=position["position_id"], allow_preparation=True)
+             for leg in ("buy", "sell")]
+    domains = {live._account_domain(live.markets[position[f"{leg}_id"]].venue)
+               for leg in ("buy", "sell")}
+    ready.extend(live._account_domain_ready(domain, now_ns, preparation_owner=position["position_id"])
+                 for domain in sorted(domains))
+    return ("valid" if all(ready) else "account_admission_changed"), evidence
 
 
 def discard_invalid_entry(live, intent, now_ns, *, dispatched=()):

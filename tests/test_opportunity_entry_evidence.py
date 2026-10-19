@@ -209,3 +209,120 @@ def test_late_economic_evidence_reclassifies_pair_without_double_count(monkeypat
     assert result['completed_pairs'] == 1
     assert result['pair_outcomes']['unfilled'] == 0
     assert result['pair_outcomes']['single_leg'] == result['pair_reclassifications'] == 1
+
+
+@pytest.mark.parametrize('changed', ['halt', 'reconciliation', 'stopping', 'entry_pause', 'inactive', 'cleanup'])
+def test_execution_admission_changes_after_prepare_block_unsent_pair(changed):
+    live, events = state()
+    publish(live)
+    if changed == 'halt':
+        live.halt_reason = 'synthetic hard protection'
+    elif changed == 'reconciliation':
+        live.order_reconciliations['synthetic-order'] = {'since_ns': NOW}
+    elif changed == 'stopping':
+        live.stopping = True
+    elif changed == 'entry_pause':
+        live.entry_pause_reason = 'synthetic pause'
+    elif changed == 'inactive':
+        live.phase = 'waiting_preflight'
+    else:
+        live.cleanup_allowed = False
+    calls = []
+    LiveCoordinator._live_intents(coordinator(live, lambda *a, **k: calls.append(a)), NOW)
+    assert not calls
+    assert all(o['status'] == 'local_not_dispatched' for o in live.orders.values())
+    assert any(e.get('reason') == 'entry_admission_changed' for e in events)
+
+
+@pytest.mark.parametrize('changed', ['disconnect', 'market_not_trading'])
+def test_market_status_changes_after_prepare_cannot_reuse_valid_old_quote(changed):
+    live, _ = state()
+    publish(live)
+    if changed == 'disconnect':
+        # Observer.on_instrument_status(adapter:disconnected) follows this path.
+        live.invalidate('BTC.HL', NOW)
+    else:
+        # Observer publishes a non-tradable snapshot with valid=False.
+        live.books['BTC.HL'] = replace(live.books['BTC.HL'], valid=False)
+    calls = []
+    LiveCoordinator._live_intents(coordinator(live, lambda *a, **k: calls.append(a)), NOW)
+    assert not calls
+    assert all(o['status'] == 'local_not_dispatched' for o in live.orders.values())
+
+
+@pytest.mark.parametrize('changed', ['halt', 'reconciliation', 'stopping', 'entry_pause'])
+def test_synchronous_first_acceptance_then_protection_never_sends_second_leg(changed):
+    live, _ = state()
+    publish(live)
+    calls = []
+    def dispatch(intent, now_ns, **kwargs):
+        if intent.action != 'submit':
+            return
+        calls.append(intent)
+        live.on_receipt(receipt(intent, 'accepted'), NOW + 1)
+        if changed == 'halt':
+            live.halt_reason = 'synthetic hard protection'
+        elif changed == 'reconciliation':
+            live.order_reconciliations[intent.client_order_id] = {'since_ns': NOW + 1}
+        elif changed == 'stopping':
+            live.stopping = True
+        else:
+            live.entry_pause_reason = 'synthetic pause'
+    LiveCoordinator._live_intents(coordinator(live, dispatch), NOW)
+    assert len(calls) == 1
+    assert live.orders[calls[0].client_order_id]['terminal_ns'] is None
+    assert sum(o['status'] == 'local_not_dispatched' for o in live.orders.values()) == 1
+
+
+def test_account_can_expire_while_latest_books_stay_fresh_after_prepare():
+    live, events = state(account_max_age_ms=1)
+    publish(live)
+    now = NOW + 2_000_000
+    set_book(live, 'HL', '99.99', '100', now)
+    set_book(live, 'ASTER', '100.3', '100.31', now)
+    calls = []
+    LiveCoordinator._live_intents(coordinator(live, lambda *a, **k: calls.append(a)), now)
+    assert not any(a[0].action == 'submit' for a in calls)
+    assert all(o['status'] == 'local_not_dispatched' for o in live.orders.values())
+    assert any(e.get('reason') == 'account_admission_changed' for e in events)
+
+
+def test_own_released_pending_entries_do_not_block_fresh_account_recheck():
+    live, _ = state()
+    publish(live)
+    calls = []
+    def dispatch(intent, now_ns, **kwargs):
+        calls.append(intent)
+        live.on_receipt(receipt(intent, 'accepted'), NOW + 1)
+    LiveCoordinator._live_intents(coordinator(live, dispatch), NOW)
+    assert len(calls) == 2
+    assert all(o['accepted_ns'] == NOW + 1 and o['terminal_ns'] is None for o in live.orders.values())
+
+
+def test_preparation_fence_allowance_retains_previous_real_activity_boundary():
+    live, events = state()
+    publish(live)
+    # Explicitly retain an earlier real activity fence stronger than the old
+    # account observation. A preparation fence must never erase this boundary.
+    for order in live.orders.values():
+        order['preparation_account_fence_ns'] = NOW + 1
+    calls = []
+    LiveCoordinator._live_intents(coordinator(live, lambda *a, **k: calls.append(a)), NOW + 2)
+    assert not any(a[0].action == 'submit' for a in calls)
+    assert any(e.get('reason') == 'account_admission_changed' for e in events)
+
+
+def test_actual_first_leg_fill_does_not_inherit_preparation_fence_allowance():
+    live, _ = state()
+    publish(live)
+    calls = []
+    def dispatch(intent, now_ns, **kwargs):
+        if intent.action != 'submit':
+            return
+        calls.append(intent)
+        fill(live, intent, NOW + 1, quantity='0.4', terminal=False)
+    LiveCoordinator._live_intents(coordinator(live, dispatch), NOW + 2)
+    assert len(calls) == 1
+    assert live.orders[calls[0].client_order_id]['filled_quantity'] == '0.4'
+    assert live.orders[calls[0].client_order_id]['terminal_ns'] is None
+    assert sum(o['status'] == 'local_not_dispatched' for o in live.orders.values()) == 1

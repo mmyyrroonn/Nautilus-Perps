@@ -40,3 +40,11 @@ E:/persarb/Nautilus-Perps/.venv/Scripts/python.exe -m pytest -q tests/test_oppor
 这是离线回放和回归证据；没有新的真实行情与成功/拒单分布，不能判断历史约 1.1 秒最大耗时实际属于排队、传输或交易所处理，不能从新测点反推 2026-10-19 四笔 HL 拒单当时缺失的盘口或网络状态。那四笔只能确认 IOC 无即时匹配。
 
 实际延迟分位数与双边完成率需要部署后在既有交易限制内自然积累样本；本轮没有为采样制造额外订单，也没有宣称完成实盘性能验收。不同市场负载的窗口不可直接归因比较。原生测点补齐前仍只能得到 Python 可观察边界。
+
+## 发送前执行与账户状态复核补充
+
+主复核补齐了队列等待及第一腿同步回调之后的全局门禁：非 active、stopping、cleanup 不可用、entry pause、halt、待订单核对、单腿风险突破和未知/超时订单均阻止尚未发送的入场腿。连接断开和停牌继续使用 Observer 撤销盘口或 `BookSnapshot.valid=False` 的既有证据。
+
+发送前重新检查账户年龄、权限、连接、完整账户持仓/挂单归属及活动后 fence。自己已持久化并 release 的 entry ID 可以作为本配对的已知 pending；准备订单本身产生的 fence 用订单新保存的 `preparation_account_fence_ns` 回看之前的真实活动边界。只有本配对零成交且仍未决的 entry 可以使用此例外；真实成交、终态、外部订单、之前活动 fence 及过期账户证据仍会阻止发送。
+
+补充回归包含准备后断连、停牌、halt、核对、停止、暂停、账户过期，以及第一腿同步 accepted 后出现硬保护和第一腿真实成交后的账户失效。最新定向回归结果：**289 passed, 4 deselected**；4 个待新 LighterExecutionControl wheel 的 native 构建用例显式排除，未视作通过。
