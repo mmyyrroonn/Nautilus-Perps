@@ -229,7 +229,7 @@ def data_clients(plan, *, backpack_quota=None):
     return result
 
 
-def create_observer(plan, state, stop, client_configs):
+def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer=True):
     from nautilus_trader.common import DataActor, DataActorConfig
     from nautilus_trader.model import BookType, ClientId, InstrumentId, OrderBook, RecordFlag
 
@@ -256,6 +256,8 @@ def create_observer(plan, state, stop, client_configs):
             self.last_display_ns = 0
             self.last_evaluation_ns = 0
             self.pending_symbols = set()
+            from opportunity_memory import current_diagnostics
+            self.memory_diagnostics = current_diagnostics()
 
         def fail(self, message):
             self.failure = message
@@ -364,6 +366,8 @@ def create_observer(plan, state, stop, client_configs):
                 instrument_id = batch.instrument_id
                 market = self.markets[instrument_id]
                 deltas = batch.deltas
+                if self.memory_diagnostics is not None:
+                    self.memory_diagnostics.record_batch(market.venue, len(deltas), batch.ts_init)
                 clear = any(d.action.name == "CLEAR" for d in deltas)
                 snapshot_part = any(
                     RecordFlag.F_SNAPSHOT.matches(d.flags) for d in deltas)
@@ -504,6 +508,8 @@ def create_observer(plan, state, stop, client_configs):
             if not self.running:
                 return
             try:
+                if self.memory_diagnostics is not None:
+                    self.memory_diagnostics.record_timer(event)
                 self.check_backpack()
                 now_ns = time.time_ns()
                 self.advance_subscriptions(now_ns)
@@ -517,7 +523,8 @@ def create_observer(plan, state, stop, client_configs):
                     # Every changed leg is current before evaluating any pair.
                     for symbol in changed:
                         state.evaluate_symbol(symbol, time.time_ns())
-                    state.on_evaluation_timer(time.time_ns())
+                    if drive_evaluation_timer:
+                        state.on_evaluation_timer(time.time_ns())
                     self.last_evaluation_ns = time.time_ns()
                 if time.time_ns() - self.last_display_ns >= plan.refresh_ms * 1_000_000:
                     if plan.evaluation_interval_ms:
@@ -527,6 +534,8 @@ def create_observer(plan, state, stop, client_configs):
                         state.expire(time.time_ns())
                     state.display()
                     self.last_display_ns = time.time_ns()
+                if self.memory_diagnostics is not None:
+                    self.memory_diagnostics.capture_books(self, state, time.time_ns())
             except Exception as exc:
                 self.fail(f"refresh/recording: {type(exc).__name__}: {exc}")
 

@@ -823,10 +823,15 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
     install("opportunity_native_execution", NativeOrderGateway=Gateway,
         execution_clients=execution_clients)
     monkeypatch.setattr(opportunity_runtime, "data_clients", data_clients)
-    observer = SimpleNamespace(failure=None)
-    monkeypatch.setattr(opportunity_runtime, "create_observer", lambda *args: observer)
+    observer = SimpleNamespace(failure=None, memory_diagnostics=None)
+    observer_options = {}
+    def create_observer(*args, **kwargs):
+        observer_options.update(kwargs)
+        return observer
+    monkeypatch.setattr(opportunity_runtime, "create_observer", create_observer)
     result, observed, strategy = build_live_node(plan, live, state)
     assert result is node and observed is observer
+    assert observer_options == {"drive_evaluation_timer": False}
     assert len(node.execution) == len(plan.venues) and len(node.data) == len(plan.venues)
     assert exec_arguments["backpack_quota"] is data_arguments["backpack_quota"]
     assert exec_arguments["run_id"] == live.session_id

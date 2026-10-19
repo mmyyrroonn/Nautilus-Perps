@@ -82,7 +82,7 @@ class TimingRecorder:
         self.io_warned = False
 
     def record(self, name, elapsed_ns, *, self_ns=None, venue="", outcome="", error=False,
-               category="span"):
+               category="span", sample_every=1):
         venue, outcome = _labels(venue, outcome)
         key = (category, name, venue, outcome)
         with self.lock:
@@ -92,7 +92,7 @@ class TimingRecorder:
             if row is None:
                 row = self.rows[key] = {"count": 0, "errors": 0, "total_ns": 0,
                     "self_ns": 0, "min_ns": elapsed_ns, "max_ns": 0,
-                    "recent": deque(maxlen=SAMPLE_WINDOW)}
+                    "recent": deque(maxlen=SAMPLE_WINDOW), "sample_every": sample_every}
             row["count"] += 1
             row["errors"] += int(error)
             row["total_ns"] += elapsed_ns
@@ -115,7 +115,8 @@ class TimingRecorder:
                 "min_ms": row["min_ns"] / 1e6, "max_ms": row["max_ns"] / 1e6,
                 "recent_samples": len(recent),
                 "recent_p50_ms": recent[math.ceil(len(recent) * .50) - 1] / 1e6,
-                "recent_p95_ms": recent[math.ceil(len(recent) * .95) - 1] / 1e6})
+                "recent_p95_ms": recent[math.ceil(len(recent) * .95) - 1] / 1e6,
+                "sample_every": row["sample_every"]})
         return {"schema_version": 1, "run_id": self.run_id, "pid": os.getpid(),
             "started_at_utc": self.started_at, "updated_at_utc": datetime.now(UTC).isoformat(),
             "finished_at_utc": self.finished_at, "status": self.status, "exit_code": self.exit_code,
@@ -125,6 +126,8 @@ class TimingRecorder:
                 "self_ms excludes instrumented children on the same thread; concurrent threads overlap.",
                 "Latency rows measure dispatch to first observed outcome; they are not CPU hotspots.",
                 "Counts/totals/min/max cover the run; percentiles cover only the last 1024 completions.",
+                "sampled_span rows cover sampled completions only; self_ms equals inclusive total_ms. "
+                "They do not subtract from full spans and must not be summed with them.",
                 "In-flight work is absent from aggregates; abrupt termination leaves the last snapshot.",
                 "Rust adapter internals and work before CLI argument parsing are not instrumented."],
             "operations": sorted(rows, key=lambda row: (row["category"], -row["self_ms"]))}
@@ -158,6 +161,15 @@ def span(name, *, venue="", outcome=""):
     return _disabled_span if recorder is None else _Span(recorder, name, venue, outcome)
 
 
+def current_timing_snapshot():
+    """Return bounded aggregates for periodic diagnostics, or None when disabled."""
+    recorder = _active
+    if recorder is None:
+        return None
+    document = recorder.document()
+    return {key: document[key] for key in ("run_id", "elapsed_ms", "operations")}
+
+
 def timed(name, *, labels=None):
     """Measure a synchronous function; disabled calls take one branch only."""
     def decorate(function):
@@ -174,6 +186,42 @@ def timed(name, *, labels=None):
                     pass
             with _Span(recorder, name, venue, outcome):
                 return function(*args, **kwargs)
+        return wrapped
+    return decorate
+
+
+def sampled_timed(name, *, every=127):
+    """Sample fixed-name hot stages per thread without changing full-span nesting.
+
+    Every Nth call is timed while diagnostics are enabled. Skipped calls only
+    advance a bounded ordinal; they do not read clocks, acquire recorder locks,
+    or retain arguments/results. Sampling is periodic, not a random estimator.
+    """
+    if type(every) is not int or every < 2:
+        raise ValueError("sample interval must be an integer of at least two")
+
+    def decorate(function):
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            recorder = _active
+            if recorder is None:
+                return function(*args, **kwargs)
+            counts = getattr(recorder.local, "sampled_calls", None)
+            if counts is None:
+                counts = recorder.local.sampled_calls = {}
+            ordinal = counts.get(name, 0) + 1
+            counts[name] = ordinal if ordinal < every else 0
+            if ordinal < every:
+                return function(*args, **kwargs)
+            started_ns = time.perf_counter_ns()
+            error = True
+            try:
+                result = function(*args, **kwargs)
+                error = False
+                return result
+            finally:
+                recorder.record(name, time.perf_counter_ns() - started_ns,
+                    category="sampled_span", sample_every=every, error=error)
         return wrapped
     return decorate
 

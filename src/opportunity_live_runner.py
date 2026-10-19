@@ -853,7 +853,10 @@ def build_live_node(plan, live, coordinator, *, environ=None):
     strategy = ContinuousStrategy()
     node.add_strategy(strategy)
     observer = create_observer(plan.scan, live,
-        lambda: coordinator.request_stop(time.time_ns(), "market_data_failure"), configs)
+        lambda: coordinator.request_stop(time.time_ns(), "market_data_failure"), configs,
+        drive_evaluation_timer=False)  # The continuous strategy owns live reconciliation/risk timers.
+    if observer.memory_diagnostics is not None:
+        observer.memory_diagnostics.attach_handle(handle)
     node.add_actor(observer)
     return node, observer, strategy
 
@@ -986,8 +989,13 @@ def main(argv=None):
     parser.add_argument("--max-gross-notional-usd")
     parser.add_argument("--duration-secs", type=int)
     add_timing_arguments(parser)
+    from opportunity_memory import add_memory_arguments, run_with_memory
+    add_memory_arguments(parser)
     args = parser.parse_args(argv)
-    return run_timed(lambda: _run(args), enabled=args.timing, directory=args.timing_dir)
+    if args.memory_tracemalloc and not args.memory_diagnostics:
+        parser.error("--memory-tracemalloc requires --memory-diagnostics")
+    return run_with_memory(
+        lambda: run_timed(lambda: _run(args), enabled=args.timing, directory=args.timing_dir), args)
 
 
 def _run(args):

@@ -17,7 +17,7 @@ from opportunity_core import (_book_valid, _budget_quantity, _metadata_valid, _n
                               _walk, evaluate_opportunity, exact_decimal)
 from opportunity_runtime import ScanState
 from opportunity_trade import TradePolicy
-from opportunity_timing import span
+from opportunity_timing import sampled_timed, span
 
 
 class PaperTradeState(ScanState):
@@ -79,6 +79,7 @@ class PaperTradeState(ScanState):
             self.halted = True
             raise
 
+    @sampled_timed("pricing.prepare_pair")
     def _pair(self, buy_id, sell_id, now_ns):
         if not all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
             return None
@@ -91,6 +92,7 @@ class PaperTradeState(ScanState):
             return None
         return [self._remaining_book(i) for i in (buy_id, sell_id)], metadata
 
+    @sampled_timed("pricing.remaining_book")
     def _remaining_book(self, instrument_id):
         book = self.books[instrument_id]
         generation = (book.ts_event_ns, book.bids, book.asks)
@@ -98,6 +100,11 @@ class PaperTradeState(ScanState):
         if used is None or used["generation"] != generation:
             used = {"generation": generation, "bids": {}, "asks": {}}
             self.consumed[instrument_id] = used
+        # Live pricing never simulates fills. An untouched immutable snapshot
+        # already represents all remaining liquidity; avoid rebuilding every
+        # level for every directed pair before the cheap price rejection.
+        if not used["bids"] and not used["asks"]:
+            return book
         sides = {}
         for side in ("bids", "asks"):
             sides[side] = tuple((price, exact_decimal(F(size) - used[side].get(price, F(0))))
@@ -117,6 +124,7 @@ class PaperTradeState(ScanState):
                 return
         raise RuntimeError("paper fill exceeded available snapshot liquidity")
 
+    @sampled_timed("pricing.entry")
     def entry(self, buy_id, sell_id, now_ns):
         pair = self._pair(buy_id, sell_id, now_ns)
         if pair is None:
