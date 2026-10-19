@@ -453,11 +453,15 @@ class LiveCoordinator:
 
     def _live_intents(self, now_ns):
         for intent in self.live.drain_intents():
+            marker = self.live.take_entry_timing(intent)
             if self.proxy.restart_pending and intent.action != "reconcile":
                 raise RuntimeError("startup account recovery cannot dispatch financial intents")
             if self.live.discard_paused_entry(intent, now_ns):
                 continue
-            self.gateway.dispatch(intent, now_ns)
+            if marker is None:
+                self.gateway.dispatch(intent, now_ns)
+            else:
+                self.gateway.dispatch(intent, now_ns, candidate_marker=marker)
 
     @timed("coordinator.receipt")
     def on_receipt(self, receipt, now_ns=None):

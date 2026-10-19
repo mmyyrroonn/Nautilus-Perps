@@ -1,7 +1,8 @@
 """Bounded current-book state and a public-data-only Nautilus runtime."""
 from __future__ import annotations
 
-from opportunity_timing import span, timed
+from opportunity_timing import (record_latency, sampled_delivery_age, sampled_start_latency,
+                                span, start_latency, timed)
 
 from copy import deepcopy
 from collections import deque
@@ -253,6 +254,9 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.pending_aster = deque()
             self.next_aster_ns = 0
             self.dirty = {}
+            # At most one cycle and one publication marker per configured market.
+            self.book_timings = {}
+            self.publication_timings = {}
             self.last_display_ns = 0
             self.last_evaluation_ns = 0
             self.pending_symbols = set()
@@ -313,6 +317,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.running = False
             self.pending_aster.clear()
             self.dirty.clear()
+            self.book_timings.clear()
+            self.publication_timings.clear()
             self.pending_symbols.clear()
             state.current.clear()
             if self.started:
@@ -332,7 +338,25 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.snapshot_seen.discard(instrument_id)
             self.pending_snapshot.discard(instrument_id)
             self.dirty.pop(instrument_id, None)
+            self.clear_book_timing(instrument_id)
             state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata)
+
+        def clear_book_timing(self, instrument_id):
+            self.book_timings.pop(instrument_id, None)
+            market = self.markets[instrument_id]
+            pending = self.publication_timings.get(market.symbol)
+            if pending is not None:
+                pending.pop(instrument_id, None)
+                if not pending:
+                    self.publication_timings.pop(market.symbol, None)
+
+        def evaluate_published(self, symbol, *, changed_id=None):
+            pending = self.publication_timings.pop(symbol, {})
+            endpoint = start_latency() if pending else None
+            for venue, marker in pending.values():
+                record_latency(marker, "market.publish_to_evaluate", venue=venue, sample_every=127,
+                               ended_ns=endpoint[1] if endpoint is not None else None)
+            state.evaluate_symbol(symbol, time.time_ns(), changed_id=changed_id)
 
         @timed("market.backpack_health")
         def check_backpack(self):
@@ -360,6 +384,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
         def on_book_deltas(self, batch):
             if not self.running or batch.instrument_id not in self.markets:
                 return
+            sampled_delivery_age(batch.ts_init, venue=self.markets[batch.instrument_id].venue)
             try:
                 if not plan.evaluation_interval_ms:
                     self.check_backpack()
@@ -378,6 +403,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.snapshot_seen.discard(instrument_id)
                     self.pending_snapshot.add(instrument_id)
                     self.dirty.pop(instrument_id, None)
+                    self.clear_book_timing(instrument_id)
                     state.invalidate(market.instrument_id, time.time_ns())
                 if instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
                     return
@@ -403,12 +429,20 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 book.apply_deltas(batch)
                 if not RecordFlag.F_LAST.matches(batch.flags):
                     self.dirty.pop(instrument_id, None)
+                    self.clear_book_timing(instrument_id)
                     state.invalidate(market.instrument_id, time.time_ns())
                     return
                 if instrument_id in self.pending_snapshot:
                     self.pending_snapshot.discard(instrument_id)
                     self.snapshot_seen.add(instrument_id)
                 stamp = (batch.ts_event, batch.ts_init, batch.sequence)
+                if instrument_id not in self.dirty:
+                    marker = sampled_start_latency("market.publication_cycle", venue=market.venue)
+                    if marker is not None:
+                        self.book_timings[instrument_id] = (marker, marker)
+                elif instrument_id in self.book_timings:
+                    first, _ = self.book_timings[instrument_id]
+                    self.book_timings[instrument_id] = (first, start_latency())
                 if plan.evaluation_interval_ms:
                     self.dirty[instrument_id] = stamp
                 else:
@@ -419,6 +453,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
         @timed("market.publish_book", labels=lambda self, instrument_id, *a, **kw: (self.markets[instrument_id].venue, ""))
         def publish_book(self, instrument_id, stamp, *, evaluate=True):
             market = self.markets[instrument_id]
+            markers = self.book_timings.pop(instrument_id, None)
             if market.instrument_id not in state.metadata:
                 return
             book = self.local_books[instrument_id]
@@ -449,7 +484,17 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                        "ts_event_ns": ts_event, "ts_received_ns": ts_received,
                        "coverage_limit": depth, "complete_book_claimed": False,
                        "sequence": sequence}
-            state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw, evaluate=evaluate)
+            state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw, evaluate=False)
+            if markers is not None:
+                published = start_latency()
+                for label, marker in zip(("first", "latest"), markers):
+                    record_latency(marker, "market." + label + "_update_to_publish",
+                                   venue=market.venue, sample_every=127,
+                                   ended_ns=published[1] if published is not None else None)
+                self.publication_timings.setdefault(market.symbol, {})[instrument_id] = (
+                    market.venue, published)
+            if evaluate:
+                self.evaluate_published(market.symbol, changed_id=market.instrument_id)
 
         @timed("market.instrument")
         def on_instrument(self, instrument):
@@ -522,7 +567,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                         changed.add(self.markets[instrument_id].symbol)
                     # Every changed leg is current before evaluating any pair.
                     for symbol in changed:
-                        state.evaluate_symbol(symbol, time.time_ns())
+                        self.evaluate_published(symbol)
                     if drive_evaluation_timer:
                         state.on_evaluation_timer(time.time_ns())
                     self.last_evaluation_ns = time.time_ns()

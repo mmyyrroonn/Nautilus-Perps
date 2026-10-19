@@ -190,6 +190,7 @@ class MemoryDiagnostics:
             if samples:
                 batches[venue].update(delivery_age_p50_ms=samples[math.ceil(len(samples) * .5) - 1],
                     delivery_age_p95_ms=samples[math.ceil(len(samples) * .95) - 1],
+                    delivery_age_p99_ms=samples[math.ceil(len(samples) * .99) - 1],
                     delivery_age_max_ms=samples[-1])
         books = self.books
         self.previous_batches = {venue: dict(counts) for venue, counts in self.counters.items()}
@@ -200,6 +201,7 @@ class MemoryDiagnostics:
         if timer_ages:
             timer.update(age_p50_ms=timer_ages[math.ceil(len(timer_ages) * .5) - 1],
                          age_p95_ms=timer_ages[math.ceil(len(timer_ages) * .95) - 1],
+                         age_p99_ms=timer_ages[math.ceil(len(timer_ages) * .99) - 1],
                          age_max_ms=timer_ages[-1])
         return {"schema_version": 1, "run_id": self.run_id, "pid": os.getpid(),
             "started_at_utc": self.started_at, "time": datetime.now(UTC).isoformat(),

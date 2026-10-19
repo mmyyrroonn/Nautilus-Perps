@@ -75,6 +75,7 @@ def test_bounded_recent_samples_and_exact_lifetime_totals():
     assert row["min_ms"] == 1 / 1e6 and row["max_ms"] == 2048 / 1e6
     assert row["recent_p50_ms"] == 1536 / 1e6
     assert row["recent_p95_ms"] == 1997 / 1e6
+    assert row["recent_p99_ms"] == 2038 / 1e6
 
 
 def test_worker_threads_share_session_without_cross_thread_nesting(monkeypatch):

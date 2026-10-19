@@ -23,6 +23,7 @@ from opportunity_preflight import ExecutionReceipt
 
 SUPPORTED_VENUES = frozenset({"HL", "HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"})
 CANCEL_REPLACE_VENUES = frozenset({"ASTER", "ONDO", "BACKPACK"})
+MAX_PENDING_SUBMIT_TIMINGS = 1024
 
 
 def _native():
@@ -233,6 +234,7 @@ class NativeOrderGateway:
         self.reads = {}
         self.native_reads = {}
         self.requests = {}
+        self.submit_timings = {}
         self.orders = {}
         self.active_request_map = {}
         self.seen_fills = {}
@@ -278,6 +280,11 @@ class NativeOrderGateway:
             record_latency(request["timing_start"], "gateway." + action + ".response",
                            venue=intent.venue, outcome=kind,
                            error=kind in {"unknown", "rejected", "denied", "modify_rejected", "cancel_rejected"})
+            record_latency(self.submit_timings.get(intent.request_id), "gateway.submit_to_outcome",
+                           venue=intent.venue, outcome=kind,
+                           error=kind in {"unknown", "rejected", "denied"})
+            if kind in {"terminal", "canceled", "expired", "rejected", "denied"}:
+                self.submit_timings.pop(intent.request_id, None)
 
     def _reject(self, intent, reason):
         self.last_error = reason
@@ -307,7 +314,7 @@ class NativeOrderGateway:
         return bid, ask, stamp
 
     @timed("gateway.dispatch", labels=lambda self, intent, *a, **kw: (intent.venue, intent.action))
-    def dispatch(self, intent, now_ns):
+    def dispatch(self, intent, now_ns, *, candidate_marker=None):
         if self.closed:
             raise RuntimeError("native gateway is closed")
         if intent.request_id in self.requests:
@@ -387,6 +394,15 @@ class NativeOrderGateway:
         self._invalidate_account(intent.venue)
         try:
             if intent.action == "submit":
+                # This is the Python/native command boundary. Native queueing,
+                # signing and transport occur after it and are not network RTT.
+                marker = start_latency()
+                if marker is not None:
+                    if len(self.submit_timings) >= MAX_PENDING_SUBMIT_TIMINGS:
+                        self.submit_timings.pop(next(iter(self.submit_timings)))
+                    self.submit_timings[intent.request_id] = marker
+                record_latency(candidate_marker, "entry.candidate_to_submit", venue=intent.venue,
+                               ended_ns=marker[1] if marker is not None else None)
                 self.strategy.submit_order(order, client_id=client)
             elif intent.action == "cancel":
                 self.strategy.cancel_order(self.model.ClientOrderId.from_str(cid), client_id=client)
@@ -701,6 +717,7 @@ class NativeOrderGateway:
         if self.closed:
             return
         self.closed = True
+        self.submit_timings.clear()
         for future in self.reads.values():
             future.cancel()
         self.worker.shutdown(wait=False, cancel_futures=True)
