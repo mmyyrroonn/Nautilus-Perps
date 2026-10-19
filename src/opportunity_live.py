@@ -6,7 +6,9 @@ every instrument between orders. Pair inventory is separate from venue netting.
 """
 from __future__ import annotations
 
-from opportunity_timing import record_latency, span, start_latency, timed
+from opportunity_timing import (begin_entry_trace, record_entry_stage, record_latency,
+                                span, start_latency, timed)
+from opportunity_entry_evidence import entry_pair_result
 
 from collections import Counter
 from copy import deepcopy
@@ -389,10 +391,20 @@ class LiveTradeState(ScanState):
         scope = self._hl_scope(account.instrument_id) if domain == "HL" else ""
         return self.account_scopes.get((domain, scope), ())
 
-    def _check_account_proof(self, instrument_id, account, expected):
+    def _entry_account_fence(self, instrument_id, preparation_owner=None):
+        fence = self.fences.get(instrument_id, 0)
+        if preparation_owner is not None:
+            for order in self._pending(instrument_id):
+                if (order["position_id"] == preparation_owner and order["purpose"] == "entry"
+                        and order["status"] in {"prepared", "dispatch_released"}
+                        and not F(order["filled_quantity"]) and fence == order["sent_ns"]):
+                    return order.get("preparation_account_fence_ns", fence)
+        return fence
+
+    def _check_account_proof(self, instrument_id, account, expected, *, preparation_owner=None):
         """Validate complete evidence once within an immutable validation pass."""
         coverage = self._account_coverage(account)
-        if any(account.observed_ns < self.fences.get(i, 0) for i in coverage):
+        if any(account.observed_ns < self._entry_account_fence(i, preparation_owner) for i in coverage):
             return {}, "predates_activity"
         if account.account_positions is None:
             positions = {instrument_id: F(account.position_quantity)}
@@ -416,7 +428,8 @@ class LiveTradeState(ScanState):
                 return positions, "unowned_order"
         return positions, None
 
-    def _account_problem(self, instrument_id, now_ns, *, check_age=True, proofs=None, expected=None):
+    def _account_problem(self, instrument_id, now_ns, *, check_age=True, proofs=None, expected=None,
+                         preparation_owner=None):
         account = self.accounts.get(instrument_id)
         if account is None:
             return "missing"
@@ -439,7 +452,8 @@ class LiveTradeState(ScanState):
         if expected is None:
             expected = {}
         if key not in proofs:
-            proofs[key] = self._check_account_proof(instrument_id, account, expected)
+            proofs[key] = self._check_account_proof(instrument_id, account, expected,
+                                                   preparation_owner=preparation_owner)
         positions, reason = proofs[key]
         if reason == "predates_activity":
             return "predates_activity"
@@ -477,10 +491,11 @@ class LiveTradeState(ScanState):
         self.emit("account_domain_paused", now_ns, domain=domain, **pause, local_not_dispatched=canceled)
 
     @timed("strategy.account_domain", labels=lambda self, domain, *a, **kw: (domain, ""))
-    def _account_domain_ready(self, domain, now_ns):
+    def _account_domain_ready(self, domain, now_ns, *, preparation_owner=None):
         instruments = self.account_domains[domain]
         proofs, expected = {}, {}
-        problems = [(i, self._account_problem(i, now_ns, proofs=proofs, expected=expected)) for i in instruments]
+        problems = [(i, self._account_problem(i, now_ns, proofs=proofs, expected=expected,
+                                            preparation_owner=preparation_owner)) for i in instruments]
         self.account_check_metrics[domain] = {"checked_at_unix_ns": now_ns, "markets_checked": len(instruments),
             "proofs_checked": len(proofs), "expected_quantities_computed": len(expected),
             "position_rows_checked": sum(len(positions) for positions, _ in proofs.values()),
@@ -562,7 +577,7 @@ class LiveTradeState(ScanState):
                   final_fill_evidence={cid: self.orders[cid]["final_fill_evidence"] for cid in resolved},
                   read_started_ns=reads)
 
-    def _account_ready(self, instrument_id, now_ns, *, pending_entry_owner=None):
+    def _account_ready(self, instrument_id, now_ns, *, pending_entry_owner=None, allow_preparation=False):
         account = self.accounts.get(instrument_id)
         pending = self._pending(instrument_id)
         # A still-live entry can only add to this pair's owned leg. A hard
@@ -572,7 +587,8 @@ class LiveTradeState(ScanState):
                    and o["position_id"] == pending_entry_owner and o["purpose"] == "entry"}
         ready = (account is not None and account.authoritative and account.connected
             and 0 <= now_ns - account.observed_ns <= self.account_max_age_ns
-            and account.observed_ns >= self.fences.get(instrument_id, 0)
+            and account.observed_ns >= self._entry_account_fence(
+                instrument_id, pending_entry_owner if allow_preparation else None)
             and set(account.open_order_ids) <= allowed and len(allowed) == len(pending)
             and F(account.position_quantity) == self.expected_native(instrument_id))
         if not ready:
@@ -695,6 +711,7 @@ class LiveTradeState(ScanState):
             "position_id": position["position_id"], "leg": leg, "purpose": purpose,
             "instrument_id": instrument_id, "side": side, "quantity": str(intent.quantity),
             "price": str(intent.price), "reduce_only": intent.reduce_only, "sent_ns": now_ns,
+            "preparation_account_fence_ns": self.fences.get(instrument_id, 0),
             "accepted_ns": None, "first_fill_ns": None, "terminal_ns": None,
             "status": "prepared", "filled_quantity": "0"}
         self.fences[instrument_id] = now_ns
@@ -779,6 +796,8 @@ class LiveTradeState(ScanState):
         if candidate_marker is not None:
             record_latency(candidate_marker, "entry.candidate_to_persisted_intents")
             for intent in intents:
+                begin_entry_trace(intent.request_id, intent.venue, candidate_marker, now_ns)
+                record_entry_stage(intent.request_id, "persisted", wall_ns=now_ns)
                 if len(self.entry_timings) >= MAX_PENDING_ENTRY_TIMINGS:
                     self.entry_timings.pop(next(iter(self.entry_timings)))
                 self.entry_timings[intent.request_id] = candidate_marker
@@ -863,6 +882,7 @@ class LiveTradeState(ScanState):
             position["closing_fees_usd"] = _number(F(position["closing_fees_usd"]) + fee)
         self.executions[identity] = signature
         order["filled_quantity"] = _number(F(order["filled_quantity"]) + quantity)
+        record_entry_stage(order["request_id"], "strategy_fill", wall_ns=now_ns)
         order["first_fill_ns"] = order["first_fill_ns"] or now_ns
         self.fences[instrument_id] = now_ns
         if order["terminal_ns"] is not None:
@@ -877,6 +897,7 @@ class LiveTradeState(ScanState):
                   fee_usd=_number(fee) if known_fee else None, fee_confirmed=known_fee,
                   estimated_fee_usd=_number(estimated_fee) if estimated_fee is not None else None,
                   latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
+        entry_pair_result(self, order)
         self._request_account(instrument_id, now_ns)
 
     @timed("strategy.receipt")
@@ -910,6 +931,7 @@ class LiveTradeState(ScanState):
         if receipt.kind == "accepted":
             if order["accepted_ns"] is None:
                 order["accepted_ns"] = now_ns
+                record_entry_stage(order["request_id"], "strategy_accepted", wall_ns=now_ns)
                 self.emit("order_accepted", now_ns, client_order_id=receipt.client_order_id,
                           latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
             return
@@ -938,10 +960,13 @@ class LiveTradeState(ScanState):
             if receipt.kind == "terminal_evidence":
                 return  # Evidence alone does not invent an order lifecycle event.
             order["terminal_ns"], order["status"] = now_ns, receipt.kind
+            record_entry_stage(order["request_id"], "strategy_rejected" if receipt.kind in {"rejected", "denied"}
+                               else "strategy_terminal", wall_ns=now_ns)
             self.fences[order["instrument_id"]] = now_ns
             self.emit("order_terminal", now_ns, client_order_id=receipt.client_order_id,
                       outcome=receipt.kind, filled_quantity=order["filled_quantity"],
                       latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
+            entry_pair_result(self, order)
             self._request_account(order["instrument_id"], now_ns)
         elif receipt.kind == "unknown":
             if order["terminal_ns"] is None and order["status"] != "unknown":

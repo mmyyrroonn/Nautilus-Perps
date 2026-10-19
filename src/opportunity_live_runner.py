@@ -472,16 +472,28 @@ class LiveCoordinator:
             self.gateway.dispatch(intent, now_ns)
 
     def _live_intents(self, now_ns):
+        from opportunity_entry_evidence import discard_invalid_entry
+        from opportunity_timing import record_entry_stage
+        dispatched = set()
+        dispatch_started = time.perf_counter_ns()
         for intent in self.live.drain_intents():
             marker = self.live.take_entry_timing(intent)
+            record_entry_stage(intent.request_id, "coordinator", wall_ns=now_ns)
             if self.proxy.restart_pending and intent.action != "reconcile":
                 raise RuntimeError("startup account recovery cannot dispatch financial intents")
             if self.live.discard_paused_entry(intent, now_ns):
                 continue
+            # Advance the callback's wall-clock observation by local monotonic
+            # elapsed time, including persistence and synchronous dispatch work.
+            # Do not reuse the earlier callback time as a send-time age check.
+            check_ns = now_ns + max(0, time.perf_counter_ns() - dispatch_started)
+            if discard_invalid_entry(self.live, intent, check_ns, dispatched=dispatched):
+                continue
+            dispatched.add(intent.client_order_id)
             if marker is None:
-                self.gateway.dispatch(intent, now_ns)
+                self.gateway.dispatch(intent, check_ns)
             else:
-                self.gateway.dispatch(intent, now_ns, candidate_marker=marker)
+                self.gateway.dispatch(intent, check_ns, candidate_marker=marker)
 
     @timed("coordinator.receipt")
     def on_receipt(self, receipt, now_ns=None):
