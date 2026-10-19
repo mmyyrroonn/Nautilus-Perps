@@ -148,3 +148,12 @@ Counter updates use fixed venue labels and bounded sample windows. Report I/O
 runs on a separate thread. Diagnostic collection and write failures are counted
 and do not request shutdown or change trading decisions. The timing option does
 add per-span measurement cost; compare instrumented results accordingly.
+
+For a same-process queue audit, run `python scripts/analyze_runner_window.py
+reports/opportunity-trading/memory --seconds 1800`. This reports queue-depth
+quantiles, dispatch progress, RSS and timing hotspots. `queued_without_dispatch`
+requires positive depths at both endpoints, no dispatch progress and an advanced
+queue sampler. It is an investigation signal, not proof of continuous starvation.
+The script excludes other process runs and reset intervals. Native enqueue time
+is still unavailable. Backpack poll spans separate durable economics, terminal
+reconciliation and admission preparation, which can block the runner thread.
