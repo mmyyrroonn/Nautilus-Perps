@@ -95,6 +95,7 @@ class SessionLossMonitor:
         self.invalidated_after_ns = 0
         self.collected_venues, self.queried_ns = {}, {}
         self.baseline_venues, self.latest_venues, self.reasons = {}, {}, {}
+        self.balance_diagnostics = {}
         self.required_currencies = {venue: set() for venue in venues}
 
     def seed_startup_balances(self, check):
@@ -115,6 +116,15 @@ class SessionLossMonitor:
         self.invalidated_after_ns = max(self.invalidated_after_ns, after_ns)
         self.collected_venues.clear()
         self.queried_ns.clear()
+        self.balance_diagnostics.clear()
+
+    def _record_balance_diagnostic(self, venue, row, queried):
+        previous = self.balance_diagnostics.get(venue, {})
+        # A rejected read runs every coordinator tick. Persist only on the
+        # query cadence or a result/boundary change, never every 100 ms.
+        if queried or any(previous.get(k) != row.get(k) for k in
+                          ("result", "failure", "required_after_ns")):
+            self.balance_diagnostics[venue] = row
 
     def due(self, now_ns):
         return (self.policy.enabled and self.status != "breached"
@@ -166,11 +176,13 @@ class SessionLossMonitor:
             if row is not None and row["observed_ns"] >= activity_ns:
                 continue
             self.collected_venues.pop(venue, None)
+            queried = False
             if (venue not in self.queried_ns or now_ns - self.queried_ns[venue]
                     >= self.policy.retry_interval_secs * 1_000_000_000):
                 try:
                     gateway.query_balance(venue)
                     self.queried_ns[venue] = now_ns
+                    queried = True
                 except Exception:
                     self.reasons[venue] = "equity_query_failed"
                     self._pause(now_ns)
@@ -187,8 +199,15 @@ class SessionLossMonitor:
                 self.collected_venues[venue] = flat_equity(snapshot, venue, now_ns, max_age_ms,
                                                           boundary, self.required_currencies[venue])
                 self.reasons.pop(venue, None)
+                self._record_balance_diagnostic(venue, {
+                    "result": "passed", "observed_ns": snapshot["observed_ns"],
+                    "read_ns": now_ns, "required_after_ns": boundary,
+                    "max_age_ms": max_age_ms, "query_ns": self.queried_ns.get(venue)}, queried)
             except BalanceUnavailable as exc:
                 self.reasons[venue] = str(exc)
+                self._record_balance_diagnostic(venue, {
+                    "result": "unavailable", "failure": str(exc), **exc.timing,
+                    "query_ns": self.queried_ns.get(venue)}, queried)
             except Exception:
                 self.reasons[venue] = "equity_read_invalid"
         if len(self.collected_venues) != len(self.venues):
@@ -216,4 +235,5 @@ class SessionLossMonitor:
                 "checked_ns": self.checked_ns, "next_check_ns": self.next_check_ns,
                 "baseline_venues": self.baseline_venues, "venues": self.latest_venues,
                 "collected_venues": dict(self.collected_venues),
+                "balance_diagnostics": {venue: dict(row) for venue, row in self.balance_diagnostics.items()},
                 "reasons": dict(self.reasons)}

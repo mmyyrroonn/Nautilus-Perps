@@ -34,6 +34,25 @@ def account_cache(*, rows=None, stamp=NOW, reported=True):
     return NS(account=lambda account_id: account), event
 
 
+@pytest.mark.parametrize("stamp,boundary,max_age,detail", [
+    (NOW - 1, NOW, None, "before_activity_boundary"),
+    (NOW + 1, 0, None, "timestamp_in_future"),
+    (0, 0, None, "invalid_timestamp"),
+    ("PRIVATE", 0, None, "invalid_timestamp"),
+    (NOW - 2_000_000, 0, 1, "maximum_age_exceeded"),
+])
+def test_balance_time_failure_keeps_safe_diagnostic_fields(stamp, boundary, max_age, detail):
+    cache, _ = account_cache(stamp=stamp)
+    with pytest.raises(BalanceUnavailable) as failure:
+        native_balance_snapshot(cache, "HL", "HL-001", NOW, max_age, after_ns=boundary)
+    assert str(failure.value) == "balance_stale_or_invalid_time"
+    assert failure.value.timing == {
+        "failure": detail, "observed_ns": stamp if type(stamp) is int else None,
+        "read_ns": NOW, "required_after_ns": boundary, "max_age_ms": max_age}
+    assert "PRIVATE" not in json.dumps(failure.value.timing)
+    assert "HL-001" not in json.dumps(failure.value.timing)
+
+
 @pytest.mark.parametrize("venue", VENUES)
 def test_snapshot_preserves_native_amounts_currency_and_timestamp(venue):
     cache, event = account_cache()
