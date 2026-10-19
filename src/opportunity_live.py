@@ -112,6 +112,8 @@ class LiveTradeState(ScanState):
         self.legacy_realized_net = None
         self.event_counts = Counter()
         self.phase, self.halt_reason = "waiting_preflight", None
+        self.order_reconciliations = {}
+        self.validated_final_orders = set()  # Current-process order evidence only.
         self.cleanup_allowed = True
         self.stopping = False
         self.entry_pause_reason = None
@@ -138,6 +140,11 @@ class LiveTradeState(ScanState):
             self.legacy_realized_net = saved["realized_net_usd"]
         self.event_counts.update(saved["event_counts"])
         self.orders, self.executions = deepcopy(saved["orders"]), deepcopy(saved["executions"])
+        self.order_reconciliations = deepcopy(saved.get("order_reconciliations", {}))
+        if saved.get("halt_reason") == "late fill after order terminal requires reconciliation":
+            for cid, order in self.orders.items():
+                if order["terminal_ns"] is not None and F(order["filled_quantity"]):
+                    self.order_reconciliations.setdefault(cid, {"since_ns": order["terminal_ns"]})
         self.fences = dict(saved["fences"])
         self.account_pauses = deepcopy(saved.get("account_pauses", {}))
         self.last_closed = {tuple(row["pair"]): row["closed_ns"] for row in saved["last_closed"]}
@@ -192,6 +199,7 @@ class LiveTradeState(ScanState):
             "orders": self.orders, "executions": self.executions, "fences": self.fences,
             "last_closed": [{"pair": list(k), "closed_ns": v} for k, v in self.last_closed.items()],
             "phase": self.phase, "halt_reason": self.halt_reason,
+            "order_reconciliations": self.order_reconciliations,
             "account_pauses": self.account_pauses, "entry_pause_reason": self.entry_pause_reason})
 
     def emit(self, kind, now_ns, **fields):
@@ -213,7 +221,7 @@ class LiveTradeState(ScanState):
             raise
 
     def activate(self, now_ns):
-        if self.halt_reason or self.phase == "recovery_blocked":
+        if self.halt_reason or self.order_reconciliations or self.phase == "recovery_blocked":
             return False
         self.phase = "active"
         self.emit("strategy_enabled", now_ns)
@@ -511,6 +519,45 @@ class LiveTradeState(ScanState):
             account = self.accounts.get(instrument_id)
             if account is None or now_ns - account.observed_ns >= self.account_max_age_ns // 2:
                 self._request_account(instrument_id, now_ns)
+        self._recover_order_reconciliations(now_ns)
+
+    def _recover_order_reconciliations(self, now_ns):
+        """Release only the late-fill fence after durable order and account proof."""
+        if not self.order_reconciliations or not self.cleanup_allowed:
+            return
+        if any(o["terminal_ns"] is None or o["status"] == "unknown" for o in self.orders.values()):
+            return
+        if self.pending_economics or any(p["unknown_commission"] for p in self.positions.values()):
+            return
+        for cid in self.order_reconciliations:
+            order = self.orders[cid]
+            proof = order.get("final_fill_evidence")
+            if cid not in self.validated_final_orders or not proof:
+                return
+            detailed = sum((F(e["quantity"]) for e in self.executions.values()
+                            if e["client_order_id"] == cid), F(0))
+            if detailed != F(order["filled_quantity"]) or detailed != F(proof["quantity"]):
+                return
+        boundary = max(p["since_ns"] for p in self.order_reconciliations.values())
+        reads = {}
+        for scope, instruments in self.account_scopes.items():
+            instrument = self._account_representative(instruments)
+            account = self.accounts.get(instrument)
+            if (account is None or account.account_positions is None or account.account_open_orders is None
+                    or account.account_open_orders or account.open_order_ids
+                    or account.observed_ns <= boundary or self._account_problem(instrument, now_ns)):
+                self._request_account(instrument, now_ns)
+                return
+            reads[":".join(scope)] = account.observed_ns
+        resolved = deepcopy(self.order_reconciliations)
+        self.order_reconciliations.clear()
+        if self.halt_reason == "late fill after order terminal requires reconciliation":
+            self.halt_reason = None
+        if self.phase == "recovery_blocked" and self.halt_reason is None:
+            self.phase = "waiting_preflight"
+        self.emit("order_reconciliation_recovered", now_ns, orders=resolved,
+                  final_fill_evidence={cid: self.orders[cid]["final_fill_evidence"] for cid in resolved},
+                  read_started_ns=reads)
 
     def _account_ready(self, instrument_id, now_ns, *, pending_entry_owner=None):
         account = self.accounts.get(instrument_id)
@@ -579,6 +626,7 @@ class LiveTradeState(ScanState):
                       else "account_mismatch", now_ns, instrument_id=instrument_id,
                       expected_native=_number(expected), observed_native=str(account.position_quantity),
                       open_orders=len(account.open_order_ids), read_started_ns=account.observed_ns)
+        self._recover_order_reconciliations(now_ns)
 
     def _limit(self, instrument_id, side, base_quantity, now_ns, *, partial=False,
                reduce_only=False, require_fees=True):
@@ -817,7 +865,9 @@ class LiveTradeState(ScanState):
         if order["terminal_ns"] is not None:
             # Preserve the late inventory, stop admission and demand a new read.
             position["status"], position["exit_reason"] = "exit_pending", "entry_imbalance"
-            self.halt_reason = "late fill after order terminal requires reconciliation"
+            self.order_reconciliations[cid] = {"since_ns": now_ns}
+            if self.halt_reason is None:
+                self.halt_reason = "late fill after order terminal requires reconciliation"
         self._update_unhedged(position, now_ns)
         self.emit("fill", now_ns, execution_id=identity, position_id=position["position_id"],
                   client_order_id=cid, native_quantity=_number(quantity), native_price=_number(price),
@@ -845,6 +895,15 @@ class LiveTradeState(ScanState):
         order = self.orders.get(receipt.client_order_id)
         if order is None or receipt.request_id != order["request_id"] or receipt.kind == "fill":
             return
+        if receipt.kind == "reconciliation_required":
+            self.order_reconciliations[receipt.client_order_id] = {"since_ns": now_ns}
+            self.validated_final_orders.discard(receipt.client_order_id)
+            order.pop("final_fill_evidence", None)
+            if self.halt_reason is None:
+                self.halt_reason = "late fill after order terminal requires reconciliation"
+            self.emit("order_reconciliation_required", now_ns, client_order_id=receipt.client_order_id)
+            self._request_account(order["instrument_id"], now_ns)
+            return
         if receipt.kind == "accepted":
             if order["accepted_ns"] is None:
                 order["accepted_ns"] = now_ns
@@ -852,7 +911,26 @@ class LiveTradeState(ScanState):
                           latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
             return
         if receipt.kind in TERMINALS:
+            final = receipt.final_filled_quantity
+            if final is not None and receipt.final_fill_source in {
+                    "lighter_websocket_terminal_order", "lighter_http_order_status", "fully_filled_order"}:
+                final = F(final)
+                if (final < 0 or final > F(order["quantity"]) or final != F(order["filled_quantity"])
+                        or (receipt.final_fill_source == "fully_filled_order" and final != F(order["quantity"]))):
+                    self.order_reconciliations[receipt.client_order_id] = {"since_ns": now_ns}
+                    self.validated_final_orders.discard(receipt.client_order_id)
+                    order.pop("final_fill_evidence", None)
+                    if self.halt_reason is None:
+                        self.halt_reason = "late fill after order terminal requires reconciliation"
+                    self.emit("order_final_quantity_mismatch", now_ns, client_order_id=receipt.client_order_id)
+                    return
+                order["final_fill_evidence"] = {"quantity": _number(final),
+                    "source": receipt.final_fill_source, "observed_ns": now_ns}
+                self.validated_final_orders.add(receipt.client_order_id)
             if order["terminal_ns"] is not None:
+                if final is not None and receipt.client_order_id in self.validated_final_orders:
+                    self.emit("order_final_fill_confirmed", now_ns, client_order_id=receipt.client_order_id,
+                              final_fill_evidence=order["final_fill_evidence"])
                 return
             order["terminal_ns"], order["status"] = now_ns, receipt.kind
             self.fences[order["instrument_id"]] = now_ns
@@ -1147,7 +1225,7 @@ class LiveTradeState(ScanState):
         self._publish_orders(intents, now_ns, position)
 
     def pending_evaluation_symbols(self):
-        if self.phase != "active" or self.entry_pause_reason or self.halt_reason or self.stopping:
+        if self.phase != "active" or self.entry_pause_reason or self.halt_reason or self.order_reconciliations or self.stopping:
             return set()
         return self.full_evaluation_symbols.copy()
 
@@ -1175,7 +1253,7 @@ class LiveTradeState(ScanState):
         for key in tuple(self.positions):
             if key[0] == symbol:
                 self.observe(key, now_ns)
-        if (self.stopping or self.entry_pause_reason or self.halt_reason or symbol not in self.trade_symbols
+        if (self.stopping or self.entry_pause_reason or self.halt_reason or self.order_reconciliations or symbol not in self.trade_symbols
                 or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
                 o["terminal_ns"] is None and (o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns)
                 for o in self.orders.values())):
@@ -1225,6 +1303,7 @@ class LiveTradeState(ScanState):
 
     def document(self):
         return {"mode": "live", "phase": self.phase, "halt_reason": self.halt_reason,
+                "order_reconciliations": deepcopy(self.order_reconciliations),
                 "entry_pause_reason": self.entry_pause_reason,
                 "account_pauses": deepcopy(self.account_pauses),
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,

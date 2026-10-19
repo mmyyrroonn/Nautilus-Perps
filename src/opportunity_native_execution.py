@@ -9,7 +9,7 @@ from opportunity_timing import record_latency, span, start_latency, timed
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 import os
 import json
@@ -85,12 +85,14 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
             factory = HyperliquidExecutionClientFactory()
         elif client == "LIGHTER":
             from nautilus_trader.adapters.lighter import (
-                LighterEnvironment, LighterExecutionClientConfig, LighterExecutionClientFactory)
+                LighterEnvironment, LighterExecutionClientConfig, LighterExecutionClientFactory,
+                LighterExecutionControl)
             from opportunity_account_scope import lighter_account_index
             prefix = "LIGHTER_" if environment == "mainnet" else "LIGHTER_TESTNET_"
             if any(not env.get(prefix + suffix) for suffix in ("API_SECRET", "API_KEY_INDEX")):
                 raise ValueError("explicit Lighter execution credentials are required")
-            config = LighterExecutionClientConfig(account_id=account_id,
+            control = LighterExecutionControl()
+            config = LighterExecutionClientConfig(account_id=account_id, control=control,
                 environment=LighterEnvironment.MAINNET if environment == "mainnet" else LighterEnvironment.TESTNET,
                 account_index=lighter_account_index(env, environment),
                 api_key_index=int(env[prefix + "API_KEY_INDEX"]), private_key=env[prefix + "API_SECRET"],
@@ -179,7 +181,7 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
         if native_controls is not None:
             if client == "ONDO":
                 native_controls[client] = factory
-            elif client == "BACKPACK":
+            elif client in {"BACKPACK", "LIGHTER"}:
                 native_controls[client] = config.control
         result.append((client, factory, config))
     return result
@@ -260,14 +262,16 @@ class NativeOrderGateway:
         from opportunity_balances import NativeBalanceReader
         return NativeBalanceReader(self.strategy, self.model).read_balance_since(venue, now_ns, after_ns)
 
-    def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0), retry_after_secs=0):
+    def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0), retry_after_secs=0,
+                 final_quantity=None, final_source=""):
         key = (intent.request_id, kind, execution_id)
         if key in self.emitted:
             return
         self.emitted.add(key)
         self._record_outcome(intent, kind)
         self.on_receipt(ExecutionReceipt(intent.request_id, intent.client_order_id, kind, execution_id, quantity,
-                                        retry_after_secs=retry_after_secs))
+                                        retry_after_secs=retry_after_secs,
+                                        final_filled_quantity=final_quantity, final_fill_source=final_source))
 
     def _record_outcome(self, intent, kind):
         request = self.requests.get(intent.request_id)
@@ -616,11 +620,42 @@ class NativeOrderGateway:
         if cached is None or not cached.is_closed:
             return
         if Fraction(_decimal(cached.filled_qty)) != owned["processed_qty"]:
+            if any((owned["intent"].request_id, kind, "") in self.emitted
+                   for kind in ("terminal", "rejected")):
+                self._receipt(owned["intent"], "reconciliation_required")
             return
+        final_quantity, final_source = None, ""
+        submit = owned["intent"]
+        if submit.venue == "LIGHTER":
+            # Cache closure and even 0 == 0 are not exchange cumulative evidence.
+            # The control is shared with this exact execution client/account.
+            control = self.native_controls.get("LIGHTER")
+            try:
+                raw = control.terminal_fill_evidence_json(cid) if control is not None else None
+                proof = json.loads(raw) if raw else None
+                if (not proof or proof.get("client_order_id") != cid
+                        or proof.get("instrument_id") != submit.instrument_id
+                        or proof.get("source") not in {"websocket_terminal_order", "http_order_status"}):
+                    return
+                if proof.get("conflicting") is not False:
+                    self._receipt(submit, "reconciliation_required")
+                    return
+                final_quantity = _decimal(proof["final_filled_quantity"])
+                if (final_quantity < 0 or Fraction(final_quantity) > Fraction(submit.quantity)
+                        or Fraction(final_quantity) != owned["processed_qty"]):
+                    if any((submit.request_id, kind, "") in self.emitted for kind in ("terminal", "rejected")):
+                        self._receipt(submit, "reconciliation_required")
+                    return
+                final_source = "lighter_" + proof["source"]
+            except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, InvalidOperation):
+                self.last_error = "Lighter final cumulative fill evidence is unavailable; order remains unresolved"
+                return
+        elif owned["processed_qty"] == Fraction(submit.quantity):
+            final_quantity, final_source = _decimal(submit.quantity), "fully_filled_order"
         kind, intent = pending
-        self._receipt(intent, kind)
+        self._receipt(intent, kind, final_quantity=final_quantity, final_source=final_source)
         if kind != "rejected" and intent.request_id != owned["intent"].request_id:
-            self._receipt(owned["intent"], "terminal")
+            self._receipt(owned["intent"], "terminal", final_quantity=final_quantity, final_source=final_source)
 
     @timed("gateway.poll")
     def poll(self, now_ns):

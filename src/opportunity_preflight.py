@@ -168,6 +168,8 @@ class ExecutionReceipt:
     execution_id: str = ""
     filled_quantity: Decimal = Decimal("0")
     retry_after_secs: int = 0
+    final_filled_quantity: Decimal | None = None
+    final_fill_source: str = ""
 
 
 class BtcPreflight:
