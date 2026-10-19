@@ -239,6 +239,14 @@ def main() -> int:
 
         env = _test_environment()
         env["NAUTILUS_ISSUE3_WHEEL_SHA256"] = identity["wheel"]["sha256"]
+        # Reintroduce only verified artifact identity after removing venue secrets.
+        for prefix in ("ONDO_CONTINUOUS_", "ONDO_TEST_"):
+            env[prefix + "WHEEL"] = str(Path(identity["wheel"]["path"]).resolve(strict=True))
+            env[prefix + "WHEEL_SHA256"] = identity["wheel"]["sha256"]
+            env[prefix + "PROVENANCE"] = str(
+                Path(identity["native_provenance"]["path"]).resolve(strict=True)
+            )
+            env[prefix + "PROVENANCE_SHA256"] = identity["native_provenance"]["sha256"]
         logs_dir = output.parent / f"{output.stem}.logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         collection_command = [

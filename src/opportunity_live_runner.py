@@ -319,6 +319,8 @@ class SessionStoreProxy:
     def complete_restart(self, snapshot, now_ns):
         if not self.restart_pending or (self.account_recovery or {}).get("result") != "passed":
             raise ValueError("restart requires fresh complete flat-account proof")
+        if self.restart_execution_problem():
+            raise ValueError("restart cannot clear unresolved execution protection")
         document = {**self._document(snapshot), "startup_complete": False, "startup": None,
                     "native_shutdown": None, "account_gate": None, "loss_monitor": None}
         # Archive and replace in the same SQLite transaction. Historical fills
@@ -330,6 +332,23 @@ class SessionStoreProxy:
         self.startup_complete = False
         self.startup = self.native_shutdown = self.account_gate = self.loss_monitor = None
         self.latest_live = snapshot
+
+    def restart_execution_problem(self):
+        """A flat account does not prove final fills or repair hard ledger faults."""
+        prior = (self.saved or {}).get("live") or {}
+        if any(order.get("terminal_ns") is None or order.get("status") == "unknown"
+               for order in prior.get("orders", {}).values()):
+            return "original_pending_order_proof_required"
+        if prior.get("order_reconciliations") or prior.get("halt_reason") == (
+                "late fill after order terminal requires reconciliation"):
+            return "original_order_final_fill_proof_required"
+        if prior.get("halt_reason") in {
+                "ledger persistence failed", "fill has no persisted live order owner",
+                "conflicting execution replay", "execution violates persisted order ownership",
+                "exit fill exceeds confirmed pair inventory", "native instrument economics changed with owned inventory",
+                "entry rebalance inventory differs from its durable target"}:
+            return "hard_execution_protection_requires_reconciliation"
+        return None
 
     def checkpoint_loss_monitor(self, document, now_ns):
         if document != self.loss_monitor:
@@ -573,12 +592,15 @@ class LiveCoordinator:
             self.live.set_entry_pause("startup_account_recovery", now_ns)
             after_ns = max(self.started_ns, self.account_recovery_after_ns or 0)
             ready = self.live.flat_accounts_ready(now_ns, after_ns) and not self.live.halt_reason
+            execution_problem = self.proxy.restart_execution_problem()
+            ready = ready and execution_problem is None
             self._live_intents(now_ns)
             document = {
                 "result": "passed" if ready else "checking", "started_ns": self.started_ns,
                 "completed_ns": now_ns if ready else None,
                 "required_after_ns": after_ns,
                 "account_problems": dict(self.live.flat_account_problems),
+                "execution_problem": execution_problem,
                 "read_started_ns": {scope[0] + (":" + scope[1] if scope[1] else ""):
                     self.live.accounts[self.live._account_representative(instruments)].observed_ns
                     for scope, instruments in self.live.account_scopes.items()

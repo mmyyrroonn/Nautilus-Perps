@@ -393,7 +393,8 @@ def test_actual_five_venue_builder_preserves_native_config_and_caps_offline(tmp_
         assert len(ondo.continuous_execution.instrument_ids) == 2
         backpack = next(c for name, _, c in configs if name == "BACKPACK")
         assert backpack.authority.max_order_notional == "100" and backpack.authority.max_reserved_notional == "500"
-        assert set(controls) == {"ONDO", "BACKPACK"}
+        assert set(controls) == {"ONDO", "BACKPACK", "LIGHTER"}
+        assert controls["LIGHTER"].terminal_fill_evidence_json("unsubmitted-order") is None
         builder = builder.add_data_client("BACKPACK", bp.BackpackDataClientFactory(quota=quota), public)
         for values in configs:
             builder = builder.add_exec_client(*values)
