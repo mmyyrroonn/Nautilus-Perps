@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from backpack_loopback_config import parse_loopback_plan
 from backpack_loopback import run_loopback
 from backpack_public import PublicEvidence
+from test_backpack_account_native import order_frame
 from test_backpack_loopback_native import (
     OrderPeer, event_records, plan_for, require_loopback_native,
 )
@@ -29,6 +30,8 @@ class DurablePeer(OrderPeer):
         self.admission_quote_times_ns = []
         self.admission_quotes_stopped = asyncio.Event()
         self.admission_directory = None
+        self.duplicate_sent_after_delete = False
+        self.duplicate_wait_cancelled = False
 
     async def send_frames(self, ws, connection):
         try:
@@ -70,7 +73,24 @@ class DurablePeer(OrderPeer):
 
     async def send_private(self, ws, connection):
         if connection == 1:
-            await super().send_private(ws, connection)
+            await self.ready.wait()
+            await self.post_received.wait()
+            await self.probe_denied.wait()
+            frame = order_frame("orderFill", 701)
+            frame["data"].update(c=self.posts[0]["clientId"], i="local-owned-A", y=False)
+            self.fill_frames = [frame, frame]
+            await ws.send(json.dumps(frame))
+            # This fixture checks receipt/recovery deduplication, not cancellation
+            # admission during a concurrent private-frame journal fence change.
+            try:
+                await self.delete_received.wait()
+            except asyncio.CancelledError:
+                self.duplicate_wait_cancelled = True
+                raise
+            self.duplicate_sent_after_delete = bool(self.deletes)
+            await ws.send(json.dumps(frame))
+            self.fixture_sent = True
+            self.fixture_ready.set()
             return
         await self.ready.wait()
         await asyncio.sleep(0.25)
@@ -130,7 +150,9 @@ def peer_diagnostics(peer):
         "public_fixture_sent": peer.ready.is_set(), "fill_fixture_sent": peer.fixture_sent,
         "post_at_ns": peer.post_at_ns, "metadata_started_at_ns": peer.metadata_started_at_ns,
         "admission_quote_times_ns": peer.admission_quote_times_ns,
-        "admission_quotes_stopped": peer.admission_quotes_stopped.is_set()}
+        "admission_quotes_stopped": peer.admission_quotes_stopped.is_set(),
+        "duplicate_sent_after_delete": peer.duplicate_sent_after_delete,
+        "duplicate_wait_cancelled": peer.duplicate_wait_cancelled}
 
 
 def diagnostic_json(summary, path, peer):
@@ -231,6 +253,7 @@ def test_delayed_admission_needs_live_quotes_without_refreshing_stale_probe(
 
             assert summary["status"] == "completed", diagnostic_json(summary, path, peer)
             assert len(peer.posts) == 1 and len(peer.deletes) == 1
+            assert peer.duplicate_sent_after_delete
             assert peer.admission_quotes_stopped.is_set() and peer.admission_quote_times_ns
             assert max(peer.admission_quote_times_ns) <= peer.post_at_ns
             rows = event_records(path)
@@ -252,6 +275,7 @@ def test_durable_receipt_restores_actual_order_position_and_rebate_once(tmp_path
             plan = replace(plan_for(peer, tmp_path, monkeypatch), durable_economics=True)
             first, first_path = await asyncio.wait_for(run_loopback(plan), 23)
             assert first["status"] == "completed", diagnostic_json(first, first_path, peer)
+            assert peer.duplicate_sent_after_delete
             assert first["durable_economic_acknowledgement"]
             assert first["economic_consumer"]["durable_receipts"] == 1
             assert first["economic_consumer"]["pending_fills"] == 0
@@ -287,6 +311,7 @@ def test_corrupt_economic_checkpoint_refuses_startup_without_another_post(tmp_pa
             plan = replace(plan_for(peer, tmp_path, monkeypatch), durable_economics=True)
             first, first_path = await asyncio.wait_for(run_loopback(plan), 23)
             assert first["status"] == "completed", diagnostic_json(first, first_path, peer)
+            assert peer.duplicate_sent_after_delete
             checkpoint = plan.economic_state_directory / "economics.json"
             document = json.loads(checkpoint.read_text())
             document["checksum"] = "invalid-checksum"
@@ -312,7 +337,8 @@ def test_terminated_process_releases_journal_and_recovers_real_engine_once(tmp_p
             document = loopback_document()
             document.update(durable_economics=True)
             document["session"].update(base_url_http=peer.http_url, base_url_ws=peer.ws_url,
-                                       duration_secs=10, request_timeout_secs=2)
+                                       duration_secs=10, request_timeout_secs=2,
+                                       stale_after_ms=500)
             document["scenario"]["stale_probe"] = False
             document["mutation_budget_ms"] = 1000
             plan = parse_loopback_plan(document, tmp_path)
@@ -375,6 +401,9 @@ asyncio.run(run_loopback(parse_loopback_plan(json.loads(path.read_text()),path.p
             while peer.active and time.monotonic() < deadline:
                 await asyncio.sleep(0.02)
             assert peer.active == 0
+            if not peer.deletes:
+                assert peer.duplicate_wait_cancelled
+                assert not peer.duplicate_sent_after_delete
             recovery = replace(plan, recovery_only=True,
                                session=replace(plan.session, duration_secs=3))
             resumed, path = await asyncio.wait_for(run_loopback(recovery), 16)
