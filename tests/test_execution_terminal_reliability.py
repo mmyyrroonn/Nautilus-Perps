@@ -209,3 +209,37 @@ def test_lighter_late_fill_requires_original_order_http_confirmation():
         final_filled_quantity=sell.quantity, final_fill_source="lighter_http_order_status"), NOW + 6)
     complete_accounts(live, NOW + 7)
     assert not live.order_reconciliations and live.halt_reason is None
+
+
+def test_final_evidence_changes_and_repeated_conflict_cycles_are_delivered(harness):
+    proof = [None]
+    gateway, strategy, receipts, _, order = lighter(harness, proof)
+    proof[0] = {**evidence(order, "0"), "source": "http_order_status"}
+    cached = strategy.cached[order.client_order_id]
+    cached.is_closed = True
+    gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
+    cached.filled_qty = D(".001")
+    proof[0]["final_filled_quantity"] = ".001"
+    gateway.on_native_event("filled", event(instrument_id=order.instrument_id, trade_id="late",
+        order_side="BUY", last_qty=D(".001"), last_px=D(100)), NOW + 2)
+    confirmations = [r.final_filled_quantity for r in receipts if r.kind == "terminal_evidence"]
+    assert confirmations == [D(0), D(".001")]
+    for conflict in (True, False, True):
+        proof[0]["conflicting"] = conflict
+        gateway.poll(NOW + 3)
+    assert sum(r.kind == "reconciliation_required" for r in receipts) == 2
+    assert [call[0] for call in strategy.calls] == ["submit", "query"]
+
+
+def test_restart_flat_proof_cannot_erase_unknown_original_submission(tmp_path):
+    from test_opportunity_restart import previous_session, prove_accounts, archives
+    from test_opportunity_live_runner import readonly_coordinator
+    saved = previous_session(tmp_path, traded=True)
+    order = next(iter(saved["live"]["orders"].values()))
+    order.update(terminal_ns=None, status="unknown")
+    coordinator, _, _, store, _ = readonly_coordinator(tmp_path, saved=saved, all_five=True)
+    coordinator.tick(NOW)
+    prove_accounts(coordinator, NOW + 1)
+    coordinator.tick(NOW + 1)
+    assert coordinator.proxy.restart_pending and not archives(store)
+    assert coordinator.proxy.account_recovery["execution_problem"] == "original_pending_order_proof_required"

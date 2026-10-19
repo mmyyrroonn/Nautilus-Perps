@@ -23,12 +23,15 @@ subject to existing ownership, account freshness and reduce-only checks.
 
 Restart does not count as reconciliation: restored final-fill proof must be
 revalidated, and the flat-account session archive cannot erase this fence or a
-known hard execution fault. The normal restart-from-flat workflow remains blocked
+known hard execution fault or unresolved original submission. Evidence updates
+are deduplicated by the latest proof state, independently of one-shot lifecycle
+receipts, so a revised confirmation or a later conflict is still delivered.
+The normal restart-from-flat workflow remains blocked
 for such sessions; it does not silently reconstruct or resend archived orders.
 
 ## Validation
 
-- 16 new offline replays cover cache-zero, explicit zero, terminal/fill ordering,
+- 18 new offline replays cover cache-zero, explicit zero, terminal/fill ordering,
   multiple partial fills, duplicates, identity/quantity conflicts, query failure,
   nonfinite quantities, fresh account proof, unknown fees, hard-protection
   preservation and restart fencing/revalidation.

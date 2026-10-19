@@ -336,6 +336,9 @@ class SessionStoreProxy:
     def restart_execution_problem(self):
         """A flat account does not prove final fills or repair hard ledger faults."""
         prior = (self.saved or {}).get("live") or {}
+        if any(order.get("terminal_ns") is None or order.get("status") == "unknown"
+               for order in prior.get("orders", {}).values()):
+            return "original_pending_order_proof_required"
         if prior.get("order_reconciliations") or prior.get("halt_reason") == (
                 "late fill after order terminal requires reconciliation"):
             return "original_order_final_fill_proof_required"

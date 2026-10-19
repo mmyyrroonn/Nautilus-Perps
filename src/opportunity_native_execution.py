@@ -243,6 +243,7 @@ class NativeOrderGateway:
         self.seen_events = set()
         self.terminals = {}
         self.emitted = set()
+        self.evidence_receipts = {}
         self.last_error = None
         self.closed = False
 
@@ -264,14 +265,22 @@ class NativeOrderGateway:
 
     def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0), retry_after_secs=0,
                  final_quantity=None, final_source=""):
+        evidence = kind in {"terminal_evidence", "reconciliation_required"}
+        signature = (kind, final_quantity, final_source)
+        if evidence and self.evidence_receipts.get(intent.request_id) == signature:
+            return True
         key = (intent.request_id, kind, execution_id)
-        if key in self.emitted:
+        if not evidence and key in self.emitted:
             return
-        self.emitted.add(key)
+        if not evidence:
+            self.emitted.add(key)
         self._record_outcome(intent, kind)
         self.on_receipt(ExecutionReceipt(intent.request_id, intent.client_order_id, kind, execution_id, quantity,
                                         retry_after_secs=retry_after_secs,
                                         final_filled_quantity=final_quantity, final_fill_source=final_source))
+        if evidence:
+            self.evidence_receipts[intent.request_id] = signature
+        return True
 
     def _record_outcome(self, intent, kind):
         request = self.requests.get(intent.request_id)
@@ -664,8 +673,8 @@ class NativeOrderGateway:
         if kind != "rejected" and intent.request_id != owned["intent"].request_id:
             self._receipt(owned["intent"], "terminal", final_quantity=final_quantity, final_source=final_source)
         if final_source == "lighter_http_order_status":
-            self._receipt(submit, "terminal_evidence", final_quantity=final_quantity, final_source=final_source)
-            owned["needs_final_query"] = False
+            if self._receipt(submit, "terminal_evidence", final_quantity=final_quantity, final_source=final_source):
+                owned["needs_final_query"] = False
 
     @timed("gateway.poll")
     def poll(self, now_ns):
