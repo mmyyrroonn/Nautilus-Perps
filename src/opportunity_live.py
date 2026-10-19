@@ -6,7 +6,7 @@ every instrument between orders. Pair inventory is separate from venue netting.
 """
 from __future__ import annotations
 
-from opportunity_timing import timed
+from opportunity_timing import record_latency, start_latency, timed
 
 from collections import Counter
 from copy import deepcopy
@@ -30,6 +30,7 @@ HARD_MAX_GROSS_USD = Decimal("500")
 HARD_MAX_PAIRS = 16
 HARD_MAX_UNHEDGED_NOTIONAL_USD = Decimal("100")
 HARD_MAX_UNHEDGED_SECS = 10
+MAX_PENDING_ENTRY_TIMINGS = 1024
 TERMINALS = {"terminal", "canceled", "rejected", "denied", "expired"}
 HARD_EXITS = {"max_hold", "max_loss", "entry_imbalance", "exit_imbalance", "operator_stop", "execution_halt", "exposure_limit",
               "unhedged_notional", "unhedged_timeout"}
@@ -98,6 +99,7 @@ class LiveTradeState(ScanState):
         self.account_read_failures, self.account_retry_after_ns = {}, {}
         self.fences, self.last_attempt = {}, {}
         self.outbox = []
+        self.entry_timings = {}  # Process-local only; never persisted or restored.
         self.session_id = uuid.uuid4().hex[:16]
         self.sequence = self.request_sequence = self.completed = 0
         self.realized_net = F(0)
@@ -197,6 +199,7 @@ class LiveTradeState(ScanState):
             self.halt_reason = "ledger persistence failed"
             self.cleanup_allowed = False
             self.outbox.clear()
+            self.entry_timings.clear()
             raise
 
     def activate(self, now_ns):
@@ -257,6 +260,9 @@ class LiveTradeState(ScanState):
                       client_order_ids=released)
         return intents
 
+    def take_entry_timing(self, intent):
+        return self.entry_timings.pop(intent.request_id, None)
+
     def expected_native(self, instrument_id):
         result = F(0)
         for position in self.positions.values():
@@ -284,6 +290,7 @@ class LiveTradeState(ScanState):
         if not paused:
             return False
         order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
+        self.take_entry_timing(intent)
         instrument_id = order["instrument_id"]
         self.fences[instrument_id] = max(self.fences.get(instrument_id, 0), now_ns)
         self.emit("entry_dispatch_blocked", now_ns, client_order_id=intent.client_order_id, domains=paused)
@@ -437,6 +444,7 @@ class LiveTradeState(ScanState):
                 order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
                 self.fences[order["instrument_id"]] = now_ns
                 canceled.append(intent.client_order_id)
+                self.take_entry_timing(intent)
             else:
                 retained.append(intent)
         self.outbox = retained
@@ -654,6 +662,7 @@ class LiveTradeState(ScanState):
         estimate = self.pricer.entry(buy_id, sell_id, now_ns)
         if estimate is None:
             return False
+        candidate_marker = start_latency()
         bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns)
                   for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
@@ -689,6 +698,12 @@ class LiveTradeState(ScanState):
         self.positions[key] = position
         intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
         self._publish_orders(intents, now_ns, position)
+        if candidate_marker is not None:
+            record_latency(candidate_marker, "entry.candidate_to_persisted_intents")
+            for intent in intents:
+                if len(self.entry_timings) >= MAX_PENDING_ENTRY_TIMINGS:
+                    self.entry_timings.pop(next(iter(self.entry_timings)))
+                self.entry_timings[intent.request_id] = candidate_marker
         return True
 
     def _position(self, position_id):
@@ -1140,6 +1155,7 @@ class LiveTradeState(ScanState):
                 order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
                 self.fences[order["instrument_id"]] = now_ns
                 canceled.append(intent.client_order_id)
+                self.take_entry_timing(intent)
             else:
                 retained.append(intent)
         self.outbox = retained

@@ -13,7 +13,7 @@ from fractions import Fraction as F
 from itertools import combinations
 import sys
 
-from opportunity_core import (_book_valid, _budget_quantity, _metadata_valid, _number,
+from opportunity_core import (_best_quotes_rule_out, _book_valid, _budget_quantity, _metadata_valid, _number,
                               _walk, evaluate_opportunity, exact_decimal)
 from opportunity_runtime import ScanState
 from opportunity_trade import TradePolicy
@@ -126,6 +126,11 @@ class PaperTradeState(ScanState):
 
     @sampled_timed("pricing.entry")
     def entry(self, buy_id, sell_id, now_ns):
+        if not all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
+            return None
+        if _best_quotes_rule_out(self.books[buy_id], self.metadata[buy_id],
+                                 self.books[sell_id], self.metadata[sell_id], self.plan.settings):
+            return None
         pair = self._pair(buy_id, sell_id, now_ns)
         if pair is None:
             return None

@@ -116,6 +116,7 @@ class TimingRecorder:
                 "recent_samples": len(recent),
                 "recent_p50_ms": recent[math.ceil(len(recent) * .50) - 1] / 1e6,
                 "recent_p95_ms": recent[math.ceil(len(recent) * .95) - 1] / 1e6,
+                "recent_p99_ms": recent[math.ceil(len(recent) * .99) - 1] / 1e6,
                 "sample_every": row["sample_every"]})
         return {"schema_version": 1, "run_id": self.run_id, "pid": os.getpid(),
             "started_at_utc": self.started_at, "updated_at_utc": datetime.now(UTC).isoformat(),
@@ -124,10 +125,13 @@ class TimingRecorder:
             "clock": "perf_counter_ns", "recent_sample_window": SAMPLE_WINDOW,
             "notes": ["Wall time, not CPU time. Spans include synchronous child calls and waits.",
                 "self_ms excludes instrumented children on the same thread; concurrent threads overlap.",
-                "Latency rows measure dispatch to first observed outcome; they are not CPU hotspots.",
+                "Latency rows measure named stage boundaries; they are not CPU hotspots or network RTT.",
                 "Counts/totals/min/max cover the run; percentiles cover only the last 1024 completions.",
                 "sampled_span rows cover sampled completions only; self_ms equals inclusive total_ms. "
                 "They do not subtract from full spans and must not be summed with them.",
+                "sampled_latency rows use periodic samples; count/total cover sampled stages only.",
+                "market.delivery_age uses time.time_ns minus native ts_init, not exact queue residence.",
+                "Submission ends at the Python submit_order handoff, not the native network write.",
                 "In-flight work is absent from aggregates; abrupt termination leaves the last snapshot.",
                 "Rust adapter internals and work before CLI argument parsing are not instrumented."],
             "operations": sorted(rows, key=lambda row: (row["category"], -row["self_ms"]))}
@@ -231,11 +235,42 @@ def start_latency():
     return None if recorder is None else (recorder, time.perf_counter_ns())
 
 
-def record_latency(marker, name, *, venue="", outcome="", error=False):
+def _latency_sample(recorder, name, venue, every):
+    counts = getattr(recorder.local, "latency_calls", None)
+    if counts is None:
+        counts = recorder.local.latency_calls = {}
+    key = (name, _labels(venue, "")[0])
+    ordinal = counts.get(key, 0) + 1
+    counts[key] = ordinal if ordinal < every else 0
+    return ordinal == every
+
+
+def sampled_start_latency(name, *, venue="", every=127):
+    """Select a whole stage/cycle; skipped calls read no clocks or recorder lock."""
+    recorder = _active
+    if recorder is None or not _latency_sample(recorder, name, venue, every):
+        return None
+    return (recorder, time.perf_counter_ns())
+
+
+def sampled_delivery_age(ts_init, *, venue=""):
+    """Observe native creation to Python callback age, not enqueue residence."""
+    recorder = _active
+    if recorder is None or not _latency_sample(recorder, "market.delivery_age", venue, 127):
+        return
+    now_ns = time.time_ns()
+    if type(ts_init) is int and 0 < ts_init <= now_ns:
+        recorder.record("market.delivery_age", now_ns - ts_init, venue=venue,
+                        category="sampled_latency", sample_every=127)
+
+
+def record_latency(marker, name, *, venue="", outcome="", error=False, sample_every=1, ended_ns=None):
     if marker is not None:
         recorder, started_ns = marker
-        recorder.record(name, time.perf_counter_ns() - started_ns, venue=venue,
-                        outcome=outcome, error=error, category="latency")
+        ended_ns = time.perf_counter_ns() if ended_ns is None else ended_ns
+        recorder.record(name, ended_ns - started_ns, venue=venue,
+                        outcome=outcome, error=error, sample_every=sample_every,
+                        category="sampled_latency" if sample_every > 1 else "latency")
 
 
 def add_timing_arguments(parser):

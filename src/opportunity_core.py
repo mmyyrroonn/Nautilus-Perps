@@ -12,6 +12,7 @@ import json
 from dataclasses import asdict, dataclass
 from decimal import MAX_EMAX, MIN_EMIN, Context, Decimal
 from fractions import Fraction
+from functools import cached_property
 from math import lcm
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,14 @@ class MarketMetadata:
     fee_source: str = "unknown"
     min_quantity: Decimal | None = None
     min_notional: Decimal | None = None
+
+    @cached_property
+    def _execution_valid(self) -> bool:
+        return _validate_execution_metadata(self)
+
+    @cached_property
+    def _fee_valid(self) -> bool:
+        return _validate_fee_metadata(self)
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,12 @@ class BookSnapshot:
         # Copy caller-owned lists, including inner levels, into immutable evidence.
         object.__setattr__(self, "bids", tuple(tuple(level) for level in self.bids))
         object.__setattr__(self, "asks", tuple(tuple(level) for level in self.asks))
+
+    @cached_property
+    def _structure_valid(self) -> bool:
+        # Object-local cache: replacement snapshots start uncached, old ones are
+        # collectible. Cached properties are not dataclass fields/evidence.
+        return _validate_book_structure(self)
 
 
 @dataclass(frozen=True)
@@ -111,6 +126,10 @@ def _json_safe(value: Any) -> Any:
 
 
 def _execution_metadata_valid(metadata: MarketMetadata) -> bool:
+    return metadata._execution_valid
+
+
+def _validate_execution_metadata(metadata: MarketMetadata) -> bool:
     """Validate instrument identity and quantity rules independently of fees."""
     return (
         isinstance(metadata.instrument_id, str)
@@ -123,6 +142,10 @@ def _execution_metadata_valid(metadata: MarketMetadata) -> bool:
 
 
 def _fee_metadata_valid(metadata: MarketMetadata) -> bool:
+    return metadata._fee_valid
+
+
+def _validate_fee_metadata(metadata: MarketMetadata) -> bool:
     return (
         _nonnegative(metadata.taker_fee_bps)
         and isinstance(metadata.fee_source, str)
@@ -136,15 +159,7 @@ def _metadata_valid(metadata: MarketMetadata) -> bool:
 
 
 def _book_valid(book: BookSnapshot, settings: ScanSettings, now_ns: int) -> bool:
-    if not book.valid or not book.venue or not book.symbol or not book.bids or not book.asks:
-        return False
-    if book.coverage_limit is not None and (
-        not _integer(book.coverage_limit)
-        or book.coverage_limit <= 0
-        or max(len(book.bids), len(book.asks)) > book.coverage_limit
-    ):
-        return False
-    if not all(_integer(value) for value in (book.ts_event_ns, book.ts_received_ns)):
+    if not book.valid or not book._structure_valid:
         return False
     if not 0 < book.ts_event_ns <= book.ts_received_ns <= now_ns:
         return False
@@ -153,6 +168,21 @@ def _book_valid(book: BookSnapshot, settings: ScanSettings, now_ns: int) -> bool
     if now_ns - book.ts_received_ns > settings.max_receive_age_ms * 1_000_000:
         return False
     if book.ts_received_ns - book.ts_event_ns > settings.max_age_ms * 1_000_000:
+        return False
+    return True
+
+
+def _validate_book_structure(book: BookSnapshot) -> bool:
+    """Validate immutable evidence once, without caching any time-based gate."""
+    if not book.venue or not book.symbol or not book.bids or not book.asks:
+        return False
+    if book.coverage_limit is not None and (
+        not _integer(book.coverage_limit)
+        or book.coverage_limit <= 0
+        or max(len(book.bids), len(book.asks)) > book.coverage_limit
+    ):
+        return False
+    if not all(_integer(value) for value in (book.ts_event_ns, book.ts_received_ns)):
         return False
     for levels, descending in ((book.bids, True), (book.asks, False)):
         previous = None
@@ -166,6 +196,29 @@ def _book_valid(book: BookSnapshot, settings: ScanSettings, now_ns: int) -> bool
                 return False
             previous = price
     return book.bids[0][0] < book.asks[0][0]
+
+
+def _best_quotes_rule_out(buy_book, buy_metadata, sell_book, sell_metadata, settings):
+    """Conservative rejection only; never establishes executable liquidity.
+
+    Original best quotes also bound any remaining paper liquidity. Negative
+    entry thresholds retain the full pricing path and its existing semantics.
+    """
+    if (not _finite(settings.min_entry_edge_bps) or settings.min_entry_edge_bps < 0
+            or not _nonnegative(settings.reserve_bps)
+            or not _metadata_valid(buy_metadata) or not _metadata_valid(sell_metadata)
+            or not buy_book.asks or not sell_book.bids
+            or len(buy_book.asks[0]) != 2 or len(sell_book.bids[0]) != 2
+            or not _positive(buy_book.asks[0][0]) or not _positive(sell_book.bids[0][0])):
+        return False
+    if sell_book.bids[0][0] <= buy_book.asks[0][0]:
+        return True
+    best_net_sell = Fraction(sell_book.bids[0][0]) * (10000 - Fraction(sell_metadata.taker_fee_bps))
+    best_required_buy = Fraction(buy_book.asks[0][0]) * (
+        10000 + Fraction(buy_metadata.taker_fee_bps) + Fraction(settings.reserve_bps)
+        + Fraction(settings.min_entry_edge_bps))
+    return best_net_sell < best_required_buy or (
+        settings.min_entry_edge_bps == 0 and best_net_sell == best_required_buy)
 
 
 def _common_step(first: Fraction, second: Fraction) -> Fraction:
@@ -233,25 +286,8 @@ def evaluate_opportunity(
         return None
     if not _metadata_valid(buy_metadata) or not _metadata_valid(sell_metadata):
         return None
-    # No depth fill can improve on the best ask/bid, with nonnegative costs.
-    # Reject this common case before walking and validating every captured level.
-    if (settings.min_entry_edge_bps >= 0 and buy_book.asks and sell_book.bids
-            and len(buy_book.asks[0]) == 2 and len(sell_book.bids[0]) == 2
-            and _positive(buy_book.asks[0][0]) and _positive(sell_book.bids[0][0])
-            and sell_book.bids[0][0] <= buy_book.asks[0][0]):
+    if _best_quotes_rule_out(buy_book, buy_metadata, sell_book, sell_metadata, settings):
         return None
-    if (settings.min_entry_edge_bps >= 0 and buy_book.asks and sell_book.bids
-            and len(buy_book.asks[0]) == 2 and len(sell_book.bids[0]) == 2
-            and _positive(buy_book.asks[0][0]) and _positive(sell_book.bids[0][0])):
-        # Even an unlimited fill at the best quotes must pay both taker fees.
-        # This exact upper bound avoids depth walks for small positive spreads.
-        best_net_sell = Fraction(sell_book.bids[0][0]) * (10000 - Fraction(sell_metadata.taker_fee_bps))
-        best_required_buy = Fraction(buy_book.asks[0][0]) * (
-            10000 + Fraction(buy_metadata.taker_fee_bps) + Fraction(settings.reserve_bps)
-            + Fraction(settings.min_entry_edge_bps))
-        if best_net_sell < best_required_buy or (
-                settings.min_entry_edge_bps == 0 and best_net_sell == best_required_buy):
-            return None
     if not _book_valid(buy_book, settings, now_ns) or not _book_valid(sell_book, settings, now_ns):
         return None
     if abs(buy_book.ts_event_ns - sell_book.ts_event_ns) > settings.max_skew_ms * 1_000_000:
