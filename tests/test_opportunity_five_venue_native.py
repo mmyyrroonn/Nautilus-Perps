@@ -85,16 +85,11 @@ def test_backpack_native_gateway_confirmed_cancel_replace_entry_and_close(tmp_pa
 
 
 def test_ondo_native_gateway_startup_cancel_replace_and_multisymbol_continuation(tmp_path, monkeypatch):
-    import json
     import test_ondo_continuous as reviewed
     from ondo_continuous import OndoContinuousStrategy
     from ondo_continuous_peer import INSTRUMENT, SECOND_INSTRUMENT
     observed = {"receipts": [], "fills": [], "commands": []}
-    installed = json.loads((Path(__file__).resolve().parents[1] / ".native-cache" / "installed.json").read_text())
-    for name, value in zip(reviewed.CANDIDATE_VARIABLES,
-            [installed["wheel"]["path"], installed["wheel"]["sha256"],
-             installed["native_provenance"]["path"], installed["native_provenance"]["sha256"]]):
-        monkeypatch.setenv(name, value)
+    # The integration runner supplies candidate identity; _child verifies it again.
     gateways = []
     def submit(strategy, order, **kw):
         route_submit(strategy, order, observed, "ONDO", [INSTRUMENT, SECOND_INSTRUMENT])
