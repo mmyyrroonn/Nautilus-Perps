@@ -189,12 +189,13 @@ class PaperTradeState(ScanState):
             i in self.books and self.books[i].ts_event_ns > previous["closed_ns"]
             for i in (buy_id, sell_id))
 
-    def evaluate_symbol(self, symbol, now_ns, *, changed_id=None):
+    def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):
         if self.halted or self.finished:
             return
+        affected = {changed_id} if changed_id is not None else changed_ids
         pairs = []
         for first, second in combinations(sorted(self.groups[symbol]), 2):
-            if changed_id is not None and changed_id not in (first, second):
+            if affected is not None and first not in affected and second not in affected:
                 continue
             key = self.pair_key(first, second)
             if key in self.positions:
