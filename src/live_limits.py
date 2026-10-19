@@ -122,9 +122,19 @@ EXPOSURE_HEADROOM = 0.90
 
 DEFAULT_PATH = Path("config/limits.toml")
 
-# Tables in the shared operator file that another strict loader owns. Their keys are not silently
-# ignored: that loader validates them. They are only outside this maker strategy's schema.
+# Legacy tables in the shared operator file that another strategy loader owns.
+# Their validation belongs to that strategy rather than this maker schema.
 EXTERNAL_LIMIT_SECTIONS = frozenset({"ondo_trade"})
+# These dedicated strategy envelopes share this file but are not maker limits.
+# Recognize their declared keys while retaining diagnostics for misspellings.
+EXTERNAL_LIMIT_KEYS = {
+    "backpack_trade": frozenset({"order_notional_usd", "max_gross_notional_usd"}),
+    "opportunity_trade": frozenset({
+        "order_notional_usd", "max_pairs", "max_gross_notional_usd",
+        "startup_max_notional_usd", "max_unhedged_notional_usd", "max_unhedged_secs",
+        "entry_unhedged_reserve_bps",
+    }),
+}
 
 
 class LimitsError(ValueError):
@@ -582,6 +592,9 @@ def _unexpected_keys(data: dict, asked: set[tuple[str, str]]) -> tuple[str, ...]
             continue
         if not isinstance(block, dict):
             out.append(f"{table} (a value outside any table)")
+            continue
+        if table in EXTERNAL_LIMIT_KEYS:
+            out += [f"[{table}] {key}" for key in block if key not in EXTERNAL_LIMIT_KEYS[table]]
             continue
         out += [f"[{table}] {key}" for key in block if (table, key) not in asked]
     return tuple(out)

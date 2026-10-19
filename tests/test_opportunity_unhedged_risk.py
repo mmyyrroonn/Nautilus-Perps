@@ -72,9 +72,15 @@ def test_risk_deadline_is_independent_of_query_interval_and_max_hold():
 
 def test_amount_limit_latches_on_fill_before_timer_and_blocks_other_pair_admission():
     live, events = state(make_plan(symbols=("BTC", "ETH")), max_unhedged_notional_usd="80")
-    position, _, _ = pending_entry(live)
+    publish(live)
+    buy, sell = submissions(live)
+    assert buy.quantity < D("0.8")
+    # Admission reserves headroom; a real subsequent jump still trips the cap.
+    set_book(live, "HL", "101.99", "102", NOW + 1)
+    fill(live, buy, NOW + SECOND // 10)
+    position = next(iter(live.positions.values()))
     assert position["exit_reason"] == "unhedged_notional"
-    assert position["unhedged_breach"]["notional_usd"] == "80"
+    assert F(position["unhedged_breach"]["notional_usd"]) > 80
     assert position["unhedged_breach"]["duration_ms"] == "0"
     publish(live, NOW + SECOND // 2, symbol="ETH")
     assert not submissions(live) and len(live.positions) == 1

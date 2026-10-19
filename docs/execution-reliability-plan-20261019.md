@@ -1,6 +1,8 @@
 # 实盘执行可靠性修复计划（2026-10-19）
 
-状态：调查完成，待实施。用户本轮要求保存计划并停止 vultr-eu 程序；本计划不表示已授权立即修改、重新部署或恢复交易。
+历史状态（2026-10-19）：调查完成，待实施。当轮要求保存计划并停止 vultr-eu 程序；以下停机记录及授权边界保留其历史含义。
+
+2026-10-20 实施记录：用户另行要求修复三项问题并分别开 PR 合并，对应 [终态与核对恢复 #86](https://github.com/mmyyrroonn/Nautilus-Perps/pull/86)、[入场可执行性与证据 #87](https://github.com/mmyyrroonn/Nautilus-Perps/pull/87)、[退出与额度余量 #88](https://github.com/mmyyrroonn/Nautilus-Perps/pull/88)。各 PR 记录最终验收与合并状态；本次实施不包含部署或恢复交易。
 
 ## 已确认的事实
 

@@ -27,6 +27,9 @@ max_gross_notional_usd = "500"
 # Independent of order queries and maximum holding time; may only be tightened.
 max_unhedged_notional_usd = "100"
 max_unhedged_secs = 10
+# Minimum reserve below each standalone leg's conservative ask/limit valuation.
+# Quantities round down after this reserve; price jumps still trigger the hard cap.
+entry_unhedged_reserve_bps = "10"
 
 [loss_monitor]
 enabled = true

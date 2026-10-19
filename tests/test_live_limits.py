@@ -366,6 +366,49 @@ class TestMisplacedKeys(unittest.TestCase):
         self.assertEqual(caught, [])
 
 
+class TestSharedStrategyLimits(unittest.TestCase):
+    def test_known_strategy_keys_are_recognized_without_changing_maker_limits(self) -> None:
+        path = write_toml('''
+            [backpack_trade]
+            order_notional_usd = "100"
+            max_gross_notional_usd = "500"
+            [opportunity_trade]
+            order_notional_usd = "100"
+            max_pairs = 16
+            max_gross_notional_usd = "500"
+            startup_max_notional_usd = "50"
+            max_unhedged_notional_usd = "100"
+            max_unhedged_secs = 10
+            entry_unhedged_reserve_bps = "10"
+        ''')
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            limits = load_limits(path, strict=True)
+        self.assertEqual(limits.unexpected, ())
+        self.assertEqual(caught, [])
+        self.assertEqual(limits.order.max_notional_usd, 20.0)
+        self.assertEqual(limits.exposure.max_total_notional_usd, 100.0)
+
+    def test_unknown_keys_in_registered_strategy_tables_are_still_refused(self) -> None:
+        for table in ("backpack_trade", "opportunity_trade"):
+            with self.subTest(table=table):
+                path = write_toml(f'[{table}]\norder_notional_usd = "100"\ntyop = "1"\n')
+                with self.assertRaises(LimitsError) as caught:
+                    load_limits(path, strict=True)
+                self.assertIn(f"[{table}] tyop", str(caught.exception))
+
+    def test_unregistered_strategy_table_is_still_refused(self) -> None:
+        with self.assertRaises(LimitsError) as caught:
+            load_limits(write_toml('[typo_trade]\norder_notional_usd = "1"\n'), strict=True)
+        self.assertIn("[typo_trade] order_notional_usd", str(caught.exception))
+
+    def test_registered_strategy_envelope_must_be_a_table(self) -> None:
+        for table in ("backpack_trade", "opportunity_trade"):
+            with self.subTest(table=table), self.assertRaises(LimitsError) as caught:
+                load_limits(write_toml(f'{table} = "wrong"\n'), strict=True)
+            self.assertIn(f"{table} (a value outside any table)", str(caught.exception))
+
+
 # --------------------------------------------------------------------------- placement
 
 
