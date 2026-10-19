@@ -65,6 +65,12 @@ def runner_rates(before, after):
                "mean_dispatch_ms": busy / dispatched / 1e6 if dispatched else None}
         if sampled > 0:
             row["queue_net_growth_per_second"] = (after[channel]["queue_depth"] - before[channel]["queue_depth"]) * 1e9 / sampled
+            # Endpoints only: this is evidence to investigate, not a claim that
+            # the receiver was continuously nonempty throughout the interval.
+            row["queued_without_dispatch"] = (dispatched == 0 and before[channel]["queue_depth"] > 0
+                                               and after[channel]["queue_depth"] > 0)
+            row["queue_sample_interval_seconds"] = sampled / 1e9
+        row["queue_sample_lag_ms"] = max(0, after["elapsed_ns"] - after["queue_sampled_at_ns"]) / 1e6
         result[channel] = row
     return result
 

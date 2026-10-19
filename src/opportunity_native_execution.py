@@ -5,7 +5,7 @@ strategies/transports and do not execute any financial requests.
 """
 from __future__ import annotations
 
-from opportunity_timing import record_latency, start_latency, timed
+from opportunity_timing import record_latency, span, start_latency, timed
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -634,9 +634,12 @@ class NativeOrderGateway:
                 if wall_ms >= self.next_authority_renewal_ms:
                     control.renew_authority(wall_ms + 300_000)
                     self.next_authority_renewal_ms = wall_ms + 30_000
-                control.persist_economics()
-                control.reconcile_terminal_evidence()
-                control.admission_status_json()
+                with span("gateway.backpack.persist_economics"):
+                    control.persist_economics()
+                with span("gateway.backpack.reconcile_terminals"):
+                    control.reconcile_terminal_evidence()
+                with span("gateway.backpack.admission_status"):
+                    control.admission_status_json()
             except RuntimeError:
                 self.last_error = "native economic checkpoint is not ready; admission remains fenced"
         for intent in tuple(self.native_reads.values()):

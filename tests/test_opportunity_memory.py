@@ -23,11 +23,40 @@ def test_rates_distinguish_queue_sample_time_from_dispatch_time():
     after = native_sample(elapsed=3_000_000_000, sampled=2_000_000_000, dispatched=30, queued=9)
     rates = memory.runner_rates(before, after)["data_events"]
     assert rates == {"dispatch_per_second": 10, "queue_net_growth_per_second": 5,
-                     "dispatch_busy_fraction": 0, "mean_dispatch_ms": 0}
+                     "dispatch_busy_fraction": 0, "mean_dispatch_ms": 0,
+                     "queued_without_dispatch": False, "queue_sample_interval_seconds": 1,
+                     "queue_sample_lag_ms": 1000}
     after["queue_sampled_at_ns"] = before["queue_sampled_at_ns"]
     assert "queue_net_growth_per_second" not in memory.runner_rates(before, after)["data_events"]
     after["data_events"]["dispatched"] = 0
     assert memory.runner_rates(before, after) == {}
+
+
+def test_no_progress_requires_two_positive_queue_samples_and_advanced_sampler():
+    before = native_sample()
+    after = native_sample(elapsed=16_000_000_000, sampled=16_000_000_000)
+    assert memory.runner_rates(before, after)["data_events"]["queued_without_dispatch"]
+    after["data_events"]["queue_depth"] = 0
+    assert not memory.runner_rates(before, after)["data_events"]["queued_without_dispatch"]
+    after["queue_sampled_at_ns"] = before["queue_sampled_at_ns"]
+    assert "queued_without_dispatch" not in memory.runner_rates(before, after)["data_events"]
+
+
+def test_window_audit_separates_runs_and_reports_endpoints_only():
+    import runpy
+    summarize = runpy.run_path(str(Path(__file__).resolve().parents[1] /
+                                  "scripts/analyze_runner_window.py"))["summarize"]
+    def row(pid, run, stamp, queued, dispatched):
+        return {"pid": pid, "run_id": run, "unix_ns": stamp,
+                "process_bytes": {"VmRSS": 1024**2},
+                "native_runner": native_sample(stamp, stamp, dispatched, queued)}
+    data = [row(1, "old", 1, 999, 100), row(2, "new", 2, 4, 5), row(2, "new", 3, 7, 5)]
+    report = summarize(data)
+    assert report["samples"] == 2 and report["pid"] == 2
+    assert report["channels"]["data_events"]["max_depth"] == 7
+    assert report["channels"]["data_events"]["queued_without_dispatch_intervals"] == 1
+    data.append(row(2, "new", 4, 0, 20))
+    assert summarize(data)["channels"]["data_events"]["zero_depth_samples"] == 1
 
 
 def test_market_samples_are_bounded_and_unknown_labels_are_ignored(tmp_path, monkeypatch):
