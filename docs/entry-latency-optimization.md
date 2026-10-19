@@ -30,6 +30,14 @@
 
 ## 每轮验收
 
+2026-10-19 后续代码进展：
+
+- 3 已实现变化 instrument 集合、非行情状态触发和共享风险回退，见 [结果](../reports/opportunity-trading/entry-latency-step3-20261019.md)。
+- 4 已实现可配置周期及持久化意图合并唤醒，默认仍为 100 ms，见 [调度回放](../reports/opportunity-trading/entry-latency-step4-20261019.md)。
+- 5 已补队列停滞诊断及轮询分段；现有窗口未证实持续饥饿，保留原生调度，见 [审计](../reports/opportunity-trading/entry-latency-step5-20261019.md)。
+- 6 已补成功候选阶段计时并减少完整账户数量转换，见 [剖析](../reports/opportunity-trading/entry-latency-step6-20261019.md)。
+  原生签名与网络写出仍无独立测点。用户已说明实盘 halt 由另一个 Agent 修复，本任务继续代码工作。
+
 1. 保存候选前源码及哈希，保留现有用户改动；使用同一回放输入检查候选、数量、价格、费用、
    订单意图和状态。覆盖无机会、精确阈值、深度不足、同价不同量、元数据换版、
    过期/未来时戳、断连/停牌、纸面扣减、账户与待处理订单变化。

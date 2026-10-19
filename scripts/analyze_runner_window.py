@@ -23,6 +23,8 @@ def summarize(rows, seconds=1800):
     if len(rows) < 2:
         raise ValueError("need two native samples from the same run")
     rows = list({r["unix_ns"]: r for r in rows}.values())
+    if len(rows) < 2:
+        raise ValueError("need two distinct native sample times")
     result = {"pid": latest["pid"], "run_id": latest["run_id"], "samples": len(rows),
         "window_seconds": (rows[-1]["unix_ns"] - rows[0]["unix_ns"]) / 1e9,
         "rss_mib": quantiles([r["process_bytes"].get("VmRSS", 0) / 1024**2 for r in rows]),
