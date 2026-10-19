@@ -28,7 +28,7 @@ _active = None
 _session_lock = threading.Lock()
 _disabled_span = nullcontext()
 _VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
-_OUTCOMES = {"connect", "reconcile", "submit", "modify", "cancel", "accepted", "updated",
+_OUTCOMES = {"connect", "reconcile", "submit", "modify", "cancel", "accepted", "updated", "partial_fill", "full_fill",
              "fill", "filled", "terminal", "canceled", "expired", "rejected", "denied",
              "modify_rejected", "cancel_rejected", "connected", "unknown", "account"}
 
@@ -80,6 +80,12 @@ class TimingRecorder:
         self.closed = False
         self.path = None
         self.io_warned = False
+        self.entry_orders = {}
+        self.entry_pair_counts = {name: 0 for name in
+            ("bilateral_full", "bilateral_partial", "single_leg", "unfilled")}
+        self.entry_pairs_seen = {}
+        self.entry_pair_reclassifications = 0
+        self.entry_trace_evictions = 0
 
     def record(self, name, elapsed_ns, *, self_ns=None, venue="", outcome="", error=False,
                category="span", sample_every=1):
@@ -105,6 +111,11 @@ class TimingRecorder:
         with self.lock:
             # Copy under the lock; sorting/serialization must not block callbacks.
             copied = [(key, {**row, "recent": tuple(row["recent"])}) for key, row in self.rows.items()]
+            traces = [dict(trace_id=row["trace_id"], venue=row["venue"],
+                           stages=list(row["stages"])) for row in self.entry_orders.values()]
+            pair_counts = dict(self.entry_pair_counts)
+            evictions = self.entry_trace_evictions
+            reclassifications = self.entry_pair_reclassifications
         rows = []
         for (category, name, venue, outcome), row in copied:
             recent = sorted(row.pop("recent"))
@@ -134,7 +145,16 @@ class TimingRecorder:
                 "Submission ends at the Python submit_order handoff, not the native network write.",
                 "In-flight work is absent from aggregates; abrupt termination leaves the last snapshot.",
                 "Rust adapter internals and work before CLI argument parsing are not instrumented."],
-            "operations": sorted(rows, key=lambda row: (row["category"], -row["self_ms"]))}
+            "operations": sorted(rows, key=lambda row: (row["category"], -row["self_ms"])),
+            "entry_execution": {"traces": traces, "trace_limit": SAMPLE_WINDOW,
+                "stage_limit": 32, "trace_evictions": evictions,
+                "missing_native_stages": ["native_received", "signing", "network_write", "native_receipt_received"],
+                "clock_notes": "stage monotonic_ns uses perf_counter_ns within this process only; wall_ns and market timestamps use Unix wall time; do not subtract across clock domains",
+                "pair_outcomes": pair_counts, "completed_pairs": sum(pair_counts.values()),
+                "pair_reclassifications": reclassifications,
+                "bilateral_completion_rate": pair_counts["bilateral_full"] / sum(pair_counts.values()) if sum(pair_counts.values()) else None,
+                "single_leg_rate": pair_counts["single_leg"] / sum(pair_counts.values()) if sum(pair_counts.values()) else None,
+                "limitations": "Opt-in process-local observations; restored orders and evicted traces lack full correlation. Percentiles are bounded recent samples; market load differs between windows."}}
 
     def write(self):
         try:
@@ -233,6 +253,93 @@ def sampled_timed(name, *, every=127):
 def start_latency():
     recorder = _active
     return None if recorder is None else (recorder, time.perf_counter_ns())
+
+
+def begin_entry_trace(request_id, venue, marker, wall_ns):
+    """Keep request IDs solely as bounded in-memory keys; export random trace IDs."""
+    recorder = _active
+    if recorder is None or marker is None:
+        return
+    with recorder.lock:
+        if len(recorder.entry_orders) >= SAMPLE_WINDOW:
+            recorder.entry_orders.pop(next(iter(recorder.entry_orders)))
+            recorder.entry_trace_evictions += 1
+        recorder.entry_orders[request_id] = {"trace_id": uuid.uuid4().hex,
+            "venue": _labels(venue, "")[0], "stages": deque([{
+                "stage": "candidate", "monotonic_ns": marker[1], "wall_ns": wall_ns}], maxlen=32)}
+
+
+def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason=None):
+    recorder = _active
+    if recorder is None or stage not in {"persisted", "coordinator", "send_check", "local_blocked",
+            "python_submit", "accepted", "rejected", "unknown", "partial_fill", "full_fill", "terminal",
+            "canceled", "expired", "denied", "strategy_accepted", "strategy_rejected",
+            "strategy_fill", "strategy_terminal", "python_receipt_accepted", "python_receipt_fill",
+            "python_receipt_rejected", "python_receipt_terminal"}:
+        return
+    interval = None
+    with recorder.lock:
+        trace = recorder.entry_orders.get(request_id)
+        if trace is None:
+            return
+        row = {"stage": stage, "monotonic_ns": time.perf_counter_ns()}
+        previous_stage, operation, outcome = {
+            "coordinator": ("persisted", "entry.persisted_to_coordinator", ""),
+            "python_submit": ("coordinator", "entry.coordinator_to_submit", ""),
+            "strategy_accepted": ("python_receipt_accepted", "entry.receipt_to_strategy", "accepted"),
+            "strategy_rejected": ("python_receipt_rejected", "entry.receipt_to_strategy", "rejected"),
+            "strategy_fill": ("python_receipt_fill", "entry.receipt_to_strategy", "fill"),
+            "strategy_terminal": ("python_receipt_terminal", "entry.receipt_to_strategy", "terminal"),
+        }.get(stage, (None, None, None))
+        previous = next((s for s in reversed(trace["stages"]) if s["stage"] == previous_stage), None)
+        if previous is not None:
+            interval = (operation, row["monotonic_ns"] - previous["monotonic_ns"], trace["venue"], outcome)
+        if type(wall_ns) is int:
+            row["wall_ns"] = wall_ns
+        if reason in {"valid", "missing_book", "metadata_unavailable", "metadata_changed", "stale_or_invalid_book",
+                "insufficient_depth", "price_outside_limit", "invalid_execution_rules_or_fees", "book_skew",
+                "net_edge_insufficient", "ioc_no_match", "rate_limit", "insufficient_balance", "invalid_order",
+                "post_only", "venue_other", "local_validation", "unhedged_headroom_insufficient"}:
+            row["reason"] = reason
+        if evidence is not None:
+            # The only caller constructs this fixed schema. Never accept raw
+            # native events, exception text or account/order payloads here.
+            fields = {"checked_wall_ns", "net_usd", "minimum_net_usd", "net_margin_usd", "reserve_usd",
+                      "unhedged_reserve_bps", "per_leg_risk_budget_usd"}
+            leg_fields = {"limit_price", "quantity", "source_wall_ns", "received_wall_ns", "source_age_ms",
+                "receive_age_ms", "available_quantity", "depth_within_limit", "executable_vwap",
+                "current_bound_price", "limit_cash_usd", "fee_usd", "standalone_risk_usd"}
+            row["evidence"] = {k: v for k, v in evidence.items() if k in fields}
+            for leg in ("buy", "sell"):
+                if leg in evidence:
+                    row["evidence"][leg] = {k: v for k, v in evidence[leg].items() if k in leg_fields}
+        trace["stages"].append(row)
+    if interval is not None:
+        operation, elapsed, venue, outcome = interval
+        recorder.record(operation, elapsed, category="latency", venue=venue, outcome=outcome)
+
+
+def record_entry_pair(request_ids, outcome):
+    recorder = _active
+    if recorder is None:
+        return
+    with recorder.lock:
+        if outcome not in recorder.entry_pair_counts:
+            return
+        # Require both process-local traces; never count restored or evicted
+        # pairs as fully observed in this diagnostic session.
+        if not all(rid in recorder.entry_orders for rid in request_ids):
+            return
+        previous = recorder.entry_pairs_seen.get(request_ids)
+        if previous == outcome:
+            return
+        if previous is not None:
+            recorder.entry_pair_counts[previous] -= 1
+            recorder.entry_pair_reclassifications += 1
+        elif len(recorder.entry_pairs_seen) >= SAMPLE_WINDOW:
+            recorder.entry_pairs_seen.pop(next(iter(recorder.entry_pairs_seen)))
+        recorder.entry_pairs_seen[request_ids] = outcome
+        recorder.entry_pair_counts[outcome] += 1
 
 
 def _latency_sample(recorder, name, venue, every):

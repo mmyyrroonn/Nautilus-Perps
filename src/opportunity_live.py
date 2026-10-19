@@ -6,7 +6,9 @@ every instrument between orders. Pair inventory is separate from venue netting.
 """
 from __future__ import annotations
 
-from opportunity_timing import record_latency, span, start_latency, timed
+from opportunity_timing import (begin_entry_trace, record_entry_stage, record_latency,
+                                span, start_latency, timed)
+from opportunity_entry_evidence import entry_pair_result
 
 from collections import Counter
 from copy import deepcopy
@@ -779,6 +781,8 @@ class LiveTradeState(ScanState):
         if candidate_marker is not None:
             record_latency(candidate_marker, "entry.candidate_to_persisted_intents")
             for intent in intents:
+                begin_entry_trace(intent.request_id, intent.venue, candidate_marker, now_ns)
+                record_entry_stage(intent.request_id, "persisted", wall_ns=now_ns)
                 if len(self.entry_timings) >= MAX_PENDING_ENTRY_TIMINGS:
                     self.entry_timings.pop(next(iter(self.entry_timings)))
                 self.entry_timings[intent.request_id] = candidate_marker
@@ -863,6 +867,7 @@ class LiveTradeState(ScanState):
             position["closing_fees_usd"] = _number(F(position["closing_fees_usd"]) + fee)
         self.executions[identity] = signature
         order["filled_quantity"] = _number(F(order["filled_quantity"]) + quantity)
+        record_entry_stage(order["request_id"], "strategy_fill", wall_ns=now_ns)
         order["first_fill_ns"] = order["first_fill_ns"] or now_ns
         self.fences[instrument_id] = now_ns
         if order["terminal_ns"] is not None:
@@ -877,6 +882,7 @@ class LiveTradeState(ScanState):
                   fee_usd=_number(fee) if known_fee else None, fee_confirmed=known_fee,
                   estimated_fee_usd=_number(estimated_fee) if estimated_fee is not None else None,
                   latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
+        entry_pair_result(self, order)
         self._request_account(instrument_id, now_ns)
 
     @timed("strategy.receipt")
@@ -910,6 +916,7 @@ class LiveTradeState(ScanState):
         if receipt.kind == "accepted":
             if order["accepted_ns"] is None:
                 order["accepted_ns"] = now_ns
+                record_entry_stage(order["request_id"], "strategy_accepted", wall_ns=now_ns)
                 self.emit("order_accepted", now_ns, client_order_id=receipt.client_order_id,
                           latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
             return
@@ -938,10 +945,13 @@ class LiveTradeState(ScanState):
             if receipt.kind == "terminal_evidence":
                 return  # Evidence alone does not invent an order lifecycle event.
             order["terminal_ns"], order["status"] = now_ns, receipt.kind
+            record_entry_stage(order["request_id"], "strategy_rejected" if receipt.kind in {"rejected", "denied"}
+                               else "strategy_terminal", wall_ns=now_ns)
             self.fences[order["instrument_id"]] = now_ns
             self.emit("order_terminal", now_ns, client_order_id=receipt.client_order_id,
                       outcome=receipt.kind, filled_quantity=order["filled_quantity"],
                       latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
+            entry_pair_result(self, order)
             self._request_account(order["instrument_id"], now_ns)
         elif receipt.kind == "unknown":
             if order["terminal_ns"] is None and order["status"] != "unknown":

@@ -5,7 +5,7 @@ strategies/transports and do not execute any financial requests.
 """
 from __future__ import annotations
 
-from opportunity_timing import record_latency, span, start_latency, timed
+from opportunity_timing import record_entry_stage, record_latency, span, start_latency, timed
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -24,6 +24,23 @@ from opportunity_preflight import ExecutionReceipt
 SUPPORTED_VENUES = frozenset({"HL", "HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"})
 CANCEL_REPLACE_VENUES = frozenset({"ASTER", "ONDO", "BACKPACK"})
 MAX_PENDING_SUBMIT_TIMINGS = 1024
+
+
+def classify_rejection(reason):
+    """Return fixed diagnostic labels; never retain raw venue rejection text."""
+    reason = str(reason).lower()
+    if ("ioc" in reason or "immediate" in reason) and any(
+            word in reason for word in ("match", "fill", "cancel")):
+        return "ioc_no_match"
+    if "rate" in reason or "too many" in reason:
+        return "rate_limit"
+    if "balance" in reason or "margin" in reason or "fund" in reason:
+        return "insufficient_balance"
+    if "post" in reason and "only" in reason:
+        return "post_only"
+    if any(word in reason for word in ("invalid", "tick", "lot", "minimum", "precision")):
+        return "invalid_order"
+    return "venue_other"
 
 
 def _native():
@@ -283,6 +300,11 @@ class NativeOrderGateway:
         return True
 
     def _record_outcome(self, intent, kind):
+        if kind == "fill":
+            owned = self.orders.get(intent.client_order_id)
+            kind = ("full_fill" if owned and owned["processed_qty"] >= Fraction(intent.quantity)
+                    else "partial_fill")
+        record_entry_stage(intent.request_id, kind)
         request = self.requests.get(intent.request_id)
         if request is None or request.get("timing_start") is None:
             return
@@ -301,6 +323,7 @@ class NativeOrderGateway:
 
     def _reject(self, intent, reason):
         self.last_error = reason
+        record_entry_stage(intent.request_id, "rejected", reason="local_validation")
         self._receipt(intent, "rejected")
 
     def _cached(self, cid):
@@ -419,6 +442,7 @@ class NativeOrderGateway:
                     self.submit_timings[intent.request_id] = marker
                 record_latency(candidate_marker, "entry.candidate_to_submit", venue=intent.venue,
                                ended_ns=marker[1] if marker is not None else None)
+                record_entry_stage(intent.request_id, "python_submit", wall_ns=now_ns)
                 with span("gateway.submit_handoff", venue=intent.venue):
                     self.strategy.submit_order(order, client_id=client)
             elif intent.action == "cancel":
@@ -572,6 +596,11 @@ class NativeOrderGateway:
                 return
             self.seen_events.add(identity)
         submit = owned["intent"]
+        receipt_stage = ("accepted" if kind == "accepted" else "fill" if kind == "filled" else
+                         "rejected" if kind in {"rejected", "denied"} else
+                         "terminal" if kind in {"canceled", "expired"} else None)
+        if receipt_stage:
+            record_entry_stage(submit.request_id, "python_receipt_" + receipt_stage, wall_ns=now_ns)
         if str(getattr(event, "instrument_id", submit.instrument_id)) != submit.instrument_id:
             raise ValueError("native event market differs from its owned order")
         if kind == "filled":
@@ -617,6 +646,9 @@ class NativeOrderGateway:
             if intent:
                 self._receipt(intent, "rejected")
         elif kind in {"canceled", "expired", "rejected", "denied"}:
+            if kind in {"rejected", "denied"}:
+                record_entry_stage(submit.request_id, "rejected", wall_ns=now_ns,
+                                   reason=classify_rejection(getattr(event, "reason", "")))
             intent = self.active_request_map.get((cid, "cancel"), submit) if kind == "canceled" else submit
             receipt_kind = ("canceled" if kind == "canceled" and intent is not submit else
                             "rejected" if kind in {"rejected", "denied"} else "terminal")
