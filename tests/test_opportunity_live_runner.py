@@ -923,7 +923,7 @@ def test_complete_live_node_builds_with_installed_five_venue_factories_without_c
         node, observer, strategy = build_live_node(plan, live, coordinator)
         try:
             assert node is not None and observer is not None and strategy is not None
-            assert set(coordinator.native_controls) == {"ONDO", "BACKPACK"}
+            assert set(coordinator.native_controls) == {"ONDO", "BACKPACK", "LIGHTER"}
             assert coordinator.gateway is None and coordinator.preflight is None
             assert live.phase == "waiting_preflight" and not live.orders
         finally:
