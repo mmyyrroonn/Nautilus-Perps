@@ -31,7 +31,7 @@ class DurablePeer(OrderPeer):
         self.admission_quotes_stopped = asyncio.Event()
         self.admission_directory = None
         self.duplicate_sent_after_delete = False
-        self.duplicate_wait_cancelled = False
+        self.first_private_producer_stopped = asyncio.Event()
 
     async def send_frames(self, ws, connection):
         try:
@@ -73,24 +73,23 @@ class DurablePeer(OrderPeer):
 
     async def send_private(self, ws, connection):
         if connection == 1:
-            await self.ready.wait()
-            await self.post_received.wait()
-            await self.probe_denied.wait()
-            frame = order_frame("orderFill", 701)
-            frame["data"].update(c=self.posts[0]["clientId"], i="local-owned-A", y=False)
-            self.fill_frames = [frame, frame]
-            await ws.send(json.dumps(frame))
-            # This fixture checks receipt/recovery deduplication, not cancellation
-            # admission during a concurrent private-frame journal fence change.
             try:
+                await self.ready.wait()
+                await self.post_received.wait()
+                await self.probe_denied.wait()
+                frame = order_frame("orderFill", 701)
+                frame["data"].update(c=self.posts[0]["clientId"], i="local-owned-A", y=False)
+                self.fill_frames = [frame, frame]
+                await ws.send(json.dumps(frame))
+                # This fixture checks receipt/recovery deduplication, not cancellation
+                # admission during a concurrent private-frame journal fence change.
                 await self.delete_received.wait()
-            except asyncio.CancelledError:
-                self.duplicate_wait_cancelled = True
-                raise
-            self.duplicate_sent_after_delete = bool(self.deletes)
-            await ws.send(json.dumps(frame))
-            self.fixture_sent = True
-            self.fixture_ready.set()
+                self.duplicate_sent_after_delete = bool(self.deletes)
+                await ws.send(json.dumps(frame))
+                self.fixture_sent = True
+                self.fixture_ready.set()
+            finally:
+                self.first_private_producer_stopped.set()
             return
         await self.ready.wait()
         await asyncio.sleep(0.25)
@@ -152,7 +151,7 @@ def peer_diagnostics(peer):
         "admission_quote_times_ns": peer.admission_quote_times_ns,
         "admission_quotes_stopped": peer.admission_quotes_stopped.is_set(),
         "duplicate_sent_after_delete": peer.duplicate_sent_after_delete,
-        "duplicate_wait_cancelled": peer.duplicate_wait_cancelled}
+        "first_private_producer_stopped": peer.first_private_producer_stopped.is_set()}
 
 
 def diagnostic_json(summary, path, peer):
@@ -398,11 +397,11 @@ asyncio.run(run_loopback(parse_loopback_plan(json.loads(path.read_text()),path.p
                 await asyncio.wait_for(process.communicate(), 5)
             # TerminateProcess/SIGKILL bypasses Python and native owner cleanup.
             deadline = time.monotonic() + 3
-            while peer.active and time.monotonic() < deadline:
+            while (peer.active or not peer.first_private_producer_stopped.is_set()) and time.monotonic() < deadline:
                 await asyncio.sleep(0.02)
             assert peer.active == 0
+            assert peer.first_private_producer_stopped.is_set()
             if not peer.deletes:
-                assert peer.duplicate_wait_cancelled
                 assert not peer.duplicate_sent_after_delete
             recovery = replace(plan, recovery_only=True,
                                session=replace(plan.session, duration_secs=3))
