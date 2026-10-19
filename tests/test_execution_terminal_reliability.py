@@ -22,7 +22,7 @@ def lighter(harness, proof):
 
 def evidence(order, quantity):
     return {"client_order_id": order.client_order_id, "instrument_id": order.instrument_id,
-            "final_filled_quantity": quantity, "source": "websocket_terminal_order", "conflicting": False}
+            "final_filled_quantity": quantity, "source": "http_order_status", "conflicting": False}
 
 
 def test_lighter_cache_zero_cannot_finish_before_final_evidence(harness):
@@ -33,8 +33,8 @@ def test_lighter_cache_zero_cannot_finish_before_final_evidence(harness):
     gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
     gateway.poll(NOW + 2)
     assert not receipts
-    gateway.poll(NOW + 11_000_000_000)
-    assert [r.kind for r in receipts] == ["unknown"]
+    gateway.poll(NOW + 3)
+    assert [r.kind for r in receipts] == []
     assert [call[0] for call in strategy.calls] == ["submit", "query"]
     proof[0] = evidence(order, ".007")
     for trade_id, quantity in (("one", ".003"), ("two", ".004")):
@@ -44,7 +44,7 @@ def test_lighter_cache_zero_cannot_finish_before_final_evidence(harness):
         gateway.on_native_event("filled", message, NOW + 12_000_000_000)
         gateway.on_native_event("filled", message, NOW + 12_000_000_001)
     assert len(fills) == 2
-    assert [r.kind for r in receipts] == ["unknown", "fill", "fill", "terminal"]
+    assert [r.kind for r in receipts] == ["fill", "fill", "terminal"]
     assert receipts[-1].final_filled_quantity == D(".007")
 
 
@@ -82,6 +82,18 @@ def test_explicit_zero_terminal_evidence(harness):
     gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
     assert [r.kind for r in receipts] == ["terminal"]
     assert receipts[0].final_filled_quantity == 0
+
+
+def test_stream_zero_requires_original_order_query_before_release(harness):
+    proof = [None]
+    gateway, strategy, receipts, _, order = lighter(harness, proof)
+    proof[0] = {**evidence(order, "0"), "source": "websocket_terminal_order"}
+    strategy.cached[order.client_order_id].is_closed = True
+    gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
+    assert not receipts and [call[0] for call in strategy.calls] == ["submit", "query"]
+    proof[0]["source"] = "http_order_status"
+    gateway.poll(NOW + 2)
+    assert [r.kind for r in receipts] == ["terminal"]
 
 
 def test_fill_before_terminal_and_conflicting_final_update(harness):
@@ -223,7 +235,8 @@ def test_final_evidence_changes_and_repeated_conflict_cycles_are_delivered(harne
     gateway.on_native_event("filled", event(instrument_id=order.instrument_id, trade_id="late",
         order_side="BUY", last_qty=D(".001"), last_px=D(100)), NOW + 2)
     confirmations = [r.final_filled_quantity for r in receipts if r.kind == "terminal_evidence"]
-    assert confirmations == [D(0), D(".001")]
+    assert confirmations == [D(".001")]
+    assert receipts[0].final_filled_quantity == D(0)
     for conflict in (True, False, True):
         proof[0]["conflicting"] = conflict
         gateway.poll(NOW + 3)

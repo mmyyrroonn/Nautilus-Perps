@@ -599,16 +599,12 @@ class NativeOrderGateway:
             owned["processed_qty"] += Fraction(quantity)
             self._receipt(submit, "fill", execution_id=fill["execution_id"], quantity=quantity)
             if any((submit.request_id, terminal, "") in self.emitted for terminal in ("terminal", "rejected")):
-                owned["needs_final_query"] = True
-                self.requests[submit.request_id]["queried_ns"] = now_ns
-                try:
-                    self.strategy.query_order(self._cached(cid) or owned["native"], client_id=self._client(submit.venue))
-                except Exception:
-                    self.last_error = "late fill original-order query failed; reconciliation remains fenced"
+                owned.pop("final_query_started", None)
+                self._request_final_evidence(owned, self._cached(cid) or owned["native"], now_ns)
             cached = self._cached(cid)
             if cached is not None and cached.is_closed and cid not in self.terminals:
                 self.terminals[cid] = ("terminal", submit)
-            self._flush_terminal(cid)
+            self._flush_terminal(cid, now_ns)
         elif kind == "accepted":
             self._receipt(submit, "accepted")
         elif kind == "updated":
@@ -625,9 +621,21 @@ class NativeOrderGateway:
             receipt_kind = ("canceled" if kind == "canceled" and intent is not submit else
                             "rejected" if kind in {"rejected", "denied"} else "terminal")
             self.terminals[cid] = (receipt_kind, intent)
-            self._flush_terminal(cid)
+            self._flush_terminal(cid, now_ns)
 
-    def _flush_terminal(self, cid):
+    def _request_final_evidence(self, owned, cached, now_ns):
+        owned["needs_final_query"] = True
+        if owned.get("final_query_started"):
+            return
+        owned["final_query_started"] = True
+        submit = owned["intent"]
+        self.requests[submit.request_id]["queried_ns"] = now_ns
+        try:
+            self.strategy.query_order(cached, client_id=self._client(submit.venue))
+        except Exception:
+            self.last_error = "final original-order query failed; reconciliation remains fenced"
+
+    def _flush_terminal(self, cid, now_ns):
         pending = self.terminals.get(cid)
         if pending is None:
             return
@@ -652,9 +660,14 @@ class NativeOrderGateway:
                 if (not proof or proof.get("client_order_id") != cid
                         or proof.get("instrument_id") != submit.instrument_id
                         or proof.get("source") not in {"websocket_terminal_order", "http_order_status"}):
+                    self._request_final_evidence(owned, cached, now_ns)
                     return
                 if proof.get("conflicting") is not False:
                     self._receipt(submit, "reconciliation_required")
+                    self._request_final_evidence(owned, cached, now_ns)
+                    return
+                if proof["source"] != "http_order_status":
+                    self._request_final_evidence(owned, cached, now_ns)
                     return
                 final_quantity = _decimal(proof["final_filled_quantity"])
                 if (final_quantity < 0 or Fraction(final_quantity) > Fraction(submit.quantity)
@@ -665,15 +678,20 @@ class NativeOrderGateway:
                 final_source = "lighter_" + proof["source"]
             except (AttributeError, RuntimeError, TypeError, ValueError, KeyError, InvalidOperation):
                 self.last_error = "Lighter final cumulative fill evidence is unavailable; order remains unresolved"
+                self._request_final_evidence(owned, cached, now_ns)
                 return
         elif owned["processed_qty"] == Fraction(submit.quantity):
             final_quantity, final_source = _decimal(submit.quantity), "fully_filled_order"
         kind, intent = pending
+        already_terminal = any((submit.request_id, k, "") in self.emitted for k in ("terminal", "rejected"))
         self._receipt(intent, kind, final_quantity=final_quantity, final_source=final_source)
         if kind != "rejected" and intent.request_id != owned["intent"].request_id:
             self._receipt(owned["intent"], "terminal", final_quantity=final_quantity, final_source=final_source)
         if final_source == "lighter_http_order_status":
-            if self._receipt(submit, "terminal_evidence", final_quantity=final_quantity, final_source=final_source):
+            if not already_terminal:
+                self.evidence_receipts[submit.request_id] = ("terminal_evidence", final_quantity, final_source)
+                owned["needs_final_query"] = False
+            elif self._receipt(submit, "terminal_evidence", final_quantity=final_quantity, final_source=final_source):
                 owned["needs_final_query"] = False
 
     @timed("gateway.poll")
@@ -755,7 +773,7 @@ class NativeOrderGateway:
                 else:
                     self.terminals[cid] = ("terminal", owned["intent"])
         for cid in tuple(self.terminals):
-            self._flush_terminal(cid)
+            self._flush_terminal(cid, now_ns)
         for request in tuple(self.requests.values()):
             intent = request["intent"]
             if intent.action in {"connect", "reconcile"}:

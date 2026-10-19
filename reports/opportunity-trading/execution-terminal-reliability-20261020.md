@@ -2,11 +2,15 @@
 
 ## Contract
 
-Lighter application terminals require the execution client's explicit terminal
-cumulative-fill proof, matching instrument/client identity and the exact sum of
+Lighter application terminals require the execution client's explicit HTTP
+original-order terminal cumulative-fill proof, matching instrument/client identity and the exact sum of
 distinct consumed trades. Cache closure and `0 == 0` never establish finality.
 The native control records terminal WebSocket orders or original-order HTTP
-reports; conflicting evidence fences admission. Missing proof retains the original
+reports. A WebSocket declaration triggers an immediate original-ID query; it
+does not by itself release the application terminal. The official protocol lists
+the cumulative quantity and independent order/trade channels without promising
+cross-channel atomicity. This conservative barrier adds a read and its latency.
+Conflicting evidence fences admission. Missing proof retains the original
 order for queries without resubmission. An older wheel lacking the control cannot
 construct the new Lighter execution client.
 
@@ -31,7 +35,7 @@ for such sessions; it does not silently reconstruct or resend archived orders.
 
 ## Validation
 
-- 18 new offline replays cover cache-zero, explicit zero, terminal/fill ordering,
+- 19 new offline replays cover cache-zero, explicit zero, terminal/fill ordering,
   multiple partial fills, duplicates, identity/quantity conflicts, query failure,
   nonfinite quantities, fresh account proof, unknown fees, hard-protection
   preservation and restart fencing/revalidation.
