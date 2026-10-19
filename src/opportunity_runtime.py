@@ -119,13 +119,18 @@ class ScanState:
         return first != second and (self.allowed_pairs is None or
                                     frozenset((first, second)) in self.allowed_pairs)
 
+    def pending_evaluation_symbols(self):
+        return set()
+
     @timed("scan.evaluate_symbol")
-    def evaluate_symbol(self, symbol: str, now_ns: int, *, changed_id: str | None = None):
+    def evaluate_symbol(self, symbol: str, now_ns: int, *, changed_id: str | None = None,
+                        changed_ids=None):
+        affected = {changed_id} if changed_id is not None else changed_ids
         for buy_id in self.groups[symbol]:
             for sell_id in self.groups[symbol]:
                 if not self.pair_allowed(buy_id, sell_id):
                     continue
-                if changed_id is not None and changed_id not in (buy_id, sell_id):
+                if affected is not None and buy_id not in affected and sell_id not in affected:
                     continue
                 buy, sell = self.markets[buy_id], self.markets[sell_id]
                 key = (symbol, buy.venue, sell.venue) if self.allowed_pairs is None else (symbol, buy_id, sell_id)
@@ -260,6 +265,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.last_display_ns = 0
             self.last_evaluation_ns = 0
             self.pending_symbols = set()
+            self.pending_instruments = set()
             from opportunity_memory import current_diagnostics
             self.memory_diagnostics = current_diagnostics()
 
@@ -320,6 +326,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.book_timings.clear()
             self.publication_timings.clear()
             self.pending_symbols.clear()
+            self.pending_instruments.clear()
             state.current.clear()
             if self.started:
                 self.clock.cancel_timer("scan-display")
@@ -350,13 +357,14 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 if not pending:
                     self.publication_timings.pop(market.symbol, None)
 
-        def evaluate_published(self, symbol, *, changed_id=None):
+        def evaluate_published(self, symbol, *, changed_id=None, changed_ids=None):
             pending = self.publication_timings.pop(symbol, {})
             endpoint = start_latency() if pending else None
             for venue, marker in pending.values():
                 record_latency(marker, "market.publish_to_evaluate", venue=venue, sample_every=127,
                                ended_ns=endpoint[1] if endpoint is not None else None)
-            state.evaluate_symbol(symbol, time.time_ns(), changed_id=changed_id)
+            state.evaluate_symbol(symbol, time.time_ns(), changed_id=changed_id,
+                                  changed_ids=changed_ids)
 
         @timed("market.backpack_health")
         def check_backpack(self):
@@ -513,6 +521,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                                       evaluate=not plan.evaluation_interval_ms)
                 if plan.evaluation_interval_ms:
                     self.pending_symbols.add(market.symbol)
+                    self.pending_instruments.add(market.instrument_id)
             except Exception as exc:
                 self.fail(f"metadata: {type(exc).__name__}: {exc}")
 
@@ -543,6 +552,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                         self.halted.discard(instrument_id)
                 if plan.evaluation_interval_ms:
                     self.pending_symbols.add(self.markets[instrument_id].symbol)
+                    self.pending_instruments.add(str(instrument_id))
                 else:
                     state.expire(time.time_ns())
             except Exception as exc:
@@ -560,14 +570,18 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 self.advance_subscriptions(now_ns)
                 if now_ns - self.last_evaluation_ns >= plan.evaluation_interval_ms * 1_000_000:
                     changed = set(self.pending_symbols)
+                    affected = self.pending_instruments.copy()
                     self.pending_symbols.clear()
+                    self.pending_instruments.clear()
                     for instrument_id, stamp in tuple(self.dirty.items()):
                         self.dirty.pop(instrument_id, None)
                         self.publish_book(instrument_id, stamp, evaluate=False)
                         changed.add(self.markets[instrument_id].symbol)
+                        affected.add(str(instrument_id))
                     # Every changed leg is current before evaluating any pair.
-                    for symbol in changed:
-                        self.evaluate_published(symbol)
+                    changed.update(state.pending_evaluation_symbols())
+                    for symbol in sorted(changed):
+                        self.evaluate_published(symbol, changed_ids=affected)
                     if drive_evaluation_timer:
                         state.on_evaluation_timer(time.time_ns())
                     self.last_evaluation_ns = time.time_ns()

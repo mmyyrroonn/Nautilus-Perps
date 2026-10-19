@@ -110,6 +110,7 @@ class LiveTradeState(ScanState):
         self.cleanup_allowed = True
         self.stopping = False
         self.entry_pause_reason = None
+        self.full_evaluation_symbols = set(self.trade_symbols)
         saved = store.load() if store else None
         if saved:
             self._restore(saved)
@@ -173,6 +174,7 @@ class LiveTradeState(ScanState):
                                       for p in self.positions.values()):
             self.halt_reason = "native instrument economics changed with owned inventory"
         self.instruments[instrument_id] = value
+        self.full_evaluation_symbols.update(self.trade_symbols)
 
     @timed("strategy.snapshot")
     def snapshot(self):
@@ -188,6 +190,9 @@ class LiveTradeState(ScanState):
             "account_pauses": self.account_pauses, "entry_pause_reason": self.entry_pause_reason})
 
     def emit(self, kind, now_ns, **fields):
+        # Account, order, ownership and lifecycle transitions can reopen admission
+        # for an unchanged pair, including a pair on another symbol.
+        self.full_evaluation_symbols.update(self.trade_symbols)
         event = deepcopy({"event": kind, "mode": "live", "observed_ns": now_ns, **fields})
         self.event_counts[kind] += 1
         try:
@@ -515,6 +520,7 @@ class LiveTradeState(ScanState):
     def on_account(self, account, now_ns):
         if account.instrument_id not in self.markets or self.markets[account.instrument_id].venue != account.venue:
             return
+        self.full_evaluation_symbols.update(self.trade_symbols)
         instrument_id = account.instrument_id
         self.account_requests.pop(instrument_id, None)
         self.account_request_ids.pop(instrument_id, None)
@@ -1119,8 +1125,30 @@ class LiveTradeState(ScanState):
         intents = [self._make_order(position, leg, "exit", bound, now_ns) for leg, bound in bounds.items()]
         self._publish_orders(intents, now_ns, position)
 
+    def pending_evaluation_symbols(self):
+        if self.phase != "active" or self.entry_pause_reason or self.halt_reason or self.stopping:
+            return set()
+        return self.full_evaluation_symbols.copy()
+
+    def update_book(self, instrument_id, book, now_ns, *, raw_book=None, evaluate=True):
+        # Owned inventory shares a global gross limit. Its valuation/freshness
+        # can change admission on every symbol, not just the updated leg.
+        if self.positions:
+            self.full_evaluation_symbols.update(self.trade_symbols)
+        super().update_book(instrument_id, book, now_ns, raw_book=raw_book, evaluate=evaluate)
+
+    def update_metadata(self, instrument_id, metadata, now_ns, *, evaluate=True):
+        if self.positions:
+            self.full_evaluation_symbols.update(self.trade_symbols)
+        super().update_metadata(instrument_id, metadata, now_ns, evaluate=evaluate)
+
+    def invalidate(self, instrument_id, now_ns, *, metadata=False):
+        if self.positions:
+            self.full_evaluation_symbols.update(self.trade_symbols)
+        super().invalidate(instrument_id, now_ns, metadata=metadata)
+
     @timed("strategy.evaluate_symbol")
-    def evaluate_symbol(self, symbol, now_ns, *, changed_id=None):
+    def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):
         if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
             return
         for key in tuple(self.positions):
@@ -1131,7 +1159,13 @@ class LiveTradeState(ScanState):
                 o["terminal_ns"] is None and (o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns)
                 for o in self.orders.values())):
             return
+        affected = {changed_id} if changed_id is not None else changed_ids
+        if self.positions or symbol in self.full_evaluation_symbols:
+            affected = None
+        self.full_evaluation_symbols.discard(symbol)
         for first, second in combinations(sorted(self.groups[symbol]), 2):
+            if affected is not None and first not in affected and second not in affected:
+                continue
             if self.markets[first].venue == self.markets[second].venue:
                 continue
             for buy_id, sell_id in ((first, second), (second, first)):
