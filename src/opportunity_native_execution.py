@@ -198,7 +198,9 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
         if native_controls is not None:
             if client == "ONDO":
                 native_controls[client] = factory
-            elif client in {"BACKPACK", "LIGHTER"}:
+            elif client == "LIGHTER":
+                native_controls[client] = control
+            elif client == "BACKPACK":
                 native_controls[client] = config.control
         result.append((client, factory, config))
     return result
