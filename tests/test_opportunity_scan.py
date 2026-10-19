@@ -287,7 +287,7 @@ def test_record_disabled_retains_only_current_state_and_display_is_bounded(tmp_p
     assert state.current == {} and len(state.metadata) == 1
 
 
-def native_observer(tmp_path, monkeypatch, *, backpack=False, **overrides):
+def native_observer(tmp_path, monkeypatch, *, backpack=False, drive_evaluation_timer=True, **overrides):
     native = pytest.importorskip("nautilus_trader.model")
     p = replace(plan(tmp_path), **overrides)
     if backpack:
@@ -302,7 +302,8 @@ def native_observer(tmp_path, monkeypatch, *, backpack=False, **overrides):
     health = {"connected": True, "metadata_ready": True, "connection_epoch": 1,
               "books_continuous": {"BTC_USDC_PERP": True}, "books_fresh": {"BTC_USDC_PERP": True}}
     configs = {"BACKPACK": SimpleNamespace(telemetry_snapshot_json=lambda: json.dumps(health))} if backpack else {}
-    template = runtime.create_observer(p, state, lambda: calls.append("stop"), configs)
+    template = runtime.create_observer(p, state, lambda: calls.append("stop"), configs,
+                                       drive_evaluation_timer=drive_evaluation_timer)
     class UnderTest(type(template)):
         @property
         def cache(self):

@@ -15,6 +15,23 @@ def moving_clock(monkeypatch):
     return now
 
 
+@pytest.mark.parametrize("drive_evaluation_timer", [True, False])
+def test_market_publication_continues_when_live_coordinator_owns_timer(
+        tmp_path, monkeypatch, drive_evaluation_timer):
+    _, state, observer, ids, _, _ = native_observer(tmp_path, monkeypatch,
+        evaluation_interval_ms=100, drive_evaluation_timer=drive_evaluation_timer)
+    now = moving_clock(monkeypatch)
+    ticks = []
+    monkeypatch.setattr(state, "on_evaluation_timer", ticks.append)
+    observer.on_book_deltas(batch(ids[0], "99.00", "100.00"))
+    observer.on_book_deltas(batch(ids[1], "102.00", "103.00"))
+    now[0] = NS + 100_000_000
+    observer.on_time_event(None)
+    assert ticks == ([now[0]] if drive_evaluation_timer else [])
+    assert len(state.books) == 2 and state.saved == 1
+    assert not observer.dirty and observer.failure is None
+
+
 def replace_touch(instrument_id, old_bid, old_ask, bid, ask, stamp, sequence=2):
     """Remove the old prices before inserting the new native L2 touch."""
     native = pytest.importorskip("nautilus_trader.model")

@@ -246,3 +246,86 @@ def test_closed_recorder_ignores_late_worker_completions():
     recorder.finish(0, "completed")
     recorder.record("late", 100)
     assert not recorder.document()["operations"]
+
+
+def test_sampled_stage_does_no_clock_work_when_disabled_or_skipped(monkeypatch):
+    recorder = timing.TimingRecorder()
+    @timing.sampled_timed("sampled", every=3)
+    def function(value):
+        return value
+    def forbidden():
+        raise AssertionError("skipped sample read the clock")
+    monkeypatch.setattr(timing.time, "perf_counter_ns", forbidden)
+    assert function(7) == 7
+    monkeypatch.setattr(timing, "_active", recorder)
+    assert function(8) == 8 and function(9) == 9
+    assert not recorder.rows
+    ticks = iter([100, 150])
+    monkeypatch.setattr(timing.time, "perf_counter_ns", lambda: next(ticks))
+    assert function(10) == 10
+    monkeypatch.setattr(timing.time, "perf_counter_ns", lambda: 200)
+    measured = rows(recorder)["sampled"]
+    assert measured["category"] == "sampled_span" and measured["sample_every"] == 3
+    assert measured["count"] == 1 and measured["total_ms"] == 50 / 1e6
+
+
+def test_sampled_inclusive_stage_does_not_double_subtract_parent_children(monkeypatch):
+    recorder = timing.TimingRecorder()
+    monkeypatch.setattr(timing, "_active", recorder)
+    @timing.sampled_timed("sampled", every=2)
+    def function(child=False):
+        if child:
+            with timing.span("inner"):
+                pass
+    function()
+    ticks = iter([100, 200, 250, 350, 400, 500])
+    monkeypatch.setattr(timing.time, "perf_counter_ns", lambda: next(ticks))
+    with timing.span("outer"):
+        function(child=True)
+    monkeypatch.setattr(timing.time, "perf_counter_ns", lambda: 600)
+    measured = rows(recorder)
+    assert measured["outer"]["total_ms"] == 400 / 1e6
+    assert measured["outer"]["self_ms"] == 300 / 1e6
+    assert measured["sampled"]["self_ms"] == measured["sampled"]["total_ms"] == 200 / 1e6
+
+
+def test_sampled_stage_preserves_exceptions_and_omits_private_arguments(monkeypatch):
+    recorder = timing.TimingRecorder()
+    monkeypatch.setattr(timing, "_active", recorder)
+    @timing.sampled_timed("sampled", every=2)
+    def function(private_value):
+        raise ValueError(private_value)
+    for _ in range(2):
+        with pytest.raises(ValueError, match="private synthetic argument"):
+            function("private synthetic argument")
+    document = recorder.document()
+    measured = rows(recorder)["sampled"]
+    assert measured["count"] == measured["errors"] == 1
+    assert "private synthetic argument" not in json.dumps(document)
+
+
+def test_sample_ordinals_are_thread_local_and_bounded(monkeypatch):
+    recorder = timing.TimingRecorder()
+    monkeypatch.setattr(timing, "_active", recorder)
+    @timing.sampled_timed("sampled", every=3)
+    def function():
+        pass
+    counts = []
+    barrier = threading.Barrier(2)
+    def worker():
+        barrier.wait(timeout=2)
+        for _ in range(7):
+            function()
+        counts.append(dict(recorder.local.sampled_calls))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [pool.submit(worker) for _ in range(2)]
+        for result in results:
+            result.result(timeout=3)
+    assert counts == [{"sampled": 1}, {"sampled": 1}]
+    assert rows(recorder)["sampled"]["count"] == 4
+
+
+@pytest.mark.parametrize("interval", [True, 0, 1, 1.5, "127"])
+def test_sampled_stage_rejects_invalid_interval(interval):
+    with pytest.raises(ValueError, match="sample interval"):
+        timing.sampled_timed("sampled", every=interval)

@@ -91,6 +91,9 @@ class LiveTradeState(ScanState):
         self.account_scopes = {}
         for instrument in self.markets:
             self.account_scopes.setdefault(self._account_scope(instrument), []).append(instrument)
+        self.account_representatives = {scope: self._account_representative(instruments)
+                                        for scope, instruments in self.account_scopes.items()}
+        self.account_check_metrics = {}
         self.flat_account_problems = {}
         self.account_read_failures, self.account_retry_after_ns = {}, {}
         self.fences, self.last_attempt = {}, {}
@@ -317,11 +320,13 @@ class LiveTradeState(ScanState):
         if now_ns < self.account_retry_after_ns.get(scope, 0):
             return
         instruments = self.account_scopes[scope]
-        observations = [self.accounts[i] for i in instruments if i in self.accounts]
+        observations = (self.accounts[i] for i in instruments if i in self.accounts)
+        first = next(observations, None)
         # Native readers return the entire account (HL: one DEX), not one HTTP
         # query per market. Legacy instrument-only readers retain their scope.
-        if not observations or any(a.account_positions is not None for a in observations):
-            instrument_id = self._account_representative(instruments)
+        if (first is None or first.account_positions is not None
+                or any(a.account_positions is not None for a in observations)):
+            instrument_id = self.account_representatives[scope]
         # The gateway owns the account-read deadline, which can exceed the
         # order timeout. Do not replace a still-pending request with a new ID.
         if instrument_id in self.account_request_ids:
@@ -355,10 +360,30 @@ class LiveTradeState(ScanState):
         if account.account_positions is None:
             return (account.instrument_id,)
         domain = self._account_domain(account.venue)
-        return tuple(i for i in self.account_domains[domain]
-                     if domain != "HL" or self._hl_scope(i) == self._hl_scope(account.instrument_id))
+        scope = self._hl_scope(account.instrument_id) if domain == "HL" else ""
+        return self.account_scopes.get((domain, scope), ())
 
-    def _account_problem(self, instrument_id, now_ns, *, check_age=True):
+    def _check_account_proof(self, instrument_id, account, expected):
+        """Validate complete evidence once within an immutable validation pass."""
+        coverage = self._account_coverage(account)
+        if any(account.observed_ns < self.fences.get(i, 0) for i in coverage):
+            return {}, "predates_activity"
+        positions = {i: F(q) for i, q in account.account_positions} if account.account_positions is not None else {
+            instrument_id: F(account.position_quantity)}
+        for instrument in set(coverage) | positions.keys():
+            if instrument not in expected:
+                expected[instrument] = self.expected_native(instrument)
+            if positions.get(instrument, 0) != expected[instrument]:
+                return positions, "position_mismatch"
+        orders = account.account_open_orders if account.account_open_orders is not None else tuple(
+            (instrument_id, cid) for cid in account.open_order_ids)
+        for instrument, cid in orders:
+            owned = self.orders.get(cid)
+            if owned is None or owned["instrument_id"] != instrument or owned["terminal_ns"] is not None:
+                return positions, "unowned_order"
+        return positions, None
+
+    def _account_problem(self, instrument_id, now_ns, *, check_age=True, proofs=None, expected=None):
         account = self.accounts.get(instrument_id)
         if account is None:
             return "missing"
@@ -367,22 +392,27 @@ class LiveTradeState(ScanState):
         age = now_ns - account.observed_ns
         if age < 0 or (check_age and age > self.account_max_age_ns):
             return "stale_or_future"
-        coverage = self._account_coverage(account)
-        if any(account.observed_ns < self.fences.get(i, 0) for i in coverage):
+        # Never retain results across calls which can change inventory, fences,
+        # authority or owned orders. A domain pass finishes validation before
+        # applying any pause/recovery side effects. Identity avoids hashing the
+        # complete payload for every market; snapshots retain both tuples.
+        domain = self._account_domain(account.venue)
+        scope = self._hl_scope(account.instrument_id) if domain == "HL" else ""
+        key = (domain, scope, account.observed_ns, id(account.account_positions), id(account.account_open_orders))
+        if account.account_positions is None:
+            key = ("instrument", instrument_id)
+        if proofs is None:
+            proofs = {}
+        if expected is None:
+            expected = {}
+        if key not in proofs:
+            proofs[key] = self._check_account_proof(instrument_id, account, expected)
+        positions, reason = proofs[key]
+        if reason == "predates_activity":
             return "predates_activity"
-        positions = dict(account.account_positions) if account.account_positions is not None else {
-            instrument_id: account.position_quantity}
-        if F(positions.get(instrument_id, 0)) != F(account.position_quantity):
+        if positions.get(instrument_id, 0) != F(account.position_quantity):
             return "inconsistent_coverage"
-        if any(F(positions.get(i, 0)) != self.expected_native(i) for i in set(coverage) | positions.keys()):
-            return "position_mismatch"
-        orders = account.account_open_orders if account.account_open_orders is not None else tuple(
-            (instrument_id, cid) for cid in account.open_order_ids)
-        for instrument, cid in orders:
-            owned = self.orders.get(cid)
-            if (owned is None or owned["instrument_id"] != instrument or owned["terminal_ns"] is not None):
-                return "unowned_order"
-        return None
+        return reason
 
     def _pause_account(self, instrument_id, now_ns, reason, *, new_evidence=False):
         domain = self._account_domain(self.markets[instrument_id].venue)
@@ -412,9 +442,16 @@ class LiveTradeState(ScanState):
         self.outbox = retained
         self.emit("account_domain_paused", now_ns, domain=domain, **pause, local_not_dispatched=canceled)
 
+    @timed("strategy.account_domain", labels=lambda self, domain, *a, **kw: (domain, ""))
     def _account_domain_ready(self, domain, now_ns):
         instruments = self.account_domains[domain]
-        problems = [(i, self._account_problem(i, now_ns)) for i in instruments]
+        proofs, expected = {}, {}
+        problems = [(i, self._account_problem(i, now_ns, proofs=proofs, expected=expected)) for i in instruments]
+        self.account_check_metrics[domain] = {"checked_at_unix_ns": now_ns, "markets_checked": len(instruments),
+            "proofs_checked": len(proofs), "expected_quantities_computed": len(expected),
+            "position_rows_checked": sum(len(positions) for positions, _ in proofs.values()),
+            "unconfigured_position_rows": sum(i not in self.markets
+                for positions, _ in proofs.values() for i in positions)}
         for instrument_id, reason in problems:
             if reason and reason != "predates_activity":
                 self._pause_account(instrument_id, now_ns, reason)

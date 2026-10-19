@@ -116,8 +116,13 @@ class AccountSnapshot:
         if (self.account_positions is None) != (self.account_open_orders is None):
             raise ValueError("complete account positions and orders must be supplied together")
         if self.account_positions is not None:
+            # Keep canonical immutable payloads shared by per-market projections.
+            # Mutable or noncanonical caller input still gets validated/copied.
+            shared_positions = type(self.account_positions) is tuple
             positions, seen = [], set()
-            for instrument, quantity in self.account_positions:
+            for row in self.account_positions:
+                instrument, quantity = row
+                shared_positions &= type(row) is tuple and type(quantity) is Decimal
                 if not isinstance(instrument, str) or not instrument or instrument in seen:
                     raise ValueError("invalid or duplicate account position identity")
                 if isinstance(quantity, bool) or not isinstance(quantity, (str, int, Decimal)):
@@ -130,8 +135,11 @@ class AccountSnapshot:
             orders = tuple(tuple(row) for row in self.account_open_orders)
             if any(len(row) != 2 or any(not isinstance(v, str) or not v for v in row) for row in orders):
                 raise ValueError("invalid account order identity")
-            object.__setattr__(self, "account_positions", tuple(positions))
-            object.__setattr__(self, "account_open_orders", orders)
+            if not shared_positions:
+                object.__setattr__(self, "account_positions", tuple(positions))
+            if not (type(self.account_open_orders) is tuple
+                    and all(type(row) is tuple for row in self.account_open_orders)):
+                object.__setattr__(self, "account_open_orders", orders)
 
 
 @dataclass(frozen=True)
