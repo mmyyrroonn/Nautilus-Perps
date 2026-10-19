@@ -190,3 +190,22 @@ def test_fresh_order_proof_can_recover_restored_ledger_but_conflict_revokes_it()
                                         "reconciliation_required"), NOW + 9)
     complete_accounts(restored, NOW + 10)
     assert restored.order_reconciliations and restored.halt_reason
+
+
+def test_lighter_late_fill_requires_original_order_http_confirmation():
+    from test_opportunity_trade import make_plan, set_book
+    live, _ = state(plan=make_plan(venues=("HL", "LIGHTER")))
+    set_book(live, "HL", "99.99", "100")
+    set_book(live, "LIGHTER", "100.3", "100.31")
+    live.evaluate_symbol("BTC", NOW)
+    buy, sell = submissions(live)
+    live.on_receipt(receipt(buy, "rejected"), NOW + 1)
+    live.on_receipt(receipt(sell, "terminal"), NOW + 2)
+    fill(live, sell, NOW + 3, terminal=False)
+    final_proof(live, sell, NOW + 4)
+    complete_accounts(live, NOW + 5)
+    assert live.order_reconciliations
+    live.on_receipt(ExecutionReceipt(sell.request_id, sell.client_order_id, "terminal_evidence",
+        final_filled_quantity=sell.quantity, final_fill_source="lighter_http_order_status"), NOW + 6)
+    complete_accounts(live, NOW + 7)
+    assert not live.order_reconciliations and live.halt_reason is None

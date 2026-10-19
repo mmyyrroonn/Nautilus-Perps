@@ -589,6 +589,13 @@ class NativeOrderGateway:
             self.seen_fills[key] = signature
             owned["processed_qty"] += Fraction(quantity)
             self._receipt(submit, "fill", execution_id=fill["execution_id"], quantity=quantity)
+            if any((submit.request_id, terminal, "") in self.emitted for terminal in ("terminal", "rejected")):
+                owned["needs_final_query"] = True
+                self.requests[submit.request_id]["queried_ns"] = now_ns
+                try:
+                    self.strategy.query_order(self._cached(cid) or owned["native"], client_id=self._client(submit.venue))
+                except Exception:
+                    self.last_error = "late fill original-order query failed; reconciliation remains fenced"
             cached = self._cached(cid)
             if cached is not None and cached.is_closed and cid not in self.terminals:
                 self.terminals[cid] = ("terminal", submit)
@@ -656,6 +663,9 @@ class NativeOrderGateway:
         self._receipt(intent, kind, final_quantity=final_quantity, final_source=final_source)
         if kind != "rejected" and intent.request_id != owned["intent"].request_id:
             self._receipt(owned["intent"], "terminal", final_quantity=final_quantity, final_source=final_source)
+        if final_source == "lighter_http_order_status":
+            self._receipt(submit, "terminal_evidence", final_quantity=final_quantity, final_source=final_source)
+            owned["needs_final_query"] = False
 
     @timed("gateway.poll")
     def poll(self, now_ns):
@@ -742,8 +752,9 @@ class NativeOrderGateway:
             if intent.action in {"connect", "reconcile"}:
                 continue
             passive_accepted = intent.action == "submit" and intent.time_in_force == "GTC" and (intent.request_id, "accepted", "") in self.emitted
-            if passive_accepted or (intent.request_id, "updated", "") in self.emitted or any(
-                    (intent.request_id, k, "") in self.emitted for k in ("canceled", "terminal", "rejected")):
+            if not self.orders.get(intent.client_order_id, {}).get("needs_final_query") and (
+                    passive_accepted or (intent.request_id, "updated", "") in self.emitted or any(
+                    (intent.request_id, k, "") in self.emitted for k in ("canceled", "terminal", "rejected"))):
                 continue
             if now_ns - request["queried_ns"] >= self.timeout_ns and intent.client_order_id in self.orders:
                 request["queried_ns"] = now_ns

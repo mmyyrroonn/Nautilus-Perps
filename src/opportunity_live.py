@@ -534,6 +534,9 @@ class LiveTradeState(ScanState):
             proof = order.get("final_fill_evidence")
             if cid not in self.validated_final_orders or not proof:
                 return
+            if (self.markets[order["instrument_id"]].venue == "LIGHTER"
+                    and proof["source"] != "lighter_http_order_status"):
+                return
             detailed = sum((F(e["quantity"]) for e in self.executions.values()
                             if e["client_order_id"] == cid), F(0))
             if detailed != F(order["filled_quantity"]) or detailed != F(proof["quantity"]):
@@ -910,7 +913,7 @@ class LiveTradeState(ScanState):
                 self.emit("order_accepted", now_ns, client_order_id=receipt.client_order_id,
                           latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
             return
-        if receipt.kind in TERMINALS:
+        if receipt.kind in TERMINALS or receipt.kind == "terminal_evidence":
             final = receipt.final_filled_quantity
             if final is not None and receipt.final_fill_source in {
                     "lighter_websocket_terminal_order", "lighter_http_order_status", "fully_filled_order"}:
@@ -932,6 +935,8 @@ class LiveTradeState(ScanState):
                     self.emit("order_final_fill_confirmed", now_ns, client_order_id=receipt.client_order_id,
                               final_fill_evidence=order["final_fill_evidence"])
                 return
+            if receipt.kind == "terminal_evidence":
+                return  # Evidence alone does not invent an order lifecycle event.
             order["terminal_ns"], order["status"] = now_ns, receipt.kind
             self.fences[order["instrument_id"]] = now_ns
             self.emit("order_terminal", now_ns, client_order_id=receipt.client_order_id,

@@ -10,7 +10,10 @@ reports; conflicting evidence fences admission. Missing proof retains the origin
 order for queries without resubmission. An older wheel lacking the control cannot
 construct the new Lighter execution client.
 
-Late fills still change inventory and fees exactly once. Their recoverable fence
+Late fills still change inventory and fees exactly once. For Lighter, recovery
+requires an original-order HTTP confirmation; a stream declaration alone cannot
+repair a lifecycle already contradicted by a late fill. The gateway queries the
+original ID immediately and retains throttled retries if that read fails. Their recoverable fence
 is persisted independently of hard failures. Recovery requires current-process
 order proof, agreement with the persisted execution ledger, no pending/unknown
 orders or unknown economics, and complete authoritative position/open-order reads
@@ -25,7 +28,7 @@ for such sessions; it does not silently reconstruct or resend archived orders.
 
 ## Validation
 
-- 15 new offline replays cover cache-zero, explicit zero, terminal/fill ordering,
+- 16 new offline replays cover cache-zero, explicit zero, terminal/fill ordering,
   multiple partial fills, duplicates, identity/quantity conflicts, query failure,
   nonfinite quantities, fresh account proof, unknown fees, hard-protection
   preservation and restart fencing/revalidation.
