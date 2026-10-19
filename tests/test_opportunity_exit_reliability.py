@@ -8,8 +8,9 @@ import pytest
 
 from test_opportunity_live import accounts, fill, receipt, state, submissions
 from test_opportunity_live_runner import configs
-from test_opportunity_trade import NOW, SECOND, publish, set_book
-from opportunity_core import exact_decimal
+from test_opportunity_trade import NOW, SECOND, make_plan, publish, set_book
+from opportunity_core import BookSnapshot, exact_decimal
+from opportunity_entry_evidence import entry_dispatch_evidence
 from opportunity_live_runner import LiveCoordinator, load_live_plan
 from opportunity_preflight import AccountSnapshot
 
@@ -74,6 +75,66 @@ def test_pons_short_cash_below_cap_cannot_hide_ask_valuation_above_cap():
     assert D(383) * D("0.26112") == D("100.00896")
     assert {entry.quantity for entry in entries} == {D(382)}
     assert D(382) * D("0.26112") < D("99.9")
+
+
+def test_native_canonical_and_quote_conversions_match_sizing_and_send_headroom():
+    plan = make_plan()
+    plan = replace(plan, markets=tuple(replace(m,
+        canonical_multiplier=D("3") if m.venue == "HL" else D("0.2"),
+        quote_to_usd=D("0.5") if m.venue == "HL" else D("2")) for m in plan.markets))
+    live, _ = state(plan)
+    for instrument, native, canonical in (("BTC.HL", "2", "3"), ("BTC.ASTER", "5", "0.2")):
+        live.register_instrument(instrument, D("0.01"), D(native), "USD")
+        live.metadata[instrument] = replace(live.metadata[instrument], multiplier=D(native) * D(canonical))
+    publish(live)
+    buy, sell = submissions(live)
+    position = next(iter(live.positions.values()))
+    assert (buy.quantity, buy.price, sell.quantity, sell.price) == (D("0.16"), D(600), D("0.96"), D("10.03"))
+    assert F(position["entry"]["sizing"]["base_quantity"]) == F("0.96")
+    reason, evidence = entry_dispatch_evidence(live, position, NOW + 1)
+    assert reason == "valid"
+    risk = position["entry"]["entry_risk"]
+    for leg, expected in (("buy", "96"), ("sell", "96.2976")):
+        assert F(risk[leg + "_standalone_usd"]) == F(evidence[leg]["standalone_risk_usd"]) == F(expected)
+    assert F(evidence["sell"]["limit_cash_usd"]) == F("96.288")
+    set_book(live, "ASTER", "100.3", "105", NOW + 2)
+    reason, evidence = entry_dispatch_evidence(live, position, NOW + 2)
+    assert reason == "unhedged_headroom_insufficient"
+    assert F(evidence["sell"]["standalone_risk_usd"]) == F("100.8")
+    fill(live, sell, NOW + 3)
+    assert F(position["remaining_sell_base"]) == F("0.96")
+    assert F(position["actual_entry"]["sell_notional_usd"]) == F("96.288")
+    assert F(position["unhedged_notional_usd"]) == F("100.8")
+    assert position["unhedged_breach"]["reason"] == "unhedged_notional"
+
+
+def test_headroom_shrink_across_depth_levels_recomputes_limits_fees_and_net():
+    live, _ = state(make_plan(reserve="1"))
+    for instrument, fee in (("BTC.HL", "2"), ("BTC.ASTER", "3")):
+        live.metadata[instrument] = replace(live.metadata[instrument], taker_fee_bps=D(fee))
+    for instrument, book in (("BTC.HL", BookSnapshot("HL", "BTC",
+            ((D("99.99"), D(10)),), ((D(100), D("0.8")), (D("100.1"), D(10))), NOW, NOW)),
+            ("BTC.ASTER", BookSnapshot("ASTER", "BTC",
+            ((D(101), D("0.8")), (D("100.9"), D(10))), ((D(130), D(10)),), NOW, NOW))):
+        live.update_book(instrument, book, NOW, evaluate=False)
+    initial = live.pricer.entry("BTC.HL", "BTC.ASTER", NOW)
+    original_quantity = F(initial["sizing"]["base_quantity"])
+    assert original_quantity > F("0.8")
+    assert live._limit("BTC.HL", "BUY", original_quantity, NOW)["price"] == D("100.1")
+    assert live._limit("BTC.ASTER", "SELL", original_quantity, NOW)["price"] == D("100.9")
+    assert live._entry("BTC.HL", "BTC.ASTER", NOW)
+    buy, sell = submissions(live)
+    assert (buy.quantity, sell.quantity, buy.price, sell.price) == (D("0.76"), D("0.76"), D(100), D(101))
+    position = next(iter(live.positions.values()))
+    sizing, economics = position["entry"]["sizing"], position["entry"]["economics"]
+    assert F(sizing["buy_notional"]) == 76 and F(sizing["sell_notional"]) == F("76.76")
+    assert F(economics["buy_taker_fee"]) == F("0.0152")
+    assert F(economics["sell_taker_fee"]) == F("0.023028")
+    assert F(economics["reserve"]) == F("0.0076")
+    assert F(economics["entry_after_fees_and_reserve"]) == F("0.714172")
+    reason, evidence = entry_dispatch_evidence(live, position, NOW + 1)
+    assert reason == "valid"
+    assert F(evidence["net_usd"]) == F(economics["entry_after_fees_and_reserve"])
 
 
 @pytest.mark.parametrize("ask,breach", [("199.999999", False), ("200", True), ("200.000001", True)])
