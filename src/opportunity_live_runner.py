@@ -238,13 +238,14 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         raise ScanConfigError("formal trading symbols must have two configured supported venues")
     runtime = document.get("runtime", {})
     allowed_keys(runtime, {"duration_secs", "drain_timeout_secs", "timer_interval_ms", "account_max_age_ms",
-                           "order_timeout_secs", "retry_interval_ms"}, "live runtime")
+                           "order_timeout_secs", "retry_interval_ms", "evaluation_interval_ms"}, "live runtime")
     duration = integer_value(runtime.get("duration_secs", scan.duration_secs) if duration_secs is None else duration_secs,
                              "duration_secs", 0, 2678400)
     anchors = {min((m for m in filtered if m.venue == venue),
                    key=lambda m: (m.symbol != "BTC", m.symbol not in requested, m.instrument_id)).instrument_id for venue in venues}
     scan = replace(scan, markets=tuple(m for m in filtered if m.symbol in set(requested) or m.instrument_id in anchors), output_path=None,
-        evaluation_interval_ms=100, duration_secs=duration,
+        evaluation_interval_ms=integer_value(runtime.get("evaluation_interval_ms", 100),
+                                            "evaluation_interval_ms", 0, 1000), duration_secs=duration,
         settings=replace(scan.settings, target_notional=policy.order_notional_usd,
                          min_entry_edge_bps=policy.entry_edge_bps))
     return LiveRunPlan(scan, policy, paths["state_path"], paths["limits_path"], venues, tuple(requested), pairs, gross,
@@ -825,6 +826,9 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                     quote_provider=lambda instrument_id, now_ns: native_quote(live, instrument_id, now_ns))
                 coordinator.attach(gateway, preflight)
                 self.clock.set_timer("opportunity-trade", timedelta(milliseconds=plan.timer_interval_ms))
+                from opportunity_wakeup import IntentWakeup
+                self.intent_wakeup = IntentWakeup(self.clock, self.on_time_event)
+                live.intent_notifier = self.intent_wakeup.request
             except Exception as exc:
                 coordinator.failure = "native strategy startup failed: "+type(exc).__name__
                 coordinator.finished = True
@@ -833,6 +837,10 @@ def build_live_node(plan, live, coordinator, *, environ=None):
         def on_time_event(self, event):
             if coordinator.gateway is None:
                 return
+            wakeup = getattr(self, "intent_wakeup", None)
+            if wakeup is not None and getattr(event, "name", None) == wakeup.name:
+                if not wakeup.consume() or not live.outbox:
+                    return
             try:
                 coordinator.tick(time.time_ns())
             except Exception as exc:
@@ -840,6 +848,10 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                 coordinator.request_stop(time.time_ns(), "execution_callback_failed")
 
         def on_stop(self):
+            live.intent_notifier = None
+            wakeup = getattr(self, "intent_wakeup", None)
+            if wakeup is not None:
+                wakeup.close()
             if coordinator.gateway:
                 coordinator.gateway.close()
 

@@ -51,6 +51,9 @@ timeout_secs = 20
 duration_secs = 0
 drain_timeout_secs = 30
 timer_interval_ms = 100
+# Market publication/evaluation: 100 baseline, 20 small batches, 0 per complete event.
+# Change after comparing CPU, queue tails and admission decisions for this deployment.
+evaluation_interval_ms = 100
 # Complete native account reads may take several seconds; BBO freshness is separate.
 account_max_age_ms = 60000
 order_timeout_secs = 10

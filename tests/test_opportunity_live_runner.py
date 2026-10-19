@@ -757,11 +757,14 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
         min_notional=None if not startup_self_test or m.venue in {"BACKPACK", "ONDO"} else D(5),
         is_inverse=False) for m in plan.scan.markets}
     timers = []
+    alerts = []
     class Strategy:
         def __init__(self, config):
             self.config = config
             self.cache = SimpleNamespace(instrument=native_instruments.get)
-            self.clock = SimpleNamespace(set_timer=lambda *args: timers.append(args))
+            self.clock = SimpleNamespace(set_timer=lambda *args: timers.append(args),
+                timestamp_ns=lambda: NOW,
+                set_time_alert_ns=lambda *args, **kwargs: alerts.append((args, kwargs)))
     class Config:
         def __init__(self, **kwargs):
             self.values = kwargs
@@ -866,6 +869,19 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
     assert state.gateway.kwargs["account_timeout_secs"] == 20
     assert state.gateway.kwargs["timeout_secs"] == 10
     assert timers and not state.gateway.sent and not live.activated
+    ticks = []
+    monkeypatch.setattr(state, "tick", ticks.append)
+    live.outbox = [object()]
+    live.intent_notifier()
+    live.intent_notifier()
+    assert len(alerts) == 1 and not ticks
+    event = SimpleNamespace(name=alerts[0][0][0])
+    alerts[0][1]["callback"](event)
+    assert len(ticks) == 1
+    live.outbox.clear()
+    live.intent_notifier()
+    strategy.on_time_event(event)
+    assert len(ticks) == 1  # A receipt may already have drained these intents.
 
 
 def native_build_credentials():

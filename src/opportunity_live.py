@@ -99,6 +99,7 @@ class LiveTradeState(ScanState):
         self.account_read_failures, self.account_retry_after_ns = {}, {}
         self.fences, self.last_attempt = {}, {}
         self.outbox = []
+        self.intent_notifier = None
         self.entry_timings = {}  # Process-local only; never persisted or restored.
         self.session_id = uuid.uuid4().hex[:16]
         self.sequence = self.request_sequence = self.completed = 0
@@ -642,6 +643,8 @@ class LiveTradeState(ScanState):
         self.emit("orders_prepared", now_ns, position_id=position["position_id"],
                   client_order_ids=[i.client_order_id for i in intents])
         self.outbox.extend(intents)
+        if intents and self.intent_notifier is not None:
+            self.intent_notifier()
 
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
