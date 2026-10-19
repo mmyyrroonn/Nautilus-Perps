@@ -21,6 +21,10 @@ BALANCE_SEMANTICS = {
 class BalanceUnavailable(ValueError):
     """A fixed, non-private reason why a native observation cannot be used."""
 
+    def __init__(self, reason, *, timing=None):
+        super().__init__(reason)
+        self.timing = dict(timing or {})
+
 
 class NativeBalanceReader:
     """Only native account reads; no order gateway or mutation methods."""
@@ -73,9 +77,19 @@ def native_balance_snapshot(cache, venue, account_id, now_ns, max_age_ms, *, aft
     if account.id != account_id or event.account_id != account_id:
         raise BalanceUnavailable("balance_account_mismatch")
     stamp = event.ts_init
-    if (type(stamp) is not int or stamp <= 0 or stamp > now_ns or stamp < after_ns
-            or (max_age_ms is not None and now_ns - stamp > max_age_ms * 1_000_000)):
-        raise BalanceUnavailable("balance_stale_or_invalid_time")
+    failure = None
+    if type(stamp) is not int or stamp <= 0:
+        failure = "invalid_timestamp"
+    elif stamp > now_ns:
+        failure = "timestamp_in_future"
+    elif stamp < after_ns:
+        failure = "before_activity_boundary"
+    elif max_age_ms is not None and now_ns - stamp > max_age_ms * 1_000_000:
+        failure = "maximum_age_exceeded"
+    if failure:
+        raise BalanceUnavailable("balance_stale_or_invalid_time", timing={
+            "failure": failure, "observed_ns": stamp if type(stamp) is int else None,
+            "read_ns": now_ns, "required_after_ns": after_ns, "max_age_ms": max_age_ms})
     rows, seen = [], set()
     for balance in event.balances:
         currency = str(balance.currency)

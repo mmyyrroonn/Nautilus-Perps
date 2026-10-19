@@ -22,6 +22,57 @@ from test_opportunity_trade import SECOND, publish
 VENUES = ("HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK")
 
 
+def test_cached_balance_retries_are_bounded_and_fresh_event_resumes():
+    from types import SimpleNamespace
+    from opportunity_balances import native_balance_snapshot
+    from test_opportunity_balances import account_cache
+
+    cache, event = account_cache(stamp=NOW)
+    fence = NOW + 1
+
+    class Live:
+        fences = {"APT.LIGHTER": fence}
+        markets = {"APT.LIGHTER": SimpleNamespace(venue="LIGHTER")}
+        entry_pause_reason = None
+
+        def set_entry_pause(self, reason, now):
+            self.entry_pause_reason = reason
+
+        def flat_accounts_ready(self, now, after):
+            return True
+
+    class CachedGateway:
+        queries = 0
+
+        def query_balance(self, venue):
+            self.queries += 1
+
+        def read_balance_since(self, venue, now, after):
+            return native_balance_snapshot(cache, venue, "HL-001", now, None, after_ns=after)
+
+    monitor = SessionLossMonitor(LossMonitorPolicy(enabled=True), ("LIGHTER",), 60000)
+    monitor.balance_epoch_ns = NOW - 1
+    monitor.baseline_usd, monitor.status = "123.45678901", "ready"
+    live, gateway = Live(), CachedGateway()
+    first = NOW + 2
+    monitor.tick(gateway, live, first, has_residual=False)
+    before = monitor.document()
+    assert before["balance_diagnostics"]["LIGHTER"]["failure"] == "before_activity_boundary"
+    assert before["balance_diagnostics"]["LIGHTER"]["required_after_ns"] == fence
+    for step in range(1, 50):
+        monitor.tick(gateway, live, first + step * 100_000_000, has_residual=False)
+    assert gateway.queries == 1
+    assert monitor.document() == before
+    assert live.entry_pause_reason == "session_loss_check"
+    monitor.tick(gateway, live, first + 5_000_000_000, has_residual=False)
+    assert gateway.queries == 2
+    assert monitor.document()["balance_diagnostics"]["LIGHTER"]["read_ns"] == first + 5_000_000_000
+    event.ts_init = first + 6_000_000_000
+    monitor.tick(gateway, live, event.ts_init, has_residual=False)
+    assert monitor.status == "ready" and live.entry_pause_reason is None
+    assert monitor.document()["balance_diagnostics"]["LIGHTER"]["result"] == "passed"
+
+
 def balance(venue, now, value="1000", currency="USDC"):
     return {"venue": venue, "observed_ns": now, "balances": [
         {"currency": currency, "total": value, "free": value, "locked": "0"}]}
