@@ -369,6 +369,7 @@ class NativeOrderGateway:
             if cid in self.orders:
                 self._reject(intent, "client order ID already belongs to a submission")
                 return
+            build_marker = start_latency()
             try:
                 quantity, price = _decimal(intent.quantity), _decimal(intent.price)
                 if quantity <= 0 or price <= 0 or intent.side not in {"BUY", "SELL"}:
@@ -384,8 +385,10 @@ class NativeOrderGateway:
                     post_only=intent.post_only, reduce_only=intent.reduce_only,
                     client_order_id=self.model.ClientOrderId.from_str(cid))
             except Exception:
+                record_latency(build_marker, "gateway.construct_order", venue=intent.venue, error=True)
                 self._reject(intent, "native order construction refused")
                 return
+            record_latency(build_marker, "gateway.construct_order", venue=intent.venue)
             self.orders[cid] = {"intent": intent, "processed_qty": Fraction(0), "native": order}
         elif cid not in self.orders or self.orders[cid]["intent"].instrument_id != intent.instrument_id:
             self._reject(intent, "only owned orders may be modified or canceled")
@@ -403,7 +406,8 @@ class NativeOrderGateway:
                     self.submit_timings[intent.request_id] = marker
                 record_latency(candidate_marker, "entry.candidate_to_submit", venue=intent.venue,
                                ended_ns=marker[1] if marker is not None else None)
-                self.strategy.submit_order(order, client_id=client)
+                with span("gateway.submit_handoff", venue=intent.venue):
+                    self.strategy.submit_order(order, client_id=client)
             elif intent.action == "cancel":
                 self.strategy.cancel_order(self.model.ClientOrderId.from_str(cid), client_id=client)
             else:

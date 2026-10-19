@@ -36,6 +36,11 @@ class IntentWakeup:
     def close(self):
         self.closed = True
         if self.pending:
-            self.clock.cancel_timer(self.name)
+            try:
+                self.clock.cancel_timer(self.name)
+            except Exception:
+                # An expired alert may already be queued or the clock disposed.
+                # Optional wakeup cancellation must not prevent gateway close.
+                pass
         self.pending = False
         self.marker = None

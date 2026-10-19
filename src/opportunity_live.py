@@ -6,7 +6,7 @@ every instrument between orders. Pair inventory is separate from venue netting.
 """
 from __future__ import annotations
 
-from opportunity_timing import record_latency, start_latency, timed
+from opportunity_timing import record_latency, span, start_latency, timed
 
 from collections import Counter
 from copy import deepcopy
@@ -31,6 +31,7 @@ HARD_MAX_PAIRS = 16
 HARD_MAX_UNHEDGED_NOTIONAL_USD = Decimal("100")
 HARD_MAX_UNHEDGED_SECS = 10
 MAX_PENDING_ENTRY_TIMINGS = 1024
+_ZERO = F(0)
 TERMINALS = {"terminal", "canceled", "rejected", "denied", "expired"}
 HARD_EXITS = {"max_hold", "max_loss", "entry_imbalance", "exit_imbalance", "operator_stop", "execution_halt", "exposure_limit",
               "unhedged_notional", "unhedged_timeout"}
@@ -95,6 +96,9 @@ class LiveTradeState(ScanState):
         self.account_representatives = {scope: self._account_representative(instruments)
                                         for scope, instruments in self.account_scopes.items()}
         self.account_check_metrics = {}
+        # One immutable payload per configured account scope, never an admission
+        # result. Freshness, fences, inventory and order ownership stay dynamic.
+        self.account_position_values = {}
         self.flat_account_problems = {}
         self.account_read_failures, self.account_retry_after_ns = {}, {}
         self.fences, self.last_attempt = {}, {}
@@ -262,15 +266,16 @@ class LiveTradeState(ScanState):
                 order["status"] = "dispatch_released"
                 released.append(intent.client_order_id)
         if released:
-            self.emit("dispatch_released", max(self.orders[cid]["sent_ns"] for cid in released),
-                      client_order_ids=released)
+            with span("strategy.persist_dispatch_release"):
+                self.emit("dispatch_released", max(self.orders[cid]["sent_ns"] for cid in released),
+                          client_order_ids=released)
         return intents
 
     def take_entry_timing(self, intent):
         return self.entry_timings.pop(intent.request_id, None)
 
     def expected_native(self, instrument_id):
-        result = F(0)
+        result = _ZERO
         for position in self.positions.values():
             for leg, sign in (("buy", 1), ("sell", -1)):
                 if position[f"{leg}_id"] == instrument_id:
@@ -381,8 +386,15 @@ class LiveTradeState(ScanState):
         coverage = self._account_coverage(account)
         if any(account.observed_ns < self.fences.get(i, 0) for i in coverage):
             return {}, "predates_activity"
-        positions = {i: F(q) for i, q in account.account_positions} if account.account_positions is not None else {
-            instrument_id: F(account.position_quantity)}
+        if account.account_positions is None:
+            positions = {instrument_id: F(account.position_quantity)}
+        else:
+            scope = self._account_scope(instrument_id)
+            cached = self.account_position_values.get(scope)
+            if cached is None or cached[0] is not account.account_positions:
+                cached = (account.account_positions, {i: F(q) for i, q in account.account_positions})
+                self.account_position_values[scope] = cached
+            positions = cached[1]
         for instrument in set(coverage) | positions.keys():
             if instrument not in expected:
                 expected[instrument] = self.expected_native(instrument)
@@ -640,8 +652,9 @@ class LiveTradeState(ScanState):
         return intent
 
     def _publish_orders(self, intents, now_ns, position):
-        self.emit("orders_prepared", now_ns, position_id=position["position_id"],
-                  client_order_ids=[i.client_order_id for i in intents])
+        with span("strategy.persist_intents"):
+            self.emit("orders_prepared", now_ns, position_id=position["position_id"],
+                      client_order_ids=[i.client_order_id for i in intents])
         self.outbox.extend(intents)
         if intents and self.intent_notifier is not None:
             self.intent_notifier()
@@ -668,12 +681,15 @@ class LiveTradeState(ScanState):
         if key in self.last_closed and any(i not in self.books or self.books[i].ts_event_ns <= self.last_closed[key]
                                           for i in (buy_id, sell_id)):
             return False
+        pricing_marker = start_latency()
         estimate = self.pricer.entry(buy_id, sell_id, now_ns)
         if estimate is None:
             return False
+        record_latency(pricing_marker, "entry.qualified_pricing")
         candidate_marker = start_latency()
-        bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns)
-                  for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
+        with span("entry.executable_bounds"):
+            bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns)
+                      for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
             return False
         buy, sell = bounds["buy"], bounds["sell"]
@@ -682,9 +698,10 @@ class LiveTradeState(ScanState):
         net = sell["cash"] - buy["cash"] - buy["fee"] - sell["fee"] - buy["cash"] * F(self.plan.settings.reserve_bps) / 10000
         if net * 10000 < F(self.policy.entry_edge_bps) * buy["cash"]:
             return False
-        ready = [self._account_ready(i, now_ns) for i in (buy_id, sell_id)]
-        ready.extend(self._account_domain_ready(domain, now_ns) for domain in sorted({
-            self._account_domain(self.markets[i].venue) for i in (buy_id, sell_id)}))
+        with span("entry.account_checks"):
+            ready = [self._account_ready(i, now_ns) for i in (buy_id, sell_id)]
+            ready.extend(self._account_domain_ready(domain, now_ns) for domain in sorted({
+                self._account_domain(self.markets[i].venue) for i in (buy_id, sell_id)}))
         if not all(ready):
             return False
         self.sequence += 1
@@ -705,7 +722,8 @@ class LiveTradeState(ScanState):
                              for leg, i in (("buy", buy_id), ("sell", sell_id))},
             "unknown_commission": False, "reserved_gross_usd": str(2 * self.policy.order_notional_usd)}
         self.positions[key] = position
-        intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
+        with span("entry.prepare_orders"):
+            intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
         self._publish_orders(intents, now_ns, position)
         if candidate_marker is not None:
             record_latency(candidate_marker, "entry.candidate_to_persisted_intents")

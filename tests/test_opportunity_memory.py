@@ -57,6 +57,8 @@ def test_window_audit_separates_runs_and_reports_endpoints_only():
     assert report["channels"]["data_events"]["queued_without_dispatch_intervals"] == 1
     data.append(row(2, "new", 4, 0, 20))
     assert summarize(data)["channels"]["data_events"]["zero_depth_samples"] == 1
+    with pytest.raises(ValueError, match="distinct"):
+        summarize([data[-1], data[-1]])
 
 
 def test_market_samples_are_bounded_and_unknown_labels_are_ignored(tmp_path, monkeypatch):

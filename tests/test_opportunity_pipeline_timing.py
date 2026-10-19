@@ -159,6 +159,8 @@ def test_submit_handoff_excludes_construction_and_records_each_outcome_once(monk
         gateway.dispatch(intent(), 1_000_000_003, candidate_marker=marker)
         measured = rows(recorder)
         assert measured['entry.candidate_to_submit']['total_ms'] == 30 / 1e6
+        assert measured['gateway.construct_order']['total_ms'] == 20 / 1e6
+        assert measured['gateway.submit_handoff']['count'] == 1
         assert measured['gateway.submit.response']['total_ms'] == 60 / 1e6
         assert measured['gateway.submit_to_outcome']['total_ms'] == 40 / 1e6
         assert measured['gateway.submit_to_outcome']['count'] == 1

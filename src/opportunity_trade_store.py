@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 import uuid
 
-from opportunity_timing import timed
+from opportunity_timing import span, timed
 
 
 class FileLock:
@@ -99,15 +99,19 @@ class TradeStore:
 
     @timed("store.save")
     def save(self, snapshot: dict, events: list[dict]) -> None:
-        with self.connection:
-            for event in events:
+        with span("store.serialize"):
+            rows = [(event["observed_ns"], event["event"], json.dumps(event, sort_keys=True))
+                    for event in events]
+            document = json.dumps(snapshot, sort_keys=True)
+        with span("store.sqlite_transaction"):
+            with self.connection:
+                for row in rows:
+                    self.connection.execute(
+                        "INSERT INTO events(observed_ns, kind, payload) VALUES (?, ?, ?)", row)
                 self.connection.execute(
-                    "INSERT INTO events(observed_ns, kind, payload) VALUES (?, ?, ?)",
-                    (event["observed_ns"], event["event"], json.dumps(event, sort_keys=True)))
-            self.connection.execute(
-                "INSERT INTO state VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET "
-                "fingerprint=excluded.fingerprint, snapshot=excluded.snapshot",
-                (self.fingerprint, json.dumps(snapshot, sort_keys=True)))
+                    "INSERT INTO state VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                    "fingerprint=excluded.fingerprint, snapshot=excluded.snapshot",
+                    (self.fingerprint, document))
 
     @timed("store.close")
     def close(self) -> None:

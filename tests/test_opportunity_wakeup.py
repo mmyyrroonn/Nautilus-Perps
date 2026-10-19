@@ -60,6 +60,16 @@ def test_failed_optional_alert_leaves_durable_orders_for_timer():
     assert len(live.drain_intents()) == 2 and not wakeup.pending
 
 
+def test_expired_alert_cancellation_cannot_interrupt_shutdown():
+    def expired(name):
+        raise ValueError("alert already expired")
+    wakeup = IntentWakeup(SimpleNamespace(timestamp_ns=lambda: NOW,
+        set_time_alert_ns=lambda *a, **kw: None, cancel_timer=expired), None)
+    wakeup.request()
+    wakeup.close()
+    assert wakeup.closed and not wakeup.pending and not wakeup.consume()
+
+
 @pytest.mark.parametrize("interval", [0, 20, 100])
 def test_evaluation_schedule_is_independent_of_risk_timer_and_fingerprint(tmp_path, interval):
     path = configs(tmp_path)

@@ -35,6 +35,8 @@ jobs:
           tests/test_opportunity_coalescing.py
           tests/test_opportunity_affected_pairs.py
           tests/test_opportunity_wakeup.py
+          tests/test_opportunity_wakeup_native.py
+          tests/test_opportunity_candidate_path.py
           tests/test_opportunity_trade.py tests/test_opportunity_live.py
           tests/test_opportunity_live_rebalance.py tests/test_opportunity_forced_reduction.py
           tests/test_opportunity_unhedged_risk.py
