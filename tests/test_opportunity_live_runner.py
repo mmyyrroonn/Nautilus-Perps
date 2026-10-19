@@ -99,7 +99,8 @@ def test_default_cli_is_dry_run_without_credentials_native_socket_or_state(tmp_p
     assert document["trade_symbols"] == ["ETH"]
     assert {m["symbol"] for m in document["scan"]["markets"]} == {"BTC", "ETH"}
     assert document["risk"] == {"max_pairs": 2, "max_gross_notional_usd": "500",
-                                "max_unhedged_notional_usd": "100", "max_unhedged_secs": 10}
+                                    "max_unhedged_notional_usd": "100", "max_unhedged_secs": 10,
+                                    "entry_unhedged_reserve_bps": "10"}
     assert not (tmp_path/"state").exists()
 
 
@@ -449,6 +450,10 @@ class FakeLive(ScanState):
         self.activated.append(now)
     def on_account(self, snapshot, now):
         self.accounts.append(snapshot)
+    def resume_exits(self, snapshot, now):
+        pass
+    def record_exit_dispatch(self, intent, now):
+        pass
     def on_receipt(self, receipt, now):
         self.receipts.append(receipt)
     def on_fill(self, fill, now):

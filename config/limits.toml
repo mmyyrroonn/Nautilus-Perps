@@ -219,3 +219,5 @@ startup_max_notional_usd = "50"
 # Per-pair unhedged risk: code caps USD 100 and 10 seconds, either limit fires.
 max_unhedged_notional_usd = "100"
 max_unhedged_secs = 10
+# Minimum entry reserve; configuration can increase it, never reduce below 10 bps.
+entry_unhedged_reserve_bps = "10"

@@ -32,6 +32,7 @@ HARD_MAX_GROSS_USD = Decimal("500")
 HARD_MAX_PAIRS = 16
 HARD_MAX_UNHEDGED_NOTIONAL_USD = Decimal("100")
 HARD_MAX_UNHEDGED_SECS = 10
+MIN_ENTRY_UNHEDGED_RESERVE_BPS = Decimal("10")
 MAX_PENDING_ENTRY_TIMINGS = 1024
 _ZERO = F(0)
 TERMINALS = {"terminal", "canceled", "rejected", "denied", "expired"}
@@ -53,13 +54,17 @@ class LiveTradeState(ScanState):
                  store=None, event_sink=None, account_max_age_ms=5000,
                  order_timeout_secs=10, retry_interval_ms=1000, trade_symbols=None,
                  max_unhedged_notional_usd=HARD_MAX_UNHEDGED_NOTIONAL_USD,
-                 max_unhedged_secs=HARD_MAX_UNHEDGED_SECS):
+                 max_unhedged_secs=HARD_MAX_UNHEDGED_SECS,
+                 entry_unhedged_reserve_bps=MIN_ENTRY_UNHEDGED_RESERVE_BPS):
         if type(max_pairs) is not int or not 1 <= max_pairs <= HARD_MAX_PAIRS:
             raise ValueError("max_pairs is outside the live hard cap")
         gross = _positive(max_gross_notional_usd, "max_gross_notional_usd")
         if gross > HARD_MAX_GROSS_USD or policy.order_notional_usd > HARD_MAX_ORDER_USD:
             raise ValueError("live risk exceeds the operator-authorized hard cap")
         unhedged = _positive(max_unhedged_notional_usd, "max_unhedged_notional_usd")
+        reserve = _positive(entry_unhedged_reserve_bps, "entry_unhedged_reserve_bps")
+        if not MIN_ENTRY_UNHEDGED_RESERVE_BPS <= reserve < 10000:
+            raise ValueError("entry unhedged reserve must be at least 10 and below 10000 bps")
         if (unhedged > HARD_MAX_UNHEDGED_NOTIONAL_USD or type(max_unhedged_secs) is not int
                 or not 1 <= max_unhedged_secs <= HARD_MAX_UNHEDGED_SECS):
             raise ValueError("unhedged risk exceeds the operator-authorized hard cap")
@@ -75,6 +80,7 @@ class LiveTradeState(ScanState):
         self.account_max_age_ns = account_max_age_ms * 1_000_000
         self.order_timeout_ns = order_timeout_secs * 1_000_000_000
         self.max_unhedged_notional = F(unhedged)
+        self.entry_unhedged_reserve_bps = F(reserve)
         self.max_unhedged_ns = max_unhedged_secs * 1_000_000_000
         self.retry_ns = retry_interval_ms * 1_000_000
         self.trade_symbols = frozenset(trade_symbols if trade_symbols is not None else self.groups)
@@ -368,6 +374,53 @@ class LiveTradeState(ScanState):
         self.account_request_ids[instrument_id] = request.request_id
         self.emit("account_read_requested", now_ns, instrument_id=instrument_id, request_id=request.request_id)
         self.outbox.append(request)
+        if self.intent_notifier is not None:
+            self.intent_notifier()
+
+    def _exit_stage(self, position, stage, now_ns, **fields):
+        timeline = position.setdefault("exit_timing", {})
+        if stage in timeline:
+            return
+        timeline[stage] = now_ns
+        self.emit("exit_stage", now_ns, position_id=position["position_id"], stage=stage,
+                  since_first_unbalanced_ms=_number(F(now_ns - timeline.get("first_unbalanced", now_ns), 1_000_000)),
+                  **fields)
+
+    def _exit_wait(self, position, leg, now_ns, reason, **fields):
+        waits = position.setdefault("exit_waits", {})
+        # Persist transitions, not a fresh journal row on every evaluation tick.
+        value = {"reason": reason, **fields}
+        if waits.get(leg) == value:
+            return
+        waits[leg] = value
+        self.emit("exit_wait", now_ns, position_id=position["position_id"], leg=leg, **value)
+
+    def resume_exits(self, account, now_ns):
+        """Wake only existing inventory work after an account read completes."""
+        if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
+            return
+        covered = set(self._account_coverage(account))
+        for key, position in tuple(self.positions.items()):
+            if not covered.intersection((position["buy_id"], position["sell_id"])):
+                continue
+            if position.get("exit_reason") or position["status"] in {"exit_pending", "flat_pending", "rebalancing"} or (
+                    F(position["remaining_buy_base"]) != F(position["remaining_sell_base"]) and
+                    all(self.orders[cid]["terminal_ns"] is not None for cid in position["entry_ids"])):
+                self.emit("exit_evidence_wakeup", now_ns, position_id=position["position_id"],
+                          instrument_id=account.instrument_id, read_started_ns=account.observed_ns)
+                self.observe(key, now_ns)
+
+    def record_exit_dispatch(self, intent, now_ns):
+        """Record the Python dispatch boundary, never a native wire timestamp."""
+        order = self.orders.get(intent.client_order_id)
+        if intent.action != "submit" or order is None or order["purpose"] == "entry":
+            return
+        if order.get("dispatch_started_ns") is not None:
+            return
+        order["dispatch_started_ns"] = now_ns
+        self.emit("exit_python_dispatch", now_ns, position_id=order["position_id"],
+                  client_order_id=intent.client_order_id,
+                  prepared_to_dispatch_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
 
     @staticmethod
     def _account_domain(venue):
@@ -590,7 +643,9 @@ class LiveTradeState(ScanState):
             and account.observed_ns >= self._entry_account_fence(
                 instrument_id, pending_entry_owner if allow_preparation else None)
             and set(account.open_order_ids) <= allowed and len(allowed) == len(pending)
-            and F(account.position_quantity) == self.expected_native(instrument_id))
+            and F(account.position_quantity) == self.expected_native(instrument_id)
+            and self._account_problem(instrument_id, now_ns,
+                preparation_owner=pending_entry_owner if allow_preparation else None) is None)
         if not ready:
             self._request_account(instrument_id, now_ns)
         return bool(ready)
@@ -601,6 +656,8 @@ class LiveTradeState(ScanState):
             return
         self.full_evaluation_symbols.update(self.trade_symbols)
         instrument_id = account.instrument_id
+        requested_ns = self.account_requests.get(instrument_id)
+        request_id = self.account_request_ids.get(instrument_id)
         self.account_requests.pop(instrument_id, None)
         self.account_request_ids.pop(instrument_id, None)
         old = self.accounts.get(instrument_id)
@@ -611,8 +668,14 @@ class LiveTradeState(ScanState):
             self.accounts.pop(instrument_id, None)
             self.fences[instrument_id] = max(self.fences.get(instrument_id, 0), now_ns + 1)
             self._pause_account(instrument_id, now_ns, "not_authoritative", new_evidence=True)
+            self.emit("account_read_completed", now_ns, instrument_id=instrument_id, request_id=request_id,
+                      requested_ns=requested_ns, read_started_ns=account.observed_ns,
+                      accepted=False, reason="not_authoritative_or_future")
             return
         if old is not None and account.observed_ns < old.observed_ns:
+            self.emit("account_read_completed", now_ns, instrument_id=instrument_id, request_id=request_id,
+                      requested_ns=requested_ns, read_started_ns=account.observed_ns,
+                      accepted=False, reason="older_observation")
             return
         self.accounts[instrument_id] = account
         if account.observed_ns >= self.fences.get(instrument_id, 0):
@@ -634,6 +697,12 @@ class LiveTradeState(ScanState):
                             open_order_ids=tuple(cid for i, cid in account.account_open_orders if i == covered),
                             bid=None, ask=None, book_observed_ns=None)
         problem = self._account_problem(instrument_id, now_ns)
+        self.emit("account_read_completed", now_ns, instrument_id=instrument_id, request_id=request_id,
+                  requested_ns=requested_ns, read_started_ns=account.observed_ns,
+                  completed_ns=now_ns, activity_fence_ns=max(
+                      (self.fences.get(i, 0) for i in self._account_coverage(account)), default=0),
+                  accepted=problem is None, reason=problem,
+                  request_to_complete_ms=None if requested_ns is None else _number(F(now_ns-requested_ns, 1_000_000)))
         if problem and problem != "predates_activity":
             self._pause_account(instrument_id, now_ns, problem, new_evidence=account != old)
         domain = self._account_domain(account.venue)
@@ -717,6 +786,9 @@ class LiveTradeState(ScanState):
         self.fences[instrument_id] = now_ns
         self.last_attempt[instrument_id] = now_ns
         position[f"{purpose}_ids"].append(cid)
+        if purpose != "entry":
+            self._exit_stage(position, "reduction_prepared_" + leg, now_ns,
+                             client_order_id=cid, reduce_only=intent.reduce_only)
         return intent
 
     def _publish_orders(self, intents, now_ns, position):
@@ -756,16 +828,51 @@ class LiveTradeState(ScanState):
         record_latency(pricing_marker, "entry.qualified_pricing")
         candidate_marker = start_latency()
         with span("entry.executable_bounds"):
-            bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns)
+            bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns, partial=True)
                       for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
             return False
+        # Either venue can fill alone. SELL proceeds/limits do not cap the
+        # short's ask valuation, and BUY price rounding can exceed raw VWAP.
+        # Budget both independent exposures before rounding down to a common lot.
+        step = F(estimate["sizing"]["common_base_step"])
+        cap = min(F(self.policy.order_notional_usd),
+                  self.max_unhedged_notional * (1 - self.entry_unhedged_reserve_bps / 10000))
+        risk_prices = {leg: max(bound["cash"] / bound["base_quantity"],
+                              F(self.books[i].asks[0][0]))
+                       for leg, i in (("buy", buy_id), ("sell", sell_id))
+                       for bound in (bounds[leg],)}
+        quantity = (min(*(b["base_quantity"] for b in bounds.values()),
+                        *(cap / p for p in risk_prices.values())) // step) * step
+        if quantity <= 0:
+            return False
+        bounds = {leg: self._limit(i, side, quantity, now_ns)
+                  for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
+        if any(b is None for b in bounds.values()):
+            return False
+        estimate["entry_risk"] = {"reserve_bps": _number(self.entry_unhedged_reserve_bps),
+            "per_leg_budget_usd": _number(cap), "buy_standalone_usd": _number(quantity * risk_prices["buy"]),
+            "sell_standalone_usd": _number(quantity * risk_prices["sell"])}
+        # The persisted estimate must describe the rounded orders actually sent.
+        for leg in ("buy", "sell"):
+            estimate["sizing"][f"{leg}_quantity"] = str(bounds[leg]["quantity"])
+            estimate["sizing"][f"{leg}_notional"] = _number(bounds[leg]["cash"])
+        estimate["sizing"]["base_quantity"] = _number(quantity)
         buy, sell = bounds["buy"], bounds["sell"]
         if max(buy["cash"], sell["cash"]) > F(self.policy.order_notional_usd):
             return False
         net = sell["cash"] - buy["cash"] - buy["fee"] - sell["fee"] - buy["cash"] * F(self.plan.settings.reserve_bps) / 10000
         if net * 10000 < F(self.policy.entry_edge_bps) * buy["cash"]:
             return False
+        estimate["estimate_type"] = "live_limit_entry"
+        for leg, bound in bounds.items():
+            estimate["sizing"][f"{leg}_vwap"] = _number(bound["cash"] / quantity)
+        estimate["economics"] = {"entry_gross": _number(sell["cash"] - buy["cash"]),
+            "entry_gross_bps": _number((sell["cash"] - buy["cash"]) * 10000 / buy["cash"]),
+            "buy_taker_fee": _number(buy["fee"]), "sell_taker_fee": _number(sell["fee"]),
+            "reserve": _number(buy["cash"] * F(self.plan.settings.reserve_bps) / 10000),
+            "entry_after_fees_and_reserve": _number(net),
+            "entry_after_fees_and_reserve_bps": _number(net * 10000 / buy["cash"])}
         with span("entry.account_checks"):
             ready = [self._account_ready(i, now_ns) for i in (buy_id, sell_id)]
             ready.extend(self._account_domain_ready(domain, now_ns) for domain in sorted({
@@ -892,6 +999,10 @@ class LiveTradeState(ScanState):
             if self.halt_reason is None:
                 self.halt_reason = "late fill after order terminal requires reconciliation"
         self._update_unhedged(position, now_ns)
+        if order["purpose"] != "entry":
+            self._exit_stage(position, "reduction_fill_" + leg, now_ns, client_order_id=cid)
+        if not F(position["remaining_buy_base"]) and not F(position["remaining_sell_base"]):
+            self._exit_stage(position, "inventory_flat", now_ns)
         self.emit("fill", now_ns, execution_id=identity, position_id=position["position_id"],
                   client_order_id=cid, native_quantity=_number(quantity), native_price=_number(price),
                   fee_usd=_number(fee) if known_fee else None, fee_confirmed=known_fee,
@@ -1037,6 +1148,8 @@ class LiveTradeState(ScanState):
         position.update(unhedged_base=_number(delta), unhedged_notional_usd=_number(notional),
                         unhedged_duration_ms=_number(F(elapsed, 1_000_000)) if delta else "0",
                         unhedged_since_ns=(previous_since if previous_since is not None else now_ns) if delta else None)
+        if delta:
+            self._exit_stage(position, "first_unbalanced", now_ns)
         reason = ("unhedged_notional" if notional >= self.max_unhedged_notional else
                   "unhedged_timeout" if previous_since is not None and elapsed >= self.max_unhedged_ns else None)
         if reason and not position.get("unhedged_breach"):
@@ -1085,31 +1198,56 @@ class LiveTradeState(ScanState):
     def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True,
                          allow_pending_entry=False):
         instrument_id = position[f"{leg}_id"]
-        if not qty or now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
+        if not qty:
+            return None
+        if now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
+            self._exit_wait(position, leg, now_ns, "order_retry_throttled",
+                            retry_at_ns=self.last_attempt[instrument_id] + self.retry_ns)
             return None
         if not self._account_ready(instrument_id, now_ns,
                 pending_entry_owner=position["position_id"] if allow_pending_entry else None):
+            account = self.accounts.get(instrument_id)
+            problem = self._account_problem(instrument_id, now_ns)
+            reason = problem or ("open_orders" if account and account.open_order_ids else "pending_order")
+            scope = self._account_scope(instrument_id)
+            requested = [(i, stamp) for i, stamp in self.account_requests.items() if self._account_scope(i) == scope]
+            started = requested[0][1] if requested else None
+            self._exit_wait(position, leg, now_ns, reason,
+                            request_ns=started,
+                            request_predates_activity=started is not None and started < self.fences.get(instrument_id, 0),
+                            read_retry_at_ns=max(self.account_retry_after_ns.get(scope, 0),
+                                max((self.account_last_reads.get(i, 0) + self.retry_ns
+                                     for i in self.account_scopes[scope]), default=0)))
             return None
+        self._exit_stage(position, "account_accepted_" + leg, now_ns)
         current = self.metadata.get(instrument_id)
         original = position["entry"][f"{leg}_metadata"]
         if current is None or current.instrument_id != instrument_id or not _execution_metadata_valid(current):
+            self._exit_wait(position, leg, now_ns, "execution_metadata_unavailable")
             return None
         for name in ("multiplier", "size_increment", "min_quantity", "min_notional"):
             old_value = original.get(name)
             if getattr(current, name) != (Decimal(old_value) if old_value is not None else None):
+                self._exit_wait(position, leg, now_ns, "execution_metadata_changed")
                 return None
         original_native = position.get("native_rules", {}).get(leg)
         native = self.instruments.get(instrument_id, {})
         if original_native is not None and any(
                 native.get(name) != (value if name == "quote_currency" else Decimal(value))
                 for name, value in original_native.items()):
+            self._exit_wait(position, leg, now_ns, "native_rules_changed")
             return None
         native_remaining = qty / F(original["multiplier"])
         delta = -native_remaining if leg == "buy" else native_remaining
         net = self.expected_native(instrument_id)
         reducing = net * delta < 0 and abs(delta) <= abs(net)
-        return self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
-                           now_ns, partial=True, reduce_only=reducing, require_fees=require_fees)
+        bound = self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
+                            now_ns, partial=True, reduce_only=reducing, require_fees=require_fees)
+        if bound is None:
+            self._exit_wait(position, leg, now_ns, "no_executable_bound")
+        else:
+            self._exit_wait(position, leg, now_ns, "account_accepted")
+        return bound
 
     def _rebalance_entry(self, position, now_ns):
         """Trim only the excess leg; never increase either confirmed entry leg."""
@@ -1155,6 +1293,8 @@ class LiveTradeState(ScanState):
         self._update_unhedged(position, now_ns)
         ids = (position["buy_id"], position["sell_id"])
         entry_done = all(self.orders[cid]["terminal_ns"] is not None for cid in position["entry_ids"])
+        if entry_done and position.get("exit_timing"):
+            self._exit_stage(position, "entries_terminal", now_ns)
         if not entry_done:
             # An unknown other venue must not prevent time-based reduction of a
             # separately confirmed leg. Its original ID and pair lock stay live.
@@ -1339,6 +1479,7 @@ class LiveTradeState(ScanState):
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,
                 "max_gross_notional_usd": _number(self.max_gross),
                 "max_unhedged_notional_usd": _number(self.max_unhedged_notional),
+                "entry_unhedged_reserve_bps": _number(self.entry_unhedged_reserve_bps),
                 "max_unhedged_secs": self.max_unhedged_ns // 1_000_000_000,
                 "gross_exposure_usd": _number(self.gross_exposure()),
                 "reserved_gross_usd": _number(self.gross_exposure(reserve=True)),

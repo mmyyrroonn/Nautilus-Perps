@@ -74,6 +74,7 @@ class LiveRunPlan:
     startup_balance_check: bool = False
     max_unhedged_notional_usd: Decimal = HARD_MAX_UNHEDGED_NOTIONAL_USD
     max_unhedged_secs: int = HARD_MAX_UNHEDGED_SECS
+    entry_unhedged_reserve_bps: Decimal = Decimal("10")
     loss_monitor: LossMonitorPolicy = LossMonitorPolicy()
 
     @property
@@ -93,6 +94,8 @@ class LiveRunPlan:
         if self.max_unhedged_notional_usd != Decimal("100") or self.max_unhedged_secs != 10:
             document["max_unhedged_notional_usd"] = str(self.max_unhedged_notional_usd)
             document["max_unhedged_secs"] = self.max_unhedged_secs
+        if self.entry_unhedged_reserve_bps != Decimal("10"):
+            document["entry_unhedged_reserve_bps"] = str(self.entry_unhedged_reserve_bps)
         if account_binding is not None:
             document["schema_version"] = 2
             document["account_binding"] = account_binding
@@ -115,7 +118,8 @@ class LiveRunPlan:
             "trade_symbols": self.trade_symbols, "policy": self.policy.document(),
             "risk": {"max_pairs": self.max_pairs, "max_gross_notional_usd": self.max_gross_notional_usd,
                 "max_unhedged_notional_usd": self.max_unhedged_notional_usd,
-                "max_unhedged_secs": self.max_unhedged_secs},
+                "max_unhedged_secs": self.max_unhedged_secs,
+                "entry_unhedged_reserve_bps": self.entry_unhedged_reserve_bps},
             "loss_monitor": self.loss_monitor.document(),
             "startup": {"self_test_enabled": self.startup_self_test,
                 "balance_check_enabled": self.startup_balance_check,
@@ -166,7 +170,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     allowed_keys(monitor, set(LossMonitorPolicy.__dataclass_fields__), "loss_monitor")
     loss_monitor = LossMonitorPolicy(**monitor)
     risk = document.get("risk", {})
-    unhedged_keys = {"max_unhedged_notional_usd", "max_unhedged_secs"}
+    unhedged_keys = {"max_unhedged_notional_usd", "max_unhedged_secs", "entry_unhedged_reserve_bps"}
     allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"} | unhedged_keys, "live risk")
     if not {"max_pairs", "max_gross_notional_usd"} <= risk.keys():
         raise ScanConfigError("risk requires explicit max_pairs and max_gross_notional_usd")
@@ -175,6 +179,9 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
                           "max_gross_notional_usd", nonnegative=True)
     unhedged = decimal_value(risk.get("max_unhedged_notional_usd", "100"), "max_unhedged_notional_usd", positive=True)
     unhedged_secs = integer_value(risk.get("max_unhedged_secs", 10), "max_unhedged_secs", 1, 86400)
+    reserve = decimal_value(risk.get("entry_unhedged_reserve_bps", "10"), "entry_unhedged_reserve_bps", positive=True)
+    if not Decimal("10") <= reserve < 10000:
+        raise ScanConfigError("entry_unhedged_reserve_bps must be at least 10 and below 10000")
     startup = document.get("startup", {})
     allowed_keys(startup, {"mandatory", "self_test_enabled", "balance_check_enabled", "max_notional_usd", "slippage_bps", "timeout_secs"}, "live startup")
     for key in ("mandatory", "self_test_enabled", "balance_check_enabled"):
@@ -216,6 +223,10 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     startup_limit = decimal_value(limits.get("startup_max_notional_usd", "50"), "limit.startup_max_notional_usd", positive=True)
     unhedged_cap = decimal_value(limits.get("max_unhedged_notional_usd", "100"), "limit.max_unhedged_notional_usd", positive=True)
     unhedged_secs_cap = integer_value(limits.get("max_unhedged_secs", 10), "limit.max_unhedged_secs", 1, 86400)
+    reserve_floor = decimal_value(limits.get("entry_unhedged_reserve_bps", "10"), "limit.entry_unhedged_reserve_bps", positive=True)
+    if not Decimal("10") <= reserve_floor < 10000:
+        raise ScanConfigError("limit.entry_unhedged_reserve_bps must be at least 10 and below 10000")
+    reserve = max(reserve, reserve_floor)
     unhedged = min(unhedged, unhedged_cap, HARD_MAX_UNHEDGED_NOTIONAL_USD)
     unhedged_secs = min(unhedged_secs, unhedged_secs_cap, HARD_MAX_UNHEDGED_SECS)
     policy = replace(policy, order_notional_usd=min(policy.order_notional_usd, order_cap, HARD_ORDER_NOTIONAL_USD))
@@ -257,7 +268,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         retry_interval_ms=integer_value(runtime.get("retry_interval_ms", 1000), "retry_interval_ms", 100, 10000),
         startup_timeout_secs=startup_timeout, limits_present=limits_present,
         startup_self_test=self_test, startup_balance_check=balance_check,
-        max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs, loss_monitor=loss_monitor)
+        max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs,
+        entry_unhedged_reserve_bps=reserve, loss_monitor=loss_monitor)
 
 
 class NativeBuildError(RuntimeError):
@@ -490,6 +502,7 @@ class LiveCoordinator:
             if discard_invalid_entry(self.live, intent, check_ns, dispatched=dispatched):
                 continue
             dispatched.add(intent.client_order_id)
+            self.live.record_exit_dispatch(intent, check_ns)
             if marker is None:
                 self.gateway.dispatch(intent, check_ns)
             else:
@@ -536,6 +549,7 @@ class LiveCoordinator:
     def on_account(self, snapshot, now_ns=None):
         now_ns = time.time_ns() if now_ns is None else now_ns
         self.live.on_account(snapshot, now_ns)
+        self.live.resume_exits(snapshot, now_ns)
         if self.phase in {"preflight", "preflight_draining"}:
             self._startup_intents(self.preflight.on_account(snapshot, now_ns), now_ns)
         self._live_intents(now_ns)
@@ -951,6 +965,7 @@ def run_live(plan, *, self_test_only=False):
             live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
                 max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
                 max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
+                entry_unhedged_reserve_bps=plan.entry_unhedged_reserve_bps,
                 account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
                 retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
             coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,
