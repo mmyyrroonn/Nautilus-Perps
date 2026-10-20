@@ -12,6 +12,7 @@ from opportunity_core import MarketMetadata
 from opportunity_live import LiveTradeState
 from opportunity_preflight import AccountSnapshot, ExecutionReceipt
 from opportunity_trade import TradePolicy
+from opportunity_leverage import AsterLeverage, AsterLeverageSnapshot
 from test_opportunity_trade import NOW, SECOND, make_plan, publish, set_book
 
 
@@ -25,10 +26,18 @@ class MemoryStore:
         self.writes.append((deepcopy(snapshot), deepcopy(events)))
 
 
+def leverage_snapshot(markets, now):
+    return AsterLeverageSnapshot(now, tuple(AsterLeverage(m.instrument_id, 5, D(0), D(100),
+        ((D(0), D(1000000), 20),)) for m in markets if m.venue == "ASTER"))
+
+
 def state(plan=None, policy=None, *, max_pairs=2, gross="500", store=None, activate=True,
           price_increment="0.01", **risk_kwargs):
     events = []
-    result = LiveTradeState(plan or make_plan(), policy or TradePolicy(), max_pairs=max_pairs,
+    plan = plan or make_plan()
+    risk_kwargs.setdefault("aster_leverage_targets",
+        {m.instrument_id: 5 for m in plan.markets if m.venue == "ASTER"})
+    result = LiveTradeState(plan, policy or TradePolicy(), max_pairs=max_pairs,
         max_gross_notional_usd=D(gross), store=store, event_sink=events.append, **risk_kwargs)
     for market in result.plan.markets:
         result.register_instrument(market.instrument_id, D(price_increment), D(1), "USD")
@@ -46,7 +55,9 @@ def accounts(live, now, *, observed_ns=None, authoritative=True, connected=True,
         live.on_account(AccountSnapshot(market.venue, market.instrument_id, D(100), D("100.01"),
             now if observed_ns is None else observed_ns,
             D(live.expected_native(market.instrument_id).numerator)/D(live.expected_native(market.instrument_id).denominator),
-            open_orders, connected=connected, authoritative=authoritative), now)
+            open_orders, connected=connected, authoritative=authoritative,
+            aster_leverage=leverage_snapshot(live.plan.markets, now if observed_ns is None else observed_ns)
+                if market.venue == "ASTER" else None), now)
 
 
 def submissions(live):

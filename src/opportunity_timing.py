@@ -346,7 +346,10 @@ def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason
                 "insufficient_depth", "price_outside_limit", "invalid_execution_rules_or_fees", "book_skew",
                 "net_edge_insufficient", "ioc_no_match", "rate_limit", "insufficient_balance", "invalid_order",
                 "post_only", "venue_other", "local_validation", "unhedged_headroom_insufficient",
-                "entry_admission_changed", "account_admission_changed"}:
+                "entry_admission_changed", "account_admission_changed", "leverage_configuration",
+                "leverage_target_pending", "leverage_unavailable", "leverage_stale", "leverage_read_failed",
+                "leverage_recheck_required", "leverage_symbol_missing", "leverage_notional_unsupported",
+                "leverage_above_maximum", "leverage_target_mismatch"}:
             row["reason"] = reason
         if evidence is not None:
             # The only caller constructs this fixed schema. Never accept raw
@@ -360,6 +363,11 @@ def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason
             for leg in ("buy", "sell"):
                 if leg in evidence:
                     row["evidence"][leg] = {k: v for k, v in evidence[leg].items() if k in leg_fields}
+                    if "leverage" in evidence[leg]:
+                        row["evidence"][leg]["leverage"] = {
+                            k: v for k, v in evidence[leg]["leverage"].items() if k in {
+                                "target", "actual", "allowed_maximum", "observed_ns", "checked_ns",
+                                "projected_notional", "target_source"}}
         trace["stages"].append(row)
     if interval is not None:
         operation, elapsed, venue, outcome = interval

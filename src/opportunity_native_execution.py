@@ -43,9 +43,21 @@ LOCAL_REJECTION_CODES = {
 }
 
 
-def classify_rejection(reason):
+def exchange_error_code(reason, venue):
+    """Extract only the numeric code from the native Aster error envelope."""
+    if venue != "ASTER":
+        return None
+    match = re.search(r"\bAster error (-[1-9][0-9]{3,5})(?=[: ])", str(reason)[:2048])
+    return int(match[1]) if match else None
+
+
+def classify_rejection(reason, venue=None):
     """Return fixed diagnostic labels; never retain raw venue rejection text."""
     reason = str(reason)[:2048].lower()
+    if venue == "ASTER" and (
+            re.search(r"\baster error -(2027|2028|4028)(?=[: ])", reason)
+            or ("leverage" in reason and any(word in reason for word in ("max", "exceed", "invalid")))):
+        return "leverage_configuration"
     if ("ioc" in reason or "immediate" in reason) and any(
             word in reason for word in ("match", "fill", "cancel")):
         return "ioc_no_match"
@@ -359,7 +371,8 @@ class NativeOrderGateway:
         return NativeBalanceReader(self.strategy, self.model).read_balance_since(venue, now_ns, after_ns)
 
     def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0), retry_after_secs=0,
-                 final_quantity=None, final_source="", reason_code="", reason_source="", native_status=""):
+                 final_quantity=None, final_source="", reason_code="", reason_source="", native_status="",
+                 exchange_error_code=None):
         evidence = kind in {"terminal_evidence", "reconciliation_required"}
         signature = (kind, final_quantity, final_source)
         if evidence and self.evidence_receipts.get(intent.request_id) == signature:
@@ -374,7 +387,7 @@ class NativeOrderGateway:
                                         retry_after_secs=retry_after_secs,
                                         final_filled_quantity=final_quantity, final_fill_source=final_source,
                                         reason_code=reason_code, reason_source=reason_source,
-                                        native_status=native_status))
+                                        native_status=native_status, exchange_error_code=exchange_error_code))
         if evidence:
             self.evidence_receipts[intent.request_id] = signature
         return True
@@ -735,16 +748,21 @@ class NativeOrderGateway:
             intent = self.active_request_map.get((cid, action))
             if intent:
                 self._receipt(intent, "rejected",
-                              reason_code=classify_rejection(getattr(event, "reason", "")),
+                              reason_code=classify_rejection(getattr(event, "reason", ""), submit.venue),
+                              exchange_error_code=exchange_error_code(getattr(event, "reason", ""), submit.venue),
                               reason_source="native_event", native_status=action + "_rejected")
         elif kind in {"canceled", "expired", "rejected", "denied"}:
             # Keep evidence beside the owned order while terminal fill reconciliation waits.
             owned["terminal_diagnostic"] = {"native_status": kind, "reason_source": "native_event",
-                "reason_code": classify_rejection(getattr(event, "reason", ""))
-                if kind in {"rejected", "denied"} else ""}
+                "reason_code": classify_rejection(getattr(event, "reason", ""), submit.venue)
+                if kind in {"rejected", "denied"} else "",
+                "exchange_error_code": exchange_error_code(getattr(event, "reason", ""), submit.venue)
+                if kind in {"rejected", "denied"} else None}
             if kind in {"rejected", "denied"}:
                 record_entry_stage(submit.request_id, "rejected", wall_ns=now_ns,
                                    reason=owned["terminal_diagnostic"]["reason_code"])
+                if owned["terminal_diagnostic"]["reason_code"] == "leverage_configuration":
+                    self._receipt(submit, "configuration_rejected", **owned["terminal_diagnostic"])
             intent = self.active_request_map.get((cid, "cancel"), submit) if kind == "canceled" else submit
             receipt_kind = ("canceled" if kind == "canceled" and intent is not submit else
                             "rejected" if kind in {"rejected", "denied"} else "terminal")

@@ -127,6 +127,7 @@ class ReadOnlyAccountReader:
         self._native_evidence = {}
         self._native_instruments = {}
         self._native_runs = {}
+        self._aster_leverage_cache = None
 
     def invalidate(self, venue):
         venue = "HL" if venue == "HYPERLIQUID" else venue
@@ -356,12 +357,14 @@ class ReadOnlyAccountReader:
     @timed("account.read", labels=lambda self, market, *a, **kw: (market.venue, ""))
     def read(self, market, bid, ask, observed_ns):
         venue = market.venue
+        leverage, leverage_error = None, ""
         if venue in {"HL", "HYPERLIQUID"}:
             position, orders, started_ns, positions, all_orders = self._hyperliquid(market.instrument_id, observed_ns)
         elif venue == "LIGHTER":
             position, orders, started_ns, positions, all_orders = self._lighter(market.instrument_id, observed_ns)
         elif venue == "ASTER":
-            position, orders, started_ns, positions, all_orders = self._aster(market.instrument_id, observed_ns)
+            position, orders, started_ns, positions, all_orders, leverage, leverage_error = self._aster(
+                market.instrument_id, observed_ns)
         elif venue in {"ONDO", "BACKPACK"}:
             return self.read_native(market, bid, ask, observed_ns)
         else:
@@ -371,7 +374,8 @@ class ReadOnlyAccountReader:
                                None if account_only else exact(bid), None if account_only else exact(ask), started_ns,
                                position, tuple(orders), connected=True, authoritative=True,
                                book_observed_ns=None if account_only else observed_ns, account_positions=tuple(positions.items()),
-                               account_open_orders=tuple(all_orders))
+                               account_open_orders=tuple(all_orders),
+                               aster_leverage=leverage, aster_leverage_error=leverage_error)
 
     def _hyperliquid(self, instrument_id, observed_ns):
         prefix = "HYPERLIQUID_" if self.environment == "mainnet" else "HYPERLIQUID_TESTNET_"
@@ -531,4 +535,23 @@ class ReadOnlyAccountReader:
             all_orders.append((row["symbol"] + "-PERP.ASTER", row["clientOrderId"]))
             if row["symbol"] == symbol:
                 ids.append(row["clientOrderId"])
-        return quantity, ids, started_ns, all_positions, all_orders
+        # A missing leverage proof blocks entries but must not disable account
+        # reconciliation or reduce-only cleanup. Never call the leverage setter.
+        leverage, leverage_error = None, ""
+        try:
+            from opportunity_leverage import parse_leverage
+            brackets, bracket_ns = self._cached_read((*scope, "leverage"), lambda:
+                self.transport("GET", base + "/fapi/v3/leverageBrackets?" + self._signed_aster_query()),
+                observed_ns)
+            proof_ns = min(started_ns, bracket_ns)
+            previous = self._aster_leverage_cache
+            if (previous is not None and previous[0] is positions and previous[1] is brackets
+                    and previous[2].started_ns == proof_ns):
+                leverage = previous[2]
+            else:
+                leverage = parse_leverage(positions, brackets, proof_ns)
+                self._aster_leverage_cache = (positions, brackets, leverage)
+        except Exception:
+            self._aster_leverage_cache = None
+            leverage_error = "leverage_read_failed"
+        return quantity, ids, started_ns, all_positions, all_orders, leverage, leverage_error
