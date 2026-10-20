@@ -287,17 +287,28 @@ def test_record_disabled_retains_only_current_state_and_display_is_bounded(tmp_p
     assert state.current == {} and len(state.metadata) == 1
 
 
-def native_observer(tmp_path, monkeypatch, *, backpack=False, drive_evaluation_timer=True, **overrides):
+def native_observer(tmp_path, monkeypatch, *, backpack=False, drive_evaluation_timer=True,
+                    autostart=True, subscription_failure=None, **overrides):
     native = pytest.importorskip("nautilus_trader.model")
     p = replace(plan(tmp_path), **overrides)
     if backpack:
-        m = replace(p.markets[1], venue="BACKPACK", instrument_id="BTC_USDC_PERP.BACKPACK")
-        p = replace(p, markets=(p.markets[0], m))
+        markets = tuple(replace(p.markets[1], venue="BACKPACK",
+            symbol="BTC" if n == 0 else f"TEST{n}",
+            instrument_id=("BTC" if n == 0 else f"TEST{n}") + "_USDC_PERP.BACKPACK")
+            for n in range(int(backpack)))
+        p = replace(p, markets=(p.markets[0], *markets))
     state = runtime.ScanState(p)
     ids = [native.InstrumentId.from_str(m.instrument_id) for m in p.markets]
     instruments = {i: SimpleNamespace(id=i, size_increment="0.01", multiplier="1", min_quantity="0.01",
         min_notional="5 USD", taker_fee=Decimal("0.0001")) for i in ids}
     calls = []
+    operations = []
+    def operation(kind, instrument_id, kwargs):
+        assert str(kwargs["client_id"]) == next(
+            m.client_id for m in p.markets if m.instrument_id == str(instrument_id))
+        if subscription_failure == (kind, str(instrument_id)):
+            raise RuntimeError("injected subscription failure")
+        operations.append((kind, instrument_id))
     monkeypatch.setattr(runtime.time, "time_ns", lambda: NS)
     health = {"connected": True, "metadata_ready": True, "connection_epoch": 1,
               "books_continuous": {"BTC_USDC_PERP": True}, "books_fresh": {"BTC_USDC_PERP": True}}
@@ -313,22 +324,105 @@ def native_observer(tmp_path, monkeypatch, *, backpack=False, drive_evaluation_t
             return SimpleNamespace(set_timer=lambda *a, **k: calls.append("timer"),
                                    cancel_timer=lambda *a, **k: calls.append("cancel_timer"))
         def subscribe_instrument(self, *a, **k):
+            operation("instrument", a[0], k)
             calls.append("instrument")
         def subscribe_book_deltas(self, *a, **k):
+            operation("book_deltas", a[0], k)
             assert k["managed"] is False
             calls.append("deltas")
+        def subscribe_quotes(self, *a, **k):
+            operation("quotes", a[0], k)
         def subscribe_instrument_status(self, *a, **k):
+            operation("instrument_status", a[0], k)
             calls.append("status")
         def unsubscribe_instrument(self, *a, **k):
-            pass
+            operation("unsubscribe_instrument", a[0], k)
         def unsubscribe_book_deltas(self, *a, **k):
-            pass
+            operation("unsubscribe_book_deltas", a[0], k)
+        def unsubscribe_quotes(self, *a, **k):
+            operation("unsubscribe_quotes", a[0], k)
         def unsubscribe_instrument_status(self, *a, **k):
-            pass
+            operation("unsubscribe_instrument_status", a[0], k)
     observer = UnderTest()
-    observer.on_start()
-    assert observer.failure is None
+    observer.operations = operations
+    if autostart:
+        observer.on_start()
+        assert observer.failure is None
     return p, state, observer, ids, calls, health
+
+
+def test_backpack_quotes_cover_entire_scope_and_clean_up_across_restart(tmp_path, monkeypatch):
+    _, state, observer, ids, calls, _ = native_observer(tmp_path, monkeypatch, backpack=70)
+    quote_ids = [i for kind, i in observer.operations if kind == "quotes"]
+    assert quote_ids == ids[1:]
+    assert len(observer.subscription_ids["quotes"]) == 70
+    assert observer.subscribed == set(ids)
+    before = list(observer.operations)
+    observer.on_start()
+    observer.subscribe_market(ids[1])
+    assert observer.operations == before
+    observer.on_book_deltas(batch(ids[0], "99.00", "100.00"))
+    assert state.books
+    observer.on_stop()
+    cleaned_quotes = [i for kind, i in observer.operations if kind == "unsubscribe_quotes"]
+    assert len(cleaned_quotes) == 70 and set(cleaned_quotes) == set(ids[1:])
+    assert not observer.subscribed and not any(observer.subscription_ids.values())
+    assert not state.books and not observer.snapshot_seen
+    stopped = list(observer.operations)
+    observer.on_stop()
+    assert observer.operations == stopped and calls.count("cancel_timer") == 1
+    observer.on_start()
+    assert observer.running and observer.failure is None
+    assert sum(kind == "quotes" for kind, _ in observer.operations) == 140
+    observer.on_book_deltas(batch(ids[0], "99.00", "100.00", snapshot=False))
+    assert not state.books
+    observer.on_stop()
+
+
+@pytest.mark.parametrize("kind", ["instrument", "book_deltas", "quotes"])
+def test_backpack_partial_start_failure_cleans_up_every_successful_subscription(tmp_path, monkeypatch, kind):
+    _, _, observer, ids, calls, _ = native_observer(tmp_path, monkeypatch, backpack=2,
+        autostart=False, subscription_failure=(kind, "TEST1_USDC_PERP.BACKPACK"))
+    observer.on_start()
+    assert observer.failure and "injected subscription failure" in observer.failure
+    assert not observer.running and "stop" in calls
+    successful = {(k, i) for k, i in observer.operations if not k.startswith("unsubscribe_")}
+    cleaned = {(k.removeprefix("unsubscribe_"), i) for k, i in observer.operations
+               if k.startswith("unsubscribe_")}
+    assert cleaned == successful
+    assert not any(observer.subscription_ids.values())
+    assert ("quotes", ids[1]) in successful
+    operations = list(observer.operations)
+    observer.on_stop()
+    assert observer.operations == operations
+
+
+def test_non_backpack_markets_do_not_subscribe_quotes(tmp_path, monkeypatch):
+    _, _, observer, _, _, _ = native_observer(tmp_path, monkeypatch)
+    assert all(kind != "quotes" for kind, _ in observer.operations)
+    observer.on_stop()
+    assert all(kind != "unsubscribe_quotes" for kind, _ in observer.operations)
+
+
+def test_backpack_failed_unsubscribe_is_retried_before_restart(tmp_path, monkeypatch):
+    _, _, observer, ids, _, _ = native_observer(tmp_path, monkeypatch, backpack=True)
+    original = type(observer).unsubscribe_quotes
+    attempts = []
+    def fail_once(self, instrument_id, **kwargs):
+        attempts.append(instrument_id)
+        if len(attempts) == 1:
+            raise RuntimeError("injected unsubscribe failure")
+        return original(self, instrument_id, **kwargs)
+    monkeypatch.setattr(type(observer), "unsubscribe_quotes", fail_once)
+    observer.on_stop()
+    assert observer.subscription_ids["quotes"] == {ids[1]}
+    assert not observer.subscription_ids["book_deltas"]
+    assert not observer.subscription_ids["instrument"]
+    observer.on_start()
+    assert attempts == [ids[1], ids[1]]
+    assert observer.running and observer.failure is None
+    assert sum(kind == "quotes" for kind, _ in observer.operations) == 2
+    observer.on_stop()
 
 
 def batch(instrument_id, bid, ask, *, snapshot=True):
@@ -518,3 +612,15 @@ def test_actual_public_factories_and_node_build_without_execution_or_output(tmp_
     node, observer, state = runtime.build_node(p)
     assert observer.running is False and not state.books
     assert list(tmp_path.iterdir()) == []
+
+
+def test_stop_clears_books_without_evaluating_partial_market_state(tmp_path, monkeypatch):
+    _, state, observer, ids, _, _ = native_observer(tmp_path, monkeypatch, backpack=True)
+    observer.on_book_deltas(batch(ids[0], "99.00", "100.00"))
+    observer.on_book_deltas(batch(ids[1], "102.00", "103.00"))
+    assert state.books
+    def forbidden(*args, **kwargs):
+        raise AssertionError("shutdown must not evaluate new opportunities")
+    monkeypatch.setattr(state, "evaluate_symbol", forbidden)
+    observer.on_stop()
+    assert not state.books and not state.raw_books and not state.current

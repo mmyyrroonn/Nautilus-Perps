@@ -250,7 +250,7 @@ class NativeOrderGateway:
     def __init__(self, strategy, markets, on_receipt, on_account, on_fill, *,
                  reader=None, environment="mainnet", model=None, timeout_secs=10,
                  quote_provider=None, native_controls=None, account_timeout_secs=None, environ=None,
-                 account_max_age_ms=15000):
+                 account_max_age_ms=15000, backpack_public_config=None):
         self.strategy = strategy
         rows = markets.values() if isinstance(markets, dict) else markets
         self.markets = {m.instrument_id: m for m in rows}
@@ -266,6 +266,10 @@ class NativeOrderGateway:
         self.account_timeout_ns = read_timeout * 1_000_000_000
         self.quote_provider = quote_provider
         self.native_controls = dict(native_controls or {})
+        self.native_admission = {}
+        self.backpack_checkpoint_ready = False
+        self.backpack_public_config = backpack_public_config
+        self.backpack_market_health = {}
         self.next_authority_renewal_ms = 0
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="account-readonly")
         self.reads = {}
@@ -281,6 +285,60 @@ class NativeOrderGateway:
         self.evidence_receipts = {}
         self.last_error = None
         self.closed = False
+
+    def refresh_native_admission(self, now_ns):
+        """Read the native full-scope gate; never infer readiness from depth."""
+        if not any(m.venue == "BACKPACK" for m in self.markets.values()):
+            return {}
+        self.backpack_market_health = {}
+        status = {"ready": False, "reason": "native_admission_unavailable", "checked_ns": now_ns}
+        control = self.native_controls.get("BACKPACK")
+        if self.closed:
+            status["reason"] = "native_gateway_closed"
+        elif control is not None and self.backpack_checkpoint_ready:
+            try:
+                with span("gateway.backpack.admission_status"):
+                    value = json.loads(control.admission_status_json())
+                if (not isinstance(value, dict) or type(value.get("ready")) is not bool
+                        or "reason" not in value
+                        or (value["ready"] and value.get("reason") is not None)
+                        or (not value["ready"] and (
+                            not isinstance(value.get("reason"), str) or not value["reason"]))):
+                    raise ValueError("invalid native admission schema")
+                status.update(ready=value["ready"], reason=value.get("reason"))
+                reason = self._backpack_quote_problem()
+                if status["ready"] and reason is not None:
+                    status.update(ready=False, reason=reason)
+            except (ValueError, TypeError):
+                status.update(ready=False, reason="native_admission_invalid_json")
+            except Exception:
+                # Exceptions can contain transport details; retain a fixed diagnostic.
+                status.update(ready=False, reason="native_admission_api_error")
+        elif control is not None:
+            status["reason"] = "native_checkpoint_not_ready"
+        self.native_admission["BACKPACK"] = status
+        return {venue: dict(row) for venue, row in self.native_admission.items()}
+
+    def _backpack_quote_problem(self):
+        """Observe full-scope public freshness alongside native admission."""
+        self.backpack_market_health = {}
+        if self.backpack_public_config is None:
+            return "native_public_health_unavailable"
+        health = json.loads(self.backpack_public_config.telemetry_snapshot_json())
+        if not isinstance(health, dict) or not isinstance(health.get("quotes_fresh"), dict):
+            raise ValueError("invalid public health schema")
+        symbols = sorted(m.instrument_id.removesuffix(".BACKPACK")
+                         for m in self.markets.values() if m.venue == "BACKPACK")
+        unavailable = [symbol for symbol in symbols if health["quotes_fresh"].get(symbol) is not True]
+        self.backpack_market_health = {"scope_markets": len(symbols),
+            "fresh_quote_markets": len(symbols) - len(unavailable),
+            "unavailable_symbols": unavailable, "connection_epoch": health.get("connection_epoch"),
+            "connected": health.get("connected") is True, "metadata_ready": health.get("metadata_ready") is True}
+        if health.get("connected") is not True or health.get("metadata_ready") is not True:
+            return "native_public_session_not_ready"
+        if unavailable:
+            return "native_public_quotes_not_ready"
+        return None
 
     def _client(self, venue):
         return self.model.ClientId.from_str("HYPERLIQUID" if venue in {"HL", "HYPERLIQUID"} else venue)
@@ -775,10 +833,11 @@ class NativeOrderGateway:
                     control.persist_economics()
                 with span("gateway.backpack.reconcile_terminals"):
                     control.reconcile_terminal_evidence()
-                with span("gateway.backpack.admission_status"):
-                    control.admission_status_json()
-            except RuntimeError:
+                self.backpack_checkpoint_ready = True
+            except Exception:
+                self.backpack_checkpoint_ready = False
                 self.last_error = "native economic checkpoint is not ready; admission remains fenced"
+        self.refresh_native_admission(now_ns)
         for intent in tuple(self.native_reads.values()):
             self._start_native_read(intent, now_ns)
         for request_id, future in tuple(self.reads.items()):

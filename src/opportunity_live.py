@@ -125,6 +125,9 @@ class LiveTradeState(ScanState):
         self.cleanup_allowed = True
         self.stopping = False
         self.entry_pause_reason = None
+        # Current-process observations only; an old ledger cannot grant admission.
+        self.native_admission = {}
+        self.native_admission_max_age_ns = 1_000_000_000
         self.full_evaluation_symbols = set(self.trade_symbols)
         saved = store.load() if store else None
         if saved:
@@ -322,6 +325,61 @@ class LiveTradeState(ScanState):
         instrument_id = order["instrument_id"]
         self.fences[instrument_id] = max(self.fences.get(instrument_id, 0), now_ns)
         self.emit("entry_dispatch_blocked", now_ns, client_order_id=intent.client_order_id, domains=paused)
+        return True
+
+    def update_native_admission(self, statuses, now_ns):
+        statuses = dict(statuses)
+        if any(m.venue == "BACKPACK" for m in self.markets.values()):
+            statuses.setdefault("BACKPACK", {"ready": False,
+                "reason": "native_admission_unavailable", "checked_ns": now_ns})
+        for venue, status in statuses.items():
+            status = dict(status)
+            if not 0 <= now_ns - status["checked_ns"] <= self.native_admission_max_age_ns:
+                status.update(ready=False, reason="native_admission_stale")
+            previous = self.native_admission.get(venue)
+            self.native_admission[venue] = status
+            previous_fresh = previous is not None and (
+                0 <= now_ns - previous["checked_ns"] <= self.native_admission_max_age_ns)
+            if previous is None or (previous["ready"] and previous_fresh, previous["reason"]) != (
+                    status["ready"], status["reason"]):
+                self.emit("native_admission_recovered" if status["ready"] else
+                          "native_admission_not_ready", now_ns, venue=venue, **status)
+
+    def native_entry_problem(self, instrument_ids, now_ns):
+        if not any(self.markets[i].venue == "BACKPACK" for i in instrument_ids):
+            return None
+        status = self.native_admission.get("BACKPACK")
+        if status is None:
+            return "native_admission_unavailable"
+        age = now_ns - status["checked_ns"]
+        if age < 0 or age > self.native_admission_max_age_ns:
+            return "native_admission_stale"
+        return None if status["ready"] is True else status["reason"]
+
+    def discard_native_entry(self, intent, now_ns, *, dispatched=()):
+        order = self.orders.get(intent.client_order_id)
+        if intent.action != "submit" or order is None or order["purpose"] != "entry":
+            return False
+        if order["status"] == "local_not_dispatched":
+            return True
+        if order["status"] != "dispatch_released":
+            return False
+        position = self._position(order["position_id"])
+        reason = self.native_entry_problem((position["buy_id"], position["sell_id"]), now_ns)
+        if reason is None:
+            return False
+        blocked = []
+        for cid in position["entry_ids"]:
+            pending = self.orders[cid]
+            if cid in dispatched or pending["status"] not in {"prepared", "dispatch_released"}:
+                continue
+            pending["terminal_ns"], pending["status"] = now_ns, "local_not_dispatched"
+            self.entry_timings.pop(pending["request_id"], None)
+            blocked.append(cid)
+            record_entry_stage(pending["request_id"], "local_blocked", wall_ns=now_ns,
+                               reason="native_admission_not_ready")
+        self.emit("entry_dispatch_blocked", now_ns, client_order_ids=blocked,
+                  reason="native_admission_not_ready", native_reason=reason)
         return True
 
     def gross_exposure(self, *, reserve=False):
@@ -817,6 +875,8 @@ class LiveTradeState(ScanState):
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
         if self.entry_pause_reason:
+            return False
+        if self.native_entry_problem((buy_id, sell_id), now_ns) is not None:
             return False
         key = self.pair_key(buy_id, sell_id)
         if key in self.positions or len(self.positions) >= self.max_pairs:
@@ -1498,6 +1558,7 @@ class LiveTradeState(ScanState):
         return {"mode": "live", "phase": self.phase, "halt_reason": self.halt_reason,
                 "order_reconciliations": deepcopy(self.order_reconciliations),
                 "entry_pause_reason": self.entry_pause_reason,
+                "native_admission": deepcopy(self.native_admission),
                 "account_pauses": deepcopy(self.account_pauses),
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,
                 "max_gross_notional_usd": _number(self.max_gross),

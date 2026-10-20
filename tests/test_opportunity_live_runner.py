@@ -442,6 +442,8 @@ class FakeLive(ScanState):
         self.halt_reason = None
     def set_entry_pause(self, reason, now):
         self.entry_pause_reason = reason
+    def update_native_admission(self, statuses, now):
+        self.native_admission = statuses
     def flat_accounts_ready(self, now, after):
         return False
     def register_instrument(self, *args):
