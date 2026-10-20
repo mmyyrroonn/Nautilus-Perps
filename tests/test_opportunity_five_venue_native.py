@@ -47,6 +47,9 @@ def route_cancel(strategy, cid, observations):
 def test_backpack_native_gateway_confirmed_cancel_replace_entry_and_close(tmp_path, monkeypatch):
     import asyncio
     import test_backpack_production_native as reviewed
+    import opportunity_timing as timing
+    recorder = timing.TimingRecorder()
+    monkeypatch.setattr(timing, "_active", recorder)
     observed = {"receipts": [], "fills": [], "commands": []}
     original_build = reviewed.build_node
     gateways = []
@@ -55,7 +58,13 @@ def test_backpack_native_gateway_confirmed_cancel_replace_entry_and_close(tmp_pa
         node, strategy, control, config, public = original_build(*args)
         gateway = attach_gateway(strategy, "BACKPACK", [s + ".BACKPACK" for s in reviewed.SYMBOLS], observed)
         gateways.append(gateway)
-        strategy.submit_order = lambda order, **kw: route_submit(strategy, order, observed, "BACKPACK", [])
+        def submit(order, **kwargs):
+            timing.begin_entry_trace("submit-" + str(order.client_order_id), "BACKPACK",
+                                     timing.start_latency(), time.time_ns())
+            route_submit(strategy, order, observed, "BACKPACK", [])
+        strategy.submit_order = submit
+        monkeypatch.setattr(type(strategy), "on_order_submitted",
+            lambda self, event: gateway.on_native_event("submitted", event, time.time_ns()))
         strategy.cancel_order = lambda cid, **kw: route_cancel(strategy, cid, observed)
         original_event = strategy.event
         def event(kind, event):
@@ -82,6 +91,11 @@ def test_backpack_native_gateway_confirmed_cancel_replace_entry_and_close(tmp_pa
     assert sum(command.reduce_only for command in observed["commands"]) == 2
     assert len([receipt for receipt in observed["receipts"] if receipt.kind == "terminal"]) == 5
     assert len([receipt for receipt in observed["receipts"] if receipt.kind == "canceled"]) == 1
+    traces = recorder.document()["entry_execution"]["traces"]
+    assert len(traces) == 5
+    assert all(any(e["kind"] == "submitted" for e in t["native_events"]) for t in traces)
+    assert any(e["kind"] == "filled" for t in traces for e in t["native_events"])
+    assert all(e["local_timestamp_status"] == "valid" for t in traces for e in t["native_events"])
 
 
 def test_ondo_native_gateway_startup_cancel_replace_and_multisymbol_continuation(tmp_path, monkeypatch):

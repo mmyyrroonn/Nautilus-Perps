@@ -859,6 +859,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                     session_id="btc"+uuid.uuid4().hex[:12], max_notional_usd=plan.startup_max_notional_usd,
                     slippage_bps=plan.startup_slippage_bps, timeout_secs=plan.startup_timeout_secs,
                     max_account_age_ms=plan.account_max_age_ms) if coordinator.startup_self_test else None
+                from opportunity_entry_evidence import entry_market_snapshot
                 gateway = NativeOrderGateway(self, plan.scan.markets, coordinator.on_receipt,
                     coordinator.on_account, coordinator.on_fill, environment=plan.environment,
                     environ=environ,
@@ -867,6 +868,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                     timeout_secs=plan.order_timeout_secs,
                     account_timeout_secs=plan.startup_timeout_secs,
                     account_max_age_ms=plan.account_max_age_ms,
+                    entry_evidence_provider=lambda intent, now_ns: entry_market_snapshot(live, intent, now_ns),
                     quote_provider=lambda instrument_id, now_ns: native_quote(live, instrument_id, now_ns))
                 coordinator.attach(gateway, preflight)
                 self.clock.set_timer("opportunity-trade", timedelta(milliseconds=plan.timer_interval_ms))
@@ -907,7 +909,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                 coordinator.failure = "native order callback failed: "+type(exc).__name__
                 coordinator.request_stop(time.time_ns(), "order_callback_failed")
         return callback
-    for kind in ("accepted", "updated", "filled", "canceled", "expired", "rejected", "denied",
+    for kind in ("submitted", "accepted", "updated", "filled", "canceled", "expired", "rejected", "denied",
                  "modify_rejected", "cancel_rejected"):
         setattr(ContinuousStrategy, "on_order_"+kind, native_callback(kind))
     strategy = ContinuousStrategy()
