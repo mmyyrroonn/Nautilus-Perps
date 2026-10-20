@@ -5,7 +5,8 @@ strategies/transports and do not execute any financial requests.
 """
 from __future__ import annotations
 
-from opportunity_timing import record_entry_stage, record_latency, span, start_latency, timed
+from opportunity_timing import (record_entry_stage, record_entry_native_event,
+                                record_latency, span, start_latency, timed)
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -250,7 +251,7 @@ class NativeOrderGateway:
     def __init__(self, strategy, markets, on_receipt, on_account, on_fill, *,
                  reader=None, environment="mainnet", model=None, timeout_secs=10,
                  quote_provider=None, native_controls=None, account_timeout_secs=None, environ=None,
-                 account_max_age_ms=15000, backpack_public_config=None):
+                 account_max_age_ms=15000, backpack_public_config=None, entry_evidence_provider=None):
         self.strategy = strategy
         rows = markets.values() if isinstance(markets, dict) else markets
         self.markets = {m.instrument_id: m for m in rows}
@@ -265,6 +266,7 @@ class NativeOrderGateway:
             raise ValueError("native account read timeout must be positive integer seconds")
         self.account_timeout_ns = read_timeout * 1_000_000_000
         self.quote_provider = quote_provider
+        self.entry_evidence_provider = entry_evidence_provider
         self.native_controls = dict(native_controls or {})
         self.native_admission = {}
         self.backpack_checkpoint_ready = False
@@ -667,6 +669,15 @@ class NativeOrderGateway:
         if owned is None:
             return
         kind = kind.removeprefix("on_order_").removeprefix("Order").lower()
+        if str(getattr(event, "instrument_id", owned["intent"].instrument_id)) != owned["intent"].instrument_id:
+            raise ValueError("native event market differs from its owned order")
+        record_entry_native_event(owned["intent"].request_id, kind, now_ns,
+            ts_event=getattr(event, "ts_event", None), ts_init=getattr(event, "ts_init", None),
+            market_provider=(lambda: self.entry_evidence_provider(owned["intent"], now_ns))
+            if self.entry_evidence_provider else None)
+        if kind == "submitted":
+            # Observational callback only: no account invalidation, receipts or queries.
+            return
         self._invalidate_account(owned["intent"].venue)
         event_id = str(getattr(event, "event_id", "") or "")
         if kind != "filled" and event_id:

@@ -112,7 +112,8 @@ class TimingRecorder:
             # Copy under the lock; sorting/serialization must not block callbacks.
             copied = [(key, {**row, "recent": tuple(row["recent"])}) for key, row in self.rows.items()]
             traces = [dict(trace_id=row["trace_id"], venue=row["venue"],
-                           stages=list(row["stages"])) for row in self.entry_orders.values()]
+                           stages=list(row["stages"]), native_events=list(row["native_events"]),
+                           native_events_seen=row["native_events_seen"]) for row in self.entry_orders.values()]
             pair_counts = dict(self.entry_pair_counts)
             evictions = self.entry_trace_evictions
             reclassifications = self.entry_pair_reclassifications
@@ -148,6 +149,13 @@ class TimingRecorder:
             "operations": sorted(rows, key=lambda row: (row["category"], -row["self_ms"])),
             "entry_execution": {"traces": traces, "trace_limit": SAMPLE_WINDOW,
                 "stage_limit": 32, "trace_evictions": evictions,
+                "native_event_limit": 16,
+                "native_event_notes": [
+                    "ts_init is local native event construction time, not a socket receive timestamp.",
+                    "ts_event is adapter/venue dependent; never interpreted as local network time.",
+                    "OrderSubmitted precedes transport completion; its placement differs by adapter.",
+                    "Callback books are local observations, not exchange matching-engine snapshots.",
+                    "Invalid or future local timestamps have no derived delivery latency."],
                 "missing_native_stages": ["native_received", "signing", "network_write", "native_receipt_received"],
                 "clock_notes": "stage monotonic_ns uses perf_counter_ns within this process only; wall_ns and market timestamps use Unix wall time; do not subtract across clock domains",
                 "pair_outcomes": pair_counts, "completed_pairs": sum(pair_counts.values()),
@@ -265,8 +273,46 @@ def begin_entry_trace(request_id, venue, marker, wall_ns):
             recorder.entry_orders.pop(next(iter(recorder.entry_orders)))
             recorder.entry_trace_evictions += 1
         recorder.entry_orders[request_id] = {"trace_id": uuid.uuid4().hex,
-            "venue": _labels(venue, "")[0], "stages": deque([{
+            "venue": _labels(venue, "")[0], "native_events": deque(maxlen=16),
+            "native_events_seen": 0, "stages": deque([{
                 "stage": "candidate", "monotonic_ns": marker[1], "wall_ns": wall_ns}], maxlen=32)}
+
+
+def record_entry_native_event(request_id, kind, received_ns, *, ts_event=None, ts_init=None,
+                              market_provider=None):
+    """Bounded native lifecycle timestamps and local books; no trading side effects."""
+    recorder = _active
+    if recorder is None or kind not in {"submitted", "accepted", "filled", "canceled",
+                                        "expired", "rejected", "denied"}:
+        return
+    with recorder.lock:
+        trace = recorder.entry_orders.get(request_id)
+        if trace is None or recorder.closed:
+            return
+    row = {"kind": kind, "received_wall_ns": received_ns}
+    if type(ts_event) is int and ts_event > 0:
+        row["native_event_wall_ns"] = ts_event
+    if type(ts_init) is int and 0 < ts_init <= received_ns:
+        row["native_init_wall_ns"] = ts_init
+        row["native_init_to_python_ms"] = (received_ns - ts_init) / 1e6
+        row["local_timestamp_status"] = "valid"
+    else:
+        row["local_timestamp_status"] = "missing_or_invalid"
+    try:
+        market = market_provider() if market_provider else None
+        if market is not None:
+            # Provider is an internal fixed-schema observer, never a native payload.
+            fields = {"status", "source_wall_ns", "received_wall_ns", "source_age_ms", "receive_age_ms",
+                      "bid_price", "ask_price", "limit_price", "quantity", "depth_within_limit",
+                      "full_quantity_available", "touch_outside_limit_bps"}
+            row["market"] = {k: v for k, v in market.items() if k in fields}
+    except Exception:
+        row["market"] = {"status": "observation_failed"}
+    with recorder.lock:
+        if recorder.entry_orders.get(request_id) is not trace or recorder.closed:
+            return
+        trace["native_events"].append(row)
+        trace["native_events_seen"] += 1
 
 
 def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason=None):

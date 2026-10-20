@@ -5,6 +5,29 @@ from opportunity_core import _book_valid, _number
 from opportunity_timing import record_entry_stage, record_entry_pair
 
 
+def entry_market_snapshot(live, intent, now_ns):
+    """Observe the current book at an order callback without changing admission."""
+    book, market = live.books.get(intent.instrument_id), live.markets.get(intent.instrument_id)
+    if book is None or market is None or not book.bids or not book.asks:
+        return {"status": "missing_book"}
+    conversion = F(market.canonical_multiplier) / F(market.quote_to_usd)
+    limit, quantity = F(intent.price), F(intent.quantity)
+    buy = intent.side == "BUY"
+    levels = book.asks if buy else book.bids
+    depth = sum((F(q) for p, q in levels
+                 if (F(p) * conversion <= limit if buy else F(p) * conversion >= limit)), F(0))
+    touch = F(levels[0][0]) * conversion
+    return {"status": "valid" if _book_valid(book, live.plan.settings, now_ns) else "stale_or_invalid",
+            "source_wall_ns": book.ts_event_ns, "received_wall_ns": book.ts_received_ns,
+            "source_age_ms": _number(F(now_ns - book.ts_event_ns, 1_000_000)),
+            "receive_age_ms": _number(F(now_ns - book.ts_received_ns, 1_000_000)),
+            "bid_price": _number(F(book.bids[0][0]) * conversion),
+            "ask_price": _number(F(book.asks[0][0]) * conversion),
+            "limit_price": str(intent.price), "quantity": str(intent.quantity),
+            "depth_within_limit": _number(depth), "full_quantity_available": depth >= quantity,
+            "touch_outside_limit_bps": _number((touch - limit if buy else limit - touch) / limit * 10000)}
+
+
 def entry_dispatch_evidence(live, position, now_ns):
     """Validate both original IOC legs against current immutable book evidence.
 
