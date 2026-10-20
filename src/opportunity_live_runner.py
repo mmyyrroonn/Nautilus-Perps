@@ -499,6 +499,17 @@ class LiveCoordinator:
             # elapsed time, including persistence and synchronous dispatch work.
             # Do not reuse the earlier callback time as a send-time age check.
             check_ns = now_ns + max(0, time.perf_counter_ns() - dispatch_started)
+            order = self.live.orders.get(intent.client_order_id)
+            if intent.action == "submit" and order and order["purpose"] == "entry":
+                position = self.live._position(order["position_id"])
+                if any(self.live.markets[position[f"{leg}_id"]].venue == "BACKPACK"
+                       for leg in ("buy", "sell")):
+                    refresh = getattr(self.gateway, "refresh_native_admission", None)
+                    self.live.update_native_admission(
+                        refresh(check_ns) if refresh is not None else {}, check_ns)
+                    check_ns = now_ns + max(0, time.perf_counter_ns() - dispatch_started)
+                    if self.live.discard_native_entry(intent, check_ns, dispatched=dispatched):
+                        continue
             if discard_invalid_entry(self.live, intent, check_ns, dispatched=dispatched):
                 continue
             dispatched.add(intent.client_order_id)
@@ -601,6 +612,7 @@ class LiveCoordinator:
             # Fence quote callbacks before processing any pending receipts.
             self.live.set_entry_pause("session_loss_check", now_ns)
         self.gateway.poll(now_ns)
+        self.live.update_native_admission(getattr(self.gateway, "native_admission", {}), now_ns)
         if self.phase == "waiting_balances":
             self.balance_check.tick(self.gateway, now_ns)
             self.proxy.checkpoint_balance_check(self.balance_check.document())
@@ -748,6 +760,7 @@ class LiveCoordinator:
                 "stop_reason": self.stop_reason, "loss_monitor": self.loss_monitor.document(),
                 "account_binding": self.proxy.account_binding,
                 "last_execution_error": getattr(self.gateway, "last_error", None),
+                "backpack_market_health": getattr(self.gateway, "backpack_market_health", {}),
                 "native_shutdown": self.proxy.native_shutdown,
                 "native_session": self.proxy.native_session,
                 "startup_self_test_enabled": self.startup_self_test,
@@ -868,6 +881,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                     coordinator.on_account, coordinator.on_fill, environment=plan.environment,
                     environ=environ,
                     native_controls=native_controls,
+                    backpack_public_config=configs.get("BACKPACK"),
                     timeout_secs=plan.order_timeout_secs,
                     account_timeout_secs=plan.startup_timeout_secs,
                     account_max_age_ms=plan.account_max_age_ms,

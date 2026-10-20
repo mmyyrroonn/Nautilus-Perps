@@ -29,7 +29,7 @@ def test_generated_registry_constructs_actual_backpack_client_with_native_bounds
     assert isinstance(clients[0][2], native.BackpackDataClientConfig)
 
 
-def test_scanner_actual_node_subscribes_only_depth_refreshes_and_stops(tmp_path, monkeypatch):
+def test_scanner_actual_node_subscribes_depth_and_quotes_refreshes_and_stops(tmp_path, monkeypatch):
     native = pytest.importorskip("nautilus_trader.adapters.backpack")
     pytest.importorskip("websockets")
     from test_backpack_public_native import PublicPeer, SYMBOL
@@ -90,9 +90,10 @@ def test_scanner_actual_node_subscribes_only_depth_refreshes_and_stops(tmp_path,
             assert observer.failure is None, observer.failure
             assert observer.started and not observer.running
             assert displays and max(displays) == 1
-            assert len(state.books) == 1 and state.saved == 0 and not state.current
+            assert not state.books and state.saved == 0 and not state.current
             assert peer.active == 0
             assert list(tmp_path.iterdir()) == []
             peer.assert_public_only()
-            assert all(topic == f"depth.{SYMBOL}" for command in peer.commands for topic in command["params"])
+            assert {topic for command in peer.commands for topic in command["params"]} == {
+                f"depth.{SYMBOL}", f"bookTicker.{SYMBOL}"}
     asyncio.run(scenario())

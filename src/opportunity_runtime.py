@@ -256,6 +256,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.started = False
             self.running = False
             self.subscribed = set()
+            self.subscription_ids = {kind: set() for kind in ("instrument", "book_deltas", "quotes", "instrument_status")}
+            self.timer_active = False
             self.pending_aster = deque()
             self.next_aster_ns = 0
             self.dirty = {}
@@ -278,6 +280,15 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
 
         @timed("startup.market_observer")
         def on_start(self):
+            if self.running:
+                return
+            if self.timer_active or any(self.subscription_ids.values()):
+                self.on_stop()
+                if self.timer_active or any(self.subscription_ids.values()):
+                    self.fail("startup: previous subscriptions could not be cleaned up")
+                    return
+            self.failure = None
+            self.next_aster_ns = 0
             self.running = True
             try:
                 for instrument_id, market in self.markets.items():
@@ -297,21 +308,31 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 tick_ms = min(plan.refresh_ms, plan.aster_subscription_interval_ms,
                               plan.evaluation_interval_ms or plan.refresh_ms)
                 self.clock.set_timer("scan-display", timedelta(milliseconds=tick_ms))
+                self.timer_active = True
                 self.started = True
             except Exception as exc:
+                self.on_stop()
                 self.fail(f"startup: {type(exc).__name__}: {exc}")
 
         def subscribe_market(self, instrument_id):
+            if instrument_id in self.subscribed:
+                return
             market = self.markets[instrument_id]
             client = ClientId.from_str(market.client_id)
             self.subscribe_instrument(instrument_id, client_id=client)
+            self.subscription_ids["instrument"].add(instrument_id)
             kwargs = {"depth": plan.aster_snapshot_depth} if market.venue == "ASTER" else {}
             if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
                 kwargs = {"depth": min(plan.depth_levels, 5), "params": {"fast": True}}
             self.subscribe_book_deltas(instrument_id, BookType.L2_MBP,
                                        client_id=client, managed=False, **kwargs)
+            self.subscription_ids["book_deltas"].add(instrument_id)
+            if market.venue == "BACKPACK":
+                self.subscribe_quotes(instrument_id, client_id=client)
+                self.subscription_ids["quotes"].add(instrument_id)
             if market.venue == "ONDO":
                 self.subscribe_instrument_status(instrument_id, client_id=client)
+                self.subscription_ids["instrument_status"].add(instrument_id)
             self.subscribed.add(instrument_id)
 
         def advance_subscriptions(self, now_ns):
@@ -328,17 +349,34 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.pending_symbols.clear()
             self.pending_instruments.clear()
             state.current.clear()
-            if self.started:
-                self.clock.cancel_timer("scan-display")
-            for instrument_id in self.subscribed:
-                market = self.markets[instrument_id]
-                client = ClientId.from_str(market.client_id)
-                self.unsubscribe_book_deltas(instrument_id, client_id=client)
-                self.unsubscribe_instrument(instrument_id, client_id=client)
-                if market.venue == "ONDO":
-                    self.unsubscribe_instrument_status(instrument_id, client_id=client)
+            if self.timer_active:
+                try:
+                    self.clock.cancel_timer("scan-display")
+                except Exception as exc:
+                    self.failure = f"cancel timer: {type(exc).__name__}: {exc}"
+                    print(f"[scan] {self.failure}", file=sys.stderr, flush=True)
+                else:
+                    self.timer_active = False
+            # Track each successful request independently: a later subscription
+            # can fail before the market is added to the completed set.
+            for kind in ("quotes", "book_deltas", "instrument_status", "instrument"):
+                ids = self.subscription_ids[kind]
+                unsubscribe = getattr(self, "unsubscribe_" + kind)
+                for instrument_id in tuple(ids):
+                    client = ClientId.from_str(self.markets[instrument_id].client_id)
+                    try:
+                        unsubscribe(instrument_id, client_id=client)
+                    except Exception as exc:
+                        self.failure = f"unsubscribe {kind}: {type(exc).__name__}: {exc}"
+                        print(f"[scan] {self.failure}", file=sys.stderr, flush=True)
+                    else:
+                        ids.discard(instrument_id)
+            self.subscribed.clear()
+            for instrument_id in self.markets:
+                self.invalidate(instrument_id, notify=False)
+            self.epochs.clear()
 
-        def invalidate(self, instrument_id, *, metadata=False):
+        def invalidate(self, instrument_id, *, metadata=False, notify=True):
             self.local_books[instrument_id].reset()
             for prices in self.level_prices[instrument_id].values():
                 prices.clear()
@@ -346,7 +384,13 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.pending_snapshot.discard(instrument_id)
             self.dirty.pop(instrument_id, None)
             self.clear_book_timing(instrument_id)
-            state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata)
+            if notify:
+                state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata)
+            else:
+                # Stop must not evaluate partially cleared multi-venue books and
+                # accidentally prepare a new pair while subscriptions are closing.
+                state.books.pop(str(instrument_id), None)
+                state.raw_books.pop(str(instrument_id), None)
 
         def clear_book_timing(self, instrument_id):
             self.book_timings.pop(instrument_id, None)
