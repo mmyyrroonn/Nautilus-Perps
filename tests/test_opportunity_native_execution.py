@@ -124,6 +124,51 @@ def test_accepted_ioc_without_terminal_queries_original_id_without_resend(harnes
     gateway.poll(11_000_000_001)
     assert [c[0] for c in strategy.calls] == ["submit", "query"]
     assert [r.kind for r in receipts] == ["accepted", "unknown"]
+    assert receipts[-1].reason_code == "receipt_timeout"
+    assert receipts[-1].reason_source == "python_timeout"
+
+
+@pytest.mark.parametrize("kind,reason,code", [
+    ("rejected", "insufficient margin; token=synthetic-secret", "insufficient_balance"),
+    ("denied", "invalid price tick; authorization=synthetic-secret", "invalid_order"),
+    ("rejected", "rate limit exceeded", "rate_limit"),
+    ("rejected", "separate account unavailable", "venue_other"),
+    ("rejected", "IOC could not match", "ioc_no_match"),
+])
+def test_rejection_evidence_survives_deferred_terminal_without_raw_text(harness, kind, reason, code):
+    gateway, strategy, receipts, _, _ = harness
+    gateway.dispatch(intent(), 1_000_000_000)
+    gateway.on_native_event(kind, event(reason=reason), 1_000_000_001)
+    assert receipts == []  # Cache/fill terminal barrier is unchanged.
+    strategy.cached["owned-1"].is_closed = True
+    gateway.poll(1_000_000_002)
+    assert len(receipts) == 1
+    assert receipts[0].reason_code == code
+    assert receipts[0].reason_source == "native_event"
+    assert receipts[0].native_status == kind
+    assert "synthetic-secret" not in repr(receipts) + repr(gateway.orders)
+
+
+def test_cache_only_rejection_does_not_invent_reason(harness):
+    gateway, strategy, receipts, _, _ = harness
+    gateway.dispatch(intent(), 1_000_000_000)
+    strategy.cached["owned-1"].is_closed = True
+    strategy.cached["owned-1"].status = "REJECTED"
+    gateway.poll(1_000_000_001)
+    assert receipts[-1].reason_source == "native_cache"
+    assert receipts[-1].reason_code == ""
+    assert receipts[-1].native_status == "rejected"
+
+
+def test_dispatch_exception_remains_unknown_with_safe_reason(harness):
+    gateway, strategy, receipts, _, _ = harness
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic-secret")
+    strategy.submit_order = fail
+    gateway.dispatch(intent(), 1_000_000_000)
+    assert receipts[-1].kind == "unknown"
+    assert receipts[-1].reason_code == "dispatch_exception"
+    assert "synthetic-secret" not in repr(receipts)
 
 
 def test_modify_cancel_receipts_have_action_request_ids(harness):
@@ -155,6 +200,8 @@ def test_ondo_invalid_client_id_never_crosses_native_dispatch(harness, cid):
     gateway, strategy, receipts, _, _ = harness
     gateway.dispatch(intent(venue="ONDO", instrument_id="BTC-USD-PERP.ONDO", client_order_id=cid), 1_000_000_000)
     assert strategy.calls == [] and receipts[-1].kind == "rejected"
+    assert receipts[-1].reason_code == "invalid_order_id"
+    assert receipts[-1].reason_source == "python_validation"
 
 
 def test_only_independent_account_read_produces_authoritative_snapshot(harness):

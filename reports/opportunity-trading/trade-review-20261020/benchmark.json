@@ -1,0 +1,367 @@
+{
+  "baseline": "0b0aa56f21e1c73ec7abca56efa2379e5c9ca9bc",
+  "method": "4 alternating baseline/current subprocess rounds; 20 warmups per subprocess; microseconds",
+  "limitations": "Synthetic Windows entry and rejection paths; not network latency or production throughput.",
+  "storage": {
+    "memory": {
+      "rounds": [
+        {
+          "variant": "baseline",
+          "round": 0,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 535.1,
+            "p95_us": 574.1,
+            "p99_us": 696.3
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 172.8,
+            "p95_us": 180.0,
+            "p99_us": 232.4
+          }
+        },
+        {
+          "variant": "current",
+          "round": 0,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 555.55,
+            "p95_us": 573.2,
+            "p99_us": 732.9
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 179.1,
+            "p95_us": 187.4,
+            "p99_us": 251.3
+          }
+        },
+        {
+          "variant": "current",
+          "round": 1,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 558.7,
+            "p95_us": 617.9,
+            "p99_us": 712.0
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 181.3,
+            "p95_us": 199.6,
+            "p99_us": 313.7
+          }
+        },
+        {
+          "variant": "baseline",
+          "round": 1,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 534.6500000000001,
+            "p95_us": 561.7,
+            "p99_us": 611.7
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 170.8,
+            "p95_us": 177.1,
+            "p99_us": 179.9
+          }
+        },
+        {
+          "variant": "baseline",
+          "round": 2,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 530.05,
+            "p95_us": 558.2,
+            "p99_us": 583.5
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 171.7,
+            "p95_us": 175.8,
+            "p99_us": 193.7
+          }
+        },
+        {
+          "variant": "current",
+          "round": 2,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 552.6500000000001,
+            "p95_us": 601.0,
+            "p99_us": 638.5
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 178.45,
+            "p95_us": 186.0,
+            "p99_us": 239.1
+          }
+        },
+        {
+          "variant": "current",
+          "round": 3,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 553.5,
+            "p95_us": 571.4,
+            "p99_us": 602.0
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 179.4,
+            "p95_us": 184.4,
+            "p99_us": 201.0
+          }
+        },
+        {
+          "variant": "baseline",
+          "round": 3,
+          "entry_us": {
+            "samples": 200,
+            "p50_us": 535.6,
+            "p95_us": 576.6,
+            "p99_us": 716.9
+          },
+          "rejection_us": {
+            "samples": 200,
+            "p50_us": 171.9,
+            "p95_us": 179.8,
+            "p99_us": 244.8
+          }
+        }
+      ],
+      "aggregate": {
+        "baseline": {
+          "entry_us": {
+            "samples": 800,
+            "p50_us": 533.9,
+            "p95_us": 568.1,
+            "p99_us": 665.9
+          },
+          "rejection_us": {
+            "samples": 800,
+            "p50_us": 171.8,
+            "p95_us": 178.6,
+            "p99_us": 232.1
+          },
+          "writes_per_cycle": [
+            4
+          ],
+          "event_payload_bytes_per_cycle": [
+            715.0,
+            715.0,
+            715.0,
+            715.0
+          ]
+        },
+        "current": {
+          "entry_us": {
+            "samples": 800,
+            "p50_us": 555.2,
+            "p95_us": 598.9,
+            "p99_us": 686.9
+          },
+          "rejection_us": {
+            "samples": 800,
+            "p50_us": 179.6,
+            "p95_us": 190.0,
+            "p99_us": 251.3
+          },
+          "writes_per_cycle": [
+            4
+          ],
+          "event_payload_bytes_per_cycle": [
+            1866.0,
+            1866.0,
+            1866.0,
+            1866.0
+          ]
+        }
+      }
+    },
+    "sqlite": {
+      "rounds": [
+        {
+          "variant": "baseline",
+          "round": 0,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5808.45,
+            "p95_us": 6832.4,
+            "p99_us": 7099.8
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10458.4,
+            "p95_us": 11792.9,
+            "p99_us": 12137.5
+          }
+        },
+        {
+          "variant": "current",
+          "round": 0,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5981.65,
+            "p95_us": 6674.3,
+            "p99_us": 7373.9
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10656.8,
+            "p95_us": 11273.1,
+            "p99_us": 11905.4
+          }
+        },
+        {
+          "variant": "current",
+          "round": 1,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5871.2,
+            "p95_us": 7218.6,
+            "p99_us": 9093.2
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10323.349999999999,
+            "p95_us": 14195.3,
+            "p99_us": 14867.4
+          }
+        },
+        {
+          "variant": "baseline",
+          "round": 1,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5949.4,
+            "p95_us": 6802.8,
+            "p99_us": 8947.0
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10533.1,
+            "p95_us": 12155.5,
+            "p99_us": 13031.2
+          }
+        },
+        {
+          "variant": "baseline",
+          "round": 2,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5492.85,
+            "p95_us": 5989.8,
+            "p99_us": 6208.8
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10261.25,
+            "p95_us": 10878.0,
+            "p99_us": 14251.7
+          }
+        },
+        {
+          "variant": "current",
+          "round": 2,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5691.799999999999,
+            "p95_us": 6414.1,
+            "p99_us": 6835.0
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10309.95,
+            "p95_us": 11747.2,
+            "p99_us": 13400.6
+          }
+        },
+        {
+          "variant": "current",
+          "round": 3,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5822.45,
+            "p95_us": 6286.2,
+            "p99_us": 6841.5
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10329.9,
+            "p95_us": 10966.9,
+            "p99_us": 12726.9
+          }
+        },
+        {
+          "variant": "baseline",
+          "round": 3,
+          "entry_us": {
+            "samples": 80,
+            "p50_us": 5686.25,
+            "p95_us": 6333.5,
+            "p99_us": 7258.6
+          },
+          "rejection_us": {
+            "samples": 80,
+            "p50_us": 10205.15,
+            "p95_us": 10948.7,
+            "p99_us": 11017.4
+          }
+        }
+      ],
+      "aggregate": {
+        "baseline": {
+          "entry_us": {
+            "samples": 320,
+            "p50_us": 5712.85,
+            "p95_us": 6627.1,
+            "p99_us": 7258.6
+          },
+          "rejection_us": {
+            "samples": 320,
+            "p50_us": 10379.35,
+            "p95_us": 11731.3,
+            "p99_us": 12333.2
+          },
+          "writes_per_cycle": [
+            4
+          ],
+          "event_payload_bytes_per_cycle": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "current": {
+          "entry_us": {
+            "samples": 320,
+            "p50_us": 5855.65,
+            "p95_us": 6674.3,
+            "p99_us": 7620.9
+          },
+          "rejection_us": {
+            "samples": 320,
+            "p50_us": 10416.05,
+            "p95_us": 11737.2,
+            "p99_us": 14867.4
+          },
+          "writes_per_cycle": [
+            4
+          ],
+          "event_payload_bytes_per_cycle": [
+            null,
+            null,
+            null,
+            null
+          ]
+        }
+      }
+    }
+  }
+}

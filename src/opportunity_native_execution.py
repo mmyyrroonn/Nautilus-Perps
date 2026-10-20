@@ -25,14 +25,30 @@ SUPPORTED_VENUES = frozenset({"HL", "HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "
 CANCEL_REPLACE_VENUES = frozenset({"ASTER", "ONDO", "BACKPACK"})
 MAX_PENDING_SUBMIT_TIMINGS = 1024
 
+LOCAL_REJECTION_CODES = {
+    "intent market/venue is not configured": "market_not_configured",
+    "unsupported venue": "unsupported_venue",
+    "unsupported gateway action": "unsupported_action",
+    "mutation requires an explicit persisted client order ID": "missing_order_id",
+    "Ondo client order ID must use at most 64 ASCII letters, digits, underscores or hyphens": "invalid_order_id",
+    "native modification is unsupported; use confirmed cancel/replace": "modify_unsupported",
+    "client order ID already belongs to a submission": "duplicate_order_id",
+    "native order construction refused": "order_construction_failed",
+    "only owned orders may be modified or canceled": "order_not_owned",
+    "account read could not start": "account_read_unavailable",
+    "account read could not start with a valid current quote": "account_quote_unavailable",
+    "recovery market is unsupported or mismatched": "recovery_market_mismatch",
+    "account reader returned unverified or mismatched evidence": "account_evidence_invalid",
+}
+
 
 def classify_rejection(reason):
     """Return fixed diagnostic labels; never retain raw venue rejection text."""
-    reason = str(reason).lower()
+    reason = str(reason)[:2048].lower()
     if ("ioc" in reason or "immediate" in reason) and any(
             word in reason for word in ("match", "fill", "cancel")):
         return "ioc_no_match"
-    if "rate" in reason or "too many" in reason:
+    if re.search(r"\brate[ _-]?limit|too many", reason):
         return "rate_limit"
     if "balance" in reason or "margin" in reason or "fund" in reason:
         return "insufficient_balance"
@@ -283,7 +299,7 @@ class NativeOrderGateway:
         return NativeBalanceReader(self.strategy, self.model).read_balance_since(venue, now_ns, after_ns)
 
     def _receipt(self, intent, kind, *, execution_id="", quantity=Decimal(0), retry_after_secs=0,
-                 final_quantity=None, final_source=""):
+                 final_quantity=None, final_source="", reason_code="", reason_source="", native_status=""):
         evidence = kind in {"terminal_evidence", "reconciliation_required"}
         signature = (kind, final_quantity, final_source)
         if evidence and self.evidence_receipts.get(intent.request_id) == signature:
@@ -296,7 +312,9 @@ class NativeOrderGateway:
         self._record_outcome(intent, kind)
         self.on_receipt(ExecutionReceipt(intent.request_id, intent.client_order_id, kind, execution_id, quantity,
                                         retry_after_secs=retry_after_secs,
-                                        final_filled_quantity=final_quantity, final_fill_source=final_source))
+                                        final_filled_quantity=final_quantity, final_fill_source=final_source,
+                                        reason_code=reason_code, reason_source=reason_source,
+                                        native_status=native_status))
         if evidence:
             self.evidence_receipts[intent.request_id] = signature
         return True
@@ -326,7 +344,8 @@ class NativeOrderGateway:
     def _reject(self, intent, reason):
         self.last_error = reason
         record_entry_stage(intent.request_id, "rejected", reason="local_validation")
-        self._receipt(intent, "rejected")
+        self._receipt(intent, "rejected", reason_code=LOCAL_REJECTION_CODES.get(reason, "local_validation"),
+                      reason_source="python_validation")
 
     def _cached(self, cid):
         return self.strategy.cache.order(self.model.ClientOrderId.from_str(cid))
@@ -459,7 +478,7 @@ class NativeOrderGateway:
         except Exception:
             # A raised send may have crossed the dispatch boundary. Preserve its ID.
             self.last_error = "native dispatch outcome is unknown; original ID retained"
-            self._receipt(intent, "unknown")
+            self._receipt(intent, "unknown", reason_code="dispatch_exception", reason_source="python_dispatch")
 
     @timed("account.native_read", labels=lambda self, intent, *a, **kw: (intent.venue, ""))
     def _start_native_read(self, intent, now_ns):
@@ -646,11 +665,17 @@ class NativeOrderGateway:
             action = "modify" if kind.startswith("modify") else "cancel"
             intent = self.active_request_map.get((cid, action))
             if intent:
-                self._receipt(intent, "rejected")
+                self._receipt(intent, "rejected",
+                              reason_code=classify_rejection(getattr(event, "reason", "")),
+                              reason_source="native_event", native_status=action + "_rejected")
         elif kind in {"canceled", "expired", "rejected", "denied"}:
+            # Keep evidence beside the owned order while terminal fill reconciliation waits.
+            owned["terminal_diagnostic"] = {"native_status": kind, "reason_source": "native_event",
+                "reason_code": classify_rejection(getattr(event, "reason", ""))
+                if kind in {"rejected", "denied"} else ""}
             if kind in {"rejected", "denied"}:
                 record_entry_stage(submit.request_id, "rejected", wall_ns=now_ns,
-                                   reason=classify_rejection(getattr(event, "reason", "")))
+                                   reason=owned["terminal_diagnostic"]["reason_code"])
             intent = self.active_request_map.get((cid, "cancel"), submit) if kind == "canceled" else submit
             receipt_kind = ("canceled" if kind == "canceled" and intent is not submit else
                             "rejected" if kind in {"rejected", "denied"} else "terminal")
@@ -718,9 +743,11 @@ class NativeOrderGateway:
             final_quantity, final_source = _decimal(submit.quantity), "fully_filled_order"
         kind, intent = pending
         already_terminal = any((submit.request_id, k, "") in self.emitted for k in ("terminal", "rejected"))
-        self._receipt(intent, kind, final_quantity=final_quantity, final_source=final_source)
+        diagnostic = owned.get("terminal_diagnostic", {})
+        self._receipt(intent, kind, final_quantity=final_quantity, final_source=final_source, **diagnostic)
         if kind != "rejected" and intent.request_id != owned["intent"].request_id:
-            self._receipt(owned["intent"], "terminal", final_quantity=final_quantity, final_source=final_source)
+            self._receipt(owned["intent"], "terminal", final_quantity=final_quantity, final_source=final_source,
+                          **diagnostic)
         if final_source == "lighter_http_order_status":
             if not already_terminal:
                 self.evidence_receipts[submit.request_id] = ("terminal_evidence", final_quantity, final_source)
@@ -800,6 +827,9 @@ class NativeOrderGateway:
             cached = self._cached(cid)
             if cid not in self.terminals and cached is not None and cached.is_closed:
                 status = str(cached.status).split(".")[-1].upper()
+                owned.setdefault("terminal_diagnostic", {"native_status": status.lower()
+                    if status in {"REJECTED", "DENIED", "CANCELED", "EXPIRED", "FILLED"} else "",
+                    "reason_source": "native_cache", "reason_code": ""})
                 if status in {"REJECTED", "DENIED"}:
                     self.terminals[cid] = ("rejected", owned["intent"])
                 elif status == "CANCELED" and (cid, "cancel") in self.active_request_map:
@@ -819,7 +849,7 @@ class NativeOrderGateway:
                 continue
             if now_ns - request["queried_ns"] >= self.timeout_ns and intent.client_order_id in self.orders:
                 request["queried_ns"] = now_ns
-                self._receipt(intent, "unknown")
+                self._receipt(intent, "unknown", reason_code="receipt_timeout", reason_source="python_timeout")
                 try:
                     order = self._cached(intent.client_order_id) or self.orders[intent.client_order_id]["native"]
                     self.strategy.query_order(order, client_id=self._client(intent.venue))
