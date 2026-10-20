@@ -175,17 +175,19 @@ def test_mismatched_economics_and_restart_never_clear_guard():
     assert restored.order_reconciliations and not restored.activate(NOW + 9)
 
 
-def test_restart_flat_archive_cannot_erase_execution_fence(tmp_path):
+def test_restart_flat_archive_preserves_historical_execution_fence(tmp_path):
     from test_opportunity_restart import previous_session, prove_accounts, archives
     from test_opportunity_live_runner import readonly_coordinator
     saved = previous_session(tmp_path, traded=True)
     saved["live"]["order_reconciliations"] = {"old-order": {"since_ns": NOW}}
-    coordinator, _, _, store, _ = readonly_coordinator(tmp_path, saved=saved, all_five=True)
+    coordinator, live, gateway, store, _ = readonly_coordinator(tmp_path, saved=saved, all_five=True)
     coordinator.tick(NOW)
     prove_accounts(coordinator, NOW + 1)
     coordinator.tick(NOW + 1)
-    assert coordinator.proxy.restart_pending and not archives(store)
-    assert coordinator.proxy.account_recovery["execution_problem"] == "original_order_final_fill_proof_required"
+    assert not coordinator.proxy.restart_pending and coordinator.phase == "active"
+    assert archives(store)[0]["previous_session"] == saved
+    assert not live.order_reconciliations and not live.orders
+    assert all(i.action == "reconcile" for i in gateway.sent)
 
 
 def test_fresh_order_proof_can_recover_restored_ledger_but_conflict_revokes_it():
@@ -244,15 +246,17 @@ def test_final_evidence_changes_and_repeated_conflict_cycles_are_delivered(harne
     assert [call[0] for call in strategy.calls] == ["submit", "query"]
 
 
-def test_restart_flat_proof_cannot_erase_unknown_original_submission(tmp_path):
+def test_restart_flat_proof_archives_unknown_original_submission_unchanged(tmp_path):
     from test_opportunity_restart import previous_session, prove_accounts, archives
     from test_opportunity_live_runner import readonly_coordinator
     saved = previous_session(tmp_path, traded=True)
     order = next(iter(saved["live"]["orders"].values()))
     order.update(terminal_ns=None, status="unknown")
-    coordinator, _, _, store, _ = readonly_coordinator(tmp_path, saved=saved, all_five=True)
+    coordinator, live, gateway, store, _ = readonly_coordinator(tmp_path, saved=saved, all_five=True)
     coordinator.tick(NOW)
     prove_accounts(coordinator, NOW + 1)
     coordinator.tick(NOW + 1)
-    assert coordinator.proxy.restart_pending and not archives(store)
-    assert coordinator.proxy.account_recovery["execution_problem"] == "original_pending_order_proof_required"
+    assert not coordinator.proxy.restart_pending and coordinator.phase == "active"
+    assert archives(store)[0]["previous_session"] == saved
+    assert not live.orders and not live.positions
+    assert all(i.action == "reconcile" for i in gateway.sent)

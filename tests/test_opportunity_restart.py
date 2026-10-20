@@ -68,6 +68,37 @@ def archives(store):
             if event["event"] == "previous_session_archived"]
 
 
+def unresolved_session(tmp_path):
+    saved = previous_session(tmp_path, traded=True)
+    order = next(iter(saved["live"]["orders"].values()))
+    order.update(terminal_ns=None, status="unknown")
+    saved["live"]["order_reconciliations"] = {"old-order": {"since_ns": NOW}}
+    saved["live"]["pending_economics"] = {"old-trade": {"commission": None}}
+    saved["live"]["halt_reason"] = "conflicting execution replay"
+    return saved
+
+
+@pytest.mark.parametrize("fault", ["missing", "position", "order", "partial", "stale",
+                                   "before_start", "disconnected", "unknown_submission"])
+def test_unknown_history_needs_complete_current_flat_proof_and_stays_archived(tmp_path, fault):
+    saved = unresolved_session(tmp_path)
+    coordinator, live, gateway, store, _ = readonly_coordinator(tmp_path, saved=saved, all_five=True)
+    coordinator.tick(NOW)
+    prove_accounts(coordinator, NOW + 1, fault=fault)
+    coordinator.tick(NOW + 1)
+    assert coordinator.proxy.restart_pending and not archives(store)
+    assert store.saved["live"] == saved["live"]
+    prove_accounts(coordinator, NOW + 2)
+    coordinator.tick(NOW + 2)
+    assert coordinator.phase == "active" and not coordinator.proxy.restart_pending
+    assert archives(store)[0]["previous_session"] == saved
+    assert not live.orders and not live.positions and not live.halt_reason
+    assert not live.executions and not live.pending_economics and not live.order_reconciliations
+    assert store.saved["live"]["realized_net_usd"] == "0"
+    assert all(i.action == "reconcile" for i in gateway.sent)
+    assert store.saved["account_recovery"]["recovery_policy"] == "fresh_session_from_flat_accounts"
+
+
 @pytest.mark.parametrize("traded", [False, True])
 def test_manual_cleanup_restarts_only_after_all_current_accounts_are_flat(tmp_path, traded):
     saved = previous_session(tmp_path, traded=traded)
@@ -236,7 +267,7 @@ def test_traded_restart_takes_new_loss_baseline_after_manual_cleanup(tmp_path):
 
 
 def test_sqlite_archival_and_new_session_are_atomic(tmp_path):
-    saved = previous_session(tmp_path, traded=True)
+    saved = unresolved_session(tmp_path)
     template, _, _, _, _ = readonly_coordinator(tmp_path, all_five=True)
     store = TradeStore(tmp_path / "restart.sqlite3", "offline-restart")
     try:
