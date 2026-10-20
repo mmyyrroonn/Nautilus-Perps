@@ -1,0 +1,565 @@
+{
+  "schema_version": 1,
+  "scope": "strategy_trade_review",
+  "trades": [
+    {
+      "session_id": "synthetic-fee-loss",
+      "position_id": 1,
+      "pair": [
+        "BTC",
+        "ASTER",
+        "HL"
+      ],
+      "orders": {
+        "Lb5d5982b0da240190000000001S": {
+          "client_order_id": "Lb5d5982b0da240190000000001S",
+          "leg": "buy",
+          "purpose": "entry",
+          "instrument_id": "BTC.HL",
+          "side": "BUY",
+          "quantity": "0.99",
+          "price": "100",
+          "sent_ns": 1800000000000000000,
+          "reduce_only": false,
+          "venue": "HL",
+          "book_source_ns": 1800000000000000000,
+          "book_received_ns": 1800000000000000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        },
+        "Lb5d5982b0da240190000000002S": {
+          "client_order_id": "Lb5d5982b0da240190000000002S",
+          "leg": "sell",
+          "purpose": "entry",
+          "instrument_id": "BTC.ASTER",
+          "side": "SELL",
+          "quantity": "0.99",
+          "price": "100.3",
+          "sent_ns": 1800000000000000000,
+          "reduce_only": false,
+          "venue": "ASTER",
+          "book_source_ns": 1800000000000000000,
+          "book_received_ns": 1800000000000000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        },
+        "Lb5d5982b0da240190000000005S": {
+          "client_order_id": "Lb5d5982b0da240190000000005S",
+          "leg": "buy",
+          "purpose": "exit",
+          "instrument_id": "BTC.HL",
+          "side": "SELL",
+          "quantity": "0.99",
+          "price": "99.99",
+          "sent_ns": 1800000001100000000,
+          "reduce_only": true,
+          "venue": "HL",
+          "book_source_ns": 1800000001100000000,
+          "book_received_ns": 1800000001100000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        },
+        "Lb5d5982b0da240190000000006S": {
+          "client_order_id": "Lb5d5982b0da240190000000006S",
+          "leg": "sell",
+          "purpose": "exit",
+          "instrument_id": "BTC.ASTER",
+          "side": "BUY",
+          "quantity": "0.99",
+          "price": "100.19",
+          "sent_ns": 1800000001100000000,
+          "reduce_only": true,
+          "venue": "ASTER",
+          "book_source_ns": 1800000001100000000,
+          "book_received_ns": 1800000001100000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        }
+      },
+      "timeline": [
+        {
+          "event": "orders_prepared",
+          "observed_ns": 1800000000000000000
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000000100000000,
+          "client_order_id": "Lb5d5982b0da240190000000001S",
+          "native_price": "100",
+          "native_quantity": "0.99",
+          "notional_usd": "99",
+          "fee_usd": "0.01",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000000100000001,
+          "client_order_id": "Lb5d5982b0da240190000000001S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000000100000000,
+          "client_order_id": "Lb5d5982b0da240190000000002S",
+          "native_price": "100.3",
+          "native_quantity": "0.99",
+          "notional_usd": "99.297",
+          "fee_usd": "0.01",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000000100000001,
+          "client_order_id": "Lb5d5982b0da240190000000002S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "orders_prepared",
+          "observed_ns": 1800000001100000000
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000001200000000,
+          "client_order_id": "Lb5d5982b0da240190000000005S",
+          "native_price": "99.99",
+          "native_quantity": "0.99",
+          "notional_usd": "98.9901",
+          "fee_usd": "1",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000001200000001,
+          "client_order_id": "Lb5d5982b0da240190000000005S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000001200000000,
+          "client_order_id": "Lb5d5982b0da240190000000006S",
+          "native_price": "100.19",
+          "native_quantity": "0.99",
+          "notional_usd": "99.1881",
+          "fee_usd": "1",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000001200000001,
+          "client_order_id": "Lb5d5982b0da240190000000006S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "closed",
+          "observed_ns": 1800000001200000002,
+          "reason": "operator_stop",
+          "fee_confirmed": true
+        }
+      ],
+      "entry_economics": {
+        "entry_gross": "0.297",
+        "entry_gross_bps": "30",
+        "buy_taker_fee": "0",
+        "sell_taker_fee": "0",
+        "reserve": "0",
+        "entry_after_fees_and_reserve": "0.297",
+        "entry_after_fees_and_reserve_bps": "30"
+      },
+      "status": "closed",
+      "net_usd": "-1.921",
+      "provisional_net_usd": "-1.921",
+      "unresolved_reconciliation": [],
+      "accounting": {
+        "long_leg_gross_usd": "-0.0099",
+        "short_leg_gross_usd": "0.1089",
+        "opening_spread_cashflow_usd": "0.297",
+        "closing_spread_cashflow_usd": "-0.1980",
+        "gross_usd": "0.0990",
+        "confirmed_fees_usd": "2.02",
+        "accounted_net_usd": "-1.9210",
+        "fee_confirmed": true
+      },
+      "observed_findings": [
+        "已确认手续费使毛盈利变为净亏损",
+        "操作员停止后退出",
+        "退出记录：操作员停止后退出"
+      ],
+      "missing_evidence": [],
+      "causal_inference": "未推断网络延迟、抢单或行情变化为根因；需要额外证据"
+    },
+    {
+      "session_id": "synthetic-price-loss",
+      "position_id": 1,
+      "pair": [
+        "BTC",
+        "ASTER",
+        "HL"
+      ],
+      "orders": {
+        "Ldad7890131f54ed40000000001S": {
+          "client_order_id": "Ldad7890131f54ed40000000001S",
+          "leg": "buy",
+          "purpose": "entry",
+          "instrument_id": "BTC.HL",
+          "side": "BUY",
+          "quantity": "0.99",
+          "price": "100",
+          "sent_ns": 1800000000000000000,
+          "reduce_only": false,
+          "venue": "HL",
+          "book_source_ns": 1800000000000000000,
+          "book_received_ns": 1800000000000000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        },
+        "Ldad7890131f54ed40000000002S": {
+          "client_order_id": "Ldad7890131f54ed40000000002S",
+          "leg": "sell",
+          "purpose": "entry",
+          "instrument_id": "BTC.ASTER",
+          "side": "SELL",
+          "quantity": "0.99",
+          "price": "100.3",
+          "sent_ns": 1800000000000000000,
+          "reduce_only": false,
+          "venue": "ASTER",
+          "book_source_ns": 1800000000000000000,
+          "book_received_ns": 1800000000000000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        },
+        "Ldad7890131f54ed40000000005S": {
+          "client_order_id": "Ldad7890131f54ed40000000005S",
+          "leg": "buy",
+          "purpose": "exit",
+          "instrument_id": "BTC.HL",
+          "side": "SELL",
+          "quantity": "0.99",
+          "price": "99.99",
+          "sent_ns": 1800000001100000000,
+          "reduce_only": true,
+          "venue": "HL",
+          "book_source_ns": 1800000001100000000,
+          "book_received_ns": 1800000001100000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        },
+        "Ldad7890131f54ed40000000006S": {
+          "client_order_id": "Ldad7890131f54ed40000000006S",
+          "leg": "sell",
+          "purpose": "exit",
+          "instrument_id": "BTC.ASTER",
+          "side": "BUY",
+          "quantity": "0.99",
+          "price": "100.39",
+          "sent_ns": 1800000001100000000,
+          "reduce_only": true,
+          "venue": "ASTER",
+          "book_source_ns": 1800000001100000000,
+          "book_received_ns": 1800000001100000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "terminal",
+            "native_status": "",
+            "reason_code": "",
+            "reason_source": "",
+            "filled_quantity": "0.99",
+            "latency_ms": "100.000001"
+          }
+        }
+      },
+      "timeline": [
+        {
+          "event": "orders_prepared",
+          "observed_ns": 1800000000000000000
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000000100000000,
+          "client_order_id": "Ldad7890131f54ed40000000001S",
+          "native_price": "100",
+          "native_quantity": "0.99",
+          "notional_usd": "99",
+          "fee_usd": "0",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000000100000001,
+          "client_order_id": "Ldad7890131f54ed40000000001S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000000100000000,
+          "client_order_id": "Ldad7890131f54ed40000000002S",
+          "native_price": "100.3",
+          "native_quantity": "0.99",
+          "notional_usd": "99.297",
+          "fee_usd": "0",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000000100000001,
+          "client_order_id": "Ldad7890131f54ed40000000002S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "orders_prepared",
+          "observed_ns": 1800000001100000000
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000001200000000,
+          "client_order_id": "Ldad7890131f54ed40000000005S",
+          "native_price": "99.99",
+          "native_quantity": "0.99",
+          "notional_usd": "98.9901",
+          "fee_usd": "0",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000001200000001,
+          "client_order_id": "Ldad7890131f54ed40000000005S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "fill",
+          "observed_ns": 1800000001200000000,
+          "client_order_id": "Ldad7890131f54ed40000000006S",
+          "native_price": "100.39",
+          "native_quantity": "0.99",
+          "notional_usd": "99.3861",
+          "fee_usd": "0",
+          "fee_confirmed": true,
+          "latency_ms": "100"
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000001200000001,
+          "client_order_id": "Ldad7890131f54ed40000000006S",
+          "reason_code": "",
+          "reason_source": "",
+          "native_status": "",
+          "outcome": "terminal",
+          "latency_ms": "100.000001"
+        },
+        {
+          "event": "closed",
+          "observed_ns": 1800000001200000002,
+          "reason": "operator_stop",
+          "fee_confirmed": true
+        }
+      ],
+      "entry_economics": {
+        "entry_gross": "0.297",
+        "entry_gross_bps": "30",
+        "buy_taker_fee": "0",
+        "sell_taker_fee": "0",
+        "reserve": "0",
+        "entry_after_fees_and_reserve": "0.297",
+        "entry_after_fees_and_reserve_bps": "30"
+      },
+      "status": "closed",
+      "net_usd": "-0.099",
+      "provisional_net_usd": "-0.099",
+      "unresolved_reconciliation": [],
+      "accounting": {
+        "long_leg_gross_usd": "-0.0099",
+        "short_leg_gross_usd": "-0.0891",
+        "opening_spread_cashflow_usd": "0.297",
+        "closing_spread_cashflow_usd": "-0.3960",
+        "gross_usd": "-0.0990",
+        "confirmed_fees_usd": "0",
+        "accounted_net_usd": "-0.0990",
+        "fee_confirmed": true
+      },
+      "observed_findings": [
+        "成交价形成的毛盈亏为负",
+        "操作员停止后退出",
+        "退出记录：操作员停止后退出"
+      ],
+      "missing_evidence": [],
+      "causal_inference": "未推断网络延迟、抢单或行情变化为根因；需要额外证据"
+    },
+    {
+      "session_id": "synthetic-rejection",
+      "position_id": 1,
+      "pair": [
+        "BTC",
+        "ASTER",
+        "HL"
+      ],
+      "orders": {
+        "L58eb170e81514b710000000001S": {
+          "client_order_id": "L58eb170e81514b710000000001S",
+          "leg": "buy",
+          "purpose": "entry",
+          "instrument_id": "BTC.HL",
+          "side": "BUY",
+          "quantity": "0.99",
+          "price": "100",
+          "sent_ns": 1800000000000000000,
+          "reduce_only": false,
+          "venue": "HL",
+          "book_source_ns": 1800000000000000000,
+          "book_received_ns": 1800000000000000000,
+          "result": {
+            "event": "order_terminal",
+            "outcome": "rejected",
+            "native_status": "rejected",
+            "reason_code": "insufficient_balance",
+            "reason_source": "native_event",
+            "filled_quantity": "0",
+            "latency_ms": "0.000001"
+          }
+        },
+        "L58eb170e81514b710000000002S": {
+          "client_order_id": "L58eb170e81514b710000000002S",
+          "leg": "sell",
+          "purpose": "entry",
+          "instrument_id": "BTC.ASTER",
+          "side": "SELL",
+          "quantity": "0.99",
+          "price": "100.3",
+          "sent_ns": 1800000000000000000,
+          "reduce_only": false,
+          "venue": "ASTER",
+          "book_source_ns": 1800000000000000000,
+          "book_received_ns": 1800000000000000000
+        }
+      },
+      "timeline": [
+        {
+          "event": "orders_prepared",
+          "observed_ns": 1800000000000000000
+        },
+        {
+          "event": "order_terminal",
+          "observed_ns": 1800000000000000001,
+          "client_order_id": "L58eb170e81514b710000000001S",
+          "reason_code": "insufficient_balance",
+          "reason_source": "native_event",
+          "native_status": "rejected",
+          "outcome": "rejected",
+          "latency_ms": "0.000001"
+        }
+      ],
+      "entry_economics": {
+        "entry_gross": "0.297",
+        "entry_gross_bps": "30",
+        "buy_taker_fee": "0",
+        "sell_taker_fee": "0",
+        "reserve": "0",
+        "entry_after_fees_and_reserve": "0.297",
+        "entry_after_fees_and_reserve_bps": "30"
+      },
+      "status": "not_closed",
+      "net_usd": null,
+      "provisional_net_usd": null,
+      "unresolved_reconciliation": [],
+      "accounting": null,
+      "observed_findings": [
+        "拒单信息被分类为余额或保证金不足"
+      ],
+      "missing_evidence": [
+        "尚无平仓记录，不能判定最终盈亏"
+      ],
+      "causal_inference": "未推断网络延迟、抢单或行情变化为根因；需要额外证据"
+    }
+  ],
+  "limitations": [
+    "净盈亏不包含资金费与借贷成本",
+    "拒单分类来自原生事件文字匹配，不是交易所根因保证；不保存原始响应",
+    "订单延时包含本地准备与处理时间，不等于网络往返时间",
+    "预期入场经济数据基于保守限价，不是成交时盘口或滑点测量",
+    "只解释已记录的交易；下单前被过滤的候选不在报告范围内"
+  ],
+  "example_notice": "SYNTHETIC TEST DATA; NOT LIVE TRADES"
+}

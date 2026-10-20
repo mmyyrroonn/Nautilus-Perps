@@ -214,7 +214,8 @@ class LiveTradeState(ScanState):
         # Account, order, ownership and lifecycle transitions can reopen admission
         # for an unchanged pair, including a pair on another symbol.
         self.full_evaluation_symbols.update(self.trade_symbols)
-        event = deepcopy({"event": kind, "mode": "live", "observed_ns": now_ns, **fields})
+        event = deepcopy({"event": kind, "mode": "live", "session_id": self.session_id,
+                          "observed_ns": now_ns, **fields})
         self.event_counts[kind] += 1
         try:
             if self.store:
@@ -792,9 +793,23 @@ class LiveTradeState(ScanState):
         return intent
 
     def _publish_orders(self, intents, now_ns, position):
+        # Reuse the durable intent transaction; no new writes or market subscriptions.
+        diagnostics = []
+        for intent in intents:
+            order = self.orders[intent.client_order_id]
+            book = self.books.get(intent.instrument_id)
+            diagnostics.append({name: order[name] for name in (
+                "client_order_id", "leg", "purpose", "instrument_id", "side", "quantity", "price",
+                "sent_ns", "reduce_only")})
+            diagnostics[-1].update(venue=intent.venue,
+                book_source_ns=book.ts_event_ns if book else None,
+                book_received_ns=book.ts_received_ns if book else None)
         with span("strategy.persist_intents"):
             self.emit("orders_prepared", now_ns, position_id=position["position_id"],
-                      client_order_ids=[i.client_order_id for i in intents])
+                      client_order_ids=[i.client_order_id for i in intents], orders=diagnostics,
+                      pair=position["pair"],
+                      entry_economics=position["entry"].get("economics")
+                      if any(self.orders[i.client_order_id]["purpose"] == "entry" for i in intents) else None)
         self.outbox.extend(intents)
         if intents and self.intent_notifier is not None:
             self.intent_notifier()
@@ -1005,6 +1020,7 @@ class LiveTradeState(ScanState):
             self._exit_stage(position, "inventory_flat", now_ns)
         self.emit("fill", now_ns, execution_id=identity, position_id=position["position_id"],
                   client_order_id=cid, native_quantity=_number(quantity), native_price=_number(price),
+                  notional_usd=_number(cash),
                   fee_usd=_number(fee) if known_fee else None, fee_confirmed=known_fee,
                   estimated_fee_usd=_number(estimated_fee) if estimated_fee is not None else None,
                   latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
@@ -1071,10 +1087,14 @@ class LiveTradeState(ScanState):
             if receipt.kind == "terminal_evidence":
                 return  # Evidence alone does not invent an order lifecycle event.
             order["terminal_ns"], order["status"] = now_ns, receipt.kind
+            diagnostic = {name: getattr(receipt, name, "")
+                          for name in ("reason_code", "reason_source", "native_status")}
+            order["terminal_diagnostic"] = diagnostic
             record_entry_stage(order["request_id"], "strategy_rejected" if receipt.kind in {"rejected", "denied"}
                                else "strategy_terminal", wall_ns=now_ns)
             self.fences[order["instrument_id"]] = now_ns
             self.emit("order_terminal", now_ns, client_order_id=receipt.client_order_id,
+                      position_id=order["position_id"], **diagnostic,
                       outcome=receipt.kind, filled_quantity=order["filled_quantity"],
                       latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
             entry_pair_result(self, order)
@@ -1082,7 +1102,9 @@ class LiveTradeState(ScanState):
         elif receipt.kind == "unknown":
             if order["terminal_ns"] is None and order["status"] != "unknown":
                 order["status"] = "unknown"
-                self.emit("order_unknown", now_ns, client_order_id=receipt.client_order_id)
+                self.emit("order_unknown", now_ns, client_order_id=receipt.client_order_id,
+                          position_id=order["position_id"], reason_code=getattr(receipt, "reason_code", ""),
+                          reason_source=getattr(receipt, "reason_source", ""))
 
     def _pnl(self, position):
         actual = position["actual_entry"]
@@ -1323,6 +1345,7 @@ class LiveTradeState(ScanState):
             self.emit("closed", now_ns, position_id=position["position_id"], pair=list(key),
                       net_usd=economics["net_usd"], fee_confirmed=economics["fee_confirmed"],
                       provisional_net_usd=economics["provisional_net_usd"],
+                      economics=economics,
                       reason=position["exit_reason"] or "entry_unfilled")
             return
         if position["status"] == "entering" and entry_done:

@@ -170,6 +170,10 @@ class ExecutionReceipt:
     retry_after_secs: int = 0
     final_filled_quantity: Decimal | None = None
     final_fill_source: str = ""
+    # Fixed diagnostic labels only; never carry raw venue messages or credentials.
+    reason_code: str = ""
+    reason_source: str = ""
+    native_status: str = ""
 
 
 class BtcPreflight:
