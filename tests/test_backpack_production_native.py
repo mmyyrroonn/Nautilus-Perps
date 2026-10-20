@@ -69,6 +69,9 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
             self.recovery_seen = 0
             self.last_financial_recovery_count = 0
             self.waiting_reason = None
+            self.retry_guarded_not_sent = False
+            self.guarded_not_sent_retries = []
+            self.posts_before_current = self.deletes_before_current = 0
 
         def on_start(self):
             self.started = True
@@ -143,6 +146,7 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
                 post_only=side != "close", reduce_only=side == "close")
             self.current = order
             self.order_ids.append(str(order.client_order_id))
+            self.posts_before_current, self.deletes_before_current = len(peer.posts), len(peer.deletes)
             self.submit_order(order)
 
         def event(self, kind, event):
@@ -170,6 +174,27 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
 
         def on_order_denied(self, event):
             self.event("denied", event)
+            # The cancel-202 scenario tests an already-sent order's uncertainty.
+            # A racing freshness fence can instead refuse a new order before any
+            # HTTP bytes. Only that authoritative NotSent outcome may start a
+            # new admission attempt; never retry an accepted or unknown order.
+            if (self.retry_guarded_not_sent and str(event.reason) == "GuardedLocalRefusal"
+                    and self.current is not None
+                    and event.client_order_id == self.current.client_order_id):
+                row = self.cache.order(event.client_order_id)
+                assert str(row.status) == "DENIED" and row.filled_qty.as_decimal() == 0
+                assert not self.accepted and not self.cancel_sent
+                assert (len(peer.posts), len(peer.deletes)) == (
+                    self.posts_before_current, self.deletes_before_current)
+                cid = str(event.client_order_id)
+                assert not any(item["client_order_id"] == cid and item["kind"] in {
+                    "accepted", "filled", "canceled"} for item in self.events)
+                attempts = sum(item["step"] == self.index for item in self.guarded_not_sent_retries)
+                assert attempts < 3, "bounded NotSent retries exhausted"
+                self.guarded_not_sent_retries.append({"step": self.index, "client_order_id": cid,
+                    "posts": len(peer.posts), "deletes": len(peer.deletes)})
+                self.current = None
+                return
             self.failure = "denied"
 
         def on_order_rejected(self, event):
@@ -192,8 +217,10 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
     return node, strategy, control, plan, public
 
 
-async def run_node(peer, directory, steps, *, expect_denial=False, recovery=False):
+async def run_node(peer, directory, steps, *, expect_denial=False, recovery=False,
+                   retry_guarded_not_sent=False):
     node, strategy, control, plan, public = build_node(peer, directory, steps)
+    strategy.retry_guarded_not_sent = retry_guarded_not_sent
     cache = node.cache
     task = asyncio.ensure_future(node.run_async())
     handle = node.handle()
@@ -224,6 +251,7 @@ async def run_node(peer, directory, steps, *, expect_denial=False, recovery=Fals
         result = {"events": strategy.events, "order_ids": strategy.order_ids,
             "receipts": strategy.receipts, "terminals": strategy.terminals,
             "cancel202_pending": strategy.cancel202_pending,
+            "guarded_not_sent_retries": strategy.guarded_not_sent_retries,
             "orders": [{"client_order_id": str(order.client_order_id), "status": str(order.status),
                 "filled": str(order.filled_qty), "trades": [str(trade) for trade in order.trade_ids],
                 "commissions": [str(fee) for fee in order.commissions().values()]} for order in orders],
@@ -310,14 +338,21 @@ def test_pre_ack_fill_preserves_original_binding_without_resubmit(tmp_path):
     asyncio.run(scenario())
 
 
-def test_cancel202_waits_for_late_fill_and_preserves_exact_economics(tmp_path):
+def test_cancel202_waits_for_late_fill_and_preserves_exact_economics(tmp_path, request):
     native_adapter()
     async def scenario():
         async with ProductionPeer(fault="cancel202") as peer:
-            result = await run_node(peer, tmp_path, [(SYMBOLS[0], "cancel", "99.9"), (SYMBOLS[0], "close", "100.0")])
+            result = await run_node(peer, tmp_path, [(SYMBOLS[0], "cancel", "99.9"), (SYMBOLS[0], "close", "100.0")],
+                retry_guarded_not_sent=True)
             assert_economics(result, 2)
             assert result["cancel202_pending"] and len(peer.deletes) == 1 and len(peer.posts) == 2
             assert not any(row["kind"] == "canceled" for row in result["events"])
+            refused_ids = {row["client_order_id"] for row in result["guarded_not_sent_retries"]}
+            assert len(set(result["order_ids"])) == len(result["order_ids"])
+            assert all(row["kind"] == "denied" for row in result["events"]
+                       if row["client_order_id"] in refused_ids)
+            request.node.user_properties.append(("guarded_not_sent_retries",
+                                                 json.dumps(result["guarded_not_sent_retries"])))
     asyncio.run(scenario())
 
 
