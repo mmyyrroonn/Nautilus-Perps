@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation, localcontext
 from fractions import Fraction as F
+from opportunity_leverage import AsterLeverageSnapshot
 
 
 HARD_MAX_NOTIONAL_USD = Decimal("50")
@@ -86,6 +87,8 @@ class AccountSnapshot:
     # None denotes legacy instrument-only evidence, never complete account coverage.
     account_positions: tuple[tuple[str, Decimal], ...] | None = None
     account_open_orders: tuple[tuple[str, str], ...] | None = None
+    aster_leverage: AsterLeverageSnapshot | None = None
+    aster_leverage_error: str = ""
 
     def __post_init__(self):
         account_only = self.bid is None and self.ask is None
@@ -174,6 +177,7 @@ class ExecutionReceipt:
     reason_code: str = ""
     reason_source: str = ""
     native_status: str = ""
+    exchange_error_code: int | None = None
 
 
 class BtcPreflight:

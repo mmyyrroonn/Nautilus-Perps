@@ -76,12 +76,16 @@ class LiveRunPlan:
     max_unhedged_secs: int = HARD_MAX_UNHEDGED_SECS
     entry_unhedged_reserve_bps: Decimal = Decimal("10")
     loss_monitor: LossMonitorPolicy = LossMonitorPolicy()
+    aster_leverage_targets: tuple[tuple[str, int], ...] = ()
+    aster_leverage_max_age_ms: int = 5000
 
     @property
     def ready(self):
         return self.limits_present and self.max_pairs > 0 and self.max_gross_notional_usd > 0
 
     def fingerprint(self, account_binding=None):
+        # Leverage targets are revalidated observations, not order identity.
+        # Changing them must not prevent original-ID recovery of an old ledger.
         document = {"schema_version": 1, "mode": "live", "environment": self.environment,
             "policy": self.policy.document(), "markets": self.scan.document()["markets"],
             "settings": self.scan.document()["settings"], "venues": self.venues,
@@ -121,6 +125,12 @@ class LiveRunPlan:
                 "max_unhedged_secs": self.max_unhedged_secs,
                 "entry_unhedged_reserve_bps": self.entry_unhedged_reserve_bps},
             "loss_monitor": self.loss_monitor.document(),
+            "aster_leverage": {"targets": dict(self.aster_leverage_targets),
+                "max_age_ms": self.aster_leverage_max_age_ms,
+                "default_target_source": "initial_verified_account",
+                "automatic_targets": [m.instrument_id for m in self.scan.markets
+                    if m.venue == "ASTER" and m.symbol in self.trade_symbols
+                    and m.instrument_id not in dict(self.aster_leverage_targets)]},
             "startup": {"self_test_enabled": self.startup_self_test,
                 "balance_check_enabled": self.startup_balance_check,
                 "mandatory": self.startup_self_test, "symbol": "BTC",
@@ -143,7 +153,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     with path.open("rb") as handle:
         document = tomllib.load(handle, parse_float=Decimal)
     allowed_keys(document, {"schema_version", "mode", "environment", "scan_config", "state_path",
-        "limits_path", "venues", "trade", "risk", "startup", "runtime", "loss_monitor"}, "live root")
+        "limits_path", "venues", "trade", "risk", "startup", "runtime", "loss_monitor", "aster_leverage"}, "live root")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise ScanConfigError("live schema_version must be 1")
     if document.get("mode") != "live" or document.get("environment") != "mainnet":
@@ -169,6 +179,14 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     monitor = document.get("loss_monitor", {})
     allowed_keys(monitor, set(LossMonitorPolicy.__dataclass_fields__), "loss_monitor")
     loss_monitor = LossMonitorPolicy(**monitor)
+    leverage = document.get("aster_leverage", {})
+    allowed_keys(leverage, {"targets", "max_age_ms"}, "aster_leverage")
+    leverage_targets = leverage.get("targets", {})
+    if not isinstance(leverage_targets, dict):
+        raise ScanConfigError("aster_leverage.targets must be an instrument table")
+    leverage_targets = tuple(sorted((instrument, integer_value(target, "Aster target leverage", 1, 125))
+                                    for instrument, target in leverage_targets.items()))
+    leverage_age = integer_value(leverage.get("max_age_ms", 5000), "aster_leverage.max_age_ms", 1, 15000)
     risk = document.get("risk", {})
     unhedged_keys = {"max_unhedged_notional_usd", "max_unhedged_secs", "entry_unhedged_reserve_bps"}
     allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"} | unhedged_keys, "live risk")
@@ -233,6 +251,9 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     pairs, gross = min(pairs, pairs_cap, HARD_MAX_PAIRS), min(gross, gross_cap, HARD_GROSS_NOTIONAL_USD)
     startup_cap = min(startup_cap, startup_limit, HARD_STARTUP_NOTIONAL_USD)
     scan = load_plan(paths["scan_config"])
+    aster_ids = {m.instrument_id for m in scan.markets if m.venue == "ASTER"}
+    if any(instrument not in aster_ids for instrument, _ in leverage_targets):
+        raise ScanConfigError("Aster leverage targets must name configured Aster instruments")
     if scan.pair_allowlist is not None:
         raise ScanConfigError("schema_version 2 pair allowlists are observation-only; use a trading market configuration")
     filtered = [m for m in scan.markets if m.venue in venues]
@@ -269,7 +290,10 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         startup_timeout_secs=startup_timeout, limits_present=limits_present,
         startup_self_test=self_test, startup_balance_check=balance_check,
         max_unhedged_notional_usd=unhedged, max_unhedged_secs=unhedged_secs,
-        entry_unhedged_reserve_bps=reserve, loss_monitor=loss_monitor)
+        entry_unhedged_reserve_bps=reserve, loss_monitor=loss_monitor,
+        aster_leverage_targets=tuple((i, target) for i, target in leverage_targets
+                                    if i in {m.instrument_id for m in scan.markets}),
+        aster_leverage_max_age_ms=leverage_age)
 
 
 class NativeBuildError(RuntimeError):
@@ -454,6 +478,10 @@ class LiveCoordinator:
 
     def attach(self, gateway, preflight=None):
         self.gateway, self.preflight = gateway, preflight
+        if self.proxy.restart_pending:
+            # Flat-account startup must not erase a durable configuration fence.
+            self.live.leverage_rejections.update(
+                ((self.proxy.saved or {}).get("live") or {}).get("leverage_rejections", {}))
         self.account_markets = tuple(min((m for m in self.plan.scan.markets if m.venue == venue),
             key=lambda m: (m.symbol != "BTC", m.symbol not in self.plan.trade_symbols, m.instrument_id)) for venue in self.plan.venues)
         if self.startup_self_test and preflight is None:
@@ -964,6 +992,8 @@ def run_live(plan, *, self_test_only=False):
                 max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
                 max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
                 entry_unhedged_reserve_bps=plan.entry_unhedged_reserve_bps,
+                aster_leverage_targets=plan.aster_leverage_targets,
+                aster_leverage_max_age_ms=plan.aster_leverage_max_age_ms,
                 account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
                 retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
             coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,

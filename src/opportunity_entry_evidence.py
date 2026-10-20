@@ -54,6 +54,11 @@ def entry_dispatch_evidence(live, position, now_ns):
                      if live.orders[cid]["leg"] == leg)
         book, meta = live.books.get(instrument), live.metadata.get(instrument)
         row = evidence[leg] = {"limit_price": order["price"], "quantity": order["quantity"]}
+        reason, leverage = live.leverage_problem(instrument, order["price"], order["quantity"], now_ns)
+        if leverage:
+            row["leverage"] = leverage
+        if reason:
+            return reason, evidence
         if book is None:
             return "missing_book", evidence
         row.update(source_wall_ns=book.ts_event_ns, received_wall_ns=book.ts_received_ns,

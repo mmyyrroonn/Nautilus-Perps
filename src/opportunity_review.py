@@ -17,6 +17,7 @@ REASONS = {
     "post_only": "拒单信息被分类为 Post-only 限制",
     "invalid_order": "拒单信息被分类为订单参数或精度限制",
     "venue_other": "收到拒单，但未识别出具体原因",
+    "leverage_configuration": "交易所拒绝杠杆配置；重新核对后方可恢复",
     "local_validation": "本地校验拒绝订单",
     "market_not_configured": "市场与交易所配置不匹配",
     "unsupported_venue": "不支持此交易所",
@@ -55,7 +56,7 @@ EVENTS = {
     "entry_dispatch_blocked", "entry_imbalance", "entry_rebalance_requested", "entry_rebalanced",
     "exit_requested", "unhedged_limit_breached", "order_reconciliation_required",
     "order_reconciliation_recovered", "order_final_quantity_mismatch", "conflicting_fill",
-    "previous_session_archived",
+    "previous_session_archived", "leverage_configuration_rejected",
 }
 
 
@@ -128,15 +129,18 @@ def review_events(events, *, session_id=None, position_id=None, legacy_sessions=
                 order = trade["orders"].setdefault(cid, {"client_order_id": cid})
                 if kind in {"order_terminal", "order_unknown"}:
                     order["result"] = {name: event.get(name) for name in (
-                        "event", "outcome", "native_status", "reason_code", "reason_source",
+                        "event", "outcome", "native_status", "reason_code", "reason_source", "exchange_error_code",
                         "filled_quantity", "latency_ms")}
+                if kind == "leverage_configuration_rejected":
+                    order.setdefault("result", {}).update({name: event.get(name) for name in (
+                        "native_status", "reason_code", "reason_source", "exchange_error_code")})
                 if kind in {"order_reconciliation_required", "order_final_quantity_mismatch", "conflicting_fill"}:
                     trade["unresolved_reconciliation"].add(cid)
             if kind == "order_reconciliation_recovered":
                 trade["unresolved_reconciliation"].difference_update(cids)
             trade["timeline"].append({name: event[name] for name in (
                 "event", "observed_ns", "client_order_id", "reason", "reason_code", "reason_source",
-                "native_status", "outcome", "native_price", "native_quantity", "notional_usd",
+                "native_status", "exchange_error_code", "outcome", "native_price", "native_quantity", "notional_usd",
                 "fee_usd", "fee_confirmed", "latency_ms") if name in event})
             if kind == "closed":
                 trade["closed"] = event

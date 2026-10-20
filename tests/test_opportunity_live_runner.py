@@ -439,6 +439,7 @@ class FakeLive(ScanState):
         self.instruments = []
         self.account_scopes = {}
         self.flat_account_problems = {}
+        self.leverage_rejections = {}
         self.halt_reason = None
     def set_entry_pause(self, reason, now):
         self.entry_pause_reason = reason

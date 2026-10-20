@@ -9,6 +9,7 @@ from __future__ import annotations
 from opportunity_timing import (begin_entry_trace, record_entry_stage, record_latency,
                                 span, start_latency, timed)
 from opportunity_entry_evidence import entry_pair_result
+from opportunity_leverage import leverage_check, leverage_integer
 
 from collections import Counter
 from copy import deepcopy
@@ -55,7 +56,8 @@ class LiveTradeState(ScanState):
                  order_timeout_secs=10, retry_interval_ms=1000, trade_symbols=None,
                  max_unhedged_notional_usd=HARD_MAX_UNHEDGED_NOTIONAL_USD,
                  max_unhedged_secs=HARD_MAX_UNHEDGED_SECS,
-                 entry_unhedged_reserve_bps=MIN_ENTRY_UNHEDGED_RESERVE_BPS):
+                 entry_unhedged_reserve_bps=MIN_ENTRY_UNHEDGED_RESERVE_BPS,
+                 aster_leverage_targets=(), aster_leverage_max_age_ms=5000):
         if type(max_pairs) is not int or not 1 <= max_pairs <= HARD_MAX_PAIRS:
             raise ValueError("max_pairs is outside the live hard cap")
         gross = _positive(max_gross_notional_usd, "max_gross_notional_usd")
@@ -84,6 +86,21 @@ class LiveTradeState(ScanState):
         self.max_unhedged_ns = max_unhedged_secs * 1_000_000_000
         self.retry_ns = retry_interval_ms * 1_000_000
         self.trade_symbols = frozenset(trade_symbols if trade_symbols is not None else self.groups)
+        self.aster_leverage_targets = dict(aster_leverage_targets)
+        for instrument, target in self.aster_leverage_targets.items():
+            if instrument not in self.markets or self.markets[instrument].venue != "ASTER":
+                raise ValueError("Aster leverage target requires a configured Aster instrument")
+            if type(target) is not int or leverage_integer(target) != target:
+                raise ValueError("Aster leverage target must be an integer")
+        if type(aster_leverage_max_age_ms) is not int or not 1 <= aster_leverage_max_age_ms <= 15000:
+            raise ValueError("Aster leverage age must be between 1 and 15000 ms")
+        self.aster_leverage_max_age_ns = aster_leverage_max_age_ms * 1_000_000
+        self.aster_leverage = None  # Never restore freshness from a ledger.
+        self.aster_leverage_error = ""
+        self.aster_leverage_initializations = {}
+        self.aster_leverage_pending = {i for i, m in self.markets.items()
+                                      if m.venue == "ASTER" and i not in self.aster_leverage_targets}
+        self.leverage_rejections, self.leverage_blocks = {}, {}
         if not self.trade_symbols <= self.groups.keys():
             raise ValueError("unconfigured live symbol")
         # Use only pricing methods; never call the paper lifecycle or its fills.
@@ -152,6 +169,12 @@ class LiveTradeState(ScanState):
         self.event_counts.update(saved["event_counts"])
         self.orders, self.executions = deepcopy(saved["orders"]), deepcopy(saved["executions"])
         self.order_reconciliations = deepcopy(saved.get("order_reconciliations", {}))
+        self.leverage_rejections = deepcopy(saved.get("leverage_rejections", {}))
+        for instrument, evidence in saved.get("aster_leverage_initializations", {}).items():
+            if instrument in self.aster_leverage_pending:
+                self.aster_leverage_targets[instrument] = leverage_integer(evidence["target"])
+                self.aster_leverage_initializations[instrument] = deepcopy(evidence)
+                self.aster_leverage_pending.discard(instrument)
         if saved.get("halt_reason") == "late fill after order terminal requires reconciliation":
             for cid, order in self.orders.items():
                 if order["terminal_ns"] is not None and F(order["filled_quantity"]):
@@ -211,6 +234,8 @@ class LiveTradeState(ScanState):
             "last_closed": [{"pair": list(k), "closed_ns": v} for k, v in self.last_closed.items()],
             "phase": self.phase, "halt_reason": self.halt_reason,
             "order_reconciliations": self.order_reconciliations,
+            "leverage_rejections": self.leverage_rejections,
+            "aster_leverage_initializations": self.aster_leverage_initializations,
             "account_pauses": self.account_pauses, "entry_pause_reason": self.entry_pause_reason})
 
     def emit(self, kind, now_ns, **fields):
@@ -407,6 +432,59 @@ class LiveTradeState(ScanState):
     def _pending(self, instrument_id):
         return [o for o in self.orders.values() if o["instrument_id"] == instrument_id
                 and o["terminal_ns"] is None]
+
+    def _initialize_leverage_targets(self, now_ns, instrument_id=None):
+        """Resolve only missing targets, once, from verified account settings."""
+        snapshot = self.aster_leverage
+        if snapshot is None:
+            return
+        pending = (instrument_id,) if instrument_id is not None else tuple(self.aster_leverage_pending)
+        for instrument in pending:
+            if instrument in self.aster_leverage_targets or instrument not in self.instruments:
+                continue
+            row = snapshot.symbol(instrument)
+            if row is None:
+                continue
+            reason, evidence = leverage_check(snapshot, instrument, row.actual, row.mark_price,
+                Decimal(0), self.instruments[instrument]["native_multiplier"], now_ns,
+                self.aster_leverage_max_age_ns, self.leverage_rejections.get(instrument, 0))
+            if reason is None:
+                self.aster_leverage_targets[instrument] = row.actual
+                self.aster_leverage_initializations[instrument] = {**evidence, "source": "initial_account"}
+                self.aster_leverage_pending.discard(instrument)
+
+    def leverage_problem(self, instrument_id, price, quantity, now_ns):
+        if self.markets[instrument_id].venue != "ASTER":
+            return None, {}
+        target = self.aster_leverage_targets.get(instrument_id)
+        if target is None:
+            # Startup normally resolves every configured instrument in one
+            # account callback. Late instrument registration uses the same proof.
+            self._initialize_leverage_targets(now_ns, instrument_id)
+            target = self.aster_leverage_targets.get(instrument_id)
+        row = self.aster_leverage.symbol(instrument_id) if target is None and self.aster_leverage else None
+        reason, evidence = leverage_check(self.aster_leverage, instrument_id,
+            target if target is not None else row.actual if row else None, price, quantity,
+            self.instruments[instrument_id]["native_multiplier"], now_ns,
+            self.aster_leverage_max_age_ns, self.leverage_rejections.get(instrument_id, 0))
+        evidence["target_source"] = ("initial_account" if instrument_id in self.aster_leverage_initializations
+                                     else "configured" if target is not None else "pending_initialization")
+        if target is None:
+            evidence["target"] = None
+            reason = reason or "leverage_target_pending"
+        if reason == "leverage_unavailable" and self.aster_leverage_error:
+            reason = self.aster_leverage_error
+        if reason:
+            self._request_account(instrument_id, now_ns)
+            if self.leverage_blocks.get(instrument_id) != reason:
+                self.leverage_blocks[instrument_id] = reason
+                self.emit("leverage_admission_blocked", now_ns, instrument_id=instrument_id,
+                          reason=reason, evidence=evidence)
+        elif instrument_id in self.leverage_blocks or instrument_id in self.leverage_rejections:
+            self.leverage_blocks.pop(instrument_id, None)
+            self.leverage_rejections.pop(instrument_id, None)
+            self.emit("leverage_admission_recovered", now_ns, instrument_id=instrument_id, evidence=evidence)
+        return reason, evidence
 
     def _request_account(self, instrument_id, now_ns):
         scope = self._account_scope(instrument_id)
@@ -721,6 +799,8 @@ class LiveTradeState(ScanState):
         self.account_request_ids.pop(instrument_id, None)
         old = self.accounts.get(instrument_id)
         if account.observed_ns > now_ns or not account.authoritative or not account.connected:
+            if account.venue == "ASTER":
+                self.aster_leverage, self.aster_leverage_error = None, "leverage_unavailable"
             # Untrusted timestamps must not poison the monotonic-success fence.
             # Neither entries nor reductions can reuse the invalidated target's
             # old observation, even if it arrives after this failure.
@@ -737,6 +817,10 @@ class LiveTradeState(ScanState):
                       accepted=False, reason="older_observation")
             return
         self.accounts[instrument_id] = account
+        if account.venue == "ASTER":
+            self.aster_leverage = account.aster_leverage
+            self.aster_leverage_error = account.aster_leverage_error
+            self._initialize_leverage_targets(now_ns)
         if account.observed_ns >= self.fences.get(instrument_id, 0):
             scope = self._account_scope(instrument_id)
             self.account_read_failures.pop(scope, None)
@@ -954,6 +1038,11 @@ class LiveTradeState(ScanState):
                 self._account_domain(self.markets[i].venue) for i in (buy_id, sell_id)}))
         if not all(ready):
             return False
+        leverage = {leg: self.leverage_problem(i, bounds[leg]["price"], bounds[leg]["quantity"], now_ns)
+                    for leg, i in (("buy", buy_id), ("sell", sell_id))}
+        if any(reason for reason, _ in leverage.values()):
+            return False
+        estimate["leverage"] = {leg: evidence for leg, (_, evidence) in leverage.items() if evidence}
         self.sequence += 1
         estimate.pop("paper_fills", None)
         position = {"position_id": self.sequence, "symbol": key[0], "pair": list(key),
@@ -1092,6 +1181,8 @@ class LiveTradeState(ScanState):
         if receipt.kind in {"unknown", "rejected"}:
             for instrument_id, request_id in tuple(self.account_request_ids.items()):
                 if receipt.request_id == request_id:
+                    if self.markets[instrument_id].venue == "ASTER":
+                        self.aster_leverage, self.aster_leverage_error = None, "leverage_read_failed"
                     self.account_requests.pop(instrument_id, None)
                     self.account_request_ids.pop(instrument_id, None)
                     scope = self._account_scope(instrument_id)
@@ -1106,6 +1197,23 @@ class LiveTradeState(ScanState):
         order = self.orders.get(receipt.client_order_id)
         if order is None or receipt.request_id != order["request_id"] or receipt.kind == "fill":
             return
+        if (self.markets[order["instrument_id"]].venue == "ASTER"
+                and receipt.kind in {"configuration_rejected", "rejected", "denied"}
+                and receipt.reason_code == "leverage_configuration"
+                and not order.get("leverage_rejection_recorded")):
+            order["leverage_rejection_recorded"] = True
+            self.leverage_rejections[order["instrument_id"]] = now_ns
+            self.full_evaluation_symbols.update(self.trade_symbols)
+            # A cache terminal can precede the native rejection callback.
+            # Enrich its diagnostic without changing lifecycle/fill evidence.
+            diagnostic = {name: getattr(receipt, name) for name in (
+                "reason_code", "reason_source", "native_status", "exchange_error_code")}
+            order.setdefault("terminal_diagnostic", {}).update(diagnostic)
+            self.emit("leverage_configuration_rejected", now_ns,
+                      instrument_id=order["instrument_id"], client_order_id=receipt.client_order_id,
+                      **diagnostic)
+        if receipt.kind == "configuration_rejected":
+            return  # The original ID still needs terminal/fill reconciliation.
         if receipt.kind == "reconciliation_required":
             self.order_reconciliations[receipt.client_order_id] = {"since_ns": now_ns}
             self.validated_final_orders.discard(receipt.client_order_id)
@@ -1149,6 +1257,7 @@ class LiveTradeState(ScanState):
             order["terminal_ns"], order["status"] = now_ns, receipt.kind
             diagnostic = {name: getattr(receipt, name, "")
                           for name in ("reason_code", "reason_source", "native_status")}
+            diagnostic["exchange_error_code"] = getattr(receipt, "exchange_error_code", None)
             order["terminal_diagnostic"] = diagnostic
             record_entry_stage(order["request_id"], "strategy_rejected" if receipt.kind in {"rejected", "denied"}
                                else "strategy_terminal", wall_ns=now_ns)
@@ -1560,6 +1669,10 @@ class LiveTradeState(ScanState):
                 "entry_pause_reason": self.entry_pause_reason,
                 "native_admission": deepcopy(self.native_admission),
                 "account_pauses": deepcopy(self.account_pauses),
+                "leverage_blocks": dict(self.leverage_blocks),
+                "leverage_rejections": dict(self.leverage_rejections),
+                "aster_leverage_targets": dict(self.aster_leverage_targets),
+                "aster_leverage_initializations": deepcopy(self.aster_leverage_initializations),
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,
                 "max_gross_notional_usd": _number(self.max_gross),
                 "max_unhedged_notional_usd": _number(self.max_unhedged_notional),

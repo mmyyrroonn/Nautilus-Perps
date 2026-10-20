@@ -17,7 +17,7 @@ from opportunity_live import LiveTradeState
 from opportunity_live_runner import LiveCoordinator, SessionStoreProxy
 from opportunity_preflight import AccountSnapshot, BtcPreflight, ExecutionReceipt, PreflightMarket
 from opportunity_trade import TradePolicy
-from test_opportunity_live import MemoryStore
+from test_opportunity_live import MemoryStore, leverage_snapshot
 from test_opportunity_trade import NOW, make_plan
 
 
@@ -60,7 +60,9 @@ class ExchangeTransport:
             elif intent.action == "reconcile":
                 current = tuple(cid for cid, order in self.orders.items() if order.venue == intent.venue)
                 c.on_account(AccountSnapshot(intent.venue, intent.instrument_id, D("99.99"), D("100"),
-                    now_ns, self.position[intent.venue], current), now_ns)
+                    now_ns, self.position[intent.venue], current,
+                    aster_leverage=leverage_snapshot(c.live.plan.markets, now_ns)
+                        if intent.venue == "ASTER" else None), now_ns)
             elif intent.action == "modify":
                 self.orders[intent.client_order_id] = intent
                 receipt("updated")
@@ -90,7 +92,8 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip(startup_
     scan = make_plan(venues=VENUES)
     store = MemoryStore()
     proxy = SessionStoreProxy(store)
-    live = LiveTradeState(scan, TradePolicy(), max_pairs=1, max_gross_notional_usd="500", store=proxy)
+    live = LiveTradeState(scan, TradePolicy(), max_pairs=1, max_gross_notional_usd="500", store=proxy,
+        aster_leverage_targets={m.instrument_id: 5 for m in scan.markets if m.venue == "ASTER"})
     markets = []
     for market in scan.markets:
         live.register_instrument(market.instrument_id, D("0.01"), D(1), "USD")

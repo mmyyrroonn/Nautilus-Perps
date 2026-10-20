@@ -1,6 +1,9 @@
 # Operator-run multi-venue trading. Default CLI action validates without connecting.
 # User-selected initial total scale: USD 500, at most two concurrent pairs.
 schema_version = 1
+# Aster targets default to verified account leverage at initialization.
+# Optional per-instrument targets override this default. No venue setting is changed.
+# See docs/aster-leverage-admission.md.
 mode = "live"
 environment = "mainnet"
 scan_config = "opportunity-scan.universe.toml"
