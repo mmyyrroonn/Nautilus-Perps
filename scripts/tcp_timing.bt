@@ -44,7 +44,8 @@ kprobe:tcp_rcv_established
 /@sockets[arg0]/
 {
     $skb = (struct sk_buff *)arg1;
-    $cb = (struct tcp_skb_cb *)$skb->cb;
+    // Keep a kernel address; casting the cb array value does not point at its storage.
+    $cb = (struct tcp_skb_cb *)((uint64)$skb + offsetof(struct sk_buff, cb));
     if ($cb->end_seq != $cb->seq) {
         // Sequence coverage can include FIN; this is TCP input, before reassembly
         printf("tcp_input,%llu,%u,%u,%u\n", nsecs(monotonic), @sockets[arg0],

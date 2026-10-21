@@ -70,7 +70,10 @@ def test_qualified_timings_exclude_unprofitable_checks(monkeypatch):
     for name in ("entry.qualified_pricing", "entry.executable_bounds", "entry.account_checks",
                  "entry.prepare_orders", "strategy.persist_intents"):
         assert measured[name]["count"] == 1
-    assert not any(cid in str(recorder.document()) for cid in live.orders)
+    document = recorder.document()
+    traces = document["entry_execution"]["traces"]
+    assert {trace.pop("client_order_id") for trace in traces} == set(live.orders)
+    assert not any(cid in str(document) for cid in live.orders)
 
 
 def test_sqlite_serialization_and_commit_remain_atomic_and_full(tmp_path):
