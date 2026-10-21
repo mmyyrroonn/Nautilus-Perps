@@ -3,6 +3,11 @@
 Application baseline: `a95805e` (PR #97), isolated worktree
 `E:\persarb\worktrees\issue96-book-diagnostics`.
 
+PR #98 (`033881e`, issue 95 entry freshness/deadlines) landed during validation.
+The PR incorporates that main update, retaining its publication ownership and
+invalidation cleanup alongside this separate diagnostic history. The performance
+comparison below isolates issue 96 against its original `a95805e` baseline.
+
 ## Diagnostic contract
 
 With CLI timing enabled before state construction, each configured market owns
@@ -41,6 +46,10 @@ missing-book callbacks on 2026-10-20.
 
 ## Validation
 
+- After merging PR #98, focused diagnostics/admission/live-runner regressions:
+  **387 passed**; exact pure-Python CI command: **813 passed, 76 skipped**.
+  The invalidation test also verifies that issue 95 publication ownership is
+  removed while issue 96 historical evidence remains diagnostic-only.
 - Focused lifecycle, callback, admission, runtime, coalescing, gateway and timing
   regression: **216 passed**. The 25 new cases include CLEAR alone, fragmented
   snapshots, snapshot replacement without CLEAR, complete empty sides, delayed
@@ -59,6 +68,11 @@ missing-book callbacks on 2026-10-20.
 - The unmodified `a95805e` baseline was rerun through `test_integration.py` with
   candidate identity: Ondo passed; the same Backpack timestamp assertion failed
   (**1 passed, 1 failed**). This change does not modify native timestamp handling.
+- The issue 96 branch was also rerun through the same integration runner:
+  **1 passed, 1 failed**, with Ondo passing and the identical Backpack timestamp
+  assertion failing. This confirms the initial missing-identity failure was a
+  direct-pytest invocation issue, while the timestamp failure is present on both
+  revisions with the installed local candidate.
 - Installed wheel/binary and source binding verified with
   `scripts/verify_native_install.py`: SHA-256
   `c545e32f799d5a9022adf079e192d9b80eadc5baac5720bdb5b7271a555f8d1d`.

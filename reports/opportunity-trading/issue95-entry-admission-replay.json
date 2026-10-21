@@ -1,0 +1,4483 @@
+{
+  "schema_version": 1,
+  "scope": "offline timing projection; historical L2/account/arrival state is not reconstructed",
+  "source_hashes": {
+    "session-analysis.json": "a0e955d2ec9042a5a2dd6e1595137c8bcc01c3b52baa205bb032a8a11bdce594",
+    "session-analysis-evidence.json": "41efd6ddd9ff21d72bd24be373987e9eaeee0780bc2bcfa72d1dc65bc2aefd39"
+  },
+  "missing": [
+    "per-book publication timestamp",
+    "venue arrival book",
+    "network RTT"
+  ],
+  "profiles": {
+    "legacy_timing_projection": {
+      "max_source_age_ms": 2000,
+      "max_receive_age_ms": 2000,
+      "max_skew_ms": 500,
+      "max_publication_wait_ms": 2000,
+      "max_dispatch_delay_ms": 2000
+    },
+    "entry_default": {
+      "max_source_age_ms": 500,
+      "max_receive_age_ms": 250,
+      "max_skew_ms": 250,
+      "max_publication_wait_ms": 150,
+      "max_dispatch_delay_ms": 100
+    },
+    "source_250_only": {
+      "max_source_age_ms": 250,
+      "max_receive_age_ms": 2000,
+      "max_skew_ms": 500,
+      "max_publication_wait_ms": 2000,
+      "max_dispatch_delay_ms": 2000
+    },
+    "source_500_only": {
+      "max_source_age_ms": 500,
+      "max_receive_age_ms": 2000,
+      "max_skew_ms": 500,
+      "max_publication_wait_ms": 2000,
+      "max_dispatch_delay_ms": 2000
+    },
+    "source_600_only": {
+      "max_source_age_ms": 600,
+      "max_receive_age_ms": 2000,
+      "max_skew_ms": 500,
+      "max_publication_wait_ms": 2000,
+      "max_dispatch_delay_ms": 2000
+    },
+    "source_750_only": {
+      "max_source_age_ms": 750,
+      "max_receive_age_ms": 2000,
+      "max_skew_ms": 500,
+      "max_publication_wait_ms": 2000,
+      "max_dispatch_delay_ms": 2000
+    },
+    "skew_100_only": {
+      "max_source_age_ms": 2000,
+      "max_receive_age_ms": 2000,
+      "max_skew_ms": 100,
+      "max_publication_wait_ms": 2000,
+      "max_dispatch_delay_ms": 2000
+    },
+    "skew_250_only": {
+      "max_source_age_ms": 2000,
+      "max_receive_age_ms": 2000,
+      "max_skew_ms": 250,
+      "max_publication_wait_ms": 2000,
+      "max_dispatch_delay_ms": 2000
+    }
+  },
+  "historical": [
+    {
+      "symbol": "TIA",
+      "dispatch_index": 1,
+      "venue": "LIGHTER",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498540867454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 13061342,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 179516181,
+              "receive_age_ns": 67975969,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 572516181,
+              "receive_age_ns": 130502636,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "1.13846381555",
+        "minimum_net_usd": "0.295754151",
+        "net_margin_usd": "0.84270966455"
+      },
+      "candidate_to_submit_ns": 15294515
+    },
+    {
+      "symbol": "TIA",
+      "dispatch_index": 2,
+      "venue": "HL",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498540867454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498540767454839,
+            "dispatch_delay_ns": 14833498,
+            "dispatch_deadline_wall_ns": 1792498542767454839,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "published_wall_ns": null,
+              "source_age_ns": 181288337,
+              "receive_age_ns": 69748125,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "published_wall_ns": null,
+              "source_age_ns": 574288337,
+              "receive_age_ns": 132274792,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 393000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "1.13846381555",
+        "minimum_net_usd": "0.295754151",
+        "net_margin_usd": "0.84270966455"
+      },
+      "candidate_to_submit_ns": 17060062
+    },
+    {
+      "symbol": "CRV",
+      "dispatch_index": 1,
+      "venue": "LIGHTER",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498966956321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 37341561,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 194662781,
+              "receive_age_ns": 83315119,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 525662781,
+              "receive_age_ns": 129124740,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "0.3263641596",
+        "minimum_net_usd": "0.298390644",
+        "net_margin_usd": "0.0279735156"
+      },
+      "candidate_to_submit_ns": 39666832
+    },
+    {
+      "symbol": "CRV",
+      "dispatch_index": 2,
+      "venue": "HL",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498966956321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792498966856321220,
+            "dispatch_delay_ns": 39098515,
+            "dispatch_deadline_wall_ns": 1792498968856321220,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "published_wall_ns": null,
+              "source_age_ns": 196419735,
+              "receive_age_ns": 85072073,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "published_wall_ns": null,
+              "source_age_ns": 527419735,
+              "receive_age_ns": 130881694,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 331000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "0.3263641596",
+        "minimum_net_usd": "0.298390644",
+        "net_margin_usd": "0.0279735156"
+      },
+      "candidate_to_submit_ns": 41198215
+    },
+    {
+      "symbol": "STX",
+      "dispatch_index": 1,
+      "venue": "ASTER",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499971458822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 15551855,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 274374151,
+              "receive_age_ns": 75232187,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 671374151,
+              "receive_age_ns": 247089281,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "0.3702118725",
+        "minimum_net_usd": "0.2978025",
+        "net_margin_usd": "0.0724093725"
+      },
+      "candidate_to_submit_ns": 21619396
+    },
+    {
+      "symbol": "STX",
+      "dispatch_index": 2,
+      "venue": "HL",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499971458822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_receive_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age",
+                "entry_receive_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_receive_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792499971358822296,
+            "dispatch_delay_ns": 18832199,
+            "dispatch_deadline_wall_ns": 1792499973358822296,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "published_wall_ns": null,
+              "source_age_ns": 277654495,
+              "receive_age_ns": 78512531,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "published_wall_ns": null,
+              "source_age_ns": 674654495,
+              "receive_age_ns": 250369625,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 397000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "0.3702118725",
+        "minimum_net_usd": "0.2978025",
+        "net_margin_usd": "0.0724093725"
+      },
+      "candidate_to_submit_ns": 24277748
+    },
+    {
+      "symbol": "JUP",
+      "dispatch_index": 1,
+      "venue": "LIGHTER",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500087066793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 29370892,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 201164214,
+              "receive_age_ns": 87023728,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 533164214,
+              "receive_age_ns": 137121765,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "0.430375909",
+        "minimum_net_usd": "0.29762496",
+        "net_margin_usd": "0.132750949"
+      },
+      "candidate_to_submit_ns": 32139369
+    },
+    {
+      "symbol": "JUP",
+      "dispatch_index": 2,
+      "venue": "HL",
+      "original_result": "valid",
+      "decisions": {
+        "legacy_timing_projection": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "entry_default": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 250,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 150,
+              "max_dispatch_delay_ms": 100
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500087066793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age",
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 250,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_500_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 500,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_source_age"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown",
+                "entry_source_age"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_source_age"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_600_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 600,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "source_750_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 750,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 500,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "passes_measured_gates",
+          "known_failures": [],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_100_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 100,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        },
+        "skew_250_only": {
+          "result": "blocked",
+          "reason": "entry_publication_unknown",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "thresholds": {
+              "max_source_age_ms": 2000,
+              "max_receive_age_ms": 2000,
+              "max_skew_ms": 250,
+              "max_publication_wait_ms": 2000,
+              "max_dispatch_delay_ms": 2000
+            },
+            "candidate_wall_ns": 1792500086966793322,
+            "dispatch_delay_ns": 31282223,
+            "dispatch_deadline_wall_ns": 1792500088966793322,
+            "timing_failures": [
+              "entry_publication_unknown",
+              "entry_book_skew"
+            ],
+            "buy": {
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "published_wall_ns": null,
+              "source_age_ns": 203075545,
+              "receive_age_ns": 88935059,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "sell": {
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "published_wall_ns": null,
+              "source_age_ns": 535075545,
+              "receive_age_ns": 139033096,
+              "publication_wait_ns": null,
+              "published_to_check_ns": null,
+              "temporal_failures": [
+                "entry_publication_unknown"
+              ]
+            },
+            "source_skew_ns": 332000000
+          },
+          "known_timing_result": "blocked",
+          "known_failures": [
+            "entry_book_skew"
+          ],
+          "unmeasured": [
+            "publication_wait"
+          ]
+        }
+      },
+      "original_economics": {
+        "net_usd": "0.430375909",
+        "minimum_net_usd": "0.29762496",
+        "net_margin_usd": "0.132750949"
+      },
+      "candidate_to_submit_ns": 33760832
+    }
+  ],
+  "sensitivity": {
+    "legacy_timing_projection": {
+      "checks_blocked": 0,
+      "pairs_blocked_before_first_send": 0
+    },
+    "entry_default": {
+      "checks_blocked": 8,
+      "pairs_blocked_before_first_send": 4
+    },
+    "source_250_only": {
+      "checks_blocked": 8,
+      "pairs_blocked_before_first_send": 4
+    },
+    "source_500_only": {
+      "checks_blocked": 8,
+      "pairs_blocked_before_first_send": 4
+    },
+    "source_600_only": {
+      "checks_blocked": 2,
+      "pairs_blocked_before_first_send": 1
+    },
+    "source_750_only": {
+      "checks_blocked": 0,
+      "pairs_blocked_before_first_send": 0
+    },
+    "skew_100_only": {
+      "checks_blocked": 8,
+      "pairs_blocked_before_first_send": 4
+    },
+    "skew_250_only": {
+      "checks_blocked": 8,
+      "pairs_blocked_before_first_send": 4
+    }
+  },
+  "synthetic": [
+    {
+      "case": "source:-1ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999500000001,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 499999999,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999500000001,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 499999999,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "source:+0ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999500000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 500000000,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999500000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 500000000,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "source:+1ns",
+      "result": "blocked",
+      "reason": "entry_source_age",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [
+          "entry_source_age"
+        ],
+        "buy": {
+          "source_wall_ns": 1799999999499999999,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 500000001,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": [
+            "entry_source_age"
+          ]
+        },
+        "sell": {
+          "source_wall_ns": 1799999999499999999,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 500000001,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": [
+            "entry_source_age"
+          ]
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "receive:-1ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999750000001,
+          "received_wall_ns": 1799999999750000001,
+          "published_wall_ns": 1799999999750000001,
+          "source_age_ns": 249999999,
+          "receive_age_ns": 249999999,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 249999999,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999750000001,
+          "received_wall_ns": 1799999999750000001,
+          "published_wall_ns": 1799999999750000001,
+          "source_age_ns": 249999999,
+          "receive_age_ns": 249999999,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 249999999,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "receive:+0ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999750000000,
+          "received_wall_ns": 1799999999750000000,
+          "published_wall_ns": 1799999999750000000,
+          "source_age_ns": 250000000,
+          "receive_age_ns": 250000000,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 250000000,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999750000000,
+          "received_wall_ns": 1799999999750000000,
+          "published_wall_ns": 1799999999750000000,
+          "source_age_ns": 250000000,
+          "receive_age_ns": 250000000,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 250000000,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "receive:+1ns",
+      "result": "blocked",
+      "reason": "entry_receive_age",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [
+          "entry_receive_age"
+        ],
+        "buy": {
+          "source_wall_ns": 1799999999749999999,
+          "received_wall_ns": 1799999999749999999,
+          "published_wall_ns": 1799999999749999999,
+          "source_age_ns": 250000001,
+          "receive_age_ns": 250000001,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 250000001,
+          "temporal_failures": [
+            "entry_receive_age"
+          ]
+        },
+        "sell": {
+          "source_wall_ns": 1799999999749999999,
+          "received_wall_ns": 1799999999749999999,
+          "published_wall_ns": 1799999999749999999,
+          "source_age_ns": 250000001,
+          "receive_age_ns": 250000001,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 250000001,
+          "temporal_failures": [
+            "entry_receive_age"
+          ]
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "skew:-1ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999750000001,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 249999999,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 249999999
+      }
+    },
+    {
+      "case": "skew:+0ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999750000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 250000000,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 250000000
+      }
+    },
+    {
+      "case": "skew:+1ns",
+      "result": "blocked",
+      "reason": "entry_book_skew",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [
+          "entry_book_skew"
+        ],
+        "buy": {
+          "source_wall_ns": 1799999999749999999,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 250000001,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 250000001
+      }
+    },
+    {
+      "case": "publication:-1ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999850000001,
+          "received_wall_ns": 1799999999850000001,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 149999999,
+          "receive_age_ns": 149999999,
+          "publication_wait_ns": 149999999,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999850000001,
+          "received_wall_ns": 1799999999850000001,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 149999999,
+          "receive_age_ns": 149999999,
+          "publication_wait_ns": 149999999,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "publication:+0ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999850000000,
+          "received_wall_ns": 1799999999850000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 150000000,
+          "receive_age_ns": 150000000,
+          "publication_wait_ns": 150000000,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999850000000,
+          "received_wall_ns": 1799999999850000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 150000000,
+          "receive_age_ns": 150000000,
+          "publication_wait_ns": 150000000,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "publication:+1ns",
+      "result": "blocked",
+      "reason": "entry_publication_wait",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 0,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [
+          "entry_publication_wait"
+        ],
+        "buy": {
+          "source_wall_ns": 1799999999849999999,
+          "received_wall_ns": 1799999999849999999,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 150000001,
+          "receive_age_ns": 150000001,
+          "publication_wait_ns": 150000001,
+          "published_to_check_ns": 0,
+          "temporal_failures": [
+            "entry_publication_wait"
+          ]
+        },
+        "sell": {
+          "source_wall_ns": 1799999999849999999,
+          "received_wall_ns": 1799999999849999999,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 150000001,
+          "receive_age_ns": 150000001,
+          "publication_wait_ns": 150000001,
+          "published_to_check_ns": 0,
+          "temporal_failures": [
+            "entry_publication_wait"
+          ]
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "dispatch:-1ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1799999999900000001,
+        "dispatch_delay_ns": 99999999,
+        "dispatch_deadline_wall_ns": 1800000000000000001,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "dispatch:+0ns",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1799999999900000000,
+        "dispatch_delay_ns": 100000000,
+        "dispatch_deadline_wall_ns": 1800000000000000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "dispatch:+1ns",
+      "result": "blocked",
+      "reason": "entry_dispatch_expired",
+      "evidence": {
+        "checked_wall_ns": 1800000000000000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1799999999899999999,
+        "dispatch_delay_ns": 100000001,
+        "dispatch_deadline_wall_ns": 1799999999999999999,
+        "timing_failures": [
+          "entry_dispatch_expired"
+        ],
+        "buy": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1800000000000000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 0,
+          "receive_age_ns": 0,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 0,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "publication_sweep:0ms",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000020000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000000000000,
+        "dispatch_delay_ns": 20000000,
+        "dispatch_deadline_wall_ns": 1800000000100000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 370000000,
+          "receive_age_ns": 20000000,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000000000000,
+          "source_age_ns": 370000000,
+          "receive_age_ns": 20000000,
+          "publication_wait_ns": 0,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "publication_sweep:20ms",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000040000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000020000000,
+        "dispatch_delay_ns": 20000000,
+        "dispatch_deadline_wall_ns": 1800000000120000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000020000000,
+          "source_age_ns": 390000000,
+          "receive_age_ns": 40000000,
+          "publication_wait_ns": 20000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000020000000,
+          "source_age_ns": 390000000,
+          "receive_age_ns": 40000000,
+          "publication_wait_ns": 20000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "publication_sweep:100ms",
+      "result": "allowed",
+      "reason": "valid",
+      "evidence": {
+        "checked_wall_ns": 1800000000120000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000100000000,
+        "dispatch_delay_ns": 20000000,
+        "dispatch_deadline_wall_ns": 1800000000200000000,
+        "timing_failures": [],
+        "buy": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000100000000,
+          "source_age_ns": 470000000,
+          "receive_age_ns": 120000000,
+          "publication_wait_ns": 100000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": []
+        },
+        "sell": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000100000000,
+          "source_age_ns": 470000000,
+          "receive_age_ns": 120000000,
+          "publication_wait_ns": 100000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": []
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "publication_sweep:150ms",
+      "result": "blocked",
+      "reason": "entry_source_age",
+      "evidence": {
+        "checked_wall_ns": 1800000000170000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000150000000,
+        "dispatch_delay_ns": 20000000,
+        "dispatch_deadline_wall_ns": 1800000000250000000,
+        "timing_failures": [
+          "entry_source_age"
+        ],
+        "buy": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000150000000,
+          "source_age_ns": 520000000,
+          "receive_age_ns": 170000000,
+          "publication_wait_ns": 150000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": [
+            "entry_source_age"
+          ]
+        },
+        "sell": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000150000000,
+          "source_age_ns": 520000000,
+          "receive_age_ns": 170000000,
+          "publication_wait_ns": 150000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": [
+            "entry_source_age"
+          ]
+        },
+        "source_skew_ns": 0
+      }
+    },
+    {
+      "case": "publication_sweep:151ms",
+      "result": "blocked",
+      "reason": "entry_source_age",
+      "evidence": {
+        "checked_wall_ns": 1800000000171000000,
+        "thresholds": {
+          "max_source_age_ms": 500,
+          "max_receive_age_ms": 250,
+          "max_skew_ms": 250,
+          "max_publication_wait_ms": 150,
+          "max_dispatch_delay_ms": 100
+        },
+        "candidate_wall_ns": 1800000000151000000,
+        "dispatch_delay_ns": 20000000,
+        "dispatch_deadline_wall_ns": 1800000000251000000,
+        "timing_failures": [
+          "entry_source_age",
+          "entry_publication_wait"
+        ],
+        "buy": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000151000000,
+          "source_age_ns": 521000000,
+          "receive_age_ns": 171000000,
+          "publication_wait_ns": 151000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": [
+            "entry_source_age",
+            "entry_publication_wait"
+          ]
+        },
+        "sell": {
+          "source_wall_ns": 1799999999650000000,
+          "received_wall_ns": 1800000000000000000,
+          "published_wall_ns": 1800000000151000000,
+          "source_age_ns": 521000000,
+          "receive_age_ns": 171000000,
+          "publication_wait_ns": 151000000,
+          "published_to_check_ns": 20000000,
+          "temporal_failures": [
+            "entry_source_age",
+            "entry_publication_wait"
+          ]
+        },
+        "source_skew_ns": 0
+      }
+    }
+  ],
+  "callback_evidence": [
+    {
+      "symbol": "TIA",
+      "hl_rejection_market": {
+        "status": "missing_book"
+      },
+      "submitted_to_response_ms": "945.725131"
+    },
+    {
+      "symbol": "CRV",
+      "hl_rejection_market": {
+        "status": "missing_book"
+      },
+      "submitted_to_response_ms": "1019.418844"
+    },
+    {
+      "symbol": "STX",
+      "hl_rejection_market": {
+        "status": "valid",
+        "source_wall_ns": 1792499971797000000,
+        "received_wall_ns": 1792499972151957629,
+        "source_age_ms": "604.194569",
+        "receive_age_ms": "249.23694",
+        "bid_price": "0.33688",
+        "ask_price": "0.33689",
+        "limit_price": "0.33821",
+        "quantity": "295",
+        "depth_within_limit": "0",
+        "full_quantity_available": false,
+        "touch_outside_limit_bps": "39.324679932586262972709263475355548327961917152065"
+      },
+      "submitted_to_response_ms": "1012.906322"
+    },
+    {
+      "symbol": "JUP",
+      "hl_rejection_market": {
+        "status": "valid",
+        "source_wall_ns": 1792500086998000000,
+        "received_wall_ns": 1792500087430350439,
+        "source_age_ms": "867.614565",
+        "receive_age_ms": "435.264126",
+        "bid_price": "0.3042",
+        "ask_price": "0.30454",
+        "limit_price": "0.30593",
+        "quantity": "326",
+        "depth_within_limit": "0",
+        "full_quantity_available": false,
+        "touch_outside_limit_bps": "56.548883731572581963194194750433105612394992318504"
+      },
+      "submitted_to_response_ms": "858.396509"
+    }
+  ]
+}

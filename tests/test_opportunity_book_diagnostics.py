@@ -53,6 +53,7 @@ def test_last_complete_preserves_first_invalidation_and_cannot_pass_admission(mo
     assert previous["received_wall_ns"] == snapshot.ts_received_ns
     assert previous["full_quantity_available"] is True
     assert previous["complete_book_claimed"] is False
+    assert buy.instrument_id not in live.book_publications
     position = live._position(live.orders[buy.client_order_id]["position_id"])
     assert entry_dispatch_evidence(live, position, NOW + 30)[0] == "missing_book"
     assert live.snapshot() == before

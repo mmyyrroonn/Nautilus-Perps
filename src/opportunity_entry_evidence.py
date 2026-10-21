@@ -1,8 +1,10 @@
 ﻿"""Send-time entry evidence and gates; no I/O, credentials or price relaxation."""
 from fractions import Fraction as F
+import time
 
 from opportunity_core import _book_valid, _number
 from opportunity_book_diagnostics import book_problem
+from opportunity_entry_admission import temporal_entry_evidence
 from opportunity_timing import record_entry_stage, record_entry_pair
 
 
@@ -90,7 +92,8 @@ def entry_dispatch_evidence(live, position, now_ns):
     reprice a durable intent. Every invocation checks both legs, including after
     a synchronous first-leg receipt changes state in the dispatch loop.
     """
-    evidence, bounds = {"checked_wall_ns": now_ns}, {}
+    temporal_reason, evidence = temporal_entry_evidence(live, position, now_ns)
+    bounds = {}
     if (live.phase != "active" or live.stopping or not live.cleanup_allowed
             or live.entry_pause_reason or live.halt_reason or live.order_reconciliations
             or any(p.get("unhedged_breach") for p in live.positions.values())
@@ -108,7 +111,8 @@ def entry_dispatch_evidence(live, position, now_ns):
         order = next(live.orders[cid] for cid in position["entry_ids"]
                      if live.orders[cid]["leg"] == leg)
         book, meta = live.books.get(instrument), live.metadata.get(instrument)
-        row = evidence[leg] = {"limit_price": order["price"], "quantity": order["quantity"]}
+        row = evidence.setdefault(leg, {})
+        row.update(limit_price=order["price"], quantity=order["quantity"])
         reason, leverage = live.leverage_problem(instrument, order["price"], order["quantity"], now_ns)
         if leverage:
             row["leverage"] = leverage
@@ -186,7 +190,7 @@ def entry_dispatch_evidence(live, position, now_ns):
                for leg in ("buy", "sell")}
     ready.extend(live._account_domain_ready(domain, now_ns, preparation_owner=position["position_id"])
                  for domain in sorted(domains))
-    return ("valid" if all(ready) else "account_admission_changed"), evidence
+    return (temporal_reason if all(ready) else "account_admission_changed"), evidence
 
 
 def discard_invalid_entry(live, intent, now_ns, *, dispatched=()):
@@ -198,7 +202,22 @@ def discard_invalid_entry(live, intent, now_ns, *, dispatched=()):
     if order["status"] != "dispatch_released":
         return False
     position = live._position(order["position_id"])
+    started = time.perf_counter_ns()
     reason, evidence = entry_dispatch_evidence(live, position, now_ns)
+    # Include the check itself (depth, exact economics and account admission) in
+    # the handoff budget. This clock does not depend on optional timing sampling.
+    if reason == "valid":
+        now_ns = max(time.time_ns(), now_ns + max(0, time.perf_counter_ns() - started))
+        reason, latest = temporal_entry_evidence(live, position, now_ns)
+        for leg in ("buy", "sell"):
+            evidence[leg].update(latest.pop(leg, {}))
+            for source, target in (("source_age_ns", "source_age_ms"), ("receive_age_ns", "receive_age_ms")):
+                evidence[leg][target] = _number(F(evidence[leg][source], 1_000_000))
+        evidence.update(latest)
+    decision = {"result": "allowed" if reason == "valid" else "blocked", "reason": reason, "evidence": evidence}
+    # Piggyback on existing receipt/block ledger transactions, never insert a
+    # synchronous durability write between the last check and native dispatch.
+    order["entry_dispatch"] = decision
     record_entry_stage(intent.request_id, "send_check", wall_ns=now_ns, evidence=evidence, reason=reason)
     if reason == "valid":
         return False
@@ -208,10 +227,13 @@ def discard_invalid_entry(live, intent, now_ns, *, dispatched=()):
         if cid in dispatched or pending["status"] not in {"prepared", "dispatch_released"}:
             continue
         pending["terminal_ns"], pending["status"] = now_ns, "local_not_dispatched"
+        pending["entry_dispatch"] = decision
         blocked.append(cid)
         live.entry_timings.pop(pending["request_id"], None)
+        live.entry_clocks.pop(cid, None)
         record_entry_stage(pending["request_id"], "local_blocked", wall_ns=now_ns, reason=reason)
-    live.emit("entry_dispatch_blocked", now_ns, client_order_ids=blocked, reason=reason)
+    live.emit("entry_dispatch_blocked", now_ns, client_order_ids=blocked, reason=reason,
+              entry_dispatch=decision)
     return True
 
 

@@ -23,6 +23,7 @@ import uuid
 from opportunity_scan import (ScanConfigError, allowed_keys, decimal_value,
                               integer_value, load_plan)
 from opportunity_trade import TradePolicy
+from opportunity_entry_admission import EntryAdmissionPolicy
 from opportunity_loss_monitor import LossMonitorPolicy, SessionLossMonitor
 from opportunity_timing import add_timing_arguments, run_timed, span, timed
 
@@ -78,6 +79,7 @@ class LiveRunPlan:
     loss_monitor: LossMonitorPolicy = LossMonitorPolicy()
     aster_leverage_targets: tuple[tuple[str, int], ...] = ()
     aster_leverage_max_age_ms: int = 5000
+    entry_admission: EntryAdmissionPolicy = EntryAdmissionPolicy()
 
     @property
     def ready(self):
@@ -86,6 +88,7 @@ class LiveRunPlan:
     def fingerprint(self, account_binding=None):
         # Leverage targets are revalidated observations, not order identity.
         # Changing them must not prevent original-ID recovery of an old ledger.
+        # Entry freshness budgets also apply at handoff without changing ownership.
         document = {"schema_version": 1, "mode": "live", "environment": self.environment,
             "policy": self.policy.document(), "markets": self.scan.document()["markets"],
             "settings": self.scan.document()["settings"], "venues": self.venues,
@@ -131,6 +134,7 @@ class LiveRunPlan:
                 "automatic_targets": [m.instrument_id for m in self.scan.markets
                     if m.venue == "ASTER" and m.symbol in self.trade_symbols
                     and m.instrument_id not in dict(self.aster_leverage_targets)]},
+            "entry_admission": self.entry_admission.document(),
             "startup": {"self_test_enabled": self.startup_self_test,
                 "balance_check_enabled": self.startup_balance_check,
                 "mandatory": self.startup_self_test, "symbol": "BTC",
@@ -153,7 +157,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     with path.open("rb") as handle:
         document = tomllib.load(handle, parse_float=Decimal)
     allowed_keys(document, {"schema_version", "mode", "environment", "scan_config", "state_path",
-        "limits_path", "venues", "trade", "risk", "startup", "runtime", "loss_monitor", "aster_leverage"}, "live root")
+        "limits_path", "venues", "trade", "risk", "startup", "runtime", "loss_monitor",
+        "aster_leverage", "entry_admission"}, "live root")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise ScanConfigError("live schema_version must be 1")
     if document.get("mode") != "live" or document.get("environment") != "mainnet":
@@ -176,6 +181,9 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     trade = document.get("trade", {})
     allowed_keys(trade, set(TradePolicy.__dataclass_fields__), "live trade")
     policy = TradePolicy(**trade)
+    admission = document.get("entry_admission", {})
+    allowed_keys(admission, set(EntryAdmissionPolicy.__dataclass_fields__), "entry_admission")
+    entry_admission = EntryAdmissionPolicy(**admission)
     monitor = document.get("loss_monitor", {})
     allowed_keys(monitor, set(LossMonitorPolicy.__dataclass_fields__), "loss_monitor")
     loss_monitor = LossMonitorPolicy(**monitor)
@@ -293,7 +301,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         entry_unhedged_reserve_bps=reserve, loss_monitor=loss_monitor,
         aster_leverage_targets=tuple((i, target) for i, target in leverage_targets
                                     if i in {m.instrument_id for m in scan.markets}),
-        aster_leverage_max_age_ms=leverage_age)
+        aster_leverage_max_age_ms=leverage_age, entry_admission=entry_admission)
 
 
 class NativeBuildError(RuntimeError):
@@ -498,6 +506,7 @@ class LiveCoordinator:
         dispatched = set()
         dispatch_started = time.perf_counter_ns()
         for intent in self.live.drain_intents():
+            entry_clock = self.live.entry_clocks.pop(intent.client_order_id, None)
             marker = self.live.take_entry_timing(intent)
             record_entry_stage(intent.request_id, "coordinator", wall_ns=now_ns)
             if self.proxy.restart_pending and intent.action != "reconcile":
@@ -508,15 +517,23 @@ class LiveCoordinator:
             # elapsed time, including persistence and synchronous dispatch work.
             # Do not reuse the earlier callback time as a send-time age check.
             check_ns = now_ns + max(0, time.perf_counter_ns() - dispatch_started)
+            if entry_clock is not None:
+                check_ns = max(check_ns, entry_clock[0] + max(0, time.perf_counter_ns() - entry_clock[1]))
             order = self.live.orders.get(intent.client_order_id)
             if intent.action == "submit" and order and order["purpose"] == "entry":
+                # The caller may have spent time processing other symbols or
+                # lifecycle events before creating this candidate.
+                check_ns = max(check_ns, time.time_ns())
                 position = self.live._position(order["position_id"])
                 if any(self.live.markets[position[f"{leg}_id"]].venue == "BACKPACK"
                        for leg in ("buy", "sell")):
                     refresh = getattr(self.gateway, "refresh_native_admission", None)
                     self.live.update_native_admission(
                         refresh(check_ns) if refresh is not None else {}, check_ns)
-                    check_ns = now_ns + max(0, time.perf_counter_ns() - dispatch_started)
+                    check_ns = max(check_ns, time.time_ns(),
+                                   now_ns + max(0, time.perf_counter_ns() - dispatch_started))
+                    if entry_clock is not None:
+                        check_ns = max(check_ns, entry_clock[0] + max(0, time.perf_counter_ns() - entry_clock[1]))
                     if self.live.discard_native_entry(intent, check_ns, dispatched=dispatched):
                         continue
             if discard_invalid_entry(self.live, intent, check_ns, dispatched=dispatched):
@@ -994,6 +1011,7 @@ def run_live(plan, *, self_test_only=False):
                 entry_unhedged_reserve_bps=plan.entry_unhedged_reserve_bps,
                 aster_leverage_targets=plan.aster_leverage_targets,
                 aster_leverage_max_age_ms=plan.aster_leverage_max_age_ms,
+                entry_admission=plan.entry_admission,
                 account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
                 retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
             coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,
