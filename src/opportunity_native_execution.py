@@ -536,9 +536,10 @@ class NativeOrderGateway:
                     self.submit_timings[intent.request_id] = marker
                 record_latency(candidate_marker, "entry.candidate_to_submit", venue=intent.venue,
                                ended_ns=marker[1] if marker is not None else None)
-                record_entry_stage(intent.request_id, "python_submit", wall_ns=now_ns)
+                record_entry_stage(intent.request_id, "python_submit", capture_wall=True)
                 with span("gateway.submit_handoff", venue=intent.venue):
                     self.strategy.submit_order(order, client_id=client)
+                record_entry_stage(intent.request_id, "python_submit_returned")
             elif intent.action == "cancel":
                 self.strategy.cancel_order(self.model.ClientOrderId.from_str(cid), client_id=client)
             else:
