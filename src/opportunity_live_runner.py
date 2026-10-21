@@ -467,9 +467,13 @@ class LiveCoordinator:
     def _live_intents(self, now_ns):
         from opportunity_entry_evidence import discard_invalid_entry
         from opportunity_timing import record_entry_stage
+        from opportunity_price_timing import pending_stage
         dispatched = set()
         dispatch_started = time.perf_counter_ns()
-        for intent in self.live.drain_intents():
+        pending_stage(self.live, "dispatch_release_started")
+        intents = self.live.drain_intents()
+        pending_stage(self.live, "dispatch_release_completed")
+        for intent in intents:
             marker = self.live.take_entry_timing(intent)
             record_entry_stage(intent.request_id, "coordinator", wall_ns=now_ns)
             if self.proxy.restart_pending and intent.action != "reconcile":
@@ -580,6 +584,8 @@ class LiveCoordinator:
 
     @timed("coordinator.tick")
     def tick(self, now_ns):
+        from opportunity_price_timing import pending_stage
+        pending_stage(self.live, "tick_started")
         if self.finished:
             return
         signal_flag = getattr(self, "stop_signal", None)
@@ -593,6 +599,7 @@ class LiveCoordinator:
             # Fence quote callbacks before processing any pending receipts.
             self.live.set_entry_pause("session_loss_check", now_ns)
         self.gateway.poll(now_ns)
+        pending_stage(self.live, "gateway_poll_completed")
         self.live.update_native_admission(getattr(self.gateway, "native_admission", {}), now_ns)
         if self.phase == "waiting_balances":
             self.balance_check.tick(self.gateway, now_ns)
@@ -642,6 +649,7 @@ class LiveCoordinator:
             monitor.tick(self.gateway, self.live, now_ns, has_residual=self._has_residual(),
                 account_after_ns=max(self.started_ns, self.account_recovery_after_ns or 0)
                 if monitor.baseline_usd is None else None)
+            pending_stage(self.live, "loss_check_completed")
             self._live_intents(now_ns)
             document = monitor.document()
             if document != self.proxy.loss_monitor:
@@ -728,6 +736,7 @@ class LiveCoordinator:
             if self.phase == "active" and self.plan.duration_secs and now_ns-self.started_ns >= self.plan.duration_secs*1_000_000_000:
                 self.request_stop(now_ns, "duration_elapsed")
             self.live.on_evaluation_timer(now_ns)
+            pending_stage(self.live, "evaluation_completed")
             self._live_intents(now_ns)
         if self.phase == "draining":
             if not self._has_residual():
@@ -884,6 +893,9 @@ def build_live_node(plan, live, coordinator, *, environ=None):
             if coordinator.gateway is None:
                 return
             wakeup = getattr(self, "intent_wakeup", None)
+            from opportunity_price_timing import pending_stage
+            pending_stage(live, "wakeup_consumed" if wakeup is not None
+                          and getattr(event, "name", None) == wakeup.name else "timer_callback")
             if wakeup is not None and getattr(event, "name", None) == wakeup.name:
                 if not wakeup.consume() or not live.outbox:
                     return

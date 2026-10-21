@@ -68,13 +68,16 @@ def test_valid_send_retains_persisted_amounts_fees_and_durability(monkeypatch):
     traces = recorder.document()['entry_execution']['traces']
     assert len(traces) == 2
     for trace in traces:
-        assert [s['stage'] for s in trace['stages']] == ['candidate', 'persisted', 'coordinator', 'send_check']
+        assert [s['stage'] for s in trace['stages']] == [
+            'pricing_started', 'candidate', 'persist_started', 'persisted',
+            'dispatch_release_started', 'dispatch_release_completed', 'coordinator', 'send_check']
         evidence = trace['stages'][-1]['evidence']
         assert F(evidence['net_margin_usd']) >= 0
         assert all(evidence[leg]['executable_vwap'] and evidence[leg]['depth_within_limit']
                    for leg in ('buy', 'sell'))
     assert 'timing' not in json.dumps(store.saved)
-    assert all(i.request_id not in json.dumps(recorder.document()) for i in calls)
+    assert {trace['client_order_id'] for trace in traces} == {i.client_order_id for i in calls}
+    assert all('request_id' not in trace for trace in traces)
 
 
 def test_second_leg_recheck_preserves_first_dispatched_identity(monkeypatch):
@@ -139,13 +142,13 @@ def test_trace_and_stage_storage_are_bounded_and_allowlisted(monkeypatch):
     for index in range(3):
         rid = 'private-order-' + str(index)
         timing.begin_entry_trace(rid, 'HL', timing.start_latency(), NOW)
-        for _ in range(40):
+        for _ in range(60):
             timing.record_entry_stage(rid, 'send_check', evidence={
                 'credentials': 'private', 'buy': {'quantity': '1', 'account': 'private'}},
                 reason='private')
     report = recorder.document()['entry_execution']
     assert len(report['traces']) == 2 and report['trace_evictions'] == 1
-    assert all(len(trace['stages']) == 32 for trace in report['traces'])
+    assert all(len(trace['stages']) == 48 for trace in report['traces'])
     assert report['missing_native_stages'] == ['native_received', 'signing', 'network_write', 'native_receipt_received']
     assert 'private' not in json.dumps(report)
 

@@ -139,7 +139,11 @@ def discard_invalid_entry(live, intent, now_ns, *, dispatched=()):
         return False
     position = live._position(order["position_id"])
     reason, evidence = entry_dispatch_evidence(live, position, now_ns)
-    record_entry_stage(intent.request_id, "send_check", wall_ns=now_ns, evidence=evidence, reason=reason)
+    from opportunity_price_timing import entry_quotes
+    from opportunity_timing import diagnostics_enabled
+    quotes = entry_quotes(live, position["buy_id"], position["sell_id"]) if diagnostics_enabled() else None
+    record_entry_stage(intent.request_id, "send_check", wall_ns=now_ns, evidence=evidence,
+                       reason=reason, quotes=quotes)
     if reason == "valid":
         return False
     blocked = []
