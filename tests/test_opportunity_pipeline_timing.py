@@ -131,7 +131,10 @@ def test_candidate_marker_survives_durability_and_dispatch_wait_but_is_not_persi
     latencies = [r for r in recorder.document()['operations'] if r['name'] == 'entry.candidate_to_submit']
     assert len(latencies) == 2 and all(r['total_ms'] == 1040 / 1e6 for r in latencies)
     assert 'timing' not in json.dumps(store.saved)
-    assert all(intent.request_id not in json.dumps(recorder.document()) for intent, _ in received)
+    exported = recorder.document()['entry_execution']['traces']
+    assert {trace['client_order_id'] for trace in exported} == {
+        intent.client_order_id for intent, _ in received}
+    assert all('request_id' not in trace for trace in exported)
 
 
 def test_submit_handoff_excludes_construction_and_records_each_outcome_once(monkeypatch):

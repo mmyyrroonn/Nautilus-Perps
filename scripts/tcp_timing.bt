@@ -1,0 +1,63 @@
+// Read-only Linux TCP boundaries. Parameters: PID, duration seconds, local port (0 = all).
+// No packet payloads, TLS plaintext, account data, or kernel addresses are exported.
+config = { max_map_keys = 256; perf_rb_pages = 32; }
+
+BEGIN { printf("stage,monotonic_ns,local_port,value,tid\n"); }
+
+kprobe:tcp_sendmsg, kprobe:tcp_recvmsg
+/pid == $1/
+{
+    $sk = (struct sock *)arg0;
+    $port = $sk->__sk_common.skc_num;
+    if ($3 == 0 || $port == $3) {
+        @sockets[(uint64)$sk] = $port;
+    }
+}
+
+kprobe:tcp_sendmsg
+/pid == $1/
+{
+    $port = @sockets[arg0];
+    if ($port) {
+        printf("tcp_send_called,%llu,%u,%llu,%u\n", nsecs(monotonic), $port, arg2, tid);
+    }
+}
+
+kprobe:tcp_recvmsg
+/pid == $1/
+{
+    $port = @sockets[arg0];
+    if ($port) {
+        @reads[tid] = $port;
+        printf("tcp_read_called,%llu,%u,0,%u\n", nsecs(monotonic), $port, tid);
+    }
+}
+
+kretprobe:tcp_recvmsg
+/pid == $1 && @reads[tid]/
+{
+    printf("tcp_read_returned,%llu,%u,%lld,%u\n", nsecs(monotonic), @reads[tid], retval, tid);
+    delete(@reads, tid);
+}
+
+kprobe:tcp_rcv_established
+/@sockets[arg0]/
+{
+    $skb = (struct sk_buff *)arg1;
+    $cb = (struct tcp_skb_cb *)$skb->cb;
+    if ($cb->end_seq != $cb->seq) {
+        // Sequence coverage can include FIN; this is TCP input, before reassembly
+        printf("tcp_input,%llu,%u,%u,%u\n", nsecs(monotonic), @sockets[arg0],
+               (uint32)($cb->end_seq - $cb->seq), tid);
+    }
+}
+
+kprobe:tcp_close
+/@sockets[arg0]/
+{
+    delete(@sockets, arg0);
+}
+
+interval:s:1 { @seconds++; if (@seconds >= $2) { exit(); } }
+
+END { clear(@sockets); clear(@reads); clear(@seconds); }

@@ -18,6 +18,7 @@ from opportunity_core import (BookSnapshot, EventRecorder, MarketMetadata, evalu
                               exact_decimal, _book_valid, _metadata_valid)
 from opportunity_scan import ScanConfigError, ScanPlan
 from opportunity_book_diagnostics import BookEvidence
+from opportunity_price_timing import QuoteTiming
 
 
 def instrument_decimal(value):
@@ -86,6 +87,7 @@ class ScanState:
         self.books: dict[str, BookSnapshot] = {}
         self.book_evidence = ({i: BookEvidence() for i in self.markets}
                               if diagnostics_enabled() else None)
+        self.quote_timings = {} if diagnostics_enabled() else None
         self.raw_books: dict[str, dict] = {}
         self.current: dict[tuple, dict] = {}
         self.recorder = EventRecorder(plan.output_path, plan.cooldown_ms, plan.edge_change_bps,
@@ -100,6 +102,8 @@ class ScanState:
             self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
 
     def invalidate(self, instrument_id: str, now_ns: int, *, metadata=False, reason="invalidated"):
+        if self.quote_timings is not None:
+            self.quote_timings.pop(instrument_id, None)
         if self.book_evidence is not None:
             self.book_evidence[instrument_id].invalidate("metadata_invalid" if metadata else reason, now_ns)
         self.books.pop(instrument_id, None)
@@ -113,6 +117,8 @@ class ScanState:
         if market is None or book.symbol != market.symbol or book.venue != market.venue:
             raise ValueError("book does not match configured market")
         self.books[instrument_id] = book
+        if self.quote_timings is not None:
+            self.quote_timings.pop(instrument_id, None)
         if self.book_evidence is not None:
             self.book_evidence[instrument_id].publish(book, now_ns)
         if raw_book is not None:
@@ -270,6 +276,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.dirty = {}
             # At most one cycle and one publication marker per configured market.
             self.book_timings = {}
+            self.pending_quote_timings = {}
             self.publication_timings = {}
             self.last_display_ns = 0
             self.last_evaluation_ns = 0
@@ -356,6 +363,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.pending_aster.clear()
             self.dirty.clear()
             self.book_timings.clear()
+            self.pending_quote_timings.clear()
             self.publication_timings.clear()
             self.pending_symbols.clear()
             self.pending_instruments.clear()
@@ -406,6 +414,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     state.book_evidence[str(instrument_id)].invalidate(reason, time.time_ns())
 
         def clear_book_timing(self, instrument_id):
+            self.pending_quote_timings.pop(instrument_id, None)
             self.book_timings.pop(instrument_id, None)
             market = self.markets[instrument_id]
             pending = self.publication_timings.get(market.symbol)
@@ -461,6 +470,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
 
         @timed("market.book_deltas", labels=lambda self, batch: (self.markets[batch.instrument_id].venue, ""))
         def on_book_deltas(self, batch):
+            callback_ns = time.perf_counter_ns() if state.quote_timings is not None else None
             if not self.running or batch.instrument_id not in self.markets:
                 return
             sampled_delivery_age(batch.ts_init, venue=self.markets[batch.instrument_id].venue)
@@ -516,6 +526,9 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.pending_snapshot.discard(instrument_id)
                     self.snapshot_seen.add(instrument_id)
                 stamp = (batch.ts_event, batch.ts_init, batch.sequence)
+                if callback_ns is not None:
+                    self.pending_quote_timings[instrument_id] = QuoteTiming(
+                        *stamp, callback_ns, time.perf_counter_ns())
                 if instrument_id not in self.dirty:
                     marker = sampled_start_latency("market.publication_cycle", venue=market.venue)
                     if marker is not None:
@@ -570,6 +583,14 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                        "coverage_limit": depth, "complete_book_claimed": False,
                        "sequence": sequence}
             state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw, evaluate=False)
+            if state.quote_timings is not None:
+                quote_timing = self.pending_quote_timings.pop(instrument_id, None)
+                if quote_timing is not None and (
+                        quote_timing.source_wall_ns, quote_timing.native_init_wall_ns,
+                        quote_timing.sequence) == stamp:
+                    state.quote_timings[market.instrument_id] = quote_timing.publish()
+                else:
+                    state.quote_timings.pop(market.instrument_id, None)
             if markers is not None:
                 published = start_latency()
                 for label, marker in zip(("first", "latest"), markers):

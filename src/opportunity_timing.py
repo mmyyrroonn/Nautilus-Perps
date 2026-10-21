@@ -1,8 +1,9 @@
 """Opt-in, process-wide wall-time measurements for one trading CLI session.
 
 Only fixed operation names and allowlisted venue/outcome labels are recorded.
-Arguments, results, exception messages and account/order identities never enter
-the report. Worker threads share the recorder; nested spans use thread-local
+Arguments, results, exception messages and account identities never enter
+the report. Client order IDs link explicitly traced entries to native captures.
+Worker threads share the recorder; nested spans use thread-local
 stacks. No tracing/profiling hook or trading-clock replacement is installed.
 """
 from __future__ import annotations
@@ -90,6 +91,22 @@ class TimingRecorder:
         self.entry_pairs_seen = {}
         self.entry_pair_reclassifications = 0
         self.entry_trace_evictions = 0
+        self.clock_anchor = self._clock_anchor()
+
+    @staticmethod
+    def _clock_anchor():
+        before = time.perf_counter_ns()
+        monotonic = time.monotonic_ns()
+        after = time.perf_counter_ns()
+        result = {"perf_before_ns": before, "monotonic_ns": monotonic, "perf_after_ns": after,
+                "monotonic_implementation": time.get_clock_info("monotonic").implementation,
+                "platform": sys.platform}
+        if sys.platform == "linux":
+            try:
+                result["boot_id"] = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            except OSError:
+                pass
+        return result
 
     def record(self, name, elapsed_ns, *, self_ns=None, venue="", outcome="", error=False,
                category="span", sample_every=1):
@@ -116,6 +133,7 @@ class TimingRecorder:
             # Copy under the lock; sorting/serialization must not block callbacks.
             copied = [(key, {**row, "recent": tuple(row["recent"])}) for key, row in self.rows.items()]
             traces = [dict(trace_id=row["trace_id"], venue=row["venue"],
+                           client_order_id=row.get("client_order_id"), quotes=row.get("quotes", {}),
                            stages=list(row["stages"]), native_events=list(row["native_events"]),
                            native_events_seen=row["native_events_seen"]) for row in self.entry_orders.values()]
             pair_counts = dict(self.entry_pair_counts)
@@ -139,6 +157,7 @@ class TimingRecorder:
             "finished_at_utc": self.finished_at, "status": self.status, "exit_code": self.exit_code,
             "elapsed_ms": ((self.ended_ns or time.perf_counter_ns()) - self.started_ns) / 1e6,
             "clock": "perf_counter_ns", "recent_sample_window": SAMPLE_WINDOW,
+            "clock_anchor": self.clock_anchor,
             "notes": ["Wall time, not CPU time. Spans include synchronous child calls and waits.",
                 "self_ms excludes instrumented children on the same thread; concurrent threads overlap.",
                 "Latency rows measure named stage boundaries; they are not CPU hotspots or network RTT.",
@@ -149,10 +168,10 @@ class TimingRecorder:
                 "market.delivery_age uses time.time_ns minus native ts_init, not exact queue residence.",
                 "Submission ends at the Python submit_order handoff, not the native network write.",
                 "In-flight work is absent from aggregates; abrupt termination leaves the last snapshot.",
-                "Rust adapter internals and work before CLI argument parsing are not instrumented."],
+                "Hyperliquid native internals are in the separate opt-in native capture."],
             "operations": sorted(rows, key=lambda row: (row["category"], -row["self_ms"])),
             "entry_execution": {"traces": traces, "trace_limit": SAMPLE_WINDOW,
-                "stage_limit": 32, "trace_evictions": evictions,
+                "stage_limit": 48, "trace_evictions": evictions,
                 "native_event_limit": 16,
                 "native_event_notes": [
                     "ts_init is local native event construction time, not a socket receive timestamp.",
@@ -269,8 +288,9 @@ def start_latency():
     return None if recorder is None else (recorder, time.perf_counter_ns())
 
 
-def begin_entry_trace(request_id, venue, marker, wall_ns):
-    """Keep request IDs solely as bounded in-memory keys; export random trace IDs."""
+def begin_entry_trace(request_id, venue, marker, wall_ns, *, client_order_id=None,
+                      pricing_marker=None, quotes=None):
+    """Keep request IDs internal; export the original client ID for native correlation."""
     recorder = _active
     if recorder is None or marker is None:
         return
@@ -279,9 +299,16 @@ def begin_entry_trace(request_id, venue, marker, wall_ns):
             recorder.entry_orders.pop(next(iter(recorder.entry_orders)))
             recorder.entry_trace_evictions += 1
         recorder.entry_orders[request_id] = {"trace_id": uuid.uuid4().hex,
+            "client_order_id": client_order_id if isinstance(client_order_id, str)
+                and 0 < len(client_order_id) <= 64 and client_order_id.isascii()
+                and all(c.isalnum() or c in "_-" for c in client_order_id) else None,
+            "quotes": quotes or {},
             "venue": _labels(venue, "")[0], "native_events": deque(maxlen=16),
             "native_events_seen": 0, "stages": deque([{
-                "stage": "candidate", "monotonic_ns": marker[1], "wall_ns": wall_ns}], maxlen=32)}
+                "stage": "candidate", "monotonic_ns": marker[1], "wall_ns": wall_ns}], maxlen=48)}
+        if pricing_marker is not None and pricing_marker[0] is recorder:
+            recorder.entry_orders[request_id]["stages"].appendleft({
+                "stage": "pricing_started", "monotonic_ns": pricing_marker[1]})
 
 
 def record_entry_native_event(request_id, kind, received_ns, *, ts_event=None, ts_init=None,
@@ -329,20 +356,32 @@ def record_entry_native_event(request_id, kind, received_ns, *, ts_event=None, t
         trace["native_events_seen"] += 1
 
 
-def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason=None):
+def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason=None,
+                       capture_wall=False, quotes=None):
     recorder = _active
     if recorder is None or stage not in {"persisted", "coordinator", "send_check", "local_blocked",
             "python_submit", "accepted", "rejected", "unknown", "partial_fill", "full_fill", "terminal",
             "canceled", "expired", "denied", "strategy_accepted", "strategy_rejected",
             "strategy_fill", "strategy_terminal", "python_receipt_accepted", "python_receipt_fill",
-            "python_receipt_rejected", "python_receipt_terminal"}:
+            "python_receipt_rejected", "python_receipt_terminal", "persist_started",
+            "wakeup_requested", "wakeup_request_returned", "wakeup_consumed", "timer_callback",
+            "tick_started", "gateway_poll_completed", "loss_check_completed",
+            "evaluation_completed", "python_submit_returned", "dispatch_release_started",
+            "dispatch_release_completed"}:
         return
+    if request_id not in recorder.entry_orders:
+        return
+    observed_ns = time.perf_counter_ns()
+    if capture_wall:
+        wall_ns = time.time_ns()
     interval = None
     with recorder.lock:
         trace = recorder.entry_orders.get(request_id)
         if trace is None:
             return
-        row = {"stage": stage, "monotonic_ns": time.perf_counter_ns()}
+        row = {"stage": stage, "monotonic_ns": observed_ns}
+        if quotes is not None:
+            row["quotes"] = quotes
         previous_stage, operation, outcome = {
             "coordinator": ("persisted", "entry.persisted_to_coordinator", ""),
             "python_submit": ("coordinator", "entry.coordinator_to_submit", ""),

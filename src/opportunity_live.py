@@ -958,15 +958,23 @@ class LiveTradeState(ScanState):
             diagnostics[-1].update(venue=intent.venue,
                 book_source_ns=book.ts_event_ns if book else None,
                 book_received_ns=book.ts_received_ns if book else None)
+        for intent in intents:
+            record_entry_stage(intent.request_id, "persist_started")
         with span("strategy.persist_intents"):
             self.emit("orders_prepared", now_ns, position_id=position["position_id"],
                       client_order_ids=[i.client_order_id for i in intents], orders=diagnostics,
                       pair=position["pair"],
                       entry_economics=position["entry"].get("economics")
                       if any(self.orders[i.client_order_id]["purpose"] == "entry" for i in intents) else None)
+        for intent in intents:
+            record_entry_stage(intent.request_id, "persisted", capture_wall=True)
         self.outbox.extend(intents)
         if intents and self.intent_notifier is not None:
+            for intent in intents:
+                record_entry_stage(intent.request_id, "wakeup_requested")
             self.intent_notifier()
+            for intent in intents:
+                record_entry_stage(intent.request_id, "wakeup_request_returned")
 
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
@@ -1078,12 +1086,16 @@ class LiveTradeState(ScanState):
             intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
         for intent in intents:
             self.entry_clocks[intent.client_order_id] = entry_clock
+        if candidate_marker is not None:
+            from opportunity_price_timing import entry_quotes
+            quotes = entry_quotes(self, buy_id, sell_id)
+            for intent in intents:
+                begin_entry_trace(intent.request_id, intent.venue, candidate_marker, now_ns,
+                    client_order_id=intent.client_order_id, pricing_marker=pricing_marker, quotes=quotes)
         self._publish_orders(intents, now_ns, position)
         if candidate_marker is not None:
             record_latency(candidate_marker, "entry.candidate_to_persisted_intents")
             for intent in intents:
-                begin_entry_trace(intent.request_id, intent.venue, candidate_marker, now_ns)
-                record_entry_stage(intent.request_id, "persisted", wall_ns=now_ns)
                 if len(self.entry_timings) >= MAX_PENDING_ENTRY_TIMINGS:
                     self.entry_timings.pop(next(iter(self.entry_timings)))
                 self.entry_timings[intent.request_id] = candidate_marker
