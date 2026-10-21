@@ -62,6 +62,52 @@ def test_backpack_every_field_is_required(field):
     assert not collect_native_shutdown({"BACKPACK": backpack(raw)})["clean"]
 
 
+def detailed_backpack_report(**updates):
+    return backpack_report(**({"positions_unknown": False, "positions_nonzero": False,
+        "complete_account_proof": True, "account_observed_at_ms": 100,
+        "account_completed_at_ms": 110, "evaluated_at_ms": 120, "private_generation": 1,
+        "private_epoch": 0, "private_revision": 3, "reason": None} | updates))
+
+
+@pytest.mark.parametrize("reason,unknown,nonzero,complete", [
+    (None, False, False, True), ("refresh_timeout", True, False, False),
+    ("private_revision_changed", True, False, False), ("positions_nonzero", False, True, True),
+    ("account_stale", True, False, False), ("unresolved_orders", False, False, True),
+])
+def test_backpack_keeps_bounded_native_shutdown_diagnostics(reason, unknown, nonzero, complete):
+    raw = detailed_backpack_report(reason=reason, dirty=reason is not None,
+        positions_unknown=unknown, positions_nonzero=nonzero, complete_account_proof=complete,
+        positions_unknown_or_nonzero=unknown or nonzero, unknown=int(reason == "unresolved_orders"))
+    result = collect_native_shutdown({"BACKPACK": backpack(raw)})
+    assert result["clean"] == (reason is None)
+    row = result["venues"]["BACKPACK"]
+    assert row["reason"] == (reason or "clean")
+    for name in ("positions_unknown", "positions_nonzero", "complete_account_proof",
+                 "account_observed_at_ms", "account_completed_at_ms", "evaluated_at_ms",
+                 "private_generation", "private_epoch", "private_revision"):
+        assert row[name] == raw[name]
+
+
+@pytest.mark.parametrize("updates", [
+    {"positions_unknown": True}, {"positions_nonzero": True}, {"positions_unknown": "false"},
+    {"complete_account_proof": False}, {"account_observed_at_ms": 0},
+    {"account_completed_at_ms": 99}, {"evaluated_at_ms": 109}, {"private_generation": 0},
+    {"private_revision": True}, {"account_completed_at_ms": None},
+    {"reason": "synthetic-private-payload"}, {"reason": ["refresh_timeout"]},
+])
+def test_backpack_invalid_or_incomplete_extended_proof_cannot_be_clean(updates):
+    result = collect_native_shutdown({"BACKPACK": backpack(detailed_backpack_report(**updates))})
+    assert not result["clean"]
+    assert "synthetic-private-payload" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("field", sorted(set(detailed_backpack_report()) - set(backpack_report())))
+def test_backpack_partial_extended_report_is_rejected(field):
+    raw = detailed_backpack_report()
+    raw.pop(field)
+    assert not collect_native_shutdown({"BACKPACK": backpack(raw)})["clean"]
+
+
 @pytest.mark.parametrize("section,updates", [
     (0, {"phase": "reconciled"}), (0, {"shutdown_status": "uncertain"}), (0, {"mode": "envelope"}),
     (0, {"complete": False}), (0, {"coverage_complete": False}), (0, {"reconciled_flat": False}),
