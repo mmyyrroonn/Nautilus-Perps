@@ -18,6 +18,14 @@ class _InvalidProof(ValueError):
     pass
 
 
+_BACKPACK_SHUTDOWN_REASONS = frozenset({
+    "account_proof_missing", "refresh_timeout", "refresh_failed", "private_unavailable",
+    "private_revision_changed", "terminal_evidence_unresolved", "open_orders", "unconsumed_fills",
+    "account_invalid", "native_position_mismatch", "account_stale", "positions_nonzero",
+    "unresolved_orders", "prior_dirty_stop", "disconnect_incomplete",
+})
+
+
 def _object(value):
     if isinstance(value, str):
         value = json.loads(value)
@@ -47,8 +55,31 @@ def _backpack(control):
     dirty = _boolean(raw.get("dirty"))
     position_unknown = _boolean(raw.get("positions_unknown_or_nonzero"))
     clean = not dirty and not position_unknown and not any(counts.values())
-    return {"clean": clean, "reason": "clean" if clean else "native_shutdown_dirty",
-            "dirty": dirty, "positions_unknown_or_nonzero": position_unknown, **counts}
+    details = {}
+    reason = None
+    if any(name in raw for name in ("positions_unknown", "positions_nonzero", "complete_account_proof")):
+        details = {name: _boolean(raw.get(name)) for name in (
+            "positions_unknown", "positions_nonzero", "complete_account_proof")}
+        unknown, nonzero = details["positions_unknown"], details["positions_nonzero"]
+        if (unknown and nonzero) or position_unknown != (unknown or nonzero):
+            raise _InvalidProof
+        reason = raw["reason"]
+        if reason is not None and (not isinstance(reason, str) or reason not in _BACKPACK_SHUTDOWN_REASONS):
+            raise _InvalidProof
+        for name in ("account_observed_at_ms", "account_completed_at_ms", "evaluated_at_ms",
+                     "private_generation", "private_epoch", "private_revision"):
+            value = raw[name]
+            details[name] = None if value is None else _count(value)
+        if details["complete_account_proof"]:
+            started, completed, evaluated, generation, epoch, revision = (
+                details[name] for name in ("account_observed_at_ms", "account_completed_at_ms",
+                    "evaluated_at_ms", "private_generation", "private_epoch", "private_revision"))
+            if (unknown or any(value is None for value in (started, completed, evaluated, generation, epoch, revision))
+                    or not 0 < started <= completed <= evaluated or generation == 0):
+                raise _InvalidProof
+        clean = clean and details["complete_account_proof"] and reason is None
+    return {"clean": clean, "reason": "clean" if clean else reason or "native_shutdown_dirty",
+            "dirty": dirty, "positions_unknown_or_nonzero": position_unknown, **counts, **details}
 
 
 def _ondo(control):
