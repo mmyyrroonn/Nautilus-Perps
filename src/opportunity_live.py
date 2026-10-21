@@ -1621,11 +1621,11 @@ class LiveTradeState(ScanState):
             self.full_evaluation_symbols.update(self.trade_symbols)
         super().update_metadata(instrument_id, metadata, now_ns, evaluate=evaluate)
 
-    def invalidate(self, instrument_id, now_ns, *, metadata=False):
+    def invalidate(self, instrument_id, now_ns, *, metadata=False, reason="invalidated"):
         self.book_publications.pop(instrument_id, None)
         if self.positions:
             self.full_evaluation_symbols.update(self.trade_symbols)
-        super().invalidate(instrument_id, now_ns, metadata=metadata)
+        super().invalidate(instrument_id, now_ns, metadata=metadata, reason=reason)
 
     @timed("strategy.evaluate_symbol")
     def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):

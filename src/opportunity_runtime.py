@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from opportunity_timing import (record_latency, sampled_delivery_age, sampled_start_latency,
-                                span, start_latency, timed)
+                                span, start_latency, timed, diagnostics_enabled)
 
 from copy import deepcopy
 from collections import deque
@@ -17,6 +17,7 @@ from datetime import timedelta
 from opportunity_core import (BookSnapshot, EventRecorder, MarketMetadata, evaluate_opportunity,
                               exact_decimal, _book_valid, _metadata_valid)
 from opportunity_scan import ScanConfigError, ScanPlan
+from opportunity_book_diagnostics import BookEvidence
 
 
 def instrument_decimal(value):
@@ -83,6 +84,8 @@ class ScanState:
             self.groups.setdefault(market.symbol, []).append(market.instrument_id)
         self.metadata: dict[str, MarketMetadata] = {}
         self.books: dict[str, BookSnapshot] = {}
+        self.book_evidence = ({i: BookEvidence() for i in self.markets}
+                              if diagnostics_enabled() else None)
         self.raw_books: dict[str, dict] = {}
         self.current: dict[tuple, dict] = {}
         self.recorder = EventRecorder(plan.output_path, plan.cooldown_ms, plan.edge_change_bps,
@@ -96,7 +99,9 @@ class ScanState:
         if evaluate:
             self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
 
-    def invalidate(self, instrument_id: str, now_ns: int, *, metadata=False):
+    def invalidate(self, instrument_id: str, now_ns: int, *, metadata=False, reason="invalidated"):
+        if self.book_evidence is not None:
+            self.book_evidence[instrument_id].invalidate("metadata_invalid" if metadata else reason, now_ns)
         self.books.pop(instrument_id, None)
         self.raw_books.pop(instrument_id, None)
         if metadata:
@@ -108,6 +113,8 @@ class ScanState:
         if market is None or book.symbol != market.symbol or book.venue != market.venue:
             raise ValueError("book does not match configured market")
         self.books[instrument_id] = book
+        if self.book_evidence is not None:
+            self.book_evidence[instrument_id].publish(book, now_ns)
         if raw_book is not None:
             self.raw_books[instrument_id] = deepcopy(raw_book)
         else:
@@ -275,6 +282,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.failure = message
             self.running = False
             state.current.clear()
+            if state.book_evidence is not None:
+                now_ns = time.time_ns()
+                for evidence in state.book_evidence.values():
+                    evidence.invalidate("observer_failed", now_ns)
             print(f"[scan] stopped: {message}", file=sys.stderr, flush=True)
             stop()
 
@@ -373,10 +384,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                         ids.discard(instrument_id)
             self.subscribed.clear()
             for instrument_id in self.markets:
-                self.invalidate(instrument_id, notify=False)
+                self.invalidate(instrument_id, notify=False, reason="stopped")
             self.epochs.clear()
 
-        def invalidate(self, instrument_id, *, metadata=False, notify=True):
+        def invalidate(self, instrument_id, *, metadata=False, notify=True, reason="invalidated"):
             self.local_books[instrument_id].reset()
             for prices in self.level_prices[instrument_id].values():
                 prices.clear()
@@ -385,12 +396,14 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.dirty.pop(instrument_id, None)
             self.clear_book_timing(instrument_id)
             if notify:
-                state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata)
+                state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata, reason=reason)
             else:
                 # Stop must not evaluate partially cleared multi-venue books and
                 # accidentally prepare a new pair while subscriptions are closing.
                 state.books.pop(str(instrument_id), None)
                 state.raw_books.pop(str(instrument_id), None)
+                if state.book_evidence is not None:
+                    state.book_evidence[str(instrument_id)].invalidate(reason, time.time_ns())
 
         def clear_book_timing(self, instrument_id):
             self.book_timings.pop(instrument_id, None)
@@ -400,6 +413,13 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 pending.pop(instrument_id, None)
                 if not pending:
                     self.publication_timings.pop(market.symbol, None)
+
+        def update_diagnostic_availability(self, instrument_id, backpack_reason=None):
+            if state.book_evidence is not None:
+                state.book_evidence[str(instrument_id)].unavailable_reason = (
+                    "disconnected" if instrument_id in self.disconnected else
+                    "metadata_invalid" if instrument_id in self.metadata_stale else
+                    "halted" if instrument_id in self.halted else backpack_reason)
 
         def evaluate_published(self, symbol, *, changed_id=None, changed_ids=None):
             pending = self.publication_timings.pop(symbol, {})
@@ -425,11 +445,18 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                            and health.get("books_continuous", {}).get(raw) is True
                            and health.get("books_fresh", {}).get(raw) is True)
                 if not healthy or (instrument_id in self.epochs and self.epochs[instrument_id] != epoch):
-                    self.invalidate(instrument_id)
+                    reason = ("disconnected" if health.get("connected") is not True else
+                              "metadata_invalid" if health.get("metadata_ready") is not True else
+                              "book_discontinuous" if health.get("books_continuous", {}).get(raw) is not True else
+                              "stale" if health.get("books_fresh", {}).get(raw) is not True else
+                              "connection_changed")
+                    self.invalidate(instrument_id, reason=reason)
                 if healthy:
                     self.backpack_unhealthy.discard(instrument_id)
                 else:
                     self.backpack_unhealthy.add(instrument_id)
+                if state.book_evidence is not None:
+                    self.update_diagnostic_availability(instrument_id, None if healthy else reason)
                 self.epochs[instrument_id] = epoch
 
         @timed("market.book_deltas", labels=lambda self, batch: (self.markets[batch.instrument_id].venue, ""))
@@ -456,7 +483,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.pending_snapshot.add(instrument_id)
                     self.dirty.pop(instrument_id, None)
                     self.clear_book_timing(instrument_id)
-                    state.invalidate(market.instrument_id, time.time_ns())
+                    state.invalidate(market.instrument_id, time.time_ns(), reason="snapshot_rebuilding")
                 if instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
                     return
                 book = self.local_books[instrument_id]
@@ -482,7 +509,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 if not RecordFlag.F_LAST.matches(batch.flags):
                     self.dirty.pop(instrument_id, None)
                     self.clear_book_timing(instrument_id)
-                    state.invalidate(market.instrument_id, time.time_ns())
+                    state.invalidate(market.instrument_id, time.time_ns(), reason=(
+                        "snapshot_rebuilding" if instrument_id in self.pending_snapshot else "partial_update"))
                     return
                 if instrument_id in self.pending_snapshot:
                     self.pending_snapshot.discard(instrument_id)
@@ -497,6 +525,11 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.book_timings[instrument_id] = (first, start_latency())
                 if plan.evaluation_interval_ms:
                     self.dirty[instrument_id] = stamp
+                    if state.book_evidence is not None:
+                        # F_LAST only: metadata describes a complete local batch,
+                        # never a ladder copy or a substitute admission snapshot.
+                        state.book_evidence[market.instrument_id].pending = (
+                            *stamp, time.time_ns(), len(sides["BUY"]), len(sides["SELL"]))
                 else:
                     self.publish_book(instrument_id, stamp)
             except Exception as exc:
@@ -560,7 +593,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 metadata = market_metadata(market, instrument)
                 old = state.metadata.get(market.instrument_id)
                 if old and (old.multiplier, old.size_increment) != (metadata.multiplier, metadata.size_increment):
-                    self.invalidate(instrument.id)
+                    self.invalidate(instrument.id, reason="metadata_invalid")
                 state.update_metadata(market.instrument_id, metadata, time.time_ns(),
                                       evaluate=not plan.evaluation_interval_ms)
                 if plan.evaluation_interval_ms:
@@ -577,7 +610,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 reason = getattr(status, "reason", "") or ""
                 if reason == "adapter:disconnected":
                     self.disconnected.add(instrument_id)
-                    self.invalidate(instrument_id)
+                    self.invalidate(instrument_id, reason="disconnected")
                 elif reason == "adapter:snapshot_ready":
                     self.disconnected.discard(instrument_id)
                 elif reason == "adapter:metadata_stale":
@@ -591,9 +624,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     if getattr(status, "is_trading", None) is False or action in {
                             "HALT", "PAUSE", "CLOSE", "SUSPEND", "NOT_AVAILABLE_FOR_TRADING"}:
                         self.halted.add(instrument_id)
-                        state.invalidate(str(instrument_id), time.time_ns())
+                        state.invalidate(str(instrument_id), time.time_ns(), reason="halted")
                     elif getattr(status, "is_trading", None) is True or action == "TRADING":
                         self.halted.discard(instrument_id)
+                self.update_diagnostic_availability(instrument_id)
                 if plan.evaluation_interval_ms:
                     self.pending_symbols.add(self.markets[instrument_id].symbol)
                     self.pending_instruments.add(str(instrument_id))
