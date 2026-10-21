@@ -1,0 +1,448 @@
+{
+  "schema_version": 1,
+  "issue": 95,
+  "app_sha": "bb443a0176dbde73e2ed881bdc8fc320521c3796",
+  "native_sha": "c8200a2",
+  "source_hashes": {
+    "session-analysis.json": "a0e955d2ec9042a5a2dd6e1595137c8bcc01c3b52baa205bb032a8a11bdce594",
+    "session-analysis-evidence.json": "41efd6ddd9ff21d72bd24be373987e9eaeee0780bc2bcfa72d1dc65bc2aefd39"
+  },
+  "scan_settings": {
+    "max_age_ms": 2000,
+    "max_receive_age_ms": 2000,
+    "max_skew_ms": 500
+  },
+  "missing": [
+    "per-book publication timestamp",
+    "venue arrival book",
+    "network RTT"
+  ],
+  "pairs": [
+    {
+      "symbol": "TIA",
+      "checks": [
+        {
+          "venue": "LIGHTER",
+          "candidate_wall_ns": 1792498540767454839,
+          "checked_wall_ns": 1792498540780516181,
+          "candidate_to_submit_ns": 15294515,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792498540780516181,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "1.13846381555",
+            "minimum_net_usd": "0.295754151",
+            "net_margin_usd": "0.84270966455",
+            "reserve_usd": "0.0492923585",
+            "buy": {
+              "limit_price": "0.64141",
+              "quantity": "153.7",
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "source_age_ms": "179.516181",
+              "receive_age_ms": "67.975969",
+              "available_quantity": "6354.8",
+              "depth_within_limit": "201.1",
+              "executable_vwap": "0.64134015614834092387768379960962914769030579050098",
+              "current_bound_price": "0.64141",
+              "limit_cash_usd": "98.584717",
+              "fee_usd": "0",
+              "standalone_risk_usd": "98.584717"
+            },
+            "sell": {
+              "limit_price": "0.64943",
+              "quantity": "153.7",
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "source_age_ms": "572.516181",
+              "receive_age_ms": "130.502636",
+              "available_quantity": "2821.5",
+              "depth_within_limit": "403.1",
+              "executable_vwap": "0.64943",
+              "current_bound_price": "0.64943",
+              "limit_cash_usd": "99.817391",
+              "fee_usd": "0.04491782595",
+              "standalone_risk_usd": "99.855816"
+            }
+          }
+        },
+        {
+          "venue": "HL",
+          "candidate_wall_ns": 1792498540767454839,
+          "checked_wall_ns": 1792498540782288337,
+          "candidate_to_submit_ns": 17060062,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792498540782288337,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "1.13846381555",
+            "minimum_net_usd": "0.295754151",
+            "net_margin_usd": "0.84270966455",
+            "reserve_usd": "0.0492923585",
+            "buy": {
+              "limit_price": "0.64141",
+              "quantity": "153.7",
+              "source_wall_ns": 1792498540601000000,
+              "received_wall_ns": 1792498540712540212,
+              "source_age_ms": "181.288337",
+              "receive_age_ms": "69.748125",
+              "available_quantity": "6354.8",
+              "depth_within_limit": "201.1",
+              "executable_vwap": "0.64134015614834092387768379960962914769030579050098",
+              "current_bound_price": "0.64141",
+              "limit_cash_usd": "98.584717",
+              "fee_usd": "0",
+              "standalone_risk_usd": "98.584717"
+            },
+            "sell": {
+              "limit_price": "0.64943",
+              "quantity": "153.7",
+              "source_wall_ns": 1792498540208000000,
+              "received_wall_ns": 1792498540650013545,
+              "source_age_ms": "574.288337",
+              "receive_age_ms": "132.274792",
+              "available_quantity": "2821.5",
+              "depth_within_limit": "403.1",
+              "executable_vwap": "0.64943",
+              "current_bound_price": "0.64943",
+              "limit_cash_usd": "99.817391",
+              "fee_usd": "0.04491782595",
+              "standalone_risk_usd": "99.855816"
+            }
+          }
+        }
+      ],
+      "hl_rejection_market": {
+        "status": "missing_book"
+      },
+      "submitted_to_response_ms": "945.725131"
+    },
+    {
+      "symbol": "CRV",
+      "checks": [
+        {
+          "venue": "LIGHTER",
+          "candidate_wall_ns": 1792498966856321220,
+          "checked_wall_ns": 1792498966893662781,
+          "candidate_to_submit_ns": 39666832,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792498966893662781,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "0.3263641596",
+            "minimum_net_usd": "0.298390644",
+            "net_margin_usd": "0.0279735156",
+            "reserve_usd": "0.049731774",
+            "buy": {
+              "limit_price": "0.36852",
+              "quantity": "269.9",
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "source_age_ms": "194.662781",
+              "receive_age_ms": "83.315119",
+              "available_quantity": "1555824.1",
+              "depth_within_limit": "4500.1",
+              "executable_vwap": "0.36852",
+              "current_bound_price": "0.36852",
+              "limit_cash_usd": "99.463548",
+              "fee_usd": "0",
+              "standalone_risk_usd": "99.463548"
+            },
+            "sell": {
+              "limit_price": "0.37008",
+              "quantity": "269.9",
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "source_age_ms": "525.662781",
+              "receive_age_ms": "129.12474",
+              "available_quantity": "34990.5",
+              "depth_within_limit": "19251.3",
+              "executable_vwap": "0.37008",
+              "current_bound_price": "0.37008",
+              "limit_cash_usd": "99.884592",
+              "fee_usd": "0.0449480664",
+              "standalone_risk_usd": "99.88999"
+            }
+          }
+        },
+        {
+          "venue": "HL",
+          "candidate_wall_ns": 1792498966856321220,
+          "checked_wall_ns": 1792498966895419735,
+          "candidate_to_submit_ns": 41198215,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792498966895419735,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "0.3263641596",
+            "minimum_net_usd": "0.298390644",
+            "net_margin_usd": "0.0279735156",
+            "reserve_usd": "0.049731774",
+            "buy": {
+              "limit_price": "0.36852",
+              "quantity": "269.9",
+              "source_wall_ns": 1792498966699000000,
+              "received_wall_ns": 1792498966810347662,
+              "source_age_ms": "196.419735",
+              "receive_age_ms": "85.072073",
+              "available_quantity": "1555824.1",
+              "depth_within_limit": "4500.1",
+              "executable_vwap": "0.36852",
+              "current_bound_price": "0.36852",
+              "limit_cash_usd": "99.463548",
+              "fee_usd": "0",
+              "standalone_risk_usd": "99.463548"
+            },
+            "sell": {
+              "limit_price": "0.37008",
+              "quantity": "269.9",
+              "source_wall_ns": 1792498966368000000,
+              "received_wall_ns": 1792498966764538041,
+              "source_age_ms": "527.419735",
+              "receive_age_ms": "130.881694",
+              "available_quantity": "34990.5",
+              "depth_within_limit": "19251.3",
+              "executable_vwap": "0.37008",
+              "current_bound_price": "0.37008",
+              "limit_cash_usd": "99.884592",
+              "fee_usd": "0.0449480664",
+              "standalone_risk_usd": "99.88999"
+            }
+          }
+        }
+      ],
+      "hl_rejection_market": {
+        "status": "missing_book"
+      },
+      "submitted_to_response_ms": "1019.418844"
+    },
+    {
+      "symbol": "STX",
+      "checks": [
+        {
+          "venue": "ASTER",
+          "candidate_wall_ns": 1792499971358822296,
+          "checked_wall_ns": 1792499971374374151,
+          "candidate_to_submit_ns": 21619396,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792499971374374151,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "0.3702118725",
+            "minimum_net_usd": "0.2978025",
+            "net_margin_usd": "0.0724093725",
+            "reserve_usd": "0.04963375",
+            "buy": {
+              "limit_price": "0.3365",
+              "quantity": "295",
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "source_age_ms": "274.374151",
+              "receive_age_ms": "75.232187",
+              "available_quantity": "77026",
+              "depth_within_limit": "718",
+              "executable_vwap": "0.3365",
+              "current_bound_price": "0.3365",
+              "limit_cash_usd": "99.2675",
+              "fee_usd": "0.039707",
+              "standalone_risk_usd": "99.2675"
+            },
+            "sell": {
+              "limit_price": "0.33821",
+              "quantity": "295",
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "source_age_ms": "671.374151",
+              "receive_age_ms": "247.089281",
+              "available_quantity": "1961",
+              "depth_within_limit": "419.4",
+              "executable_vwap": "0.33821",
+              "current_bound_price": "0.33821",
+              "limit_cash_usd": "99.77195",
+              "fee_usd": "0.0448973775",
+              "standalone_risk_usd": "99.7749"
+            }
+          }
+        },
+        {
+          "venue": "HL",
+          "candidate_wall_ns": 1792499971358822296,
+          "checked_wall_ns": 1792499971377654495,
+          "candidate_to_submit_ns": 24277748,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792499971377654495,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "0.3702118725",
+            "minimum_net_usd": "0.2978025",
+            "net_margin_usd": "0.0724093725",
+            "reserve_usd": "0.04963375",
+            "buy": {
+              "limit_price": "0.3365",
+              "quantity": "295",
+              "source_wall_ns": 1792499971100000000,
+              "received_wall_ns": 1792499971299141964,
+              "source_age_ms": "277.654495",
+              "receive_age_ms": "78.512531",
+              "available_quantity": "77026",
+              "depth_within_limit": "718",
+              "executable_vwap": "0.3365",
+              "current_bound_price": "0.3365",
+              "limit_cash_usd": "99.2675",
+              "fee_usd": "0.039707",
+              "standalone_risk_usd": "99.2675"
+            },
+            "sell": {
+              "limit_price": "0.33821",
+              "quantity": "295",
+              "source_wall_ns": 1792499970703000000,
+              "received_wall_ns": 1792499971127284870,
+              "source_age_ms": "674.654495",
+              "receive_age_ms": "250.369625",
+              "available_quantity": "1961",
+              "depth_within_limit": "419.4",
+              "executable_vwap": "0.33821",
+              "current_bound_price": "0.33821",
+              "limit_cash_usd": "99.77195",
+              "fee_usd": "0.0448973775",
+              "standalone_risk_usd": "99.7749"
+            }
+          }
+        }
+      ],
+      "hl_rejection_market": {
+        "status": "valid",
+        "source_wall_ns": 1792499971797000000,
+        "received_wall_ns": 1792499972151957629,
+        "source_age_ms": "604.194569",
+        "receive_age_ms": "249.23694",
+        "bid_price": "0.33688",
+        "ask_price": "0.33689",
+        "limit_price": "0.33821",
+        "quantity": "295",
+        "depth_within_limit": "0",
+        "full_quantity_available": false,
+        "touch_outside_limit_bps": "39.324679932586262972709263475355548327961917152065"
+      },
+      "submitted_to_response_ms": "1012.906322"
+    },
+    {
+      "symbol": "JUP",
+      "checks": [
+        {
+          "venue": "LIGHTER",
+          "candidate_wall_ns": 1792500086966793322,
+          "checked_wall_ns": 1792500086996164214,
+          "candidate_to_submit_ns": 32139369,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792500086996164214,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "0.430375909",
+            "minimum_net_usd": "0.29762496",
+            "net_margin_usd": "0.132750949",
+            "reserve_usd": "0.04960416",
+            "buy": {
+              "limit_price": "0.30432",
+              "quantity": "326",
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "source_age_ms": "201.164214",
+              "receive_age_ms": "87.023728",
+              "available_quantity": "412667.8",
+              "depth_within_limit": "2189.4",
+              "executable_vwap": "0.30432",
+              "current_bound_price": "0.30432",
+              "limit_cash_usd": "99.20832",
+              "fee_usd": "0",
+              "standalone_risk_usd": "99.20832"
+            },
+            "sell": {
+              "limit_price": "0.30593",
+              "quantity": "326",
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "source_age_ms": "533.164214",
+              "receive_age_ms": "137.121765",
+              "available_quantity": "4140",
+              "depth_within_limit": "413",
+              "executable_vwap": "0.30594085889570552147239263803680981595092024539877",
+              "current_bound_price": "0.30593",
+              "limit_cash_usd": "99.73318",
+              "fee_usd": "0.044879931",
+              "standalone_risk_usd": "99.76252"
+            }
+          }
+        },
+        {
+          "venue": "HL",
+          "candidate_wall_ns": 1792500086966793322,
+          "checked_wall_ns": 1792500086998075545,
+          "candidate_to_submit_ns": 33760832,
+          "original_reason": "valid",
+          "evidence": {
+            "checked_wall_ns": 1792500086998075545,
+            "unhedged_reserve_bps": "10",
+            "per_leg_risk_budget_usd": "99.9",
+            "net_usd": "0.430375909",
+            "minimum_net_usd": "0.29762496",
+            "net_margin_usd": "0.132750949",
+            "reserve_usd": "0.04960416",
+            "buy": {
+              "limit_price": "0.30432",
+              "quantity": "326",
+              "source_wall_ns": 1792500086795000000,
+              "received_wall_ns": 1792500086909140486,
+              "source_age_ms": "203.075545",
+              "receive_age_ms": "88.935059",
+              "available_quantity": "412667.8",
+              "depth_within_limit": "2189.4",
+              "executable_vwap": "0.30432",
+              "current_bound_price": "0.30432",
+              "limit_cash_usd": "99.20832",
+              "fee_usd": "0",
+              "standalone_risk_usd": "99.20832"
+            },
+            "sell": {
+              "limit_price": "0.30593",
+              "quantity": "326",
+              "source_wall_ns": 1792500086463000000,
+              "received_wall_ns": 1792500086859042449,
+              "source_age_ms": "535.075545",
+              "receive_age_ms": "139.033096",
+              "available_quantity": "4140",
+              "depth_within_limit": "413",
+              "executable_vwap": "0.30594085889570552147239263803680981595092024539877",
+              "current_bound_price": "0.30593",
+              "limit_cash_usd": "99.73318",
+              "fee_usd": "0.044879931",
+              "standalone_risk_usd": "99.76252"
+            }
+          }
+        }
+      ],
+      "hl_rejection_market": {
+        "status": "valid",
+        "source_wall_ns": 1792500086998000000,
+        "received_wall_ns": 1792500087430350439,
+        "source_age_ms": "867.614565",
+        "receive_age_ms": "435.264126",
+        "bid_price": "0.3042",
+        "ask_price": "0.30454",
+        "limit_price": "0.30593",
+        "quantity": "326",
+        "depth_within_limit": "0",
+        "full_quantity_available": false,
+        "touch_outside_limit_bps": "56.548883731572581963194194750433105612394992318504"
+      },
+      "submitted_to_response_ms": "858.396509"
+    }
+  ]
+}

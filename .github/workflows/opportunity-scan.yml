@@ -44,6 +44,7 @@ jobs:
           tests/test_opportunity_unhedged_risk.py
           tests/test_execution_terminal_reliability.py
           tests/test_opportunity_entry_evidence.py
+          tests/test_opportunity_entry_admission.py
           tests/test_opportunity_leverage.py
           tests/test_opportunity_exit_reliability.py
           tests/test_opportunity_account_scope.py

@@ -22,6 +22,16 @@ breakeven_after_secs = 180
 force_close_after_secs = 300
 slippage_bps = "0"
 
+[entry_admission]
+# Local entry handoff budgets, validated offline; no guarantee of venue execution.
+# Effective source/receive/skew limits also respect stricter scan settings.
+max_source_age_ms = 500
+max_receive_age_ms = 250
+max_skew_ms = 250
+# Native receive -> strategy publication includes delivery queues and coalescing.
+max_publication_wait_ms = 150
+max_dispatch_delay_ms = 100
+
 [risk]
 # Zero refuses all execution; values can only tighten the total USD 500 hard cap.
 max_pairs = 2
