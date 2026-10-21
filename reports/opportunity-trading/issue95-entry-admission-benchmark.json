@@ -1,0 +1,86 @@
+{
+  "baseline_sha": "a95805e8a2d7dcdd4fcc1ea4437eaf6963820fac",
+  "python": "3.12.9 (main, Mar 17 2025, 21:06:20) [MSC v.1943 64 bit (AMD64)]",
+  "iterations_per_sample": 3000,
+  "scope": "Two send checks per pair; in-memory books/accounts, timing disabled, no store/native/network; latency without tracemalloc",
+  "results": {
+    "baseline": [
+      {
+        "p50_us": 399.8,
+        "p95_us": 425.2,
+        "p99_us": 533.4,
+        "pairs_per_second": 2472.057102541423,
+        "cpu_us_per_pair": 401.0416666666667,
+        "retained_bytes_after_100_pairs": 480,
+        "peak_bytes": 323498
+      },
+      {
+        "p50_us": 398.0,
+        "p95_us": 423.9,
+        "p99_us": 527.5,
+        "pairs_per_second": 2481.158495908487,
+        "cpu_us_per_pair": 406.25,
+        "retained_bytes_after_100_pairs": 480,
+        "peak_bytes": 323498
+      },
+      {
+        "p50_us": 398.6,
+        "p95_us": 409.5,
+        "p99_us": 475.8,
+        "pairs_per_second": 2493.2806087593935,
+        "cpu_us_per_pair": 401.0416666666667,
+        "retained_bytes_after_100_pairs": 480,
+        "peak_bytes": 323498
+      }
+    ],
+    "candidate": [
+      {
+        "p50_us": 440.5,
+        "p95_us": 455.6,
+        "p99_us": 570.9,
+        "pairs_per_second": 2250.834328014537,
+        "cpu_us_per_pair": 437.5,
+        "retained_bytes_after_100_pairs": 7336,
+        "peak_bytes": 396394
+      },
+      {
+        "p50_us": 436.5,
+        "p95_us": 453.6,
+        "p99_us": 556.2,
+        "pairs_per_second": 2272.5659549772868,
+        "cpu_us_per_pair": 437.5,
+        "retained_bytes_after_100_pairs": 7336,
+        "peak_bytes": 395882
+      },
+      {
+        "p50_us": 441.0,
+        "p95_us": 468.9,
+        "p99_us": 577.3,
+        "pairs_per_second": 2240.8543451398223,
+        "cpu_us_per_pair": 442.7083333333333,
+        "retained_bytes_after_100_pairs": 7336,
+        "peak_bytes": 395562
+      }
+    ]
+  },
+  "medians": {
+    "baseline": {
+      "p50_us": 398.6,
+      "p95_us": 423.9,
+      "p99_us": 527.5,
+      "pairs_per_second": 2481.158495908487,
+      "cpu_us_per_pair": 401.0416666666667,
+      "retained_bytes_after_100_pairs": 480,
+      "peak_bytes": 323498
+    },
+    "candidate": {
+      "p50_us": 440.5,
+      "p95_us": 455.6,
+      "p99_us": 570.9,
+      "pairs_per_second": 2250.834328014537,
+      "cpu_us_per_pair": 437.5,
+      "retained_bytes_after_100_pairs": 7336,
+      "peak_bytes": 395882
+    }
+  }
+}

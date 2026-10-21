@@ -10,6 +10,7 @@ from opportunity_timing import (begin_entry_trace, record_entry_stage, record_la
                                 span, start_latency, timed)
 from opportunity_entry_evidence import entry_pair_result
 from opportunity_leverage import leverage_check, leverage_integer
+from opportunity_entry_admission import EntryAdmissionPolicy
 
 from collections import Counter
 from copy import deepcopy
@@ -18,6 +19,7 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction as F
 from itertools import combinations
 import sys
+import time
 import uuid
 
 from opportunity_core import (
@@ -57,7 +59,8 @@ class LiveTradeState(ScanState):
                  max_unhedged_notional_usd=HARD_MAX_UNHEDGED_NOTIONAL_USD,
                  max_unhedged_secs=HARD_MAX_UNHEDGED_SECS,
                  entry_unhedged_reserve_bps=MIN_ENTRY_UNHEDGED_RESERVE_BPS,
-                 aster_leverage_targets=(), aster_leverage_max_age_ms=5000):
+                 aster_leverage_targets=(), aster_leverage_max_age_ms=5000,
+                 entry_admission=EntryAdmissionPolicy()):
         if type(max_pairs) is not int or not 1 <= max_pairs <= HARD_MAX_PAIRS:
             raise ValueError("max_pairs is outside the live hard cap")
         gross = _positive(max_gross_notional_usd, "max_gross_notional_usd")
@@ -79,6 +82,9 @@ class LiveTradeState(ScanState):
             target_notional=policy.order_notional_usd, min_entry_edge_bps=policy.entry_edge_bps))
         super().__init__(plan)
         self.policy, self.max_pairs, self.max_gross = policy, max_pairs, F(gross)
+        self.entry_admission = entry_admission
+        self.book_publications = {}  # One immutable snapshot identity/time per configured market.
+        self.entry_clocks = {}  # Pending entry IDs only; monotonic clocks never survive restart.
         self.account_max_age_ns = account_max_age_ms * 1_000_000
         self.order_timeout_ns = order_timeout_secs * 1_000_000_000
         self.max_unhedged_notional = F(unhedged)
@@ -242,6 +248,10 @@ class LiveTradeState(ScanState):
         # Account, order, ownership and lifecycle transitions can reopen admission
         # for an unchanged pair, including a pair on another symbol.
         self.full_evaluation_symbols.update(self.trade_symbols)
+        if kind in {"order_accepted", "order_terminal", "order_unknown"}:
+            order = self.orders.get(fields.get("client_order_id"), {})
+            if "entry_dispatch" in order:
+                fields["entry_dispatch"] = order["entry_dispatch"]
         event = deepcopy({"event": kind, "mode": "live", "session_id": self.session_id,
                           "observed_ns": now_ns, **fields})
         self.event_counts[kind] += 1
@@ -255,6 +265,7 @@ class LiveTradeState(ScanState):
             self.cleanup_allowed = False
             self.outbox.clear()
             self.entry_timings.clear()
+            self.entry_clocks.clear()
             raise
 
     def activate(self, now_ns):
@@ -317,6 +328,7 @@ class LiveTradeState(ScanState):
         return intents
 
     def take_entry_timing(self, intent):
+        self.entry_clocks.pop(intent.client_order_id, None)
         return self.entry_timings.pop(intent.request_id, None)
 
     def expected_native(self, instrument_id):
@@ -980,6 +992,7 @@ class LiveTradeState(ScanState):
         if key in self.last_closed and any(i not in self.books or self.books[i].ts_event_ns <= self.last_closed[key]
                                           for i in (buy_id, sell_id)):
             return False
+        entry_clock = (now_ns, time.perf_counter_ns())
         pricing_marker = start_latency()
         estimate = self.pricer.entry(buy_id, sell_id, now_ns)
         if estimate is None:
@@ -1063,6 +1076,8 @@ class LiveTradeState(ScanState):
         self.positions[key] = position
         with span("entry.prepare_orders"):
             intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
+        for intent in intents:
+            self.entry_clocks[intent.client_order_id] = entry_clock
         self._publish_orders(intents, now_ns, position)
         if candidate_marker is not None:
             record_latency(candidate_marker, "entry.candidate_to_persisted_intents")
@@ -1596,7 +1611,10 @@ class LiveTradeState(ScanState):
         # can change admission on every symbol, not just the updated leg.
         if self.positions:
             self.full_evaluation_symbols.update(self.trade_symbols)
-        super().update_book(instrument_id, book, now_ns, raw_book=raw_book, evaluate=evaluate)
+        super().update_book(instrument_id, book, now_ns, raw_book=raw_book, evaluate=False)
+        self.book_publications[instrument_id] = (book, now_ns)
+        if evaluate:
+            self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
 
     def update_metadata(self, instrument_id, metadata, now_ns, *, evaluate=True):
         if self.positions:
@@ -1604,6 +1622,7 @@ class LiveTradeState(ScanState):
         super().update_metadata(instrument_id, metadata, now_ns, evaluate=evaluate)
 
     def invalidate(self, instrument_id, now_ns, *, metadata=False):
+        self.book_publications.pop(instrument_id, None)
         if self.positions:
             self.full_evaluation_symbols.update(self.trade_symbols)
         super().invalidate(instrument_id, now_ns, metadata=metadata)
@@ -1674,6 +1693,7 @@ class LiveTradeState(ScanState):
                 "aster_leverage_targets": dict(self.aster_leverage_targets),
                 "aster_leverage_initializations": deepcopy(self.aster_leverage_initializations),
                 "policy": self.policy.document(), "max_pairs": self.max_pairs,
+                "entry_admission": self.entry_admission.document(),
                 "max_gross_notional_usd": _number(self.max_gross),
                 "max_unhedged_notional_usd": _number(self.max_unhedged_notional),
                 "entry_unhedged_reserve_bps": _number(self.entry_unhedged_reserve_bps),

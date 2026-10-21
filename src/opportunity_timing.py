@@ -349,17 +349,26 @@ def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason
                 "entry_admission_changed", "account_admission_changed", "leverage_configuration",
                 "leverage_target_pending", "leverage_unavailable", "leverage_stale", "leverage_read_failed",
                 "leverage_recheck_required", "leverage_symbol_missing", "leverage_notional_unsupported",
-                "leverage_above_maximum", "leverage_target_mismatch"}:
+                "leverage_above_maximum", "leverage_target_mismatch", "entry_source_age",
+                "entry_receive_age", "entry_publication_wait", "entry_book_skew",
+                "entry_dispatch_expired", "entry_clock_invalid", "entry_publication_unknown"}:
             row["reason"] = reason
         if evidence is not None:
             # The only caller constructs this fixed schema. Never accept raw
             # native events, exception text or account/order payloads here.
             fields = {"checked_wall_ns", "net_usd", "minimum_net_usd", "net_margin_usd", "reserve_usd",
-                      "unhedged_reserve_bps", "per_leg_risk_budget_usd"}
+                      "unhedged_reserve_bps", "per_leg_risk_budget_usd", "candidate_wall_ns",
+                      "dispatch_delay_ns", "dispatch_deadline_wall_ns", "source_skew_ns", "timing_failures"}
             leg_fields = {"limit_price", "quantity", "source_wall_ns", "received_wall_ns", "source_age_ms",
                 "receive_age_ms", "available_quantity", "depth_within_limit", "executable_vwap",
-                "current_bound_price", "limit_cash_usd", "fee_usd", "standalone_risk_usd"}
+                "current_bound_price", "limit_cash_usd", "fee_usd", "standalone_risk_usd",
+                "published_wall_ns", "source_age_ns", "receive_age_ns", "publication_wait_ns",
+                "published_to_check_ns", "temporal_failures"}
             row["evidence"] = {k: v for k, v in evidence.items() if k in fields}
+            if "thresholds" in evidence:
+                row["evidence"]["thresholds"] = {k: v for k, v in evidence["thresholds"].items()
+                    if k in {"max_source_age_ms", "max_receive_age_ms", "max_skew_ms",
+                             "max_publication_wait_ms", "max_dispatch_delay_ms"}}
             for leg in ("buy", "sell"):
                 if leg in evidence:
                     row["evidence"][leg] = {k: v for k, v in evidence[leg].items() if k in leg_fields}
