@@ -33,6 +33,10 @@ _OUTCOMES = {"connect", "reconcile", "submit", "modify", "cancel", "accepted", "
              "modify_rejected", "cancel_rejected", "connected", "unknown", "account"}
 
 
+def diagnostics_enabled():
+    return _active is not None and not _active.closed
+
+
 def _labels(venue, outcome):
     venue = "HL" if venue == "HYPERLIQUID" else venue
     return (venue if isinstance(venue, str) and venue in _VENUES else "",
@@ -155,6 +159,8 @@ class TimingRecorder:
                     "ts_event is adapter/venue dependent; never interpreted as local network time.",
                     "OrderSubmitted precedes transport completion; its placement differs by adapter.",
                     "Callback books are local observations, not exchange matching-engine snapshots.",
+                    "last_complete is invalid historical configured depth; never current liquidity or admission evidence.",
+                    "local_pending contains complete-batch metadata only, not a usable or copied local ladder.",
                     "Invalid or future local timestamps have no derived delivery latency."],
                 "missing_native_stages": ["native_received", "signing", "network_write", "native_receipt_received"],
                 "clock_notes": "stage monotonic_ns uses perf_counter_ns within this process only; wall_ns and market timestamps use Unix wall time; do not subtract across clock domains",
@@ -304,8 +310,16 @@ def record_entry_native_event(request_id, kind, received_ns, *, ts_event=None, t
             # Provider is an internal fixed-schema observer, never a native payload.
             fields = {"status", "source_wall_ns", "received_wall_ns", "source_age_ms", "receive_age_ms",
                       "bid_price", "ask_price", "limit_price", "quantity", "depth_within_limit",
-                      "full_quantity_available", "touch_outside_limit_bps"}
+                      "full_quantity_available", "touch_outside_limit_bps", "diagnostic_only",
+                      "evidence_state", "published_wall_ns", "coverage_limit", "complete_book_claimed",
+                      "bid_levels", "ask_levels", "lifecycle_reason", "lifecycle_wall_ns"}
             row["market"] = {k: v for k, v in market.items() if k in fields}
+            for name, extra in (
+                    ("last_complete", {"invalidation_reason", "invalidated_wall_ns", "invalidation_time_basis"}),
+                    ("local_pending", {"completed_wall_ns", "sequence"})):
+                if name in market:
+                    allowed = fields | extra
+                    row["market"][name] = {k: v for k, v in market[name].items() if k in allowed}
     except Exception:
         row["market"] = {"status": "observation_failed"}
     with recorder.lock:

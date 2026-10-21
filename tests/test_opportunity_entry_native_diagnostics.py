@@ -108,7 +108,7 @@ def test_market_observation_preserves_stale_evidence_and_native_price_conversion
     market = live.markets[buy.instrument_id]
     live.markets[buy.instrument_id] = replace(market, canonical_multiplier=D(10), quote_to_usd=D(2))
     observed = entry_market_snapshot(live, buy, NOW + 10_000_000_000)
-    assert observed["status"] == "stale_or_invalid"
+    assert observed["status"] == "stale"
     assert D(observed["ask_price"]) == 500
     assert not observed["full_quantity_available"]
     assert live.snapshot() == original

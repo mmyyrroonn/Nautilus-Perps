@@ -2,14 +2,73 @@
 from fractions import Fraction as F
 
 from opportunity_core import _book_valid, _number
+from opportunity_book_diagnostics import book_problem
 from opportunity_timing import record_entry_stage, record_entry_pair
 
 
 def entry_market_snapshot(live, intent, now_ns):
     """Observe the current book at an order callback without changing admission."""
     book, market = live.books.get(intent.instrument_id), live.markets.get(intent.instrument_id)
-    if book is None or market is None or not book.bids or not book.asks:
-        return {"status": "missing_book"}
+    contexts = getattr(live, "book_evidence", None)
+    context = contexts.get(intent.instrument_id) if contexts is not None else None
+    reason = (book_problem(book, live.plan.settings, now_ns) if book is not None else
+              context.reason if context is not None else "unobserved_missing_book")
+    if book is None and reason == "published":
+        reason = "unobserved_missing_book"
+    if context is not None and context.invalidated_ns is not None and book is context.last_complete:
+        reason = context.reason
+    if context is not None and context.unavailable_reason is not None:
+        reason = context.unavailable_reason
+    if market is None or intent.instrument_id not in live.metadata:
+        reason = "metadata_invalid"
+    result = {"status": reason or "valid", "diagnostic_only": True}
+    if context is not None:
+        result.update(lifecycle_reason=context.reason, lifecycle_wall_ns=context.reason_ns)
+        if context.pending is not None:
+            source, received, sequence, completed, bids, asks = context.pending
+            result["local_pending"] = {
+                "evidence_state": "complete_unpublished_metadata_only", "diagnostic_only": True,
+                "source_wall_ns": source, "received_wall_ns": received,
+                "completed_wall_ns": completed, "published_wall_ns": None,
+                "sequence": sequence, "bid_levels": bids, "ask_levels": asks,
+                "status": "pending_publish" if bids and asks else "empty_side"}
+            if book is None and reason in {"uninitialized", "snapshot_rebuilding", "partial_update"}:
+                result["status"] = result["local_pending"]["status"]
+    observation = None
+    if book is not None and market is not None:
+        observation = _book_observation(book, market, intent, now_ns)
+        result.update(observation)
+        result["evidence_state"] = "historical_invalid" if reason else "published_current"
+        result["published_wall_ns"] = context.current_published_ns if context is not None else None
+    if context is not None and context.last_complete is not None and (reason or book is not context.last_complete):
+        previous = context.last_complete
+        invalid_reason, invalid_ns = context.invalidation_reason, context.invalidated_ns
+        if invalid_reason is None:
+            invalid_reason = reason or "invalidated"
+            if reason == "stale":
+                invalid_ns = min(previous.ts_event_ns + live.plan.settings.max_age_ms * 1_000_000,
+                                 previous.ts_received_ns + live.plan.settings.max_receive_age_ms * 1_000_000) + 1
+        historical = {"evidence_state": "historical_invalid", "diagnostic_only": True,
+                      "published_wall_ns": context.published_ns,
+                      "invalidation_reason": invalid_reason, "invalidated_wall_ns": invalid_ns,
+                      "invalidation_time_basis": "observed" if context.invalidated_ns is not None else
+                                                 "freshness_deadline" if invalid_ns is not None else "unknown"}
+        if market is not None:
+            historical.update(observation if previous is book else
+                              _book_observation(previous, market, intent, now_ns))
+        result["last_complete"] = historical
+    return result
+
+
+def _book_observation(book, market, intent, now_ns):
+    """Summarize retained configured depth; do not export entire native payloads."""
+    result = {"source_wall_ns": book.ts_event_ns, "received_wall_ns": book.ts_received_ns,
+              "source_age_ms": _number(F(now_ns - book.ts_event_ns, 1_000_000)),
+              "receive_age_ms": _number(F(now_ns - book.ts_received_ns, 1_000_000)),
+              "coverage_limit": book.coverage_limit, "complete_book_claimed": False,
+              "bid_levels": len(book.bids), "ask_levels": len(book.asks)}
+    if not book.bids or not book.asks:
+        return result
     conversion = F(market.canonical_multiplier) / F(market.quote_to_usd)
     limit, quantity = F(intent.price), F(intent.quantity)
     buy = intent.side == "BUY"
@@ -17,11 +76,7 @@ def entry_market_snapshot(live, intent, now_ns):
     depth = sum((F(q) for p, q in levels
                  if (F(p) * conversion <= limit if buy else F(p) * conversion >= limit)), F(0))
     touch = F(levels[0][0]) * conversion
-    return {"status": "valid" if _book_valid(book, live.plan.settings, now_ns) else "stale_or_invalid",
-            "source_wall_ns": book.ts_event_ns, "received_wall_ns": book.ts_received_ns,
-            "source_age_ms": _number(F(now_ns - book.ts_event_ns, 1_000_000)),
-            "receive_age_ms": _number(F(now_ns - book.ts_received_ns, 1_000_000)),
-            "bid_price": _number(F(book.bids[0][0]) * conversion),
+    return {**result, "bid_price": _number(F(book.bids[0][0]) * conversion),
             "ask_price": _number(F(book.asks[0][0]) * conversion),
             "limit_price": str(intent.price), "quantity": str(intent.quantity),
             "depth_within_limit": _number(depth), "full_quantity_available": depth >= quantity,
