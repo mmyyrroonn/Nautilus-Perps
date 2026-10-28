@@ -100,14 +100,15 @@ async def publish_status(strategy):
     """Formatting and output are auxiliary and cannot request trading shutdown."""
     from ondo_maker_diagnostics import write_status
 
+    collector = strategy.diagnostics
     try:
         snapshot = strategy.status(raw_diagnostics=True)
         error_type = await asyncio.to_thread(write_status, snapshot)
-        if error_type and strategy.diagnostics is not None:
-            strategy.diagnostics.disable(error_type)
+        if error_type and collector is not None and strategy.diagnostics is collector:
+            collector.disable(error_type)
     except Exception as error:  # noqa: BLE001 - diagnostics are not trading authority
-        if strategy.diagnostics is not None:
-            strategy.diagnostics.disable(type(error).__name__)
+        if collector is not None and strategy.diagnostics is collector:
+            collector.disable(type(error).__name__)
 
 
 async def serve(node, strategy, *, seconds=0):
@@ -116,10 +117,14 @@ async def serve(node, strategy, *, seconds=0):
     handle = node.handle()
     loop = asyncio.get_running_loop()
     previous = {}
-    for signum in (signal.SIGINT, signal.SIGTERM):
+    handlers = {signal.SIGINT: strategy.request_stop, signal.SIGTERM: strategy.request_stop}
+    for name, enabled in (("SIGUSR1", True), ("SIGUSR2", False)):
+        if hasattr(signal, name):
+            handlers[getattr(signal, name)] = partial(strategy.set_diagnostics, enabled)
+    for signum, callback in handlers.items():
         previous[signum] = signal.getsignal(signum)
         signal.signal(
-            signum, lambda *_args: loop.call_soon_threadsafe(strategy.request_stop)
+            signum, lambda *_args, callback=callback: loop.call_soon_threadsafe(callback)
         )
     native = asyncio.ensure_future(node.run_async())
     reference = asyncio.create_task(binance_feed(strategy, finished))

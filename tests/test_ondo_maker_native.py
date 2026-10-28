@@ -68,7 +68,8 @@ def child(mode, journal):
     node, _factory, strategy = build_session(
         session,
         strategy_factory=partial(
-            make_strategy, maker=config, run_id="testmaker", diagnostics=mode != "diagnostics-off"
+            make_strategy, maker=config, run_id="testmaker",
+            diagnostics=mode not in {"diagnostics-off", "diagnostics-toggle"},
         ),
     )
     handle = node.handle()
@@ -137,6 +138,8 @@ def child(mode, journal):
                         continue
                 if mode == "feed-loss":
                     strategy.binance_disconnect()
+                if mode == "diagnostics-toggle":
+                    strategy.set_diagnostics(True)
                 strategy.request_stop()
                 requested = True
             if mode == "heartbeat-loss" and not open_makers and time.monotonic() - began >= 12:
@@ -175,6 +178,7 @@ def child(mode, journal):
 
 @pytest.mark.parametrize("mode", [
     "feed-loss", "cancel-fill", "quiet-heartbeat", "quiet-fill", "heartbeat-loss", "diagnostics-off",
+    "diagnostics-toggle",
 ])
 def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     from test_ondo_continuous import _environment
@@ -235,9 +239,10 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     else:
         assert diagnostics["enabled"]
         latency = diagnostics["maker_ack_latency"]
-        assert latency["accepted_total"] == 4
-        assert latency["submit_call_to_accept_callback"]["samples"] == 4
-        assert latency["native_submitted_to_accepted"]["samples"] == 4
+        accepted = 0 if mode == "diagnostics-toggle" else 4
+        assert latency["accepted_total"] == accepted
+        assert latency["submit_call_to_accept_callback"]["samples"] == accepted
+        assert latency["native_submitted_to_accepted"]["samples"] == accepted
         canceled = sum(o["status"] == "canceled" for o in data["orders"] if not o["reduceOnly"])
         cancel = diagnostics["cancel_latency"]
         assert cancel["confirmed_total"] == canceled

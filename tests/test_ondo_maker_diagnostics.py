@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import signal
 import subprocess
 import sys
 from decimal import Decimal
@@ -15,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from ondo_maker_diagnostics import CAPACITY, CancelLatency, MakerDiagnostics, format_diagnostics
 from ondo_maker_live import OndoMakerStrategy
-from run_ondo_maker import publish_status
+from run_ondo_maker import publish_status, serve
 from test_ondo_maker import SECOND, ready
 
 
@@ -122,6 +123,66 @@ def test_status_output_failure_disables_only_diagnostics(monkeypatch):
     asyncio.run(publish_status(value))
     assert not shutdown
     assert diagnostics.report() == {"enabled": False, "error_type": "OSError"}
+
+
+def test_runtime_toggle_keeps_trading_state_and_contains_initialization_failure(monkeypatch):
+    value = host(None)
+    value.diagnostics_error = None
+    orders = {market: tuple(state.orders) for market, state in value.engine.markets.items()}
+    OndoMakerStrategy.set_diagnostics(value, True)
+    collector = value.diagnostics
+    OndoMakerStrategy.set_diagnostics(value, True)
+    assert value.diagnostics is collector
+    OndoMakerStrategy.set_diagnostics(value, False)
+    assert value.diagnostics is None
+    assert orders == {market: tuple(state.orders) for market, state in value.engine.markets.items()}
+    assert value.engine.fault is None and not value.engine.stopping
+
+    def broken():
+        raise RuntimeError("synthetic initialization failure")
+
+    monkeypatch.setattr("ondo_maker_live.MakerDiagnostics", broken)
+    OndoMakerStrategy.set_diagnostics(value, True)
+    assert value.diagnostics is None and value.diagnostics_error == "RuntimeError"
+    assert value.engine.fault is None and not value.engine.stopping
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="Unix diagnostic signals")
+def test_runtime_signals_only_toggle_diagnostics_and_restore_handlers(monkeypatch):
+    handlers = {}
+    previous = object()
+    events = []
+    engine = NS(can_stop=False)
+    strategy = NS(
+        engine=engine, diagnostics=None,
+        set_diagnostics=lambda enabled: events.append(enabled),
+        request_stop=lambda: setattr(engine, "can_stop", True),
+    )
+    monkeypatch.setattr(signal, "getsignal", lambda _: previous)
+    monkeypatch.setattr(signal, "signal", lambda sig, callback: handlers.update({sig: callback}))
+
+    async def status(_):
+        pass
+
+    async def feed(_strategy, _finished):
+        handlers[signal.SIGUSR1](signal.SIGUSR1, None)
+        await asyncio.sleep(0)
+        assert events == [True] and not engine.can_stop
+        handlers[signal.SIGUSR2](signal.SIGUSR2, None)
+        await asyncio.sleep(0)
+        assert events == [True, False] and not engine.can_stop
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    async def run():
+        stopped = asyncio.Event()
+        node = NS(run_async=stopped.wait, handle=lambda: NS(stop=stopped.set))
+        result = await asyncio.wait_for(serve(node, strategy), 2)
+        assert result == 0 and events == [True, False]
+
+    monkeypatch.setattr("run_ondo_maker.binance_feed", feed)
+    monkeypatch.setattr("run_ondo_maker.publish_status", status)
+    asyncio.run(run())
+    assert len(handlers) == 4 and all(h is previous for h in handlers.values())
 
 
 @pytest.mark.parametrize("enabled", [False, True])

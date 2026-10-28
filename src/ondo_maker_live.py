@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import functools
 import time
-from collections import deque
 from datetime import timedelta
 from decimal import Decimal
 
@@ -55,7 +54,22 @@ class OndoMakerStrategy(Strategy):
         self.timer_name = "ondo-maker-supervision"
         self.driving = False
         self.command_counts = {"cancel": 0, "maker": 0, "close": 0}
-        self.diagnostics = MakerDiagnostics() if diagnostics else None
+        self.diagnostics = None
+        self.diagnostics_error = None
+        self.set_diagnostics(diagnostics)
+
+    def set_diagnostics(self, enabled):
+        """Changes observations only, on the strategy's event loop."""
+        if not enabled:
+            self.diagnostics = None
+            self.diagnostics_error = None
+        elif self.diagnostics is None or not self.diagnostics.enabled:
+            try:
+                self.diagnostics = MakerDiagnostics()
+                self.diagnostics_error = None
+            except Exception as error:  # noqa: BLE001 - optional allocation cannot stop trading
+                self.diagnostics = None
+                self.diagnostics_error = type(error).__name__
 
     @guarded
     def on_start(self):
@@ -379,7 +393,10 @@ class OndoMakerStrategy(Strategy):
             "commands": dict(self.command_counts),
             "diagnostics": (
                 self.diagnostics.snapshot() if raw_diagnostics else self.diagnostics.report()
-            ) if self.diagnostics is not None else {"enabled": False},
+            ) if self.diagnostics is not None else (
+                {"enabled": False, "error_type": self.diagnostics_error}
+                if self.diagnostics_error else {"enabled": False}
+            ),
             "markets": {
                 m: {
                     "state": phase(s),
