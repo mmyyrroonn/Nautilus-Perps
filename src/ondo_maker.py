@@ -29,7 +29,7 @@ class MakerConfig:
     cancel_bps: Decimal = Decimal(3)
     volatility_bps: float = 2.0
     cooldown_ns: int = 5 * SECOND
-    ondo_stale_ns: int = 2 * SECOND
+    ondo_stale_ns: int = 3 * SECOND
     binance_stale_ns: int = SECOND
     retry_ns: int = 250_000_000
     cancel_retry_ns: int = SECOND
@@ -211,6 +211,7 @@ class Market:
     bid: Decimal = ZERO
     ask: Decimal = ZERO
     quote_ns: int | None = None
+    heartbeat_ns: int | None = None
     position: Decimal = ZERO
     orders: dict[str, Order] = field(default_factory=dict)
     replacing: bool = False
@@ -249,6 +250,7 @@ class MakerEngine:
                 state.guard.reset()
             else:
                 state.quote_ns = None
+                state.heartbeat_ns = None
             state.replacing = True
 
     def on_binance(self, market: str, now: int, bid: float, ask: float) -> None:
@@ -267,6 +269,14 @@ class MakerEngine:
             self.disconnect("ondo", market)
             return
         state.bid, state.ask, state.quote_ns = bid, ask, now
+        state.heartbeat_ns = now
+
+    def on_ondo_heartbeat(self, market: str, now: int) -> None:
+        state = self.markets[market]
+        if state.quote_ns is not None and (
+            state.heartbeat_ns is None or now >= state.heartbeat_ns
+        ):
+            state.heartbeat_ns = now
 
     def set_account(
         self,
@@ -370,7 +380,8 @@ class MakerEngine:
     def _fresh(self, state: Market, now: int) -> bool:
         return (
             state.quote_ns is not None
-            and 0 <= now - state.quote_ns <= self.config.ondo_stale_ns
+            and state.heartbeat_ns is not None
+            and 0 <= now - state.heartbeat_ns <= self.config.ondo_stale_ns
         )
 
     def _reason(self, state: Market, now: int) -> str:

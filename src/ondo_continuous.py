@@ -1060,6 +1060,7 @@ def build_session(
             ondo.OndoDataClientConfig(
                 environment=environment,
                 load_ids=instruments,
+                ws_heartbeat_secs=1,
                 base_url_http=session.base_url_http,
                 base_url_ws=session.base_url_ws,
             ),

@@ -39,7 +39,9 @@ def child(mode, journal):
     from ondo_maker_live import make_strategy
 
     identity = _identity()
-    peer = fixture_peer(mode == "cancel-fill")
+    peer = fixture_peer(mode in {"cancel-fill", "quiet-fill"})
+    if mode.startswith("quiet") or mode == "heartbeat-loss":
+        peer.quote_interval = 3600
     config = MakerConfig(
         Decimal(500), Decimal(500),
         max_order_usd=Decimal(500), max_gross_usd=Decimal(2000),
@@ -113,7 +115,7 @@ def child(mode, journal):
         failure = None
         while not native.done():
             now = time.monotonic_ns()
-            if not requested or mode == "cancel-fill":
+            if not requested or mode in {"cancel-fill", "quiet-fill", "heartbeat-loss"}:
                 for m in MARKETS:
                     strategy.binance_quote(m, now, 100, 100)
             with peer._lock:
@@ -123,8 +125,19 @@ def child(mode, journal):
                     if o["status"] == "open" and not o["reduceOnly"]
                 ]
             if len(open_makers) == 4 and not requested:
+                if mode.startswith("quiet") and time.monotonic() - began < 9:
+                    await asyncio.sleep(0.05)
+                    continue
+                if mode == "heartbeat-loss":
+                    peer.public_heartbeat = False
+                    if time.monotonic() - began < 12:
+                        await asyncio.sleep(0.05)
+                        continue
                 if mode == "feed-loss":
                     strategy.binance_disconnect()
+                strategy.request_stop()
+                requested = True
+            if mode == "heartbeat-loss" and not open_makers and time.monotonic() - began >= 12:
                 strategy.request_stop()
                 requested = True
             if strategy.engine.can_stop:
@@ -158,7 +171,7 @@ def child(mode, journal):
         peer.close()
 
 
-@pytest.mark.parametrize("mode", ["feed-loss", "cancel-fill"])
+@pytest.mark.parametrize("mode", ["feed-loss", "cancel-fill", "quiet-heartbeat", "quiet-fill", "heartbeat-loss"])
 def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     from test_ondo_continuous import _environment
 
@@ -212,7 +225,11 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
         assert 0 < quantity * valuation <= Decimal(500)
         assert (quantity + lot) * valuation > Decimal(500)
     assert sum(notionals) <= Decimal(2000)
-    if mode == "cancel-fill":
+    latency = data["status"]["maker_ack_latency"]
+    assert latency["accepted_total"] == 4
+    assert latency["submit_call_to_accept_callback"]["samples"] == 4
+    assert latency["native_submitted_to_accepted"]["samples"] == 4
+    if mode in {"cancel-fill", "quiet-fill"}:
         assert closes and all(
             not o["postOnly"] and o["timeInForce"] == "IOC" for o in closes
         )
@@ -222,7 +239,7 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
             if r["method"] == "POST" and r["body"]["reduceOnly"]
         )
         assert sum(r["method"] == "DELETE" for r in data["writes"][:first_close]) >= 4
-    else:
+    elif mode == "feed-loss":
         assert not closes
         assert any(
             row["commands"]
@@ -230,6 +247,11 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
             and set(row["reasons"].values()) == {"binance_unavailable"}
             for row in data["trace"]
         )
+    elif mode == "heartbeat-loss":
+        assert not closes
+        assert any(set(row["reasons"].values()) == {"ondo_unavailable"} for row in data["trace"])
+    else:
+        assert not closes
 
 
 if __name__ == "__main__":

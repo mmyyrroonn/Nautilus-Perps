@@ -160,7 +160,7 @@ def main():
         args.eth_usd,
         max_order_usd=max(Decimal(100), args.btc_usd, args.eth_usd),
         max_gross_usd=args.gross_usd,
-        ondo_stale_ns=2 * SECOND,
+        ondo_stale_ns=3 * SECOND,
         pause_both=args.pause_both,
     )
     if args.seconds < 0 or not __import__("math").isfinite(args.seconds):

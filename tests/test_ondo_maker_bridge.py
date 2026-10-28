@@ -10,7 +10,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from test_ondo_maker import ready
 
-from ondo_maker_live import OndoMakerStrategy
+from ondo_maker_live import OndoMakerStrategy, OrderLatency
+
+
+def test_latency_reports_acceptance_once_and_excludes_unacknowledged_orders():
+    timing = OrderLatency()
+    timing.begin("one", 1_000_000)
+    timing.submitted("one", 100_000_000)
+    timing.accepted_event("one", 13_000_000, 110_000_000)
+    timing.accepted_event("one", 20_000_000, 120_000_000)
+    timing.begin("rejected", 20_000_000)
+    timing.finish("rejected")
+    timing.begin("unknown", 30_000_000)
+    report = timing.report()
+    assert report["accepted_total"] == 1 and report["pending"] == 1
+    assert report["submit_call_to_accept_callback"]["p50_ms"] == 12
+    assert report["native_submitted_to_accepted"]["p50_ms"] == 10
+    for n in range(3000):
+        timing.begin(str(n), n)
+    assert len(timing.pending) == 64
 
 
 def test_failed_dispatch_does_not_leave_never_sent_sibling_reservations():
@@ -31,6 +49,7 @@ def test_failed_dispatch_does_not_leave_never_sent_sibling_reservations():
         command_counts={"cancel": 0, "maker": 0, "close": 0},
         clock=NS(timestamp_ns=lambda: 1),
         latencies_ns=deque(maxlen=8),
+        order_latency=OrderLatency(),
     )
     # Use a fixed engine clock while exercising the real bridge dispatch loop.
     step = engine.step

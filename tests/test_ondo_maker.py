@@ -98,6 +98,30 @@ def test_three_bp_cancels_both_sides_only_in_affected_market():
     assert not e.step(SECOND + 2)
 
 
+def test_unchanged_quotes_remain_live_with_heartbeats_then_cancel_on_heartbeat_loss():
+    engine = ready()
+    engine.step(SECOND)
+    for second in range(2, 20):
+        for market in ("BTC", "ETH"):
+            engine.on_binance(market, second * SECOND, 100, 100)
+            engine.on_ondo_heartbeat(market, second * SECOND)
+        assert not engine.step(second * SECOND)
+        assert all(s.quote_ns == SECOND for s in engine.markets.values())
+    now = 23 * SECOND
+    commands = engine.step(now)
+    assert len(commands) == 4 and all(c.kind == "cancel" for c in commands)
+    assert all(s.reason == "ondo_unavailable" for s in engine.markets.values())
+
+
+def test_heartbeat_cannot_restore_quotes_after_disconnect_without_new_snapshot():
+    engine = ready()
+    engine.step(SECOND)
+    engine.disconnect("ondo", "BTC")
+    engine.on_ondo_heartbeat("BTC", 2 * SECOND)
+    assert engine.markets["BTC"].quote_ns is None
+    assert not engine._fresh(engine.markets["BTC"], 2 * SECOND)
+
+
 def test_cancel_confirmation_and_account_proof_required_before_replacement():
     e = ready()
     e.step(SECOND)
