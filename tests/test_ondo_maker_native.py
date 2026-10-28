@@ -28,7 +28,43 @@ def fixture_peer(fill_on_cancel):
     spec.loader.exec_module(module)
     module.SECOND_MARKET = "ETH-USD.P"
     module.SECOND_INSTRUMENT = "ETH-USD-PERP.ONDO"
-    return module.ContinuousPeer(fill_on_cancel=fill_on_cancel)
+    peer = module.ContinuousPeer(fill_on_cancel=fill_on_cancel)
+    original_quotes = peer._quotes
+    peer.depth_enabled = True
+    peer.bid_depth_scale = Decimal(1)
+
+    async def combined_quotes(socket):
+        async def depth():
+            while True:
+                if peer.depth_enabled:
+                    stamp = module.timestamp()
+                    items = []
+                    for market, bid, ask, increment, quantity in (
+                        (module.MARKET, "85000", "85001", "2", "1"),
+                        (module.SECOND_MARKET, "227.49", "227.50", "0.01", "10"),
+                    ):
+                        item = {"market": market, "time": stamp}
+                        for label, touch, direction in (("bids", bid, -1), ("asks", ask, 1)):
+                            scale = peer.bid_depth_scale if market == module.MARKET and label == "bids" else Decimal(1)
+                            item[label] = [
+                                [str(Decimal(touch) + direction * Decimal(increment) * n), str(Decimal(quantity) * scale)]
+                                for n in range(40)
+                            ]
+                        items.append(item)
+                    await socket.send(json.dumps({
+                        "type": "update", "channel": "depthBooksPerps", "timestamp": stamp, "data": items,
+                    }))
+                await asyncio.sleep(0.1)
+
+        task = asyncio.create_task(depth())
+        try:
+            await original_quotes(socket)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    peer._quotes = combined_quotes
+    return peer
 
 
 def child(mode, journal):
@@ -39,9 +75,10 @@ def child(mode, journal):
     from ondo_maker_live import make_strategy
 
     identity = _identity()
-    peer = fixture_peer(mode in {"cancel-fill", "quiet-fill", "reward-fill"})
+    peer = fixture_peer(mode in {"cancel-fill", "quiet-fill", "reward-fill", "depth-fill"})
     reward_mode = mode in {"reward-replace", "reward-fill"}
     replacement_checkpoint = None
+    depth_triggered_at = None
     if reward_mode:
         peer.quote_shift = Decimal(0)
         original_quotes = peer._quotes
@@ -52,7 +89,8 @@ def child(mode, journal):
                     frame = json.loads(raw)
                     item = frame["data"][0]
                     for side in ("bids", "asks"):
-                        item[side][0][0] = str(Decimal(item[side][0][0]) + peer.quote_shift)
+                        for level in item[side]:
+                            level[0] = str(Decimal(level[0]) + peer.quote_shift)
                     await socket.send(json.dumps(frame))
 
             await original_quotes(ShiftedSocket())
@@ -85,6 +123,7 @@ def child(mode, journal):
     )
     node, _factory, strategy = build_session(
         session,
+        book_limit=config.depth_max_levels,
         strategy_factory=partial(
             make_strategy, maker=config, run_id="testmaker",
             diagnostics=mode not in {"diagnostics-off", "diagnostics-toggle"},
@@ -130,14 +169,14 @@ def child(mode, journal):
     strategy.engine.step = traced_step
 
     async def run():
-        nonlocal replacement_checkpoint
+        nonlocal replacement_checkpoint, depth_triggered_at
         native = asyncio.ensure_future(node.run_async())
         began = time.monotonic()
         requested = False
         failure = None
         while not native.done():
             now = time.monotonic_ns()
-            if not requested or mode in {"cancel-fill", "quiet-fill", "heartbeat-loss", "reward-fill"}:
+            if not requested or mode in {"cancel-fill", "quiet-fill", "heartbeat-loss", "reward-fill", "depth-fill"}:
                 for m in MARKETS:
                     strategy.binance_quote(m, now, 100, 100)
             with peer._lock:
@@ -147,6 +186,19 @@ def child(mode, journal):
                     if o["status"] == "open" and not o["reduceOnly"]
                 ]
             if len(open_makers) == 4 and not requested:
+                if mode in {"depth-drop", "depth-loss", "depth-fill"}:
+                    # Establish a post-submit depth baseline before shrinking it.
+                    if any(o.depth_volume is None for s in strategy.engine.markets.values() for o in s.orders.values()):
+                        await asyncio.sleep(0.05)
+                        continue
+                    if depth_triggered_at is None:
+                        if mode == "depth-loss":
+                            peer.depth_enabled = False
+                        else:
+                            peer.bid_depth_scale = Decimal("0.5")
+                        depth_triggered_at = time.monotonic()
+                    await asyncio.sleep(0.05)
+                    continue
                 if reward_mode:
                     if not peer.quote_shift:
                         peer.quote_shift = Decimal("4.25")
@@ -172,9 +224,19 @@ def child(mode, journal):
                     strategy.set_diagnostics(True)
                 strategy.request_stop()
                 requested = True
-            if mode == "reward-fill" and strategy.engine.reducing and not requested:
+            if mode in {"reward-fill", "depth-fill"} and strategy.engine.reducing and not requested:
                 strategy.request_stop()
                 requested = True
+            if mode in {"depth-drop", "depth-loss"} and depth_triggered_at and not requested:
+                expected_open = 3 if mode == "depth-drop" else 0
+                if len(open_makers) == expected_open:
+                    replacement_checkpoint = {
+                        "open_makers": [dict(o) for o in open_makers],
+                        "status": strategy.status(),
+                        "writes": [dict(r) for r in peer.requests if r["method"] != "GET"],
+                    }
+                    strategy.request_stop()
+                    requested = True
             if mode == "heartbeat-loss" and not open_makers and time.monotonic() - began >= 12:
                 strategy.request_stop()
                 requested = True
@@ -214,6 +276,7 @@ def child(mode, journal):
     "feed-loss", "cancel-fill", "quiet-heartbeat", "quiet-fill", "heartbeat-loss", "diagnostics-off",
     "diagnostics-toggle",
     "reward-replace", "reward-fill",
+    "depth-drop", "depth-loss", "depth-fill",
 ])
 def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     from test_ondo_continuous import _environment
@@ -292,7 +355,7 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
         assert cancel["confirmed_total"] == canceled
         assert cancel["first_cancel_call_to_canceled"]["samples"] == canceled
         assert cancel["pending"] == 0 and cancel["dropped"] == 0
-    if mode in {"cancel-fill", "quiet-fill", "reward-fill"}:
+    if mode in {"cancel-fill", "quiet-fill", "reward-fill", "depth-fill"}:
         assert closes and all(
             not o["postOnly"] and o["timeInForce"] == "IOC" for o in closes
         )
@@ -313,6 +376,16 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     elif mode == "heartbeat-loss":
         assert not closes
         assert any(set(row["reasons"].values()) == {"ondo_unavailable"} for row in data["trace"])
+    elif mode in {"depth-drop", "depth-loss"}:
+        assert not closes
+        checkpoint = data["replacement_checkpoint"]
+        assert checkpoint is not None
+        assert len(checkpoint["open_makers"]) == (3 if mode == "depth-drop" else 0)
+        if mode == "depth-drop":
+            assert not any(o["market"] == "BTC-USD.P" and o["side"] == "buy" for o in checkpoint["open_makers"])
+            assert checkpoint["status"]["markets"]["BTC"]["sides"]["buy"]["reason"] == "depth_cooldown"
+        else:
+            assert all(s["reason"] == "depth_unavailable" for s in checkpoint["status"]["markets"].values())
     else:
         assert not closes
 

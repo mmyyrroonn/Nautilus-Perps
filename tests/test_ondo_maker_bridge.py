@@ -5,6 +5,8 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from test_ondo_maker import ready
@@ -229,3 +231,38 @@ def test_single_side_replacement_accepts_matching_live_keeper_but_not_stale_or_m
     replacement = engine.step(1_000_000_005)
     assert len(replacement) == 1 and replacement[0].order.side == 1
     assert replacement[0].order.market == "BTC"
+
+
+@pytest.mark.parametrize("fault", [None, "stale", "no_clear", "no_last", "incremental", "oversized"])
+def test_native_depth_callback_requires_bounded_complete_fresh_snapshot(monkeypatch, fault):
+    from nautilus_trader.model import BookAction, OrderSide, RecordFlag
+    from test_ondo_maker import depth_levels
+
+    engine = ready()
+    levels = depth_levels()
+    value = lambda x: NS(as_decimal=lambda: x)
+    deltas = [NS(action=BookAction.CLEAR, flags=int(RecordFlag.F_SNAPSHOT))]
+    for side, rows in ((OrderSide.BUY, levels[0]), (OrderSide.SELL, levels[1])):
+        deltas.extend(NS(
+            action=BookAction.ADD, flags=int(RecordFlag.F_SNAPSHOT),
+            order=NS(side=side, price=value(p), size=value(q)),
+        ) for p, q in rows)
+    deltas[-1].flags |= int(RecordFlag.F_LAST)
+    batch = NS(instrument_id="btc", ts_init=10_000_000_000, deltas=deltas)
+    if fault == "stale":
+        batch.ts_init = 1
+    elif fault == "no_clear":
+        deltas[0].action = BookAction.ADD
+    elif fault == "no_last":
+        deltas[-1].flags = int(RecordFlag.F_SNAPSHOT)
+    elif fault == "incremental":
+        deltas[1].flags = 0
+    elif fault == "oversized":
+        batch.deltas = deltas * 30
+    host = NS(
+        engine=engine, symbols={"btc": "BTC"}, last_native_depth_ns={},
+        clock=NS(timestamp_ns=lambda: 10_000_000_000), drive=lambda: None,
+    )
+    monkeypatch.setattr("ondo_maker_live.time.monotonic_ns", lambda: 2_000_000_000)
+    OndoMakerStrategy.on_book_deltas.__wrapped__(host, batch)
+    assert engine.markets["BTC"].depth.fresh(2_000_000_000, engine.config.depth_stale_ns) is (fault is None)

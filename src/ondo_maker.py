@@ -12,6 +12,8 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
+from ondo_maker_depth import DepthBook
+
 ZERO = Decimal(0)
 BPS = Decimal(10_000)
 SECOND = 1_000_000_000
@@ -38,6 +40,12 @@ class MakerConfig:
     max_order_usd: Decimal = Decimal(100)
     close_slippage_bps: Decimal = Decimal(20)
     pause_both: bool = False
+    depth_window_bps: Decimal = Decimal(2)
+    depth_min_multiple: Decimal = Decimal(1)
+    depth_drop_pct: Decimal = Decimal(30)
+    depth_cooldown_ns: int = 10 * SECOND
+    depth_stale_ns: int = 3 * SECOND
+    depth_max_levels: int = 1000
 
     def __post_init__(self) -> None:
         decimals = (
@@ -49,6 +57,9 @@ class MakerConfig:
             self.max_gross_usd,
             self.max_order_usd,
             self.close_slippage_bps,
+            self.depth_window_bps,
+            self.depth_min_multiple,
+            self.depth_drop_pct,
         )
         if any(
             not isinstance(x, Decimal) or not x.is_finite() or x <= 0 for x in decimals
@@ -71,12 +82,18 @@ class MakerConfig:
             raise ValueError("four maker orders exceed allocated gross budget")
         if not math.isfinite(self.volatility_bps) or self.volatility_bps <= 0:
             raise ValueError("volatility threshold must be positive and finite")
+        if self.depth_drop_pct > 100 or self.depth_window_bps >= BPS:
+            raise ValueError("invalid depth percentage/window")
+        if type(self.depth_max_levels) is not int or not 1 <= self.depth_max_levels <= 1000:
+            raise ValueError("depth levels must be in 1..1000")
         for value in (
             self.cooldown_ns,
             self.ondo_stale_ns,
             self.binance_stale_ns,
             self.retry_ns,
             self.cancel_retry_ns,
+            self.depth_cooldown_ns,
+            self.depth_stale_ns,
         ):
             if type(value) is not int or value <= 0:
                 raise ValueError("durations must be positive integer nanoseconds")
@@ -198,6 +215,8 @@ class Order:
     terminal: bool = False
     cancel_requested: bool = False
     last_cancel_ns: int = -1
+    depth_generation: int = -1
+    depth_volume: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,11 +230,13 @@ class QuoteSide:
     replacing: bool = False
     retry_at: int = 0
     reason: str = "starting"
+    depth_pause_until: int = 0
 
 
 @dataclass(slots=True)
 class Market:
     guard: VolatilityGuard
+    depth: DepthBook = field(default_factory=DepthBook)
     instrument: Instrument | None = None
     bid: Decimal = ZERO
     ask: Decimal = ZERO
@@ -239,7 +260,10 @@ class MakerEngine:
         self.config = config
         self.run_id = run_id
         self.markets = {
-            m: Market(VolatilityGuard(config.volatility_bps, config.cooldown_ns))
+            m: Market(
+                VolatilityGuard(config.volatility_bps, config.cooldown_ns),
+                DepthBook(config.depth_max_levels),
+            )
             for m in MARKETS
         }
         self.history: OrderedDict[str, Order] = OrderedDict()
@@ -262,6 +286,7 @@ class MakerEngine:
             else:
                 state.quote_ns = None
                 state.heartbeat_ns = None
+                state.depth.invalidate()
             for side in state.sides.values():
                 side.replacing = True
 
@@ -290,6 +315,18 @@ class MakerEngine:
             state.heartbeat_ns is None or now >= state.heartbeat_ns
         ):
             state.heartbeat_ns = now
+
+    def invalidate_depth(self, market: str) -> None:
+        state = self.markets[market]
+        state.depth.invalidate()
+        for side in state.sides.values():
+            side.replacing = True
+
+    def on_depth(self, market: str, now: int, bids, asks) -> None:
+        state = self.markets[market]
+        if not state.depth.update(now, bids, asks):
+            for side in state.sides.values():
+                side.replacing = True
 
     def set_account(
         self,
@@ -410,6 +447,8 @@ class MakerEngine:
             return "binance_unavailable"
         if now < state.guard.pause_until:
             return "volatility_pause"
+        if not state.depth.fresh(now, self.config.depth_stale_ns):
+            return "depth_unavailable"
         return "quoting"
 
     def _price_reason(self, mid: Decimal, price: Decimal, side: int) -> str:
@@ -418,6 +457,26 @@ class MakerEngine:
             return "quote_too_close"
         if distance > mid * self.config.reward_max_bps:
             return "outside_reward_band"
+        return "quoting"
+
+    def _depth_reason(self, state: Market, order: Order, now: int) -> str:
+        side = state.sides[order.side]
+        if now < side.depth_pause_until:
+            return "depth_cooldown"
+        if order.depth_generation == state.depth.generation:
+            return "quoting"
+        current = state.depth.nearby(
+            order.side, order.price, self.config.depth_window_bps, order.quantity - order.filled,
+        )
+        previous = order.depth_volume
+        order.depth_generation, order.depth_volume = state.depth.generation, current
+        if current is None:
+            return "depth_coverage_insufficient"
+        if previous is not None and previous > 0 and (
+            (previous - current) * 100 >= previous * self.config.depth_drop_pct
+        ):
+            side.depth_pause_until = max(side.depth_pause_until, now + self.config.depth_cooldown_ns)
+            return "depth_drop"
         return "quoting"
 
     def step(self, now: int) -> list[Command]:
@@ -429,6 +488,8 @@ class MakerEngine:
                 side.reason = state.reason
                 if state.reason != "quoting":
                     side.replacing = True
+                elif now < side.depth_pause_until:
+                    side.reason = "depth_cooldown"
             mid = (state.bid + state.ask) / 2
             for order in state.orders.values():
                 if order.reduce_only:
@@ -436,6 +497,8 @@ class MakerEngine:
                 side = state.sides[order.side]
                 if state.reason == "quoting":
                     side.reason = self._price_reason(mid, order.price, order.side)
+                    if side.reason == "quoting":
+                        side.reason = self._depth_reason(state, order, now)
                     if side.reason != "quoting":
                         side.replacing = True
                 if not side.replacing:
@@ -499,6 +562,9 @@ class MakerEngine:
                     o.side == side and not o.reduce_only for o in state.orders.values()
                 ):
                     continue
+                if now < quote_side.depth_pause_until:
+                    quote_side.reason = "depth_cooldown"
+                    continue
                 price = mid * (1 - side * self.config.quote_bps / BPS)
                 price = (price / spec.tick).to_integral_value(
                     rounding=ROUND_FLOOR if side > 0 else ROUND_CEILING
@@ -527,7 +593,19 @@ class MakerEngine:
                 ):
                     quote_side.reason = "amount_below_minimum"
                     continue
+                ahead = state.depth.ahead(side, price, self.config.depth_window_bps)
+                nearby = state.depth.nearby(side, price, self.config.depth_window_bps, ZERO)
+                if ahead is None or nearby is None:
+                    quote_side.reason = "depth_coverage_insufficient"
+                    continue
+                if ahead < qty * self.config.depth_min_multiple:
+                    quote_side.reason = "depth_ahead_insufficient"
+                    continue
                 quote_side.replacing = False
                 quote_side.reason = "quoting"
-                commands.append(self._new(symbol, side, qty, price, False))
+                command = self._new(symbol, side, qty, price, False)
+                # The first post-submit snapshot establishes the resting baseline:
+                # the pre-submit snapshot cannot yet contain our new order.
+                command.order.depth_generation = state.depth.generation
+                commands.append(command)
         return commands

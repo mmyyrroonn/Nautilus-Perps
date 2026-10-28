@@ -164,6 +164,12 @@ def main():
         "--eth-usd", type=Decimal, required=True, help="USD per ETH side"
     )
     parser.add_argument("--gross-usd", type=Decimal, default=Decimal(400))
+    parser.add_argument("--depth-window-bps", type=Decimal, default=Decimal(2))
+    parser.add_argument("--depth-min-multiple", type=Decimal, default=Decimal(1))
+    parser.add_argument("--depth-drop-pct", type=Decimal, default=Decimal(30))
+    parser.add_argument("--depth-cooldown-seconds", type=int, default=10)
+    parser.add_argument("--depth-stale-seconds", type=int, default=3)
+    parser.add_argument("--depth-levels", type=int, default=1000)
     parser.add_argument(
         "--diagnostics", action="store_true",
         help="enable bounded development latency measurements (default: off)",
@@ -185,6 +191,12 @@ def main():
         max_gross_usd=args.gross_usd,
         ondo_stale_ns=3 * SECOND,
         pause_both=args.pause_both,
+        depth_window_bps=args.depth_window_bps,
+        depth_min_multiple=args.depth_min_multiple,
+        depth_drop_pct=args.depth_drop_pct,
+        depth_cooldown_ns=args.depth_cooldown_seconds * SECOND,
+        depth_stale_ns=args.depth_stale_seconds * SECOND,
+        depth_max_levels=args.depth_levels,
     )
     if args.seconds < 0 or not __import__("math").isfinite(args.seconds):
         parser.error("seconds must be finite and nonnegative")
@@ -200,6 +212,15 @@ def main():
                     "max_gross_usd": str(config.max_gross_usd),
                     "quote_bps": str(config.quote_bps),
                     "cancel_bps": str(config.cancel_bps),
+                    "reward_max_bps": str(config.reward_max_bps),
+                    "depth": {
+                        "window_bps": str(config.depth_window_bps),
+                        "minimum_multiple": str(config.depth_min_multiple),
+                        "drop_pct": str(config.depth_drop_pct),
+                        "cooldown_seconds": args.depth_cooldown_seconds,
+                        "stale_seconds": args.depth_stale_seconds,
+                        "levels": config.depth_max_levels,
+                    },
                     "priority": "cancel_then_close",
                     "binance_pause": "both" if args.pause_both else "per_market",
                     "startup_test_trades": False,
@@ -247,7 +268,7 @@ def main():
         ),
     )
     node, _factory, strategy = build_session(
-        session, strategy_factory=partial(
+        session, book_limit=config.depth_max_levels, strategy_factory=partial(
             make_strategy, maker=config, run_id=run_id, diagnostics=args.diagnostics
         )
     )

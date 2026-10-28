@@ -10,6 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ondo_maker import SECOND, Instrument, MakerConfig, MakerEngine, VolatilityGuard
 
 
+def depth_levels(quantity=D(10)):
+    return (
+        [(D("99.99") - D("0.01") * n, quantity) for n in range(40)],
+        [(D("100.01") + D("0.01") * n, quantity) for n in range(40)],
+    )
+
+
 def ready(config=None):
     engine = MakerEngine(config or MakerConfig(D(50), D(50)), "test")
     for market in ("BTC", "ETH"):
@@ -19,6 +26,7 @@ def ready(config=None):
         engine.on_binance(market, 0, 100, 100)
         engine.on_binance(market, SECOND, 100, 100)
         engine.on_ondo(market, SECOND, D("99.99"), D("100.01"))
+        engine.on_depth(market, SECOND, *depth_levels())
     engine.set_account(ready=True, reduction_ready=True, flat=True)
     return engine
 
@@ -173,6 +181,7 @@ def test_unchanged_quotes_remain_live_with_heartbeats_then_cancel_on_heartbeat_l
         for market in ("BTC", "ETH"):
             engine.on_binance(market, second * SECOND, 100, 100)
             engine.on_ondo_heartbeat(market, second * SECOND)
+            engine.on_depth(market, second * SECOND, *depth_levels())
         assert not engine.step(second * SECOND)
         assert all(s.quote_ns == SECOND for s in engine.markets.values())
     now = 23 * SECOND
@@ -194,6 +203,8 @@ def test_cancel_confirmation_and_account_proof_required_before_replacement():
     e = ready()
     e.step(SECOND)
     e.on_ondo("BTC", SECOND + 1, D("99.96"), D("99.98"))
+    bids, asks = depth_levels()
+    e.on_depth("BTC", SECOND + 1, [(p - D("0.03"), q) for p, q in bids], [(p - D("0.03"), q) for p, q in asks])
     cancels = e.step(SECOND + 1)
     settle(e, [cancels[0].order])
     assert not [c for c in e.step(SECOND + 2) if c.kind == "create"]

@@ -9,9 +9,12 @@ from decimal import Decimal
 
 from nautilus_trader.model import (
     AccountId,
+    BookAction,
+    BookType,
     ClientOrderId,
     InstrumentId,
     OrderSide,
+    RecordFlag,
     TimeInForce,
 )
 from nautilus_trader.trading import Strategy
@@ -51,6 +54,7 @@ class OndoMakerStrategy(Strategy):
         self.account_health_until_ns = 0
         self.last_proof_started_ns = 0
         self.last_native_quote_ns: dict[str, int] = {}
+        self.last_native_depth_ns: dict[str, int] = {}
         self.timer_name = "ondo-maker-supervision"
         self.driving = False
         self.command_counts = {"cancel": 0, "maker": 0, "close": 0}
@@ -91,6 +95,7 @@ class OndoMakerStrategy(Strategy):
                 else ZERO,
             )
             self.subscribe_quotes(instrument_id)
+            self.subscribe_book_deltas(instrument_id, BookType.L2_MBP, managed=False)
             self.subscribe_instrument_status(instrument_id)
 
     @guarded
@@ -98,6 +103,7 @@ class OndoMakerStrategy(Strategy):
         market = self.symbols.get(status.instrument_id)
         if market and (status.is_quoting is False or status.is_trading is False):
             self.engine.disconnect("ondo", market)
+            self.last_native_depth_ns.pop(market, None)
             self.drive()
         elif market and str(status.reason) == "adapter:quote_heartbeat" and status.is_quoting is True:
             age = int(self.clock.timestamp_ns()) - int(status.ts_init)
@@ -127,6 +133,40 @@ class OndoMakerStrategy(Strategy):
                 quote.bid_price.as_decimal(),
                 quote.ask_price.as_decimal(),
             )
+        self.drive()
+
+    @guarded
+    def on_book_deltas(self, batch):
+        market = self.symbols.get(batch.instrument_id)
+        if market is None:
+            return
+        age = int(self.clock.timestamp_ns()) - int(batch.ts_init)
+        deltas = batch.deltas
+        valid = (
+            0 <= age <= self.engine.config.depth_stale_ns
+            and batch.ts_init >= self.last_native_depth_ns.get(market, 0)
+            and 1 <= len(deltas) <= 2 * self.engine.config.depth_max_levels + 1
+            and deltas[0].action == BookAction.CLEAR
+            and deltas[-1].flags & int(RecordFlag.F_LAST)
+        )
+        bids, asks = [], []
+        if valid:
+            for delta in deltas[1:]:
+                order = delta.order
+                if (
+                    delta.action != BookAction.ADD
+                    or not delta.flags & int(RecordFlag.F_SNAPSHOT)
+                    or order.side not in (OrderSide.BUY, OrderSide.SELL)
+                ):
+                    valid = False
+                    break
+                target = bids if order.side == OrderSide.BUY else asks
+                target.append((order.price.as_decimal(), order.size.as_decimal()))
+        if valid:
+            self.last_native_depth_ns[market] = int(batch.ts_init)
+            self.engine.on_depth(market, time.monotonic_ns() - age, bids, asks)
+        else:
+            self.engine.invalidate_depth(market)
         self.drive()
 
     @guarded
@@ -413,6 +453,7 @@ class OndoMakerStrategy(Strategy):
                     "pause_until_ns": s.guard.pause_until,
                     "quote_age_ms": (time.monotonic_ns() - s.quote_ns) / 1_000_000 if s.quote_ns is not None else None,
                     "heartbeat_age_ms": (time.monotonic_ns() - s.heartbeat_ns) / 1_000_000 if s.heartbeat_ns is not None else None,
+                    "depth_age_ms": (time.monotonic_ns() - s.depth.updated_ns) / 1_000_000 if s.depth.updated_ns is not None else None,
                 }
                 for m, s in self.engine.markets.items()
             },

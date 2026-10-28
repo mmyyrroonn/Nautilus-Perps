@@ -50,6 +50,11 @@ def main():
         engine.on_binance(market, 0, 100, 100)
         engine.on_binance(market, SECOND, 100, 100)
         engine.on_ondo(market, SECOND, Decimal("99.99"), Decimal("100.01"))
+        engine.on_depth(
+            market, SECOND,
+            [(Decimal("99.99") - Decimal(".01") * n, Decimal(10)) for n in range(40)],
+            [(Decimal("100.01") + Decimal(".01") * n, Decimal(10)) for n in range(40)],
+        )
     engine.set_account(ready=True, reduction_ready=True, flat=True)
     engine.step(SECOND)
     controller = []

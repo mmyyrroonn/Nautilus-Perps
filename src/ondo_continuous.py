@@ -961,9 +961,12 @@ def build_session(
     startup_mode: str = "maker",
     on_continuous_quote: Callable | None = None,
     strategy_factory: Callable | None = None,
+    book_limit: int = 100,
 ):
     """Register real native data/execution factories and the reusable Strategy, without I/O."""
     session.validate()
+    if type(book_limit) is not int or not 1 <= book_limit <= 1000:
+        raise ValueError("book limit must be in 1..1000")
     from nautilus_trader.adapters import ondo
 
     factory = ondo.OndoExecutionClientFactory()
@@ -1061,6 +1064,7 @@ def build_session(
                 environment=environment,
                 load_ids=instruments,
                 ws_heartbeat_secs=1,
+                book_limit=book_limit,
                 base_url_http=session.base_url_http,
                 base_url_ws=session.base_url_ws,
             ),

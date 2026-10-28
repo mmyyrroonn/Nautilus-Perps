@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="80" time="218.555" timestamp="2026-10-28T23:06:15.021292+08:00" hostname="localhost"><testcase classname="tests.test_ondo_maker" name="test_guard_inclusive_boundary_quantity_updates_and_extension" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_guard_retains_quote_at_window_start_and_round_trip_range" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_guard_matches_step_price_oracle_random_stream" time="0.639" /><testcase classname="tests.test_ondo_maker" name="test_guard_gap_reconnect_invalid_and_overflow_require_new_history" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_large_move_cancels_close_side_and_out_of_reward_side_only_in_affected_market" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_reward_replacement_keeps_opposite_side_and_waits_for_terminal_and_proof[0.005-1]" time="0.001" /><testcase classname="tests.test_ondo_maker" name="test_reward_replacement_keeps_opposite_side_and_waits_for_terminal_and_proof[-0.005--1]" time="0.001" /><testcase classname="tests.test_ondo_maker" name="test_inner_boundary_cancels_only_that_side_and_outer_boundary_is_inclusive" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_rounded_quotes_remain_inside_band_and_impossible_ticks_are_not_submitted" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_fill_during_single_side_replacement_cancels_keepers_before_reduction" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_unchanged_quotes_remain_live_with_heartbeats_then_cancel_on_heartbeat_loss" time="0.002" /><testcase classname="tests.test_ondo_maker" name="test_heartbeat_cannot_restore_quotes_after_disconnect_without_new_snapshot" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_cancel_confirmation_and_account_proof_required_before_replacement" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_partial_fill_sends_all_cancels_before_close_without_waiting_for_ack" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_stream_loss_cancels_and_does_not_disable_reduction" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_volatility_cancels_both_sides_and_cooldown_does_not_release_unknown_orders" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_shutdown_waits_for_cancels_reduction_and_fresh_flat_proof" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_fault_stops_new_quotes_but_preserves_close_retries_and_uncertain_reservations" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_invalid_amount_rejected[0-10]" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_invalid_amount_rejected[NaN-10]" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_invalid_amount_rejected[101-10]" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_invalid_amount_rejected[10-Infinity]" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_four_500_usd_makers_respect_exact_order_and_total_caps" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_crypto_caps_cannot_be_exceeded[500.00000001-2000]" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_crypto_caps_cannot_be_exceeded[500-2000.00000001]" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_no_idle_fill_from_one_market_can_restart_the_other_during_cleanup" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_short_fill_closes_with_buy_and_partially_filled_exit_retries_only_residual" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_late_fill_after_cancel_is_still_closed_and_cannot_restart_quotes" time="0.000" /><testcase classname="tests.test_ondo_maker" name="test_stale_ondo_cancels_even_when_binance_is_live_and_rebuilds_before_quote" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_ahead_excludes_same_price_and_requires_visible_far_boundary" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_snapshot_clears_previous_depth[bids0-asks0]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_snapshot_clears_previous_depth[bids1-asks1]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_snapshot_clears_previous_depth[bids2-asks2]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_snapshot_clears_previous_depth[bids3-asks3]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_snapshot_clears_previous_depth[bids4-asks4]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_snapshot_clears_previous_depth[bids5-asks5]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_depth_is_bounded_and_time_regression_invalidates" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_missing_stale_and_short_depth_block_new_orders_but_not_reduction" time="0.001" /><testcase classname="tests.test_ondo_maker_depth" name="test_thin_ahead_blocks_only_that_side" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_exact_thirty_percent_drop_cancels_only_affected_side_and_enforces_cooldown" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_drop_fill_race_cancels_other_markets_and_closes" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_depth_configuration[kwargs0]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_depth_configuration[kwargs1]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_depth_configuration[kwargs2]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_depth_configuration[kwargs3]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_depth_configuration[kwargs4]" time="0.000" /><testcase classname="tests.test_ondo_maker_depth" name="test_invalid_depth_configuration[kwargs5]" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_latency_reports_acceptance_once_and_excludes_unacknowledged_orders" time="0.001" /><testcase classname="tests.test_ondo_maker_bridge" name="test_failed_dispatch_does_not_leave_never_sent_sibling_reservations" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_private_disconnect_revokes_new_risk_even_with_fresh_flat_snapshot" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_flat_snapshot_started_before_last_activity_cannot_finish_shutdown" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_own_activity_proof_invalidation_keeps_only_bounded_health" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_single_side_replacement_accepts_matching_live_keeper_but_not_stale_or_mismatched_proof" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_native_depth_callback_requires_bounded_complete_fresh_snapshot[None]" time="0.001" /><testcase classname="tests.test_ondo_maker_bridge" name="test_native_depth_callback_requires_bounded_complete_fresh_snapshot[stale]" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_native_depth_callback_requires_bounded_complete_fresh_snapshot[no_clear]" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_native_depth_callback_requires_bounded_complete_fresh_snapshot[no_last]" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_native_depth_callback_requires_bounded_complete_fresh_snapshot[incremental]" time="0.000" /><testcase classname="tests.test_ondo_maker_bridge" name="test_native_depth_callback_requires_bounded_complete_fresh_snapshot[oversized]" time="0.000" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_cancel_latency_preserves_first_attempt_and_requires_canceled_confirmation" time="0.001" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_snapshot_is_detached_before_background_formatting" time="0.000" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_disabled_diagnostics_add_no_clock_reads_or_samples" time="0.000" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_collector_exception_does_not_block_cancels_or_close" time="0.000" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_status_output_failure_disables_only_diagnostics" time="0.003" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_runtime_toggle_keeps_trading_state_and_contains_initialization_failure" time="0.000" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_runtime_signals_only_toggle_diagnostics_and_restore_handlers" time="0.051" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_cli_diagnostics_are_opt_in_without_network_or_credentials[False]" time="0.066" /><testcase classname="tests.test_ondo_maker_diagnostics" name="test_cli_diagnostics_are_opt_in_without_network_or_credentials[True]" time="0.064" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[feed-loss]" time="15.706" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[cancel-fill]" time="16.541" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[quiet-heartbeat]" time="22.521" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[quiet-fill]" time="23.479" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[heartbeat-loss]" time="24.404" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[diagnostics-off]" time="15.624" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[diagnostics-toggle]" time="15.454" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[reward-replace]" time="16.483" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[reward-fill]" time="16.595" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[depth-drop]" time="15.481"><failure message="AssertionError: assert 'quoting' == 'depth_cooldown'&#10;  &#10;  - depth_cooldown&#10;  + quoting">mode = 'depth-drop'
+tmp_path = PosixPath('/home/myron/ondo-maker-improvements-20261028/evidence/step2-pytest/test_native_cancel_first_and_d9')
+
+    @pytest.mark.parametrize("mode", [
+        "feed-loss", "cancel-fill", "quiet-heartbeat", "quiet-fill", "heartbeat-loss", "diagnostics-off",
+        "diagnostics-toggle",
+        "reward-replace", "reward-fill",
+        "depth-drop", "depth-loss", "depth-fill",
+    ])
+    def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
+        from test_ondo_continuous import _environment
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                mode,
+                str(tmp_path / "journal.jsonl"),
+            ],
+            env=_environment(),
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=100,
+        )
+        lines = [
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("ONDO_MAKER_RESULT ")
+        ]
+        assert result.returncode == 0 and lines, (
+            result.stdout[-5000:],
+            result.stderr[-2500:],
+        )
+        data = json.loads(lines[-1].split(" ", 1)[1])
+        (tmp_path / "native-result.json").write_text(
+            json.dumps(data, indent=2), encoding="utf-8"
+        )
+        assert data["failure"] is None, data
+        assert data["status"]["safe_to_stop"], data
+        assert all(Decimal(q) == 0 for q in data["positions"].values()), data
+        assert all(o["status"] != "open" for o in data["orders"]), data
+        creates = [r["body"] for r in data["writes"] if r["method"] == "POST"]
+        makers = [o for o in creates if not o["reduceOnly"]]
+        closes = [o for o in creates if o["reduceOnly"]]
+        expected_makers = 5 if mode == "reward-replace" else 4
+        assert len(makers) == expected_makers and all(
+            o["postOnly"] and o["timeInForce"] == "GTC" for o in makers
+        ), data["trace"]
+        notionals = [Decimal(o["size"]) * Decimal(o["price"]) for o in makers]
+        # The synthetic BTC lot is worth about USD 8.50, so a USD 1 tolerance is invalid.
+        fixture_lots = {
+            "BTC-USD.P": (Decimal("0.0001"), Decimal("85001")),
+            "ETH-USD.P": (Decimal("0.01"), Decimal("227.50")),
+        }
+        for order in makers:
+            lot, ask = fixture_lots[order["market"]]
+            quantity = Decimal(order["size"])
+            valuation = max(Decimal(order["price"]), ask)
+            assert 0 &lt; quantity * valuation &lt;= Decimal(500)
+            assert (quantity + lot) * valuation &gt; Decimal(500)
+        assert sum(notionals[:4]) &lt;= Decimal(2000)
+        if mode == "reward-replace":
+            checkpoint = data["replacement_checkpoint"]
+            assert checkpoint is not None
+            cancellations = [r for r in checkpoint["writes"] if r["method"] == "DELETE"]
+            assert len(cancellations) == 1
+            assert makers[-1]["market"] == "BTC-USD.P" and makers[-1]["side"] == "buy"
+            original_keepers = {o["clientOrderId"] for o in makers[:4] if o != makers[0]}
+            assert original_keepers &lt;= {o["clientOrderId"] for o in checkpoint["open_makers"]}
+        diagnostics = data["status"]["diagnostics"]
+        if mode == "diagnostics-off":
+            assert diagnostics == {"enabled": False}
+        else:
+            assert diagnostics["enabled"]
+            latency = diagnostics["maker_ack_latency"]
+            accepted = 0 if mode == "diagnostics-toggle" else expected_makers
+            assert latency["accepted_total"] == accepted
+            assert latency["submit_call_to_accept_callback"]["samples"] == accepted
+            assert latency["native_submitted_to_accepted"]["samples"] == accepted
+            canceled = sum(o["status"] == "canceled" for o in data["orders"] if not o["reduceOnly"])
+            cancel = diagnostics["cancel_latency"]
+            assert cancel["confirmed_total"] == canceled
+            assert cancel["first_cancel_call_to_canceled"]["samples"] == canceled
+            assert cancel["pending"] == 0 and cancel["dropped"] == 0
+        if mode in {"cancel-fill", "quiet-fill", "reward-fill", "depth-fill"}:
+            assert closes and all(
+                not o["postOnly"] and o["timeInForce"] == "IOC" for o in closes
+            )
+            first_close = next(
+                i
+                for i, r in enumerate(data["writes"])
+                if r["method"] == "POST" and r["body"]["reduceOnly"]
+            )
+            assert sum(r["method"] == "DELETE" for r in data["writes"][:first_close]) &gt;= 4
+        elif mode == "feed-loss":
+            assert not closes
+            assert any(
+                row["commands"]
+                and all(c[0] == "cancel" for c in row["commands"])
+                and set(row["reasons"].values()) == {"binance_unavailable"}
+                for row in data["trace"]
+            )
+        elif mode == "heartbeat-loss":
+            assert not closes
+            assert any(set(row["reasons"].values()) == {"ondo_unavailable"} for row in data["trace"])
+        elif mode in {"depth-drop", "depth-loss"}:
+            assert not closes
+            checkpoint = data["replacement_checkpoint"]
+            assert checkpoint is not None
+            assert len(checkpoint["open_makers"]) == (3 if mode == "depth-drop" else 0)
+            if mode == "depth-drop":
+                assert not any(o["market"] == "BTC-USD.P" and o["side"] == "buy" for o in checkpoint["open_makers"])
+&gt;               assert checkpoint["status"]["markets"]["BTC"]["sides"]["buy"]["reason"] == "depth_cooldown"
+E               AssertionError: assert 'quoting' == 'depth_cooldown'
+E
+E                 - depth_cooldown
+E                 + quoting
+
+tests/test_ondo_maker_native.py:386: AssertionError</failure></testcase><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[depth-loss]" time="18.539" /><testcase classname="tests.test_ondo_maker_native" name="test_native_cancel_first_and_drains_to_flat[depth-fill]" time="16.553" /></testsuite></testsuites>
