@@ -681,6 +681,20 @@ def test_application_preserves_explicit_native_limit_boundaries(changes) -> None
         replace(ContinuousLimits(), **changes).validate()
 
 
+def test_crypto_capacity_is_exact_and_scoped_to_btc_eth() -> None:
+    limits = ContinuousLimits(max_notional_per_order_usd="500", max_gross_exposure_usd="2000")
+    instruments = ("BTC-USD-PERP.ONDO", "ETH-USD-PERP.ONDO")
+    ContinuousSession(instrument_ids=instruments, limits=limits).validate()
+    for changes in (
+        {"max_notional_per_order_usd": "500.00000000000000000001"},
+        {"max_gross_exposure_usd": "2000.00000000000000000001"},
+    ):
+        with pytest.raises(ValueError):
+            replace(limits, **changes).validate(instrument_ids=instruments)
+    with pytest.raises(ValueError):
+        limits.validate(instrument_ids=instruments + ("NVDA-USD-PERP.ONDO",))
+
+
 def test_production_execution_requires_explicit_account_binding(
     tmp_path,
 ) -> None:

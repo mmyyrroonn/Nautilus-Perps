@@ -1,0 +1,27 @@
+[Unit]
+Description=Ondo BTC/ETH cancel-first maker (USD 500 per side)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=ondo-maker
+Group=ondo-maker
+WorkingDirectory=/opt/ondo-maker/releases/20261028-500/app
+ExecStart=/opt/ondo-maker/releases/20261028-500/app/.venv/bin/python scripts/run_ondo_maker.py --btc-usd 500 --eth-usd 500 --gross-usd 2000 --live
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=no
+KillSignal=SIGTERM
+TimeoutStopSec=infinity
+SendSIGKILL=no
+LimitNOFILE=65536
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ondo-maker/releases/20261028-500/app/reports
+
+[Install]
+WantedBy=multi-user.target
