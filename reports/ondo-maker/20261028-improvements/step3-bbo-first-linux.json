@@ -1,0 +1,240 @@
+{
+  "started_at_utc": "2026-10-28T15:25:58.721748+00:00",
+  "endpoint": "wss://api.ondoperps.xyz/ws",
+  "markets": [
+    "BTC-USD.P",
+    "ETH-USD.P"
+  ],
+  "subscription_order": [
+    "topOfBooksPerps",
+    "depthBooksPerps"
+  ],
+  "requested_measurement_seconds": 90.0,
+  "warmup_seconds": 5,
+  "depth_limit": 1000,
+  "transport": "one shared WebSocket, no compression, max_queue=16, max_size=2 MiB",
+  "method": "strict match of market, event-time string and Decimal best prices AND sizes; receipt before JSON decode",
+  "positive_delta_means": "BBO received earlier",
+  "receipt_clock": {
+    "name": "perf_counter_ns",
+    "implementation": "clock_gettime(CLOCK_MONOTONIC)",
+    "resolution_seconds": 1e-09,
+    "monotonic": true
+  },
+  "limitations": [
+    "Local application receipt includes scheduling, prior-frame parsing and shared TCP head-of-line effects.",
+    "This is not exchange publication latency, wire arrival time or an independent-connection comparison.",
+    "Only matched states are comparable; unmatched updates may bias the subset.",
+    "Duplicates are suppressed within a bounded 5-second/10000-event window; each market retains at most 100000 samples."
+  ],
+  "completed": true,
+  "elapsed_seconds": 96.353213971,
+  "observed_measurement_seconds": 90.0,
+  "acknowledgements": [
+    "topOfBooksPerps",
+    "depthBooksPerps"
+  ],
+  "errors": [],
+  "channels": {
+    "topOfBooksPerps": {
+      "frames": 155,
+      "bytes": 33681,
+      "max_frame_bytes": 219,
+      "max_bid_levels": 1,
+      "max_ask_levels": 1,
+      "decode_and_match_ns": 12461871
+    },
+    "depthBooksPerps": {
+      "frames": 686,
+      "bytes": 2472571,
+      "max_frame_bytes": 3915,
+      "max_bid_levels": 100,
+      "max_ask_levels": 100,
+      "decode_and_match_ns": 69821865
+    }
+  },
+  "first_public_states": {
+    "topOfBooksPerps": [
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:26:06.0809656Z",
+        "bid": [
+          "80601",
+          "0.0259"
+        ],
+        "ask": [
+          "80611",
+          "0.0124"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:26:06.112965717Z",
+        "bid": [
+          "80608",
+          "0.0001"
+        ],
+        "ask": [
+          "80611",
+          "0.0124"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:26:06.112965717Z",
+        "bid": [
+          "80608",
+          "0.0001"
+        ],
+        "ask": [
+          "80610",
+          "0.0001"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:26:07.608970906Z",
+        "bid": [
+          "80608",
+          "0.0005"
+        ],
+        "ask": [
+          "80610",
+          "0.0001"
+        ]
+      }
+    ],
+    "depthBooksPerps": [
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:26:04.928961414Z",
+        "bid": [
+          "80607",
+          "0.0124"
+        ],
+        "ask": [
+          "80611",
+          "0.0124"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:26:04.928961414Z",
+        "bid": [
+          "2336.1",
+          "0.25"
+        ],
+        "ask": [
+          "2336.7",
+          "0.427"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:26:05.184962344Z",
+        "bid": [
+          "80607",
+          "0.0124"
+        ],
+        "ask": [
+          "80611",
+          "0.0124"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:26:05.184962344Z",
+        "bid": [
+          "2336.1",
+          "0.25"
+        ],
+        "ask": [
+          "2336.7",
+          "0.427"
+        ]
+      }
+    ]
+  },
+  "comparison": {
+    "BTC-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 343,
+        "unique_topOfBooksPerps": 41,
+        "unmatched_depthBooksPerps": 343,
+        "unmatched_topOfBooksPerps": 41
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.0,
+        "depthBooksPerps": 0.0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    },
+    "ETH-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 343,
+        "unmatched_depthBooksPerps": 342,
+        "unique_topOfBooksPerps": 114,
+        "unmatched_topOfBooksPerps": 113,
+        "matched": 1,
+        "bbo_first": 1
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.008771929824561403,
+        "depthBooksPerps": 0.0029154518950437317
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 1,
+        "min_us": 40035.827,
+        "max_us": 40035.827,
+        "p50_us": 40035.827,
+        "p95_us": 40035.827,
+        "p99_us": 40035.827
+      }
+    }
+  },
+  "price_transition_observation": {
+    "method": "same preceding and next best bid/ask prices; transition occurs exactly once in each channel over the whole sample; receipt gap <=1s; sizes/timestamps not matched",
+    "limitation": "Heuristic visibility of sampled price transitions, NOT proof of the same exchange event. Skipped/repeated changes and unmatched paths bias the subset.",
+    "markets": {
+      "BTC-USD.P": {
+        "observed_changes": {
+          "topOfBooksPerps": 28,
+          "depthBooksPerps": 17
+        },
+        "counts": {
+          "unpaired_transition_keys": 31,
+          "bbo_first": 7
+        },
+        "depth_minus_bbo_receipt": {
+          "samples": 7,
+          "min_us": 43990.617,
+          "max_us": 242042.585,
+          "p50_us": 141731.968,
+          "p95_us": 242042.585,
+          "p99_us": 242042.585
+        }
+      },
+      "ETH-USD.P": {
+        "observed_changes": {
+          "depthBooksPerps": 35,
+          "topOfBooksPerps": 71
+        },
+        "counts": {
+          "unpaired_transition_keys": 70,
+          "bbo_first": 17,
+          "excluded_repeated_transition_keys": 1
+        },
+        "depth_minus_bbo_receipt": {
+          "samples": 17,
+          "min_us": 168.429,
+          "max_us": 314775.021,
+          "p50_us": 156794.51,
+          "p95_us": 314775.021,
+          "p99_us": 314775.021
+        }
+      }
+    }
+  }
+}

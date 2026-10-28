@@ -184,3 +184,62 @@ p99 565µs，约 2,182 次更新/CPU 秒；真实原生数据对象进入 Python
 没有主网端到端、真实到达频率下的排队尾延迟或交易效果测量，也没有部署。
 证据和初次失败/修复后通过的原始测试报告位于
 `reports/ondo-maker/20261028-improvements/step2-*`。
+
+## BBO 订阅和速度核查（2026-10-28）
+
+当前已经订阅 BBO。已校验原生候选 `ef27c8938524a54996d718f04cad520f4c7f6d77`
+的 `crates/adapters/ondo/src/data.rs::subscribe_quotes` 路由到 `topOfBooksPerps`；
+`websocket/client.rs::publish_top_of_book` 把该频道转换成 `QuoteTick`。
+`depthBooksPerps` 独立提供 `OrderBookDeltas`，不覆盖 BBO 报价。
+因此无需增加一次 BBO 订阅或改用盘口第一档生成策略报价。
+
+官方文档提供 [Top of Book](https://docs.ondoperps.xyz/api-reference/public-channels/subscribe:-perps-top-of-book)
+和 [Depth Book](https://docs.ondoperps.xyz/api-reference/public-channels/subscribe:-perps-depth-book)
+两个公共频道；2026-10-28 读取的页面没有给出二者的延迟或先后保证。
+较小的 BBO 报文意味着更少的接收/解析工作，不能单凭报文大小断言价格一定先到。
+
+新增 `scripts/probe_ondo_bbo_latency.py` 仅连接公共 WS，不读取 `.env`、不登录或下单。
+同一连接订阅两频道，预热后在 JSON 解码前用高分辨率单调 `perf_counter_ns` 记录接收时刻。
+先严格匹配市场、事件时间和最佳买卖价/数量；另列观察指标，只比较两频道都出现一次的
+相同“前一个买一卖一价格 → 下一个买一卖一价格”，并要求接收间隔不超过一秒。
+重复往返、未匹配或被跳过的路径不作为该观察指标的样本。
+后者不要求事件时间或数量相同，属于价格可见时间的启发式比较，不证明同一个交易所事件。
+
+```powershell
+.\.venv-ondo-maker\Scripts\python.exe scripts\probe_ondo_bbo_latency.py --seconds 90 --output reports\ondo-maker\bbo-first.json
+.\.venv-ondo-maker\Scripts\python.exe scripts\probe_ondo_bbo_latency.py --seconds 90 --depth-first --output reports\ondo-maker\depth-first.json
+```
+
+报告同时保留确认订阅的频道、报文/字节数、匹配比例、丢弃计数和错误。
+匹配缓存、样本和价格路径均有上限；诊断脚本不进入交易策略进程。
+正的 `depth_minus_bbo_receipt` 表示 BBO 先被应用收到。
+这个值仍包含本机调度、前一报文解析和共享 TCP 队头阻塞，不是独立连接对照或交易所发布延迟。
+13 项单元检查覆盖方向符号、数量精度等值、重复事件、不同事件/数量不误配、
+容量边界、非法报价、重复价格路径和跨过中间状态的排除。
+
+### 公开采样结果
+
+本机 WSL/Linux 在 UTC 15:25:58 和 15:28:39 开始两轮测量，各预热 5 秒、采样 90 秒；
+第二轮反转订阅顺序。均确认两频道订阅，完整运行且无错误。
+
+| 订阅顺序 | 市场 | BBO / 深度价格变化数 | 可比较变化数 | BBO 先到 | 中位提前 |
+| --- | --- | --- | --- | --- | --- |
+| BBO → 深度 | BTC | 28 / 17 | 7 | 7 | 141.7ms |
+| BBO → 深度 | ETH | 71 / 35 | 17 | 17 | 156.8ms |
+| 深度 → BBO | BTC | 32 / 15 | 8 | 8 | 195.1ms |
+| 深度 → BBO | ETH | 63 / 25 | 8 | 8 | 154.6ms |
+
+上述是启发式价格变化指标：筛选后的 40 次均为 BBO 先可见，支持继续用 BBO 触发价格决策、
+用独立深度做保护。无法据此承诺所有行情都更快或固定提前量；样本很短，且只包含两频道
+都观察到的相同路径。严格同时间戳、同价同量的事件，两轮合计仅匹配到 ETH 1 次，
+不足以据此估计频道之间同事件的延迟分布。
+
+两轮深度分别收到 686 / 684 帧，即每币约 3.8 帧/秒；BBO 为 155 / 138 帧。
+BBO 平均约 217 字节/帧，深度约 3.6KB/帧；申请上限 1,000 档，样本实际最多每侧 100 档。
+更新次数不同不代表速度快慢，深度也包含买一卖一未变化的更新。
+这不是生产交易节点或单独 WS 连接的对照，未验证交易所撮合/撤单延迟。
+
+完整结果为 `reports/ondo-maker/20261028-improvements/step3-*-linux.json`。
+Windows 预采样和握手失败保留为单独报告；首次探索使用低分辨率 `GetTickCount64`，
+已明确排除其延迟数字，正式两轮使用 Linux 高分辨率单调时钟。
+未更改原生 BBO 路由，未部署或启停任何交易服务。

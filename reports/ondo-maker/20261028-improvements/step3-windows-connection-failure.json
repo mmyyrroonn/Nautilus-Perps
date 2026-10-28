@@ -1,0 +1,87 @@
+{
+  "started_at_utc": "2026-10-28T15:25:31.930229+00:00",
+  "endpoint": "wss://api.ondoperps.xyz/ws",
+  "markets": [
+    "BTC-USD.P",
+    "ETH-USD.P"
+  ],
+  "subscription_order": [
+    "topOfBooksPerps",
+    "depthBooksPerps"
+  ],
+  "requested_measurement_seconds": 90.0,
+  "warmup_seconds": 5,
+  "depth_limit": 1000,
+  "transport": "one shared WebSocket, no compression, max_queue=16, max_size=2 MiB",
+  "method": "strict match of market, event-time string and Decimal best prices AND sizes; receipt before JSON decode",
+  "positive_delta_means": "BBO received earlier",
+  "receipt_clock": {
+    "name": "perf_counter_ns",
+    "implementation": "QueryPerformanceCounter()",
+    "resolution_seconds": 1e-07,
+    "monotonic": true
+  },
+  "limitations": [
+    "Local application receipt includes scheduling, prior-frame parsing and shared TCP head-of-line effects.",
+    "This is not exchange publication latency, wire arrival time or an independent-connection comparison.",
+    "Only matched states are comparable; unmatched updates may bias the subset.",
+    "Duplicates are suppressed within a bounded 5-second/10000-event window; each market retains at most 100000 samples."
+  ],
+  "completed": false,
+  "elapsed_seconds": 5.030043799997657,
+  "observed_measurement_seconds": 0,
+  "acknowledgements": [],
+  "errors": [
+    "ConnectionResetError"
+  ],
+  "channels": {
+    "topOfBooksPerps": {},
+    "depthBooksPerps": {}
+  },
+  "first_public_states": {
+    "topOfBooksPerps": [],
+    "depthBooksPerps": []
+  },
+  "comparison": {
+    "BTC-USD.P": {
+      "counts": {},
+      "matched_fraction": {
+        "topOfBooksPerps": 0,
+        "depthBooksPerps": 0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    },
+    "ETH-USD.P": {
+      "counts": {},
+      "matched_fraction": {
+        "topOfBooksPerps": 0,
+        "depthBooksPerps": 0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    }
+  },
+  "price_transition_observation": {
+    "method": "same preceding and next best bid/ask prices; transition occurs exactly once in each channel over the whole sample; receipt gap <=1s; sizes/timestamps not matched",
+    "limitation": "Heuristic visibility of sampled price transitions, NOT proof of the same exchange event. Skipped/repeated changes and unmatched paths bias the subset.",
+    "markets": {
+      "BTC-USD.P": {
+        "observed_changes": {},
+        "counts": {},
+        "depth_minus_bbo_receipt": {
+          "samples": 0
+        }
+      },
+      "ETH-USD.P": {
+        "observed_changes": {},
+        "counts": {},
+        "depth_minus_bbo_receipt": {
+          "samples": 0
+        }
+      }
+    }
+  }
+}
