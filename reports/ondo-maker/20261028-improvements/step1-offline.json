@@ -1,0 +1,43 @@
+{
+  "command": [
+    "/usr/bin/env",
+    "GIT_CONFIG_COUNT=1",
+    "GIT_CONFIG_KEY_0=safe.directory",
+    "GIT_CONFIG_VALUE_0=/home/myron/ondo-maker-improvements-20261028",
+    "ONDO_CONTINUOUS_WHEEL=/mnt/e/persarb/reports/ondo-heartbeat-20261028-artifacts/nautilus_trader-2.0.0rc4-cp312-cp312-manylinux_2_39_x86_64.whl",
+    "ONDO_CONTINUOUS_WHEEL_SHA256=67c87f70db2ebc6ac6947022a5d7f46b5ab5182545ca8577a60d803b1fd0794f",
+    "ONDO_CONTINUOUS_PROVENANCE=/mnt/e/persarb/reports/ondo-heartbeat-20261028-artifacts/native-provenance.json",
+    "ONDO_CONTINUOUS_PROVENANCE_SHA256=3cfaeb64fd6f950a52ac3dcf74a358b015e86073baf5bc04e7d989314af82fc2",
+    "/home/myron/ondo-maker-improvements-20261028/.venv/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "tests/test_ondo_maker.py",
+    "tests/test_ondo_maker_bridge.py",
+    "tests/test_ondo_maker_diagnostics.py",
+    "tests/test_ondo_maker_native.py",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--junitxml=evidence/step1-tests.xml",
+    "--basetemp=evidence/step1-pytest"
+  ],
+  "enforcement": {
+    "kind": "network-namespace",
+    "loopback": "up",
+    "namespace": "sudo-network",
+    "non_loopback_interfaces": "absent",
+    "probe_exit_code": 0
+  },
+  "exit_code": 0,
+  "finished_at": "2026-10-28T14:56:11.470186+00:00",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "policy": "loopback-only",
+  "run_id": "8a65cd916b4f406e80a413c2ae4d06be",
+  "schema_version": 1,
+  "started_at": "2026-10-28T14:53:25.997742+00:00",
+  "status": "passed",
+  "workspaces": [
+    "/home/myron/ondo-maker-improvements-20261028"
+  ]
+}

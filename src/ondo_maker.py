@@ -27,6 +27,7 @@ class MakerConfig:
     eth_notional_usd: Decimal
     quote_bps: Decimal = Decimal("4.8")
     cancel_bps: Decimal = Decimal(3)
+    reward_max_bps: Decimal = Decimal(5)
     volatility_bps: float = 2.0
     cooldown_ns: int = 5 * SECOND
     ondo_stale_ns: int = 3 * SECOND
@@ -44,6 +45,7 @@ class MakerConfig:
             self.eth_notional_usd,
             self.quote_bps,
             self.cancel_bps,
+            self.reward_max_bps,
             self.max_gross_usd,
             self.max_order_usd,
             self.close_slippage_bps,
@@ -54,8 +56,8 @@ class MakerConfig:
             raise ValueError(
                 "amounts and price parameters must be positive finite Decimals"
             )
-        if not self.cancel_bps < self.quote_bps < BPS:
-            raise ValueError("require 0 < cancel_bps < quote_bps < 10000")
+        if not self.cancel_bps < self.quote_bps <= self.reward_max_bps < BPS:
+            raise ValueError("require 0 < cancel_bps < quote_bps <= reward_max_bps < 10000")
         if not self.close_slippage_bps <= 20:
             raise ValueError("close price protection must be within 20 bps")
         if not (
@@ -205,6 +207,13 @@ class Command:
 
 
 @dataclass(slots=True)
+class QuoteSide:
+    replacing: bool = False
+    retry_at: int = 0
+    reason: str = "starting"
+
+
+@dataclass(slots=True)
 class Market:
     guard: VolatilityGuard
     instrument: Instrument | None = None
@@ -214,7 +223,9 @@ class Market:
     heartbeat_ns: int | None = None
     position: Decimal = ZERO
     orders: dict[str, Order] = field(default_factory=dict)
-    replacing: bool = False
+    sides: dict[int, QuoteSide] = field(
+        default_factory=lambda: {1: QuoteSide(), -1: QuoteSide()}
+    )
     retry_at: int = 0
     reason: str = "starting"
 
@@ -251,7 +262,8 @@ class MakerEngine:
             else:
                 state.quote_ns = None
                 state.heartbeat_ns = None
-            state.replacing = True
+            for side in state.sides.values():
+                side.replacing = True
 
     def on_binance(self, market: str, now: int, bid: float, ask: float) -> None:
         state = self.markets[market]
@@ -261,7 +273,8 @@ class MakerEngine:
                 other.guard.pause_until = max(
                     other.guard.pause_until, now + self.config.cooldown_ns
                 )
-                other.replacing = True
+                for side in other.sides.values():
+                    side.replacing = True
 
     def on_ondo(self, market: str, now: int, bid: Decimal, ask: Decimal) -> None:
         state = self.markets[market]
@@ -345,20 +358,20 @@ class MakerEngine:
             self.account_flat = False
             self.activity += 1
             for other in self.markets.values():
-                other.replacing = True
+                for side in other.sides.values():
+                    side.replacing = True
         if terminal and not order.terminal:
             order.terminal = True
             state.orders.pop(client_id, None)
             self.history[client_id] = order
             if len(self.history) > 4096:
                 self.history.popitem(last=False)
-            state.retry_at = (
-                max(state.retry_at, now + self.config.retry_ns) if rejected else now
-            )
+            retry = state if order.reduce_only else state.sides[order.side]
+            retry.retry_at = max(retry.retry_at, now + self.config.retry_ns) if rejected else now
             self.activity += 1
             self.account_flat = False
             if not order.reduce_only:
-                state.replacing = True
+                state.sides[order.side].replacing = True
 
     def _new(
         self,
@@ -397,12 +410,14 @@ class MakerEngine:
             return "binance_unavailable"
         if now < state.guard.pause_until:
             return "volatility_pause"
-        mid = (state.bid + state.ask) / 2
-        for order in state.orders.values():
-            if not order.reduce_only and (
-                (mid - order.price) * order.side * BPS <= mid * self.config.cancel_bps
-            ):
-                return "quote_too_close"
+        return "quoting"
+
+    def _price_reason(self, mid: Decimal, price: Decimal, side: int) -> str:
+        distance = (mid - price) * side * BPS
+        if distance <= mid * self.config.cancel_bps:
+            return "quote_too_close"
+        if distance > mid * self.config.reward_max_bps:
+            return "outside_reward_band"
         return "quoting"
 
     def step(self, now: int) -> list[Command]:
@@ -410,10 +425,20 @@ class MakerEngine:
         # Phase 1 covers both markets before any close is allowed to be dispatched.
         for state in self.markets.values():
             state.reason = self._reason(state, now)
-            if state.reason != "quoting":
-                state.replacing = True
+            for side in state.sides.values():
+                side.reason = state.reason
+                if state.reason != "quoting":
+                    side.replacing = True
+            mid = (state.bid + state.ask) / 2
             for order in state.orders.values():
-                if order.reduce_only or not state.replacing:
+                if order.reduce_only:
+                    continue
+                side = state.sides[order.side]
+                if state.reason == "quoting":
+                    side.reason = self._price_reason(mid, order.price, order.side)
+                    if side.reason != "quoting":
+                        side.replacing = True
+                if not side.replacing:
                     continue
                 if (
                     order.last_cancel_ns < 0
@@ -449,8 +474,9 @@ class MakerEngine:
                 commands.append(self._new(symbol, side, qty, price, True))
                 state.retry_at = now + self.config.retry_ns
 
-        # Phase 3 requires a fresh flat proof after every prior cycle. It never
-        # treats an accepted cancellation or an expired cooldown as that proof.
+        # Phase 3 requires current reconciled zero inventory and an exact match
+        # of remaining owned orders. The opposite side may remain live; a pending
+        # cancellation keeps its own side reserved until the terminal event.
         if (
             self.stopping
             or self.reducing
@@ -459,22 +485,38 @@ class MakerEngine:
         ):
             return commands
         flat_proven = self.account_flat and self.proven_activity == self.activity
+        if not flat_proven:
+            return commands
         for symbol, state in self.markets.items():
-            if state.reason != "quoting" or state.orders or now < state.retry_at:
-                continue
-            if state.replacing and not flat_proven:
+            if state.reason != "quoting":
                 continue
             spec = state.instrument
             if spec is None:
                 continue
-            state.replacing = False
             mid = (state.bid + state.ask) / 2
-            quotes = []
-            for side in (1, -1):
+            for side, quote_side in state.sides.items():
+                if now < quote_side.retry_at or any(
+                    o.side == side and not o.reduce_only for o in state.orders.values()
+                ):
+                    continue
                 price = mid * (1 - side * self.config.quote_bps / BPS)
                 price = (price / spec.tick).to_integral_value(
                     rounding=ROUND_FLOOR if side > 0 else ROUND_CEILING
                 ) * spec.tick
+                # Outward rounding must not move the quote outside the reward
+                # band. If no valid passive tick exists, leave this side empty.
+                boundary = mid * (1 - side * self.config.reward_max_bps / BPS)
+                boundary = (boundary / spec.tick).to_integral_value(
+                    rounding=ROUND_CEILING if side > 0 else ROUND_FLOOR
+                ) * spec.tick
+                price = max(price, boundary) if side > 0 else min(price, boundary)
+                if (
+                    self._price_reason(mid, price, side) != "quoting"
+                    or (side > 0 and price >= state.ask)
+                    or (side < 0 and price <= state.bid)
+                ):
+                    quote_side.reason = "no_passive_tick_in_reward_band"
+                    continue
                 qty = (
                     self.config.notional(symbol) / max(price, state.ask) / spec.step
                 ).to_integral_value(rounding=ROUND_FLOOR) * spec.step
@@ -483,10 +525,9 @@ class MakerEngine:
                     or qty < spec.minimum_quantity
                     or qty * price < spec.minimum_notional
                 ):
-                    state.reason = "amount_below_minimum"
-                    quotes = []
-                    break
-                quotes.append((side, qty, price))
-            for side, qty, price in quotes:
+                    quote_side.reason = "amount_below_minimum"
+                    continue
+                quote_side.replacing = False
+                quote_side.reason = "quoting"
                 commands.append(self._new(symbol, side, qty, price, False))
         return commands

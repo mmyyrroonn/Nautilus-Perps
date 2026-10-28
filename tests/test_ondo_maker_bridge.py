@@ -187,3 +187,45 @@ def test_own_activity_proof_invalidation_keeps_only_bounded_health():
     transport["run_state"] = "disconnected"
     OndoMakerStrategy.refresh_account(host)
     assert not engine.account_healthy and host.account_health_until_ns == 0
+
+
+def test_single_side_replacement_accepts_matching_live_keeper_but_not_stale_or_mismatched_proof():
+    engine = ready()
+    engine.step(1_000_000_000)
+    buy = next(o for o in engine.markets["BTC"].orders.values() if o.side == 1)
+    buy.price = Decimal("99.94")
+    assert len(engine.step(1_000_000_001)) == 1
+    engine.update_order(buy.client_id, filled=Decimal(0), terminal=True, now=1_000_000_002)
+    observed = [
+        {"client_order_id": o.client_id}
+        for state in engine.markets.values() for o in state.orders.values()
+    ]
+    snapshot = {
+        "run_id": "test", "mode": "continuous", "snapshot_unix_nanos": 20,
+        "snapshot_started_ns": 10, "reconciled_activity_generation": 5,
+        "latest_activity_generation": 5, "open_orders": observed,
+        "position_quantities": {}, "unknown_submissions": 0,
+        "account_positions_owned": True, "foreign_open_orders": 0,
+        "connected_ready": True, "reconciled_flat": True,
+        "native_ready": True, "reduction_ready": True,
+    }
+    host = NS(
+        engine=engine, factory=NS(
+            production_trade_snapshot=lambda: snapshot,
+            read_only_snapshot=lambda: {"run_id": "test", "run_state": "trading_ready"},
+        ),
+        session=NS(diagnostics_run_id="test"), clock=NS(timestamp_ns=lambda: 20),
+        last_activity_wall_ns=15, ids={"BTC": "btc", "ETH": "eth"}, account="test",
+        portfolio=NS(net_position=lambda *_: Decimal(0)),
+    )
+    OndoMakerStrategy.refresh_account(host)
+    assert not engine.step(1_000_000_003)
+    snapshot["snapshot_started_ns"] = 16
+    snapshot["open_orders"] = observed[:-1]
+    OndoMakerStrategy.refresh_account(host)
+    assert not engine.step(1_000_000_004)
+    snapshot["open_orders"] = observed
+    OndoMakerStrategy.refresh_account(host)
+    replacement = engine.step(1_000_000_005)
+    assert len(replacement) == 1 and replacement[0].order.side == 1
+    assert replacement[0].order.market == "BTC"

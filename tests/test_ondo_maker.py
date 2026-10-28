@@ -85,7 +85,7 @@ def test_guard_gap_reconnect_invalid_and_overflow_require_new_history():
     assert not g.ready(2 * SECOND, SECOND)
 
 
-def test_three_bp_cancels_both_sides_only_in_affected_market():
+def test_large_move_cancels_close_side_and_out_of_reward_side_only_in_affected_market():
     e = ready()
     for state in e.markets.values():
         state.instrument = Instrument(D("0.001"), D("0.001"), D("0.001"))
@@ -98,6 +98,72 @@ def test_three_bp_cancels_both_sides_only_in_affected_market():
     assert all(c.kind == "cancel" and c.order.market == "BTC" for c in commands)
     assert {c.order.side for c in commands} == {-1, 1}
     assert not e.step(SECOND + 2)
+
+
+@pytest.mark.parametrize("move,side", [("0.005", 1), ("-0.005", -1)])
+def test_reward_replacement_keeps_opposite_side_and_waits_for_terminal_and_proof(move, side):
+    e = ready()
+    e.markets["BTC"].instrument = Instrument(D("0.001"), D("0.001"), D("0.001"))
+    e.step(SECOND)
+    old = next(o for o in e.markets["BTC"].orders.values() if o.side == side)
+    keeper = next(o for o in e.markets["BTC"].orders.values() if o.side != side)
+    e.on_ondo("BTC", SECOND + 1, D("99.99") + D(move), D("100.01") + D(move))
+    commands = e.step(SECOND + 1)
+    assert [(c.kind, c.order.client_id) for c in commands] == [("cancel", old.client_id)]
+    assert e.markets["BTC"].sides[side].reason == "outside_reward_band"
+    # Even an account proof cannot release the still-unconfirmed old order.
+    e.set_account(ready=True, reduction_ready=True, flat=True)
+    assert not e.step(SECOND + 2)
+    settle(e, [old], SECOND + 3)
+    assert not e.step(SECOND + 4)
+    e.set_account(ready=True, reduction_ready=True, flat=True)
+    replacement = e.step(SECOND + 5)
+    assert len(replacement) == 1 and replacement[0].kind == "create"
+    assert replacement[0].order.side == side and replacement[0].order.client_id != old.client_id
+    assert e.markets["BTC"].orders[keeper.client_id] is keeper
+    assert not keeper.cancel_requested
+    assert len(e.markets["ETH"].orders) == 2
+
+
+def test_inner_boundary_cancels_only_that_side_and_outer_boundary_is_inclusive():
+    e = ready()
+    e.step(SECOND)
+    buy, sell = e.markets["BTC"].orders.values()
+    buy.price, sell.price = D("99.95"), D("100.05")
+    assert not e.step(SECOND + 1)
+    buy.price = D("99.97")
+    commands = e.step(SECOND + 2)
+    assert [(c.kind, c.order.client_id) for c in commands] == [("cancel", buy.client_id)]
+    assert not sell.cancel_requested
+
+
+def test_rounded_quotes_remain_inside_band_and_impossible_ticks_are_not_submitted():
+    e = ready()
+    e.on_ondo("BTC", SECOND, D("100.00"), D("100.02"))
+    commands = e.step(SECOND)
+    for command in commands:
+        order = command.order
+        state = e.markets[order.market]
+        mid = (state.bid + state.ask) / 2
+        distance = (mid - order.price) * order.side * D(10000) / mid
+        assert D(3) < distance <= D(5)
+    e = ready()
+    e.markets["BTC"].instrument = Instrument(D("0.1"), D("0.001"), D("0.001"))
+    assert all(c.order.market == "ETH" for c in e.step(SECOND))
+    assert all(s.reason == "no_passive_tick_in_reward_band" for s in e.markets["BTC"].sides.values())
+
+
+def test_fill_during_single_side_replacement_cancels_keepers_before_reduction():
+    e = ready()
+    e.step(SECOND)
+    buy = next(o for o in e.markets["BTC"].orders.values() if o.side > 0)
+    buy.price = D("99.94")
+    e.step(SECOND + 1)
+    e.update_order(buy.client_id, filled=D("0.1"), terminal=True, now=SECOND + 2)
+    commands = e.step(SECOND + 2)
+    assert [c.kind for c in commands] == ["cancel"] * 3 + ["create"]
+    assert commands[-1].order.reduce_only
+    assert not any(c.kind == "create" and not c.order.reduce_only for c in commands)
 
 
 def test_unchanged_quotes_remain_live_with_heartbeats_then_cancel_on_heartbeat_loss():

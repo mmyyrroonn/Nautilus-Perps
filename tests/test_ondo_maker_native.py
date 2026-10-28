@@ -39,7 +39,25 @@ def child(mode, journal):
     from ondo_maker_live import make_strategy
 
     identity = _identity()
-    peer = fixture_peer(mode in {"cancel-fill", "quiet-fill"})
+    peer = fixture_peer(mode in {"cancel-fill", "quiet-fill", "reward-fill"})
+    reward_mode = mode in {"reward-replace", "reward-fill"}
+    replacement_checkpoint = None
+    if reward_mode:
+        peer.quote_shift = Decimal(0)
+        original_quotes = peer._quotes
+
+        async def shifted_quotes(socket):
+            class ShiftedSocket:
+                async def send(self, raw):
+                    frame = json.loads(raw)
+                    item = frame["data"][0]
+                    for side in ("bids", "asks"):
+                        item[side][0][0] = str(Decimal(item[side][0][0]) + peer.quote_shift)
+                    await socket.send(json.dumps(frame))
+
+            await original_quotes(ShiftedSocket())
+
+        peer._quotes = shifted_quotes
     if mode.startswith("quiet") or mode == "heartbeat-loss":
         peer.quote_interval = 3600
     config = MakerConfig(
@@ -112,13 +130,14 @@ def child(mode, journal):
     strategy.engine.step = traced_step
 
     async def run():
+        nonlocal replacement_checkpoint
         native = asyncio.ensure_future(node.run_async())
         began = time.monotonic()
         requested = False
         failure = None
         while not native.done():
             now = time.monotonic_ns()
-            if not requested or mode in {"cancel-fill", "quiet-fill", "heartbeat-loss"}:
+            if not requested or mode in {"cancel-fill", "quiet-fill", "heartbeat-loss", "reward-fill"}:
                 for m in MARKETS:
                     strategy.binance_quote(m, now, 100, 100)
             with peer._lock:
@@ -128,6 +147,17 @@ def child(mode, journal):
                     if o["status"] == "open" and not o["reduceOnly"]
                 ]
             if len(open_makers) == 4 and not requested:
+                if reward_mode:
+                    if not peer.quote_shift:
+                        peer.quote_shift = Decimal("4.25")
+                    maker_count = sum(not o["reduceOnly"] for o in peer.orders.values())
+                    if mode == "reward-fill" or maker_count < 5:
+                        await asyncio.sleep(0.05)
+                        continue
+                    replacement_checkpoint = {
+                        "open_makers": [dict(o) for o in open_makers],
+                        "writes": [dict(r) for r in peer.requests if r["method"] != "GET"],
+                    }
                 if mode.startswith("quiet") and time.monotonic() - began < 9:
                     await asyncio.sleep(0.05)
                     continue
@@ -140,6 +170,9 @@ def child(mode, journal):
                     strategy.binance_disconnect()
                 if mode == "diagnostics-toggle":
                     strategy.set_diagnostics(True)
+                strategy.request_stop()
+                requested = True
+            if mode == "reward-fill" and strategy.engine.reducing and not requested:
                 strategy.request_stop()
                 requested = True
             if mode == "heartbeat-loss" and not open_makers and time.monotonic() - began >= 12:
@@ -170,6 +203,7 @@ def child(mode, journal):
             "writes": [r for r in peer.requests if r["method"] != "GET"],
             "identity": identity.get("wheel_sha256", "verified"),
             "trace": trace,
+            "replacement_checkpoint": replacement_checkpoint,
         }
         print("ONDO_MAKER_RESULT " + json.dumps(result))
     finally:
@@ -179,6 +213,7 @@ def child(mode, journal):
 @pytest.mark.parametrize("mode", [
     "feed-loss", "cancel-fill", "quiet-heartbeat", "quiet-fill", "heartbeat-loss", "diagnostics-off",
     "diagnostics-toggle",
+    "reward-replace", "reward-fill",
 ])
 def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     from test_ondo_continuous import _environment
@@ -217,7 +252,8 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     creates = [r["body"] for r in data["writes"] if r["method"] == "POST"]
     makers = [o for o in creates if not o["reduceOnly"]]
     closes = [o for o in creates if o["reduceOnly"]]
-    assert len(makers) == 4 and all(
+    expected_makers = 5 if mode == "reward-replace" else 4
+    assert len(makers) == expected_makers and all(
         o["postOnly"] and o["timeInForce"] == "GTC" for o in makers
     ), data["trace"]
     notionals = [Decimal(o["size"]) * Decimal(o["price"]) for o in makers]
@@ -232,14 +268,22 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
         valuation = max(Decimal(order["price"]), ask)
         assert 0 < quantity * valuation <= Decimal(500)
         assert (quantity + lot) * valuation > Decimal(500)
-    assert sum(notionals) <= Decimal(2000)
+    assert sum(notionals[:4]) <= Decimal(2000)
+    if mode == "reward-replace":
+        checkpoint = data["replacement_checkpoint"]
+        assert checkpoint is not None
+        cancellations = [r for r in checkpoint["writes"] if r["method"] == "DELETE"]
+        assert len(cancellations) == 1
+        assert makers[-1]["market"] == "BTC-USD.P" and makers[-1]["side"] == "buy"
+        original_keepers = {o["clientOrderId"] for o in makers[:4] if o != makers[0]}
+        assert original_keepers <= {o["clientOrderId"] for o in checkpoint["open_makers"]}
     diagnostics = data["status"]["diagnostics"]
     if mode == "diagnostics-off":
         assert diagnostics == {"enabled": False}
     else:
         assert diagnostics["enabled"]
         latency = diagnostics["maker_ack_latency"]
-        accepted = 0 if mode == "diagnostics-toggle" else 4
+        accepted = 0 if mode == "diagnostics-toggle" else expected_makers
         assert latency["accepted_total"] == accepted
         assert latency["submit_call_to_accept_callback"]["samples"] == accepted
         assert latency["native_submitted_to_accepted"]["samples"] == accepted
@@ -248,7 +292,7 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
         assert cancel["confirmed_total"] == canceled
         assert cancel["first_cancel_call_to_canceled"]["samples"] == canceled
         assert cancel["pending"] == 0 and cancel["dropped"] == 0
-    if mode in {"cancel-fill", "quiet-fill"}:
+    if mode in {"cancel-fill", "quiet-fill", "reward-fill"}:
         assert closes and all(
             not o["postOnly"] and o["timeInForce"] == "IOC" for o in closes
         )

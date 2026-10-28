@@ -318,7 +318,7 @@ class OndoMakerStrategy(Strategy):
                         and (
                             self.engine.stopping
                             or self.engine.reducing
-                            or self.engine.markets[order.market].replacing
+                            or self.engine.markets[order.market].sides[order.side].replacing
                         )
                     )
                 ):
@@ -382,7 +382,7 @@ class OndoMakerStrategy(Strategy):
                 return "flattening"
             if any(o.cancel_requested for o in state.orders.values()):
                 return "waiting_cancel"
-            if state.replacing and not self.engine.account_flat:
+            if any(side.replacing for side in state.sides.values()) and not self.engine.account_flat:
                 return "waiting_account"
             return state.reason
 
@@ -403,6 +403,13 @@ class OndoMakerStrategy(Strategy):
                     "reason": s.reason,
                     "position": str(s.position),
                     "live_orders": len(s.orders),
+                    "sides": {
+                        "buy" if side > 0 else "sell": {
+                            "reason": state.reason,
+                            "replacing": state.replacing,
+                        }
+                        for side, state in s.sides.items()
+                    },
                     "pause_until_ns": s.guard.pause_until,
                     "quote_age_ms": (time.monotonic_ns() - s.quote_ns) / 1_000_000 if s.quote_ns is not None else None,
                     "heartbeat_age_ms": (time.monotonic_ns() - s.heartbeat_ns) / 1_000_000 if s.heartbeat_ns is not None else None,
