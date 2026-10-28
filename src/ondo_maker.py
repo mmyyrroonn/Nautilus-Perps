@@ -25,7 +25,7 @@ NATIVE_UNPACED_REQUEST_BOUND = (1 << 32) - 1
 class MakerConfig:
     btc_notional_usd: Decimal
     eth_notional_usd: Decimal
-    quote_bps: Decimal = Decimal(5)
+    quote_bps: Decimal = Decimal("4.8")
     cancel_bps: Decimal = Decimal(3)
     volatility_bps: float = 2.0
     cooldown_ns: int = 5 * SECOND

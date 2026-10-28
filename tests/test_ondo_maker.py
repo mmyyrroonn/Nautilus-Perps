@@ -87,9 +87,11 @@ def test_guard_gap_reconnect_invalid_and_overflow_require_new_history():
 
 def test_three_bp_cancels_both_sides_only_in_affected_market():
     e = ready()
+    for state in e.markets.values():
+        state.instrument = Instrument(D("0.001"), D("0.001"), D("0.001"))
     orders = [c.order for c in e.step(SECOND)]
     assert len(orders) == 4
-    assert all(c.price == (D("99.95") if c.side > 0 else D("100.05")) for c in orders)
+    assert all(c.price == (D("99.952") if c.side > 0 else D("100.048")) for c in orders)
     e.on_ondo("BTC", SECOND + 1, D("99.96"), D("99.98"))
     commands = e.step(SECOND + 1)
     assert len(commands) == 2
