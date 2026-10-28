@@ -76,11 +76,27 @@ Binance U 本位永续 BTCUSDT / ETHUSDT `bookTicker` 中间价过去一秒振�
 
 ## 运行与验证
 
-每五秒状态中的 `maker_ack_latency` 记录最近最多 2,048 笔成功接受的做市单：
-`submit_call_to_accept_callback` 是调用策略下单到收到接受回调的本机单调时钟耗时；
-`native_submitted_to_accepted` 是原生提交和接受事件的本机时间差。
-两者均给出样本数、p50/p95/p99/max 毫秒值。拒单不混入成功样本，重复接受不重复计数。
-这是交易所确认耗时，不是订单进入公开盘口的精确时间；后者不能由现有聚合盘口定位。
+性能检测默认关闭，启动时显式添加 `--diagnostics` 才开启。关闭时不创建采样器，
+跳过诊断计时、样本保存及统计计算。行情心跳、账户健康、风控、撤单和清仓检查始终启用。
+开启时每类最多保留 2,048 个完成样本和 64 个待确认订单；关闭程序后样本不持久化。
+诊断异常仅禁用诊断，不触发交易停机或影响撤单清仓。每五秒复制一次有界样本，
+统计排序、JSON 编码和输出放在后台，最多一个输出任务；输出失败不停止交易。
+
+每五秒状态中的 `diagnostics.maker_ack_latency` 提供：
+`submit_call_to_accept_callback`（调用下单到收到接受回调，本机单调时钟）和
+`native_submitted_to_accepted`（原生提交与接受事件的本机时间差）。
+
+`diagnostics.cancel_latency` 提供：
+`decision_start_to_cancel_call`（开始本轮策略决策到调用撤单）、
+`first_cancel_call_to_canceled`（首次调用撤单到收到 `OrderCanceled` 终态回调）、
+`decision_start_to_canceled`（前两段之和）。调用时间不等于请求上网线的时间，
+计时包含本地下发、网络及交易所处理；不包含行情抵达本机之前的延迟。
+重试不重置首次时间，并单列重试次数；拒绝、未确认及完全成交不算撤单成功。
+缓存已经终态但没有观察到取消回调的订单单独计数，不冒充取消确认样本。
+
+以上均给出样本数、p50/p95/p99/max 毫秒值，重复确认不重复计数。
+`diagnostics.decision_cycle` 只测本地策略决策和调用耗时，不是交易所撤单耗时。
+这些是确认回调耗时，不是订单进入或消失于公开盘口的精确时间。
 `quote_age_ms` 与 `heartbeat_age_ms` 分开显示，便于区分价格静止和连接失活。
 
 工作目录 `E:\persarb\Nautilus-Perps`。新候选安装在独立 `.venv-ondo-maker`；原 `.venv` 不替换。

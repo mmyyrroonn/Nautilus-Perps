@@ -1,7 +1,6 @@
 """Callback failure and account-proof fences around the native strategy bridge."""
 
 import sys
-from collections import deque
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -10,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from test_ondo_maker import ready
 
-from ondo_maker_live import OndoMakerStrategy, OrderLatency
+from ondo_maker_live import OndoMakerStrategy
+from ondo_maker_diagnostics import OrderLatency
 
 
 def test_latency_reports_acceptance_once_and_excludes_unacknowledged_orders():
@@ -48,8 +48,7 @@ def test_failed_dispatch_does_not_leave_never_sent_sibling_reservations():
         submit_order=submit,
         command_counts={"cancel": 0, "maker": 0, "close": 0},
         clock=NS(timestamp_ns=lambda: 1),
-        latencies_ns=deque(maxlen=8),
-        order_latency=OrderLatency(),
+        diagnostics=None,
     )
     # Use a fixed engine clock while exercising the real bridge dispatch loop.
     step = engine.step

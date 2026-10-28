@@ -96,6 +96,20 @@ async def binance_feed(strategy, finished):
             strategy.binance_disconnect()
 
 
+async def publish_status(strategy):
+    """Formatting and output are auxiliary and cannot request trading shutdown."""
+    from ondo_maker_diagnostics import write_status
+
+    try:
+        snapshot = strategy.status(raw_diagnostics=True)
+        error_type = await asyncio.to_thread(write_status, snapshot)
+        if error_type and strategy.diagnostics is not None:
+            strategy.diagnostics.disable(error_type)
+    except Exception as error:  # noqa: BLE001 - diagnostics are not trading authority
+        if strategy.diagnostics is not None:
+            strategy.diagnostics.disable(type(error).__name__)
+
+
 async def serve(node, strategy, *, seconds=0):
     """Signals request draining; only proven flatness stops the native node."""
     finished = asyncio.Event()
@@ -110,6 +124,7 @@ async def serve(node, strategy, *, seconds=0):
     native = asyncio.ensure_future(node.run_async())
     reference = asyncio.create_task(binance_feed(strategy, finished))
     started, reported = time.monotonic(), 0.0
+    reporter = None
     try:
         while not native.done():
             now = time.monotonic()
@@ -118,12 +133,8 @@ async def serve(node, strategy, *, seconds=0):
             if strategy.engine.can_stop:
                 handle.stop()
                 break
-            if now - reported >= 5:
-                status = json.dumps(strategy.status(), sort_keys=True)
-                try:
-                    await asyncio.to_thread(print, status, flush=True)
-                except OSError:
-                    strategy.request_stop()
+            if now - reported >= 5 and (reporter is None or reporter.done()):
+                reporter = asyncio.create_task(publish_status(strategy))
                 reported = now
             await asyncio.sleep(0.05)
         await native
@@ -131,6 +142,9 @@ async def serve(node, strategy, *, seconds=0):
         finished.set()
         reference.cancel()
         await asyncio.gather(reference, return_exceptions=True)
+        if reporter is not None:
+            reporter.cancel()
+            await asyncio.gather(reporter, return_exceptions=True)
         for signum, handler in previous.items():
             signal.signal(signum, handler)
     return 0 if strategy.engine.can_stop else 1
@@ -145,6 +159,10 @@ def main():
         "--eth-usd", type=Decimal, required=True, help="USD per ETH side"
     )
     parser.add_argument("--gross-usd", type=Decimal, default=Decimal(400))
+    parser.add_argument(
+        "--diagnostics", action="store_true",
+        help="enable bounded development latency measurements (default: off)",
+    )
     parser.add_argument(
         "--pause-both", action="store_true", help="Binance trigger cancels both markets"
     )
@@ -180,6 +198,7 @@ def main():
                     "priority": "cancel_then_close",
                     "binance_pause": "both" if args.pause_both else "per_market",
                     "startup_test_trades": False,
+                    "diagnostics": args.diagnostics,
                 },
                 indent=2,
             )
@@ -223,7 +242,9 @@ def main():
         ),
     )
     node, _factory, strategy = build_session(
-        session, strategy_factory=partial(make_strategy, maker=config, run_id=run_id)
+        session, strategy_factory=partial(
+            make_strategy, maker=config, run_id=run_id, diagnostics=args.diagnostics
+        )
     )
     return asyncio.run(serve(node, strategy, seconds=args.seconds))
 

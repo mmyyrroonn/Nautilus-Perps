@@ -19,60 +19,7 @@ from nautilus_trader.trading import Strategy
 
 from ondo_continuous import ContinuousStrategyConfig
 from ondo_maker import MARKETS, SECOND, ZERO, Instrument, MakerConfig, MakerEngine
-
-
-class OrderLatency:
-    """Bounded maker timings; acceptance is an acknowledgement, not book visibility."""
-
-    def __init__(self):
-        self.pending = {}
-        self.samples = deque(maxlen=2048)
-        self.accepted = 0
-        self.dropped = 0
-
-    def begin(self, client_id, now):
-        if len(self.pending) >= 64:
-            self.pending.pop(next(iter(self.pending)))
-            self.dropped += 1
-        self.pending[client_id] = (now, None)
-
-    def submitted(self, client_id, native_ns):
-        current = self.pending.get(client_id)
-        if current is not None and current[1] is None:
-            self.pending[client_id] = (current[0], native_ns)
-
-    def accepted_event(self, client_id, now, native_ns):
-        current = self.pending.pop(client_id, None)
-        if current is None or now < current[0]:
-            return
-        native_delta = None
-        if current[1] is not None and native_ns >= current[1]:
-            native_delta = native_ns - current[1]
-        self.samples.append((now - current[0], native_delta))
-        self.accepted += 1
-
-    def finish(self, client_id):
-        self.pending.pop(client_id, None)
-
-    def report(self):
-        def distribution(values):
-            values = sorted(values)
-            if not values:
-                return {"samples": 0}
-            return {
-                "samples": len(values),
-                "p50_ms": values[(len(values) - 1) // 2] / 1_000_000,
-                "p95_ms": values[min(len(values) - 1, int(len(values) * .95))] / 1_000_000,
-                "p99_ms": values[min(len(values) - 1, int(len(values) * .99))] / 1_000_000,
-                "max_ms": values[-1] / 1_000_000,
-            }
-        return {
-            "accepted_total": self.accepted,
-            "pending": len(self.pending),
-            "dropped": self.dropped,
-            "submit_call_to_accept_callback": distribution(x[0] for x in self.samples),
-            "native_submitted_to_accepted": distribution(x[1] for x in self.samples if x[1] is not None),
-        }
+from ondo_maker_diagnostics import MakerDiagnostics
 
 
 def guarded(method):
@@ -94,7 +41,7 @@ class OndoMakerStrategy(Strategy):
     def __new__(cls, config, **_kwargs):
         return super().__new__(cls, config)
 
-    def __init__(self, config, *, session, factory, maker: MakerConfig, run_id: str):
+    def __init__(self, config, *, session, factory, maker: MakerConfig, run_id: str, diagnostics=False):
         super().__init__(config)
         self.session, self.factory = session, factory
         self.engine = MakerEngine(maker, run_id)
@@ -107,9 +54,8 @@ class OndoMakerStrategy(Strategy):
         self.last_native_quote_ns: dict[str, int] = {}
         self.timer_name = "ondo-maker-supervision"
         self.driving = False
-        self.latencies_ns: deque[int] = deque(maxlen=8192)
         self.command_counts = {"cancel": 0, "maker": 0, "close": 0}
-        self.order_latency = OrderLatency()
+        self.diagnostics = MakerDiagnostics() if diagnostics else None
 
     @guarded
     def on_start(self):
@@ -197,8 +143,8 @@ class OndoMakerStrategy(Strategy):
                         terminal=cached.is_closed,
                         now=time.monotonic_ns(),
                     )
-                    if cached.is_closed:
-                        self.order_latency.finish(pending.client_id)
+                    if cached.is_closed and self.diagnostics is not None:
+                        self.diagnostics.finish(pending.client_id)
                     self.last_activity_wall_ns = int(self.clock.timestamp_ns())
         self.refresh_account()
         self.drive()
@@ -290,8 +236,8 @@ class OndoMakerStrategy(Strategy):
     @guarded
     def order_event(self, event):
         client_id = str(event.client_order_id)
-        if type(event).__name__ == "OrderAccepted":
-            self.order_latency.accepted_event(client_id, time.monotonic_ns(), int(event.ts_init))
+        if self.diagnostics is not None:
+            self.diagnostics.order_event(event)
         order = self.cache.order(event.client_order_id)
         if order is None:
             self.engine.fail("missing_cached_order_event")
@@ -305,13 +251,14 @@ class OndoMakerStrategy(Strategy):
             rejected=type(event).__name__ in {"OrderDenied", "OrderRejected"},
         )
         self.last_activity_wall_ns = int(self.clock.timestamp_ns())
-        if order.is_closed:
-            self.order_latency.finish(client_id)
+        if order.is_closed and self.diagnostics is not None:
+            self.diagnostics.finish(client_id)
         self.drive()
 
     @guarded
     def on_order_submitted(self, event):
-        self.order_latency.submitted(str(event.client_order_id), int(event.ts_init))
+        if self.diagnostics is not None:
+            self.diagnostics.submitted(event)
 
     on_order_filled = order_event
     on_order_canceled = order_event
@@ -338,9 +285,13 @@ class OndoMakerStrategy(Strategy):
                     cached = self.cache.order(client_id)
                     if cached is not None and not cached.is_closed:
                         try:
+                            if self.diagnostics is not None:
+                                self.diagnostics.cancel_sent(order.client_id, start)
                             self.cancel_order(client_id)
                             self.command_counts["cancel"] += 1
                         except Exception:  # noqa: BLE001 - a failed callback must not stop cleanup
+                            if self.diagnostics is not None:
+                                self.diagnostics.cancel_dispatch_failed(order.client_id)
                             cancel_failed = True
                             order.last_cancel_ns = -1
                             self.engine.fail("cancel_dispatch_failed")
@@ -394,8 +345,8 @@ class OndoMakerStrategy(Strategy):
                 # A dispatch exception leaves the outcome reserved/unknown until
                 # the cache or native reconciliation supplies its terminal state.
                 try:
-                    if not order.reduce_only:
-                        self.order_latency.begin(order.client_id, time.monotonic_ns())
+                    if not order.reduce_only and self.diagnostics is not None:
+                        self.diagnostics.maker_begin(order.client_id)
                     self.submit_order(native)
                     self.command_counts["close" if order.reduce_only else "maker"] += 1
                 except Exception:  # noqa: BLE001 - reserve uncertain outcomes; release unsent siblings
@@ -403,14 +354,15 @@ class OndoMakerStrategy(Strategy):
                     dispatch_failed = True
         finally:
             self.driving = False
-            self.latencies_ns.append(time.monotonic_ns() - start)
+            if self.diagnostics is not None:
+                self.diagnostics.drive_done(start)
 
     @guarded
     def on_stop(self):
         if self.timer_name in self.clock.timer_names():
             self.clock.cancel_timer(self.timer_name)
 
-    def status(self):
+    def status(self, *, raw_diagnostics=False):
         def phase(state):
             if state.position or any(o.reduce_only for o in state.orders.values()):
                 return "flattening"
@@ -425,7 +377,9 @@ class OndoMakerStrategy(Strategy):
             "safe_to_stop": self.engine.can_stop,
             "fault": self.engine.fault,
             "commands": dict(self.command_counts),
-            "maker_ack_latency": self.order_latency.report(),
+            "diagnostics": (
+                self.diagnostics.snapshot() if raw_diagnostics else self.diagnostics.report()
+            ) if self.diagnostics is not None else {"enabled": False},
             "markets": {
                 m: {
                     "state": phase(s),
@@ -441,7 +395,7 @@ class OndoMakerStrategy(Strategy):
         }
 
 
-def make_strategy(session, factory, *, maker, run_id):
+def make_strategy(session, factory, *, maker, run_id, diagnostics=False):
     if not getattr(factory, "supports_quote_heartbeat", False):
         raise ValueError("install the Ondo quote-heartbeat native candidate before using this launcher")
     if not getattr(factory, "supports_cancel_first_unpaced_rest", False):
@@ -457,4 +411,5 @@ def make_strategy(session, factory, *, maker, run_id):
         factory=factory,
         maker=maker,
         run_id=run_id,
+        diagnostics=diagnostics,
     )

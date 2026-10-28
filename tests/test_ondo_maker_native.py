@@ -67,7 +67,9 @@ def child(mode, journal):
     )
     node, _factory, strategy = build_session(
         session,
-        strategy_factory=partial(make_strategy, maker=config, run_id="testmaker"),
+        strategy_factory=partial(
+            make_strategy, maker=config, run_id="testmaker", diagnostics=mode != "diagnostics-off"
+        ),
     )
     handle = node.handle()
     trace = []
@@ -171,7 +173,9 @@ def child(mode, journal):
         peer.close()
 
 
-@pytest.mark.parametrize("mode", ["feed-loss", "cancel-fill", "quiet-heartbeat", "quiet-fill", "heartbeat-loss"])
+@pytest.mark.parametrize("mode", [
+    "feed-loss", "cancel-fill", "quiet-heartbeat", "quiet-fill", "heartbeat-loss", "diagnostics-off",
+])
 def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
     from test_ondo_continuous import _environment
 
@@ -225,10 +229,20 @@ def test_native_cancel_first_and_drains_to_flat(mode, tmp_path):
         assert 0 < quantity * valuation <= Decimal(500)
         assert (quantity + lot) * valuation > Decimal(500)
     assert sum(notionals) <= Decimal(2000)
-    latency = data["status"]["maker_ack_latency"]
-    assert latency["accepted_total"] == 4
-    assert latency["submit_call_to_accept_callback"]["samples"] == 4
-    assert latency["native_submitted_to_accepted"]["samples"] == 4
+    diagnostics = data["status"]["diagnostics"]
+    if mode == "diagnostics-off":
+        assert diagnostics == {"enabled": False}
+    else:
+        assert diagnostics["enabled"]
+        latency = diagnostics["maker_ack_latency"]
+        assert latency["accepted_total"] == 4
+        assert latency["submit_call_to_accept_callback"]["samples"] == 4
+        assert latency["native_submitted_to_accepted"]["samples"] == 4
+        canceled = sum(o["status"] == "canceled" for o in data["orders"] if not o["reduceOnly"])
+        cancel = diagnostics["cancel_latency"]
+        assert cancel["confirmed_total"] == canceled
+        assert cancel["first_cancel_call_to_canceled"]["samples"] == canceled
+        assert cancel["pending"] == 0 and cancel["dropped"] == 0
     if mode in {"cancel-fill", "quiet-fill"}:
         assert closes and all(
             not o["postOnly"] and o["timeInForce"] == "IOC" for o in closes
