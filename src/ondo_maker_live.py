@@ -341,6 +341,9 @@ class OndoMakerStrategy(Strategy):
                         try:
                             if self.diagnostics is not None:
                                 self.diagnostics.cancel_sent(order.client_id, start)
+                            # Native cancellation invalidates the account proof before
+                            # its acknowledgement. Preserve only the existing health lease.
+                            self.last_activity_wall_ns = int(self.clock.timestamp_ns())
                             self.cancel_order(client_id)
                             self.command_counts["cancel"] += 1
                         except Exception:  # noqa: BLE001 - a failed callback must not stop cleanup
