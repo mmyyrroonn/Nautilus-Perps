@@ -1,0 +1,190 @@
+{
+  "started_at_utc": "2026-10-28T15:23:04.211341+00:00",
+  "endpoint": "wss://api.ondoperps.xyz/ws",
+  "markets": [
+    "BTC-USD.P",
+    "ETH-USD.P"
+  ],
+  "subscription_order": [
+    "depthBooksPerps",
+    "topOfBooksPerps"
+  ],
+  "requested_measurement_seconds": 60.0,
+  "warmup_seconds": 5,
+  "depth_limit": 1000,
+  "transport": "one shared WebSocket, no compression, max_queue=16, max_size=2 MiB",
+  "method": "strict match of market, event-time string and Decimal best prices AND sizes; receipt before JSON decode",
+  "positive_delta_means": "BBO received earlier",
+  "receipt_clock": {
+    "name": "perf_counter_ns",
+    "implementation": "QueryPerformanceCounter()",
+    "resolution_seconds": 1e-07,
+    "monotonic": true
+  },
+  "limitations": [
+    "Local application receipt includes scheduling, prior-frame parsing and shared TCP head-of-line effects.",
+    "This is not exchange publication latency, wire arrival time or an independent-connection comparison.",
+    "Only matched states are comparable; unmatched updates may bias the subset.",
+    "Duplicates are suppressed within a bounded 5-second/10000-event window; each market retains at most 100000 samples."
+  ],
+  "completed": true,
+  "elapsed_seconds": 65.39541279998957,
+  "observed_measurement_seconds": 60.0,
+  "acknowledgements": [
+    "depthBooksPerps",
+    "topOfBooksPerps"
+  ],
+  "errors": [],
+  "channels": {
+    "topOfBooksPerps": {
+      "frames": 113,
+      "bytes": 24549,
+      "max_frame_bytes": 219,
+      "max_bid_levels": 1,
+      "max_ask_levels": 1,
+      "decode_and_match_ns": 6568300
+    },
+    "depthBooksPerps": {
+      "frames": 468,
+      "bytes": 1696119,
+      "max_frame_bytes": 3912,
+      "max_bid_levels": 100,
+      "max_ask_levels": 100,
+      "decode_and_match_ns": 42986000
+    }
+  },
+  "first_public_states": {
+    "topOfBooksPerps": [
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:23:10.096426408Z",
+        "bid": [
+          "80584",
+          "0.0019"
+        ],
+        "ask": [
+          "80590",
+          "0.2354"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:23:13.292436178Z",
+        "bid": [
+          "2334.6",
+          "0.049"
+        ],
+        "ask": [
+          "2335.5",
+          "0.428"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:23:13.344436333Z",
+        "bid": [
+          "2334.6",
+          "11.346"
+        ],
+        "ask": [
+          "2335.5",
+          "0.428"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:23:13.908438016Z",
+        "bid": [
+          "2335",
+          "0.25"
+        ],
+        "ask": [
+          "2335.5",
+          "0.428"
+        ]
+      }
+    ],
+    "depthBooksPerps": [
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:23:08.968422732Z",
+        "bid": [
+          "80584",
+          "0.0019"
+        ],
+        "ask": [
+          "80590",
+          "0.235"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:23:08.968422732Z",
+        "bid": [
+          "2334.8",
+          "0.25"
+        ],
+        "ask": [
+          "2335.5",
+          "0.428"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:23:09.220423553Z",
+        "bid": [
+          "80584",
+          "0.0019"
+        ],
+        "ask": [
+          "80590",
+          "0.235"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:23:09.220423553Z",
+        "bid": [
+          "2334.8",
+          "0.25"
+        ],
+        "ask": [
+          "2335.5",
+          "0.428"
+        ]
+      }
+    ]
+  },
+  "comparison": {
+    "BTC-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 234,
+        "unique_topOfBooksPerps": 41,
+        "unmatched_depthBooksPerps": 234,
+        "unmatched_topOfBooksPerps": 41
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.0,
+        "depthBooksPerps": 0.0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    },
+    "ETH-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 234,
+        "unique_topOfBooksPerps": 72,
+        "unmatched_depthBooksPerps": 234,
+        "unmatched_topOfBooksPerps": 72
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.0,
+        "depthBooksPerps": 0.0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    }
+  }
+}

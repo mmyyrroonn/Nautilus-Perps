@@ -42,6 +42,8 @@ class ContinuousPeer:
         empty_market_entry: bool = False,
     ) -> None:
         self.fill_on_cancel = fill_on_cancel
+        self.quote_interval = 0.1
+        self.public_heartbeat = True
         self.missing_release = missing_release
         self.empty_market_entry = empty_market_entry
         self.orders: dict[str, dict] = {}
@@ -129,6 +131,8 @@ class ContinuousPeer:
                             continue
                         response = {"type": "unsubscribed", "channel": channel}
                     elif op == "ping":
+                        if socket not in venue._private and not venue.public_heartbeat:
+                            continue
                         response = {"type": "pong"}
                     else:
                         continue
@@ -412,7 +416,7 @@ class ContinuousPeer:
                         }
                     )
                 )
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(self.quote_interval)
         except ConnectionClosed:
             pass
 

@@ -1,0 +1,28 @@
+{
+  "scope": "offline Python; 1000 levels per side; excludes native decoding, transport and cancel ACK",
+  "depth_update_and_decision": {
+    "samples": 3000,
+    "p50_us": 464.6,
+    "p95_us": 496.4,
+    "p99_us": 565.1,
+    "max_us": 1061.1
+  },
+  "depth_updates_per_cpu_second": 2181.818181818182,
+  "two_market_idle_controller": {
+    "samples": 30000,
+    "p50_us": 3.1,
+    "p95_us": 3.2,
+    "p99_us": 3.3,
+    "max_us": 103.2
+  },
+  "depth_traced_current_bytes": 451776,
+  "depth_traced_peak_bytes": 903312,
+  "retained_levels": 2000,
+  "native_batch_to_decision": {
+    "samples": 1000,
+    "p50_us": 2010.5,
+    "p95_us": 3010.3,
+    "p99_us": 3375.8,
+    "max_us": 4555.9
+  }
+}

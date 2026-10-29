@@ -1,0 +1,63 @@
+{
+  "started_at_utc": "2026-10-28T15:22:17.393687+00:00",
+  "endpoint": "wss://api.ondoperps.xyz/ws",
+  "markets": [
+    "BTC-USD.P",
+    "ETH-USD.P"
+  ],
+  "subscription_order": [
+    "depthBooksPerps",
+    "topOfBooksPerps"
+  ],
+  "requested_measurement_seconds": 60.0,
+  "warmup_seconds": 5,
+  "depth_limit": 1000,
+  "transport": "one shared WebSocket, no compression, max_queue=16, max_size=2 MiB",
+  "method": "strict match of market, event-time string and Decimal best prices AND sizes; receipt before JSON decode",
+  "positive_delta_means": "BBO received earlier",
+  "receipt_clock": {
+    "name": "perf_counter_ns",
+    "implementation": "QueryPerformanceCounter()",
+    "resolution_seconds": 1e-07,
+    "monotonic": true
+  },
+  "limitations": [
+    "Local application receipt includes scheduling, prior-frame parsing and shared TCP head-of-line effects.",
+    "This is not exchange publication latency, wire arrival time or an independent-connection comparison.",
+    "Only matched states are comparable; unmatched updates may bias the subset.",
+    "Duplicates are suppressed within a bounded 5-second/10000-event window; each market retains at most 100000 samples."
+  ],
+  "completed": false,
+  "elapsed_seconds": 5.028710700004012,
+  "observed_measurement_seconds": 0,
+  "acknowledgements": [],
+  "errors": [
+    "ConnectionResetError"
+  ],
+  "channels": {
+    "topOfBooksPerps": {},
+    "depthBooksPerps": {}
+  },
+  "comparison": {
+    "BTC-USD.P": {
+      "counts": {},
+      "matched_fraction": {
+        "topOfBooksPerps": 0,
+        "depthBooksPerps": 0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    },
+    "ETH-USD.P": {
+      "counts": {},
+      "matched_fraction": {
+        "topOfBooksPerps": 0,
+        "depthBooksPerps": 0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    }
+  }
+}

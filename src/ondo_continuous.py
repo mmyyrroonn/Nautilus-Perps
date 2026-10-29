@@ -56,7 +56,7 @@ class ContinuousLimits:
     max_requests_per_second: int = 2
     max_unresolved_orders: int = 1
 
-    def validate(self) -> None:
+    def validate(self, *, instrument_ids: tuple[str, ...] = ()) -> None:
         order, gross, margin = map(
             exact,
             (
@@ -65,7 +65,16 @@ class ContinuousLimits:
                 self.min_available_margin_usdc,
             ),
         )
-        if not (Decimal(0) < order <= 100 and order <= gross <= 500 and margin > 0):
+        crypto_only = bool(instrument_ids) and all(
+            name in {"BTC-USD-PERP.ONDO", "ETH-USD-PERP.ONDO"}
+            for name in instrument_ids
+        )
+        order_cap, gross_cap = (500, 2000) if crypto_only else (100, 500)
+        if not (
+            Decimal(0) < order <= order_cap
+            and order <= gross <= gross_cap
+            and margin > 0
+        ):
             raise ValueError(
                 "continuous order, gross or margin limits exceed the native contract"
             )
@@ -105,7 +114,7 @@ class ContinuousSession:
     api_secret: str | None = field(default=None, repr=False)
 
     def validate(self) -> None:
-        self.limits.validate()
+        self.limits.validate(instrument_ids=self.instrument_ids)
         if self.environment not in {"sandbox", "production"}:
             raise ValueError("unknown Ondo environment")
         if not self.instrument_ids or len(set(self.instrument_ids)) != len(
@@ -951,9 +960,13 @@ def build_session(
     startup_timeout_secs: int = 120,
     startup_mode: str = "maker",
     on_continuous_quote: Callable | None = None,
+    strategy_factory: Callable | None = None,
+    book_limit: int = 100,
 ):
     """Register real native data/execution factories and the reusable Strategy, without I/O."""
     session.validate()
+    if type(book_limit) is not int or not 1 <= book_limit <= 1000:
+        raise ValueError("book limit must be in 1..1000")
     from nautilus_trader.adapters import ondo
 
     factory = ondo.OndoExecutionClientFactory()
@@ -1002,17 +1015,20 @@ def build_session(
         http_timeout_secs=15,
     )
     instrument = InstrumentId.from_str(startup_instrument or session.instrument_ids[0])
-    strategy = OndoContinuousStrategy(
-        ContinuousStrategyConfig(
-            instrument_id=instrument,
-            account_id=AccountId.from_str(session.account_id),
-            startup_timeout_secs=startup_timeout_secs,
-            startup_mode=startup_mode,
-        ),
-        session=session,
-        execution_factory=factory,
-        on_continuous_quote=on_continuous_quote,
-    )
+    if strategy_factory:
+        strategy = strategy_factory(session, factory)
+    else:
+        strategy = OndoContinuousStrategy(
+            ContinuousStrategyConfig(
+                instrument_id=instrument,
+                account_id=AccountId.from_str(session.account_id),
+                startup_timeout_secs=startup_timeout_secs,
+                startup_mode=startup_mode,
+            ),
+            session=session,
+            execution_factory=factory,
+            on_continuous_quote=on_continuous_quote,
+        )
     node = (
         LiveNode.builder(
             "ONDO-CONTINUOUS",
@@ -1047,6 +1063,8 @@ def build_session(
             ondo.OndoDataClientConfig(
                 environment=environment,
                 load_ids=instruments,
+                ws_heartbeat_secs=1,
+                book_limit=book_limit,
                 base_url_http=session.base_url_http,
                 base_url_ws=session.base_url_ws,
             ),

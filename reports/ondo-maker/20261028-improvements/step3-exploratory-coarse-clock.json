@@ -1,0 +1,86 @@
+{
+  "started_at_utc": "2026-10-28T15:19:48.309599+00:00",
+  "endpoint": "wss://api.ondoperps.xyz/ws",
+  "markets": [
+    "BTC-USD.P",
+    "ETH-USD.P"
+  ],
+  "subscription_order": [
+    "topOfBooksPerps",
+    "depthBooksPerps"
+  ],
+  "requested_measurement_seconds": 60.0,
+  "warmup_seconds": 5,
+  "depth_limit": 1000,
+  "transport": "one shared WebSocket, no compression, max_queue=16, max_size=2 MiB",
+  "method": "strict match of market, event-time string and Decimal best prices AND sizes; receipt before JSON decode",
+  "positive_delta_means": "BBO received earlier",
+  "limitations": [
+    "Local application receipt includes scheduling, prior-frame parsing and shared TCP head-of-line effects.",
+    "This is not exchange publication latency, wire arrival time or an independent-connection comparison.",
+    "Only matched states are comparable; unmatched updates may bias the subset.",
+    "Duplicates are suppressed within a bounded 5-second/10000-event window; each market retains at most 100000 samples."
+  ],
+  "completed": true,
+  "elapsed_seconds": 65.375,
+  "observed_measurement_seconds": 60.0,
+  "acknowledgements": [
+    "topOfBooksPerps",
+    "depthBooksPerps"
+  ],
+  "errors": [],
+  "channels": {
+    "topOfBooksPerps": {
+      "frames": 193,
+      "bytes": 42020,
+      "max_frame_bytes": 220,
+      "decode_and_match_ns": 10632300
+    },
+    "depthBooksPerps": {
+      "frames": 464,
+      "bytes": 1673912,
+      "max_frame_bytes": 3917,
+      "decode_and_match_ns": 42336500
+    }
+  },
+  "comparison": {
+    "BTC-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 232,
+        "unique_topOfBooksPerps": 81,
+        "unmatched_depthBooksPerps": 232,
+        "unmatched_topOfBooksPerps": 81
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.0,
+        "depthBooksPerps": 0.0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    },
+    "ETH-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 232,
+        "unique_topOfBooksPerps": 112,
+        "unmatched_depthBooksPerps": 231,
+        "unmatched_topOfBooksPerps": 111,
+        "matched": 1,
+        "bbo_first": 1
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.008928571428571428,
+        "depthBooksPerps": 0.004310344827586207
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 1,
+        "min_us": 32000.0,
+        "max_us": 32000.0,
+        "p50_us": 32000.0,
+        "p95_us": 32000.0,
+        "p99_us": 32000.0
+      }
+    }
+  },
+  "excluded_from_latency_conclusions": "Exploratory run used GetTickCount64 with 15.625ms resolution; repeated with QPC before conclusions."
+}

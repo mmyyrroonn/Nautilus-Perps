@@ -1,0 +1,234 @@
+{
+  "started_at_utc": "2026-10-28T15:28:39.259083+00:00",
+  "endpoint": "wss://api.ondoperps.xyz/ws",
+  "markets": [
+    "BTC-USD.P",
+    "ETH-USD.P"
+  ],
+  "subscription_order": [
+    "depthBooksPerps",
+    "topOfBooksPerps"
+  ],
+  "requested_measurement_seconds": 90.0,
+  "warmup_seconds": 5,
+  "depth_limit": 1000,
+  "transport": "one shared WebSocket, no compression, max_queue=16, max_size=2 MiB",
+  "method": "strict match of market, event-time string and Decimal best prices AND sizes; receipt before JSON decode",
+  "positive_delta_means": "BBO received earlier",
+  "receipt_clock": {
+    "name": "perf_counter_ns",
+    "implementation": "clock_gettime(CLOCK_MONOTONIC)",
+    "resolution_seconds": 1e-09,
+    "monotonic": true
+  },
+  "limitations": [
+    "Local application receipt includes scheduling, prior-frame parsing and shared TCP head-of-line effects.",
+    "This is not exchange publication latency, wire arrival time or an independent-connection comparison.",
+    "Only matched states are comparable; unmatched updates may bias the subset.",
+    "Duplicates are suppressed within a bounded 5-second/10000-event window; each market retains at most 100000 samples."
+  ],
+  "completed": true,
+  "elapsed_seconds": 95.57436700299999,
+  "observed_measurement_seconds": 90.0,
+  "acknowledgements": [
+    "depthBooksPerps",
+    "topOfBooksPerps"
+  ],
+  "errors": [],
+  "channels": {
+    "topOfBooksPerps": {
+      "frames": 138,
+      "bytes": 30027,
+      "max_frame_bytes": 220,
+      "max_bid_levels": 1,
+      "max_ask_levels": 1,
+      "decode_and_match_ns": 8950350
+    },
+    "depthBooksPerps": {
+      "frames": 684,
+      "bytes": 2457995,
+      "max_frame_bytes": 3915,
+      "max_bid_levels": 100,
+      "max_ask_levels": 100,
+      "decode_and_match_ns": 69761951
+    }
+  },
+  "first_public_states": {
+    "topOfBooksPerps": [
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:28:46.233478034Z",
+        "bid": [
+          "80597",
+          "0.0001"
+        ],
+        "ask": [
+          "80604",
+          "0.0031"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:28:46.233478034Z",
+        "bid": [
+          "80597",
+          "0.0001"
+        ],
+        "ask": [
+          "80603",
+          "0.0001"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:28:48.245484345Z",
+        "bid": [
+          "80596",
+          "0.0206"
+        ],
+        "ask": [
+          "80603",
+          "0.0001"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:28:48.245484345Z",
+        "bid": [
+          "80596",
+          "0.0206"
+        ],
+        "ask": [
+          "80604",
+          "0.0031"
+        ]
+      }
+    ],
+    "depthBooksPerps": [
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:28:44.765473409Z",
+        "bid": [
+          "80596",
+          "0.0206"
+        ],
+        "ask": [
+          "80604",
+          "0.0031"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:28:44.765473409Z",
+        "bid": [
+          "2334.2",
+          "11.204"
+        ],
+        "ask": [
+          "2335",
+          "0.571"
+        ]
+      },
+      {
+        "market": "BTC-USD.P",
+        "time": "2026-10-28T15:28:45.021474215Z",
+        "bid": [
+          "80596",
+          "0.0206"
+        ],
+        "ask": [
+          "80604",
+          "0.0031"
+        ]
+      },
+      {
+        "market": "ETH-USD.P",
+        "time": "2026-10-28T15:28:45.021474215Z",
+        "bid": [
+          "2334.2",
+          "11.204"
+        ],
+        "ask": [
+          "2335",
+          "0.571"
+        ]
+      }
+    ]
+  },
+  "comparison": {
+    "BTC-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 342,
+        "unique_topOfBooksPerps": 46,
+        "unmatched_depthBooksPerps": 342,
+        "unmatched_topOfBooksPerps": 46
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.0,
+        "depthBooksPerps": 0.0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    },
+    "ETH-USD.P": {
+      "counts": {
+        "unique_depthBooksPerps": 342,
+        "unmatched_depthBooksPerps": 342,
+        "unique_topOfBooksPerps": 92,
+        "unmatched_topOfBooksPerps": 92
+      },
+      "matched_fraction": {
+        "topOfBooksPerps": 0.0,
+        "depthBooksPerps": 0.0
+      },
+      "depth_minus_bbo_receipt": {
+        "samples": 0
+      }
+    }
+  },
+  "price_transition_observation": {
+    "method": "same preceding and next best bid/ask prices; transition occurs exactly once in each channel over the whole sample; receipt gap <=1s; sizes/timestamps not matched",
+    "limitation": "Heuristic visibility of sampled price transitions, NOT proof of the same exchange event. Skipped/repeated changes and unmatched paths bias the subset.",
+    "markets": {
+      "BTC-USD.P": {
+        "observed_changes": {
+          "topOfBooksPerps": 32,
+          "depthBooksPerps": 15
+        },
+        "counts": {
+          "unpaired_transition_keys": 29,
+          "bbo_first": 8,
+          "excluded_repeated_transition_keys": 1
+        },
+        "depth_minus_bbo_receipt": {
+          "samples": 8,
+          "min_us": 47943.895,
+          "max_us": 261307.95,
+          "p50_us": 195056.56,
+          "p95_us": 261307.95,
+          "p99_us": 261307.95
+        }
+      },
+      "ETH-USD.P": {
+        "observed_changes": {
+          "topOfBooksPerps": 63,
+          "depthBooksPerps": 25
+        },
+        "counts": {
+          "unpaired_transition_keys": 52,
+          "excluded_repeated_transition_keys": 7,
+          "bbo_first": 8
+        },
+        "depth_minus_bbo_receipt": {
+          "samples": 8,
+          "min_us": 27467.523,
+          "max_us": 244986.994,
+          "p50_us": 154564.043,
+          "p95_us": 244986.994,
+          "p99_us": 244986.994
+        }
+      }
+    }
+  }
+}

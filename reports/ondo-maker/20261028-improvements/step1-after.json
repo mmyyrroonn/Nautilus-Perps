@@ -1,0 +1,28 @@
+{
+  "scope": "offline Python only; not signal-to-wire or cancel-ACK latency",
+  "reference": "literal trailing min/max scan at synthetic 10000 updates/second",
+  "scan_baseline": {
+    "samples": 30000,
+    "p50_us": 398.5,
+    "p95_us": 701.1,
+    "p99_us": 741.6,
+    "max_us": 1103.5
+  },
+  "incremental_guard": {
+    "samples": 30000,
+    "p50_us": 1.1,
+    "p95_us": 4.6,
+    "p99_us": 5.7,
+    "max_us": 56.8
+  },
+  "two_market_idle_controller": {
+    "samples": 30000,
+    "p50_us": 2.6,
+    "p95_us": 4.9,
+    "p99_us": 5.2,
+    "max_us": 29.8
+  },
+  "guard_traced_current_bytes": 1206640,
+  "guard_traced_peak_bytes": 1206768,
+  "guard_retained_points": 10001
+}
