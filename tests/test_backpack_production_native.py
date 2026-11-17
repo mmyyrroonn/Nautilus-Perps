@@ -26,7 +26,8 @@ def roundtrips(cycles=2):
         for _ in range(cycles) for symbol in SYMBOLS for side in ("buy", "close")]
 
 
-def build_node(peer, directory, steps, *, account_max_age_ms=10000):
+def build_node(peer, directory, steps, *, account_max_age_ms=10000, market_max_age_ms=10000,
+               recovery_interval_ms=1000):
     bp = native_adapter()
     from nautilus_trader.common import Environment, LoggerConfig, LogLevel
     from nautilus_trader.live import LiveExecutionEngineConfig, LiveNode
@@ -41,10 +42,10 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
         http_timeout_secs=3, quote_stale_after_ms=1000, **endpoints)
     account = bp.BackpackExecutionClientConfig(list(SYMBOLS), credential, "BACKPACK-SIGNED-PEER",
         "caller-label-not-authority", str(directory / "identity"), quota=quota,
-        connect_timeout_ms=10000, shutdown_timeout_ms=1000, recovery_interval_ms=1000,
+        connect_timeout_ms=10000, shutdown_timeout_ms=1000, recovery_interval_ms=recovery_interval_ms,
         page_size=1000, max_pages=10, max_items=10000, read_timeout_ms=30000, **endpoints)
     authority = bp.BackpackProductionExecutionAuthority(expires_at_ms=time.time_ns() // 1000000 + 180000,
-        max_account_age_ms=account_max_age_ms, max_market_age_ms=10000, max_order_notional="5",
+        max_account_age_ms=account_max_age_ms, max_market_age_ms=market_max_age_ms, max_order_notional="5",
         max_reserved_notional="10", max_reserved_margin="10", max_unsettled_orders=1,
         allow_new_risk=True, allow_reduction=True, allow_owned_cancel=True)
     plan = bp.BackpackProductionExecutionClientConfig(account, public, authority=authority,
@@ -71,6 +72,8 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
             self.waiting_reason = None
             self.retry_guarded_not_sent = False
             self.guarded_not_sent_retries = []
+            self.guarded_retry_after = 0
+            self.guarded_retry_recovery = 0
             self.posts_before_current = self.deletes_before_current = 0
 
         def on_start(self):
@@ -86,6 +89,9 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
                 return
             health = json.loads(control.telemetry_snapshot_json())
             self.recovery_seen = max(self.recovery_seen, health["recovery_count"])
+            if (time.monotonic() < self.guarded_retry_after
+                    or health["completed_recovery_count"] < self.guarded_retry_recovery):
+                return
             if self.current is not None:
                 current = self.cache.order(self.current.client_order_id)
                 if not current.is_closed:
@@ -174,7 +180,7 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
 
         def on_order_denied(self, event):
             self.event("denied", event)
-            # The cancel-202 scenario tests an already-sent order's uncertainty.
+            # The transport scenarios test an already-sent order's uncertainty.
             # A racing freshness fence can instead refuse a new order before any
             # HTTP bytes. Only that authoritative NotSent outcome may start a
             # new admission attempt; never retry an accepted or unknown order.
@@ -190,9 +196,16 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
                 assert not any(item["client_order_id"] == cid and item["kind"] in {
                     "accepted", "filled", "canceled"} for item in self.events)
                 attempts = sum(item["step"] == self.index for item in self.guarded_not_sent_retries)
-                assert attempts < 3, "bounded NotSent retries exhausted"
+                if attempts >= 3:
+                    self.failure = "bounded NotSent retries exhausted"
+                    return
                 self.guarded_not_sent_retries.append({"step": self.index, "client_order_id": cid,
                     "posts": len(peer.posts), "deletes": len(peer.deletes)})
+                # Match the production operator's bounded one-second retry cadence
+                # and require a new authenticated recovery after a local refusal.
+                self.guarded_retry_after = time.monotonic() + 1
+                self.guarded_retry_recovery = (
+                    json.loads(control.telemetry_snapshot_json())["completed_recovery_count"] + 1)
                 self.current = None
                 return
             self.failure = "denied"
@@ -218,9 +231,9 @@ def build_node(peer, directory, steps, *, account_max_age_ms=10000):
 
 
 async def run_node(peer, directory, steps, *, expect_denial=False, recovery=False,
-                   retry_guarded_not_sent=False):
+                   retry_guarded_not_sent=True):
     node, strategy, control, plan, public = build_node(peer, directory, steps)
-    strategy.retry_guarded_not_sent = retry_guarded_not_sent
+    strategy.retry_guarded_not_sent = retry_guarded_not_sent and not expect_denial
     cache = node.cache
     task = asyncio.ensure_future(node.run_async())
     handle = node.handle()
@@ -278,7 +291,7 @@ def assert_economics(result, count):
     assert not result["health"]["pending_fills"]
     assert all(len(row["trades"]) == 1 and row["filled"] == "0.00002" for row in result["orders"] if row["status"] == "FILLED")
     assert all(not row["open"] for row in result["positions"])
-    assert not result["shutdown"]["dirty"], result["shutdown"]
+    assert not result["shutdown"]["dirty"], json.dumps(result["shutdown"])
 
 
 def test_two_symbols_repeated_roundtrips_exact_rebates_history_replay_and_clean_restart(tmp_path):
@@ -331,7 +344,7 @@ def test_pre_ack_fill_preserves_original_binding_without_resubmit(tmp_path):
     native_adapter()
     async def scenario():
         async with ProductionPeer(fault="preack") as peer:
-            result = await run_node(peer, tmp_path, roundtrips(1))
+            result = await run_node(peer, tmp_path, roundtrips(1), retry_guarded_not_sent=True)
             assert_economics(result, 4)
             assert len(peer.posts) == 4 and len({row["clientId"] for row in peer.posts}) == 4
             assert len({row["client_order_id"] for row in result["events"] if row["kind"] == "accepted"}) == 4
@@ -367,21 +380,23 @@ def test_external_orders_block_admission_and_are_retained_as_dirty_residual(tmp_
     asyncio.run(scenario())
 
 
-def test_app_maker_and_market_roundtrips_exact_native_economics(tmp_path):
+def test_app_maker_and_market_roundtrips_exact_native_economics(tmp_path, request):
     """Exercise the operator entry point and its real registered RoundTrip strategy."""
-    _app_maker_and_market_roundtrips(tmp_path)
+    _app_maker_and_market_roundtrips(tmp_path, request=request)
 
 
-def test_app_fresh_flat_session_excludes_old_fills_and_restores_its_own_fills(tmp_path):
+def test_app_fresh_flat_session_excludes_old_fills_and_restores_its_own_fills(tmp_path, request):
     """A manually flattened account can start a new bounded, durable acceptance session."""
-    _app_maker_and_market_roundtrips(tmp_path, fresh_session=True)
+    _app_maker_and_market_roundtrips(tmp_path, fresh_session=True, request=request)
 
 
-def _app_maker_and_market_roundtrips(tmp_path, *, fresh_session=False):
+def _app_maker_and_market_roundtrips(tmp_path, *, fresh_session=False, request):
     native_adapter()
     from backpack_production import OperatorPlan, execute, build_node as build_operator_node
 
-    async def scenario():
+    async def scenario(attempt):
+        directory = tmp_path / f"attempt-{attempt}"
+        directory.mkdir()
         async with ProductionPeer() as peer:
             if fresh_session:
                 import hashlib
@@ -407,15 +422,26 @@ def _app_maker_and_market_roundtrips(tmp_path, *, fresh_session=False):
                     "credential_scope_sha256": hashlib.sha256(KEY.public_key().public_bytes_raw()).hexdigest(),
                     "results": {name: {"status": 200, "observation": {"count": 0, name: []}}
                                 for name in ("positions", "orders")}}
-                (tmp_path / "session-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
-            plan = OperatorPlan((SYMBOLS[0],), tmp_path, Decimal("5"), Decimal("5"), 60)
+                (directory / "session-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
+            plan = OperatorPlan((SYMBOLS[0],), directory, Decimal("5"), Decimal("5"), 60)
             commands = [{"action": "roundtrip", "symbol": SYMBOLS[0], "style": style,
                 "quantity": "0.00002", "reference_price": "101", "wait_seconds": 5}
                 for style in ("maker", "market")]
+            initial_fills = len(peer.fills)
             result = await execute(plan, commands, SEED,
                 endpoint_overrides={"base_url_http": peer.http_url, "base_url_ws": peer.ws_url})
             assert not peer.errors, {"peer_errors": peer.errors, "result": result}
-            assert result["completed"] and result["failure"] is None, result
+            # Production correctly stops a denied new entry. The protocol fixture
+            # may restart only a provably flat run which never wrote to the peer.
+            if (not result["completed"] and len(result["events"]) == 1
+                    and result["events"][0].get("reason_code") == "local_not_sent"
+                    and not peer.posts and not peer.deletes and len(peer.fills) == initial_fills
+                    and not result["shutdown"]["dirty"]
+                    and not result["shutdown"]["positions_unknown_or_nonzero"]):
+                request.node.user_properties.append(("proven_no_write_startup_attempt", attempt))
+                return False
+            assert result["completed"] and result["failure"] is None, json.dumps({
+                "failure": result["failure"], "events": result["events"], "shutdown": result["shutdown"]})
             assert result["commands_completed"] == 2 and result["account_reconciled"]
             assert [row["style"] for row in result["roundtrips"]] == ["maker", "market"]
             for trip in result["roundtrips"]:
@@ -437,7 +463,7 @@ def _app_maker_and_market_roundtrips(tmp_path, *, fresh_session=False):
             assert result["health"]["pending_fills"] == 0
             assert result["health"]["completed_recovery_count"] > 0
             assert "RecoveryIncomplete" not in result["health"]["evidence_gaps"]
-            assert not result["shutdown"]["dirty"], result["shutdown"]
+            assert not result["shutdown"]["dirty"], json.dumps(result["shutdown"])
             assert peer.private_verified and peer.signed_reads
             assert len(peer.posts) == 4 and len({row["clientId"] for row in peer.posts}) == 4
             maker, market = peer.posts[:2], peer.posts[2:]
@@ -482,7 +508,11 @@ def _app_maker_and_market_roundtrips(tmp_path, *, fresh_session=False):
                         await asyncio.wait_for(asyncio.shield(task), 12)
                     finally:
                         node.dispose()
-    asyncio.run(scenario())
+        return True
+    for attempt in range(3):
+        if asyncio.run(scenario(attempt)):
+            return
+    pytest.fail("bounded proven-no-write startup retries exhausted")
 
 
 @pytest.mark.parametrize("case", ["partial_entry", "zero_entry", "partial_exit"])
@@ -751,13 +781,15 @@ def test_app_close_only_recovers_original_entry_and_only_reduces(tmp_path):
     asyncio.run(scenario())
 
 
-def test_native_terminal_evidence_survives_invalid_snapshot_but_reduction_stays_gated(tmp_path):
+@pytest.mark.parametrize("fault", ["postfill_borrow", "postfill_auto_lend", "external_order", "economic_checkpoint"])
+def test_native_invalid_account_policy_blocks_entries_but_allows_owned_reduction(tmp_path, fault, request):
     native_adapter()
     from backpack_production import OperatorPlan, build_node as build_operator_node
 
-    async def scenario():
+    async def scenario(attempt):
         async with ProductionPeer() as peer:
-            plan = OperatorPlan((SYMBOLS[0],), tmp_path, Decimal("5"), Decimal("5"), 60)
+            directory = tmp_path / str(attempt)
+            plan = OperatorPlan((SYMBOLS[0],), directory, Decimal("5"), Decimal("5"), 60)
             entry = {"action": "submit", "symbol": SYMBOLS[0], "side": "buy", "quantity": "0.00005",
                 "price": "100.0", "time_in_force": "GTC", "post_only": True, "reduce_only": False,
                 "cancel_after_accept": False}
@@ -766,58 +798,165 @@ def test_native_terminal_evidence_survives_invalid_snapshot_but_reduction_stays_
             task = asyncio.ensure_future(node.run_async())
             handle = node.handle()
             deadline = time.monotonic() + 20
+            startup_refused = False
             try:
                 while time.monotonic() < deadline:
                     assert not task.done() and not peer.errors
                     strategy.advance()
+                    if (len(strategy.events) == 1
+                            and strategy.events[0].get("reason_code") == "local_not_sent"
+                            and not peer.posts and not peer.deletes and not peer.fills):
+                        startup_refused = True
+                        assert strategy.position_quantity(SYMBOLS[0]) == 0
+                        return False
                     if any(row["kind"] == "filled" for row in strategy.events):
                         receipts = json.loads(control.persist_economics())
                         if receipts["durable_receipts"] == 1 and json.loads(control.admission_status_json())["ready"]:
                             break
                     await asyncio.sleep(0.05)
                 else:
-                    pytest.fail("signed peer entry did not reach durable fill and ready snapshot")
+                    pytest.fail("signed peer entry did not reach durable fill and ready snapshot: " + json.dumps({
+                        "events": strategy.events, "posts": peer.posts,
+                        "health": json.loads(control.telemetry_snapshot_json())}))
                 original = next(row for row in strategy.events if row["kind"] == "filled")
                 assert original["quantity"] == "0.00005" and original["commission"] == "-0.00000100 USDC"
                 before = json.loads(control.reconcile_terminal_evidence())
                 terminal = next(row for row in before["orders"] if row["client_order_id"] == original["client_order_id"])
                 assert terminal["reconciled"]
-                peer.fault = "postfill_borrow"
+                peer.fault = fault
+                peer.external = fault == "external_order"
+                if fault == "economic_checkpoint":
+                    checkpoint = directory / "economics" / "economics.json"
+                    checkpoint.rename(checkpoint.with_suffix(".before-failure"))
+                    checkpoint.mkdir()  # Deterministic atomic-replace failure, not an overwritten payload.
                 while time.monotonic() < deadline:
                     admission = json.loads(control.admission_status_json())
-                    if peer.invalid_collateral_reads and not admission["ready"]:
+                    if not admission["ready"]:
                         break
                     await asyncio.sleep(0.05)
                 else:
-                    pytest.fail("fresh signed borrowed collateral did not close native admission")
+                    pytest.fail("injected account/economic failure did not close native admission")
                 assert admission["reason"]
-                after = json.loads(control.reconcile_terminal_evidence())
-                assert next(row for row in after["orders"] if row["client_order_id"] == original["client_order_id"]) == terminal
-                assert json.loads(control.persist_economics())["durable_receipts"] == 1
+                if fault != "economic_checkpoint":
+                    after = json.loads(control.reconcile_terminal_evidence())
+                    assert next(row for row in after["orders"] if row["client_order_id"] == original["client_order_id"]) == terminal
+                    assert json.loads(control.persist_economics())["durable_receipts"] == 1
                 assert strategy.position_quantity(SYMBOLS[0]) == Decimal("0.00005")
+                strategy.submit(entry)
+                blocked_id = strategy.order_id
+                while time.monotonic() < deadline:
+                    if any(row["client_order_id"] == blocked_id and row["kind"] == "denied"
+                           for row in strategy.events):
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    pytest.fail("new entry was not denied under invalid account admission")
+                assert len(peer.posts) == 1
+                # Signed account checks can outlive a public observation. Require
+                # a new usable target quote, independently of account admission.
+                from nautilus_trader.model import InstrumentId
+                instrument = InstrumentId.from_str(SYMBOLS[0] + ".BACKPACK")
+                previous_quote = strategy.cache.quote(instrument)
+                previous_stamp = previous_quote.ts_init if previous_quote is not None else 0
+                while time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                    quote = strategy.cache.quote(instrument)
+                    if (quote is not None and quote.ts_init > previous_stamp
+                            and strategy.quote(SYMBOLS[0]) is not None):
+                        break
+                else:
+                    pytest.fail("target market did not recover a fresh native quote: "
+                        + strategy.public_config.telemetry_snapshot_json())
                 # Deliberately exercise the native financial guard through the real Strategy.
                 strategy.submit({"action": "submit", "symbol": SYMBOLS[0], "side": "sell",
-                    "quantity": "0.00005", "order_type": "market", "reference_price": "101",
+                    "quantity": "0.00005", "price": "100.0", "order_type": "limit",
                     "time_in_force": "IOC", "post_only": False, "reduce_only": True,
                     "cancel_after_accept": False})
-                rejected_id = strategy.order_id
+                reduction_id = strategy.order_id
                 while time.monotonic() < deadline:
-                    if any(row["client_order_id"] == rejected_id and row["kind"] in {"denied", "rejected"}
+                    if any(row["client_order_id"] == reduction_id and row["kind"] == "filled"
                         for row in strategy.events):
                         break
                     await asyncio.sleep(0.05)
                 else:
-                    pytest.fail("inadmissible reduction did not report its native financial rejection")
-                assert len(peer.posts) == 1 and not peer.deletes
-                assert peer.invalid_collateral_reads and not peer.errors
-                assert len(peer.fills) == 1 and strategy.position_quantity(SYMBOLS[0]) == Decimal("0.00005")
+                    pytest.fail("account policy blocked the native reduce-only exit: " + json.dumps({
+                        "events": strategy.events, "posts": peer.posts,
+                        "public": json.loads(strategy.public_config.telemetry_snapshot_json()),
+                        "health": json.loads(control.telemetry_snapshot_json())}))
+                assert len(peer.posts) == 2 and not peer.deletes
+                assert peer.posts[-1]["reduceOnly"] is True
+                assert not peer.errors
+                if fault == "postfill_borrow":
+                    assert peer.invalid_collateral_reads
+                if fault == "economic_checkpoint":
+                    assert checkpoint.is_dir()
+                    assert "ReductionEconomicCheckpointPending" in json.loads(
+                        control.telemetry_snapshot_json())["evidence_gaps"]
+                assert len(peer.fills) == 2 and strategy.position_quantity(SYMBOLS[0]) == 0
             finally:
                 handle.stop()
                 try:
                     await asyncio.wait_for(asyncio.shield(task), 12)
                 finally:
                     node.dispose()
-    asyncio.run(scenario())
+                if startup_refused:
+                    shutdown = json.loads(control.shutdown_report_json())
+                    assert not shutdown["dirty"] and not shutdown["positions_unknown_or_nonzero"], shutdown
+                    request.node.user_properties.append(("proven_no_write_startup_attempt", attempt))
+            return True
+    for attempt in range(3):
+        if asyncio.run(scenario(attempt)):
+            break
+        time.sleep(1)
+    else:
+        pytest.fail("bounded proven-flat startup attempts exhausted")
+
+
+@pytest.mark.parametrize("reducing,status,reason,filled,venue_id,retry", [
+    (True, "DENIED", "GuardedLocalRefusal", "0", None, True),
+    (False, "DENIED", "GuardedLocalRefusal", "0", None, False),
+    (True, "ACCEPTED", "GuardedLocalRefusal", "0", None, False),
+    (True, "DENIED", "BackpackProductionAdmission", "0", None, False),
+    (True, "DENIED", "GuardedLocalRefusal", "0.00001", None, False),
+    (True, "DENIED", "GuardedLocalRefusal", "0", "venue-owned", False),
+])
+def test_operator_retries_only_proven_unsent_reduction_and_caps_current_position(
+        tmp_path, reducing, status, reason, filled, venue_id, retry):
+    native_adapter()
+    from backpack_production import OperatorPlan, build_node as build_operator_node
+    plan = OperatorPlan((SYMBOLS[0],), tmp_path, Decimal("5"), Decimal("5"), 60)
+    command = {"action": "submit", "symbol": SYMBOLS[0], "side": "sell", "quantity": "0.00005",
+        "price": "100.0", "time_in_force": "IOC", "post_only": False, "reduce_only": True,
+        "cancel_after_accept": False}
+    node, strategy, _ = build_operator_node(plan, [command], SEED,
+        endpoint_overrides={"base_url_http": "http://127.0.0.1:1", "base_url_ws": "ws://127.0.0.1:1"})
+    try:
+        cached = SimpleNamespace(is_reduce_only=reducing, status=status, venue_order_id=venue_id,
+            filled_qty=SimpleNamespace(as_decimal=lambda: Decimal(filled)))
+        sent = []
+        actor = SimpleNamespace(cache=SimpleNamespace(order=lambda cid: cached), order_id="original",
+            last_submission=command, reduction_retry_at_ns=None, record_event=lambda *args: None,
+            failure=None, started=True, index=0, position_quantity=lambda symbol: Decimal("0.00002"),
+            round_trip=SimpleNamespace(order_id="original", clock=lambda: 42, sent_at=0))
+        def submit(value):
+            sent.append(value)
+            actor.order_id = "new-reduction-id"
+        actor.submit = submit
+        kind = type(strategy)
+        kind.on_order_denied(actor, SimpleNamespace(client_order_id="original", reason=reason))
+        assert (actor.reduction_retry_at_ns is not None) is retry
+        if retry:
+            assert actor.failure is None
+            kind.advance(actor)
+            assert not sent  # Preserve the one-second retry interval.
+            actor.reduction_retry_at_ns = 0
+            kind.advance(actor)
+            assert len(sent) == 1 and sent[0]["reduce_only"] and sent[0]["quantity"] == "0.00002"
+            assert actor.round_trip.order_id == "new-reduction-id" and actor.round_trip.sent_at == 42
+        else:
+            assert actor.failure == "native order admission refused" and not sent
+    finally:
+        node.dispose()
 
 
 def test_close_only_already_flat_is_a_confirmed_noop():

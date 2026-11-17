@@ -127,8 +127,11 @@ def test_partial_pending_entry_can_reduce_confirmed_quantity_without_replacing_o
     unwind, = submissions(live)
     assert unwind.quantity == D("0.8") and unwind.reduce_only
     live.on_receipt(receipt(unwind, "unknown"), now + 1)
-    assert not refresh(live, now + SECOND)
+    retry, = refresh(live, now + SECOND)
+    assert retry.reduce_only and retry.quantity == D("0.8")
+    assert retry.client_order_id != unwind.client_order_id
     fill(live, unwind, now + SECOND + 1)
+    live.on_receipt(receipt(retry, "terminal"), now + SECOND + 2)
     # More of the original entry fills after the first confirmed amount exits.
     fill(live, entry, now + 2 * SECOND, quantity="0.1", trade_id="late-entry", terminal=False)
     residual, = refresh(live, now + 3 * SECOND)
@@ -143,7 +146,7 @@ def test_partial_pending_entry_can_reduce_confirmed_quantity_without_replacing_o
 
 
 @pytest.mark.parametrize("problem", ["stale", "mismatch", "foreign", "disconnected", "other_owner", "pending_reduction"])
-def test_pending_entry_cleanup_still_requires_account_and_exclusive_ownership(problem):
+def test_pending_entry_cleanup_keeps_reducing_despite_secondary_account_barriers(problem):
     live, _ = state()
     position, entry, _ = pending_entry(live, terminal=False)
     now = position["opened_ns"] + 10 * SECOND
@@ -167,7 +170,10 @@ def test_pending_entry_cleanup_still_requires_account_and_exclusive_ownership(pr
         live.orders["different"] = extra
     set_book(live, "HL", "99.99", "100", now)
     live.on_evaluation_timer(now)
-    assert not submissions(live) and position["exit_reason"] == "unhedged_timeout"
+    unwind, = submissions(live)
+    assert unwind.reduce_only and unwind.quantity == D("0.9" if problem == "mismatch" else "0.8")
+    assert position["exit_reason"] == "unhedged_timeout"
+    assert not live._account_ready(entry.instrument_id, now)
     assert position["remaining_buy_base"] == "0.8" and live.gross_exposure(reserve=True) >= 200
 
 
@@ -207,17 +213,22 @@ def test_fill_arriving_at_deadline_cannot_erase_expired_risk_before_timer_runs()
     assert len(refresh(live, NOW + 11 * SECOND)) == 2
 
 
-def test_rebalance_unknown_blocks_duplicate_but_late_trim_is_accounted_before_exit():
+def test_rebalance_unknown_allows_forced_exit_and_late_trim_is_still_accounted():
     live, _ = state()
     position, _ = enter(live)
     trim, = refresh(live, NOW + SECOND)
     fill(live, trim, NOW + 2 * SECOND, quantity="0.1", terminal=False)
     live.on_receipt(receipt(trim, "unknown"), NOW + 2 * SECOND + 1)
-    other_exit, = refresh(live, NOW + 11 * SECOND)
+    exits = refresh(live, NOW + 11 * SECOND)
+    assert len(exits) == 2 and all(i.reduce_only for i in exits)
+    other_exit, = [i for i in exits if i.instrument_id == "BTC.ASTER"]
+    retry, = [i for i in exits if i.instrument_id == trim.instrument_id]
+    assert retry.quantity == D("0.7")
     assert other_exit.instrument_id == "BTC.ASTER" and other_exit.quantity == D("0.5")
     fill(live, other_exit, NOW + 11 * SECOND + 1)
     assert not refresh(live, NOW + 12 * SECOND)
     fill(live, trim, NOW + 13 * SECOND, quantity="0.2", trade_id="late-trim")
+    live.on_receipt(receipt(retry, "terminal"), NOW + 13 * SECOND + 1)
     exit_order, = refresh(live, NOW + 14 * SECOND)
     assert exit_order.instrument_id == trim.instrument_id and exit_order.quantity == D("0.5")
     assert position["rebalance_ids"] == [trim.client_order_id] and position["exit_reason"] == "unhedged_timeout"
@@ -366,9 +377,9 @@ def test_shared_leg_account_net_zero_does_not_cancel_pair_exposure_or_expand_own
         set_book(live, venue, bid, ask, now)
     live.on_evaluation_timer(now)
     exits = submissions(live)
-    assert len(exits) == 2 and all(live.orders[i.client_order_id]["position_id"] == first["position_id"] for i in exits)
-    shared, = [i for i in exits if i.instrument_id == "BTC.ASTER"]
-    assert shared.quantity == D("0.8") and shared.side == "BUY" and not shared.reduce_only
+    assert len(exits) == 1 and live.orders[exits[0].client_order_id]["position_id"] == first["position_id"]
+    assert exits[0].instrument_id == "BTC.HL" and exits[0].reduce_only
+    assert exits[0].quantity == D("0.5")  # Never reopen the already-flat shared net position.
     assert F(first["unhedged_base"]) == F("-0.3")
 
 

@@ -397,6 +397,8 @@ def build_node(plan, commands, seed, *, read_only=False, endpoint_overrides=None
             self.round_trip = None
             self.roundtrip_results = []
             self.stop_roundtrips = False
+            self.last_submission = None
+            self.reduction_retry_at_ns = None
 
         def ready(self):
             self.admission = json.loads(control.admission_status_json())
@@ -482,6 +484,7 @@ def build_node(plan, commands, seed, *, read_only=False, endpoint_overrides=None
             self.order_id = str(order.client_order_id)
             self.last_id = self.order_id
             self.phase = "submit"
+            self.last_submission = dict(command)
             self.submit_order(order)
 
         def finish(self, action, order, *, terminal=False):
@@ -533,6 +536,23 @@ def build_node(plan, commands, seed, *, read_only=False, endpoint_overrides=None
             if not self.started or self.failure or self.index == len(commands):
                 return
             try:
+                if self.reduction_retry_at_ns is not None:
+                    if time.monotonic_ns() < self.reduction_retry_at_ns:
+                        return
+                    command = dict(self.last_submission)
+                    position = Decimal(str(self.position_quantity(command["symbol"])))
+                    available = max(Decimal(0), position if command["side"] == "sell" else -position)
+                    quantity = min(Decimal(command["quantity"]), available)
+                    self.reduction_retry_at_ns = None
+                    if quantity == 0:
+                        self.failure = "position flat; reduction accounting remains unresolved"
+                        return
+                    command["quantity"] = str(quantity)
+                    self.submit(command)
+                    if self.round_trip is not None:
+                        self.round_trip.order_id = self.order_id
+                        self.round_trip.sent_at = self.round_trip.clock()
+                    return
                 command = commands[self.index]
                 if self.command_started_ns is None:
                     self.command_started_ns = time.monotonic_ns()
@@ -621,6 +641,11 @@ def build_node(plan, commands, seed, *, read_only=False, endpoint_overrides=None
             venue_id = getattr(event, "venue_order_id", None)
             if venue_id is not None:
                 row["venue_order_id"] = str(venue_id)
+            if kind == "denied":
+                reason = str(getattr(event, "reason", ""))
+                row["reason_code"] = ("local_not_sent" if reason == "GuardedLocalRefusal"
+                    else "native_admission" if reason.startswith("BackpackProductionAdmission")
+                    else "local_denial")
             if kind == "filled":
                 row.update(
                     trade_id=str(event.trade_id),
@@ -645,6 +670,15 @@ def build_node(plan, commands, seed, *, read_only=False, endpoint_overrides=None
 
         def on_order_denied(self, event):
             self.record_event("denied", event)
+            order = self.cache.order(event.client_order_id)
+            if (str(event.reason) == "GuardedLocalRefusal" and order is not None
+                    and str(event.client_order_id) == self.order_id and order.is_reduce_only
+                    and str(order.status) == "DENIED" and order.filled_qty.as_decimal() == 0
+                    and order.venue_order_id is None and self.last_submission is not None):
+                # This native outcome proves that no HTTP bytes were sent. Retry
+                # only the bounded reduction, retaining the denied original ID.
+                self.reduction_retry_at_ns = time.monotonic_ns() + 1_000_000_000
+                return
             self.failure = "native order admission refused"
 
         def on_order_rejected(self, event):

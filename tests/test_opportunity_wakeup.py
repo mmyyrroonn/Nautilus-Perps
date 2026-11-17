@@ -45,9 +45,9 @@ def test_failed_persistence_never_notifies_or_releases_intents():
     def fail(*a):
         raise OSError("synthetic disk failure")
     store.save = fail
-    with pytest.raises(OSError):
-        publish(live)
-    assert not notifications and not live.outbox and not live.cleanup_allowed
+    publish(live)
+    assert not notifications and not live.outbox and live.persistence_failed
+    assert live.cleanup_allowed and live.halt_reason
 
 
 def test_failed_optional_alert_leaves_durable_orders_for_timer():

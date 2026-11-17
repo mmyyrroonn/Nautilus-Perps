@@ -58,6 +58,12 @@ authorizes an automatic replacement.
 
 ## Roundtrips and recovery
 
+Public feed recovery continues with capped backoff until shutdown, including after twenty short
+connections or a recovery timeout. It never makes stale observations admissible: each replacement
+requires current metadata and new market observations. Memory diagnostics record the current
+public gate plus the retained `last_fault_reason`, `last_fault_epoch` and `recovery_timeouts`.
+These public recovery counters do not prove private account or order reconciliation.
+
 The [Maker/Market launcher](backpack-maker-market-acceptance.md) runs Maker limit
 entry followed by a reduce-only Market exit, then Market entry followed by a
 reduce-only Market exit. Each exit uses only the confirmed filled quantity.
@@ -69,6 +75,25 @@ The operator does not bulk-cancel or adopt external orders. Its default persiste
 state is `reports/backpack/operator-state`. Retain this state after failures,
 interruptions or residual positions; an initialized state cannot be replaced to
 bypass unresolved ownership or economics.
+
+## Market admission scope
+
+Monitoring the configured universe does not require every market to have a fresh
+quote at once. Native admission reports global account/session trust separately
+from per-instrument quote/metadata trust. The continuous coordinator checks the
+Backpack instrument in the current pair before either leg is dispatched; the native
+client checks that target again before new risk or reduction submits. An unrelated
+quiet market cannot veto the pair. Account, session, unresolved-order, position,
+margin and notional checks retain their existing scope and limits.
+Nonzero account positions still need current quotes to value aggregate exposure;
+zero positions do not require marks.
+
+The top-level `ready` remains an aggregate diagnostic for older consumers.
+The continuous coordinator requires `global_ready` and the requested row in
+`markets`; incomplete or invalid maps fail closed. Older wheels without market
+rows retain the conservative aggregate check. Periodic memory diagnostics include
+the global result and ready instrument IDs. A ready market does not bypass the
+application's price-age, paired-entry, loss or account gates.
 
 ## Results and inspection
 

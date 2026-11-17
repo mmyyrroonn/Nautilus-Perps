@@ -41,6 +41,60 @@ def test_actual_target_and_changed_maximum(actual, maximum, target, expected):
     assert check(parse_leverage(*payloads(actual, maximum), NOW), target) == expected
 
 
+@pytest.mark.parametrize("maximum", [150, 200, 300, "150", "200", "300", "1000"])
+def test_exchange_tier_ceiling_does_not_raise_account_or_target_leverage(maximum):
+    snapshot = parse_leverage(*payloads(maximum=maximum), NOW)
+    row = snapshot.symbol("STXUSDT-PERP.ASTER")
+    assert row.actual == 5 and row.brackets[0][2] == int(maximum)
+    assert check(snapshot) is None
+    assert check(snapshot, target=10) == "leverage_target_mismatch"
+    assert check(snapshot, quantity="3000") == "leverage_above_maximum"
+
+
+@pytest.mark.parametrize("maximum", [True, False, 0, -1, 150.0, None, "", "0", "-1",
+                                     "+150", "0150", "150.0", "1e2", "NaN", " 150", "150\n", "１５０"])
+def test_invalid_exchange_tier_ceiling_fails_closed(maximum):
+    with pytest.raises(ValueError, match="invalid Aster tier leverage"):
+        parse_leverage(*payloads(maximum=maximum), NOW)
+
+
+@pytest.mark.parametrize("actual", [126, "150", "200", "300"])
+def test_larger_exchange_ceiling_does_not_expand_supported_account_settings(actual):
+    with pytest.raises(ValueError, match="invalid Aster leverage"):
+        parse_leverage(*payloads(actual=actual, maximum=300), NOW)
+
+
+def test_large_ceiling_on_another_symbol_does_not_discard_bulk_proof():
+    positions, brackets = payloads()
+    extra_positions, extra_brackets = payloads(maximum="300")
+    extra_positions[0]["symbol"] = extra_brackets[0]["symbol"] = "BTCUSDT"
+    snapshot = parse_leverage(positions + extra_positions, brackets + extra_brackets, NOW)
+    assert len(snapshot.symbols) == 2
+    assert check(snapshot) is None
+    assert snapshot.symbol("BTCUSDT-PERP.ASTER").brackets[0][2] == 300
+
+
+def test_flat_zero_mark_uses_order_limit_price_and_still_enforces_tiers():
+    positions, brackets = payloads(maximum="300")
+    positions[0]["markPrice"] = "0.0000"
+    snapshot = parse_leverage(positions, brackets, NOW)
+    assert check(snapshot) is None
+    for quantity, expected in (("999", None), ("1000", "leverage_above_maximum")):
+        reason, evidence = leverage_check(snapshot, "STXUSDT-PERP.ASTER", 5, D(1),
+                                         D(quantity), D(1), NOW, 5 * SECOND)
+        assert reason == expected
+        assert D(evidence["projected_notional"]) == D(quantity)
+
+
+@pytest.mark.parametrize("position,mark", [("1", "0"), ("-1", "0"), ("0", "-1"),
+                                           ("0", "NaN"), ("0", "Infinity")])
+def test_missing_mark_for_exposure_or_invalid_mark_fails_closed(position, mark):
+    positions, brackets = payloads(maximum="300")
+    positions[0].update(positionAmt=position, markPrice=mark)
+    with pytest.raises((ValueError, AccountReadError)):
+        parse_leverage(positions, brackets, NOW)
+
+
 def test_freshness_tiers_and_post_rejection_fence():
     snapshot = parse_leverage(*payloads(), NOW)
     assert check(None) == "leverage_unavailable"
@@ -76,9 +130,9 @@ def test_malformed_proof_fails_closed(change):
         parse_leverage(positions, brackets, NOW)
 
 
-def reader_fixture(fail_brackets=False):
+def reader_fixture(fail_brackets=False, maximum=20):
     calls = []
-    positions, brackets = payloads()
+    positions, brackets = payloads(maximum=maximum)
     clock = [NOW]
     def transport(method, url):
         path = url.split("?")[0].split(".com")[-1]
@@ -98,8 +152,9 @@ def reader_fixture(fail_brackets=False):
     return reader, calls, clock
 
 
-def test_reader_uses_signed_read_only_bulk_evidence_and_preserves_cache_age():
-    reader, calls, clock = reader_fixture()
+@pytest.mark.parametrize("maximum", [20, "300"])
+def test_reader_uses_signed_read_only_bulk_evidence_and_preserves_cache_age(maximum):
+    reader, calls, clock = reader_fixture(maximum=maximum)
     market = NS(venue="ASTER", instrument_id="STXUSDT-PERP.ASTER")
     snapshot = reader.read(market, None, None, NOW)
     assert check(snapshot.aster_leverage) is None
@@ -330,6 +385,26 @@ def test_startup_automatically_resolves_and_persists_targets_without_manual_conf
     assert evidence["source"] == "initial_account" and evidence["observed_ns"] == NOW
     publish(live)
     assert len(submissions(live)) == 2
+
+
+@pytest.mark.parametrize("mark", ["0", "0.3365"])
+def test_automatic_target_uses_actual_setting_with_a_larger_exchange_ceiling(mark):
+    from opportunity_preflight import AccountSnapshot
+    store = MemoryStore()
+    live, _ = state(store=store, aster_leverage_targets=())
+    aster = next(m.instrument_id for m in live.plan.markets if m.venue == "ASTER")
+    live.aster_leverage_targets.clear()
+    live.aster_leverage_initializations.clear()
+    live.aster_leverage_pending.add(aster)
+    positions, brackets = payloads(maximum="300")
+    positions[0]["markPrice"] = mark
+    proof = parse_leverage(positions, brackets, NOW + 1)
+    proof = replace(proof, symbols=(replace(proof.symbols[0], instrument_id=aster),))
+    live.on_account(AccountSnapshot("ASTER", aster, D(100), D(101), NOW + 1, D(0),
+                                    aster_leverage=proof), NOW + 1)
+    assert live.aster_leverage_targets == {aster: 5}
+    evidence = store.saved["aster_leverage_initializations"][aster]
+    assert evidence["target"] == 5 and evidence["allowed_maximum"] == 300
 
 
 def test_automatic_target_does_not_follow_later_account_leverage_changes():

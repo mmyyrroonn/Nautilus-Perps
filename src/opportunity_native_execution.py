@@ -44,7 +44,10 @@ LOCAL_REJECTION_CODES = {
 
 
 def exchange_error_code(reason, venue):
-    """Extract only the numeric code from the native Aster error envelope."""
+    """Extract only the numeric code from a recognized native error envelope."""
+    if venue == "LIGHTER":
+        match = re.search(r"\bLIGHTER_([1-9][0-9]{4})(?=:)", str(reason)[:2048])
+        return int(match[1]) if match else None
     if venue != "ASTER":
         return None
     match = re.search(r"\bAster error (-[1-9][0-9]{3,5})(?=[: ])", str(reason)[:2048])
@@ -54,6 +57,8 @@ def exchange_error_code(reason, venue):
 def classify_rejection(reason, venue=None):
     """Return fixed diagnostic labels; never retain raw venue rejection text."""
     reason = str(reason)[:2048].lower()
+    if venue == "LIGHTER" and ("lighter_21613:" in reason or "invalid margin mode" in reason):
+        return "margin_configuration"
     if venue == "ASTER" and (
             re.search(r"\baster error -(2027|2028|4028)(?=[: ])", reason)
             or ("leverage" in reason and any(word in reason for word in ("max", "exceed", "invalid")))):
@@ -207,7 +212,10 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
             account = bp.BackpackExecutionClientConfig(symbols, credential, str(account_id),
                 env["BACKPACK_MAINNET_API_KEY"], str(directory / "backpack" / "identity"),
                 quota=backpack_quota if backpack_quota is not None else bp.BackpackQuota(),
-                connect_timeout_ms=60000, recovery_interval_ms=1000,
+                # Full authenticated histories are recovery work. Keep their cadence
+                # below the venue's observed throttling while the native public
+                # metadata task independently maintains the strict market deadline.
+                connect_timeout_ms=60000, recovery_interval_ms=5000,
                 recovery_lookback_ms=86400000)
             if read_only:
                 result.append((client, bp.BackpackExecutionClientFactory(), account))
@@ -301,7 +309,7 @@ class NativeOrderGateway:
         self.closed = False
 
     def refresh_native_admission(self, now_ns):
-        """Read the native full-scope gate; never infer readiness from depth."""
+        """Read global account/session trust and independent native market gates."""
         if not any(m.venue == "BACKPACK" for m in self.markets.values()):
             return {}
         self.backpack_market_health = {}
@@ -313,28 +321,52 @@ class NativeOrderGateway:
             try:
                 with span("gateway.backpack.admission_status"):
                     value = json.loads(control.admission_status_json())
-                if (not isinstance(value, dict) or type(value.get("ready")) is not bool
-                        or "reason" not in value
-                        or (value["ready"] and value.get("reason") is not None)
-                        or (not value["ready"] and (
-                            not isinstance(value.get("reason"), str) or not value["reason"]))):
-                    raise ValueError("invalid native admission schema")
-                status.update(ready=value["ready"], reason=value.get("reason"))
-                reason = self._backpack_quote_problem()
-                if status["ready"] and reason is not None:
+                status.update(self._backpack_admission(value))
+                scoped = status.get("global_ready") is True
+                reason = self._backpack_quote_problem(status["markets"] if scoped else None)
+                if scoped:
+                    if reason is not None:
+                        status.update(global_ready=False, markets={})
+                    else:
+                        reason = next((row["reason"] for row in status["markets"].values()
+                                       if not row["ready"]), None)
+                    status.update(ready=reason is None, reason=reason)
+                elif status["ready"] and reason is not None:
                     status.update(ready=False, reason=reason)
             except (ValueError, TypeError):
-                status.update(ready=False, reason="native_admission_invalid_json")
+                status = {"ready": False, "reason": "native_admission_invalid_json", "checked_ns": now_ns}
             except Exception:
                 # Exceptions can contain transport details; retain a fixed diagnostic.
-                status.update(ready=False, reason="native_admission_api_error")
+                status = {"ready": False, "reason": "native_admission_api_error", "checked_ns": now_ns}
         elif control is not None:
             status["reason"] = "native_checkpoint_not_ready"
         self.native_admission["BACKPACK"] = status
         return {venue: dict(row) for venue, row in self.native_admission.items()}
 
-    def _backpack_quote_problem(self):
-        """Observe full-scope public freshness alongside native admission."""
+    def _backpack_admission(self, value):
+        def valid(row):
+            return (isinstance(row, dict) and type(row.get("ready")) is bool
+                    and "reason" in row and (row["reason"] is None if row["ready"]
+                        else isinstance(row["reason"], str) and bool(row["reason"])))
+        if not valid(value):
+            raise ValueError("invalid native admission schema")
+        result = {"ready": value["ready"], "reason": value["reason"]}
+        if "global_ready" not in value and "markets" not in value:
+            return result  # Older wheels retain their conservative aggregate gate.
+        markets = value.get("markets")
+        expected = {m.instrument_id for m in self.markets.values() if m.venue == "BACKPACK"}
+        if (type(value.get("global_ready")) is not bool or not isinstance(markets, dict)
+                or (value["global_ready"] and (set(markets) != expected
+                    or not all(valid(row) for row in markets.values())
+                    or value["ready"] != all(row["ready"] for row in markets.values())))
+                or (not value["global_ready"] and (value["ready"] or markets))):
+            raise ValueError("invalid native market admission schema")
+        result.update(global_ready=value["global_ready"], markets={
+            key: {"ready": row["ready"], "reason": row["reason"]} for key, row in markets.items()})
+        return result
+
+    def _backpack_quote_problem(self, market_status=None):
+        """Observe all markets, applying quote failures only to the affected market."""
         self.backpack_market_health = {}
         if self.backpack_public_config is None:
             return "native_public_health_unavailable"
@@ -347,9 +379,20 @@ class NativeOrderGateway:
         self.backpack_market_health = {"scope_markets": len(symbols),
             "fresh_quote_markets": len(symbols) - len(unavailable),
             "unavailable_symbols": unavailable, "connection_epoch": health.get("connection_epoch"),
+            "stale_reason": health.get("stale_reason"),
+            "last_fault_reason": health.get("last_fault_reason"),
+            "last_fault_epoch": health.get("last_fault_epoch"),
+            "recovery_timeouts": health.get("recovery_timeouts"),
             "connected": health.get("connected") is True, "metadata_ready": health.get("metadata_ready") is True}
-        if health.get("connected") is not True or health.get("metadata_ready") is not True:
+        if (health.get("connected") is not True or health.get("metadata_ready") is not True
+                or health.get("stale_reason") is not None):
             return "native_public_session_not_ready"
+        if market_status is not None:
+            for symbol in unavailable:
+                row = market_status[symbol + ".BACKPACK"]
+                if row["ready"]:
+                    row.update(ready=False, reason="native_public_quotes_not_ready")
+            return None
         if unavailable:
             return "native_public_quotes_not_ready"
         return None
@@ -656,6 +699,7 @@ class NativeOrderGateway:
             self._receipt(intent, "unknown")
             return False
         processed = Fraction(0)
+        pending_fees = set()
         for fill in processed_fills:
             if fill["client_order_id"] != cid or fill["instrument_id"] != intent.instrument_id or fill["venue"] != intent.venue:
                 raise ValueError("persisted fill differs from its original submission")
@@ -667,7 +711,10 @@ class NativeOrderGateway:
                 continue
             self.seen_fills[key] = signature
             processed += Fraction(signature["native_qty"])
-        self.orders[cid] = {"intent": intent, "processed_qty": processed, "native": cached}
+            if signature["commission_amount"] is None:
+                pending_fees.add(str(fill["trade_id"]))
+        self.orders[cid] = {"intent": intent, "processed_qty": processed, "native": cached,
+                            "pending_fee_ids": pending_fees}
         self.active_request_map[(cid, "submit")] = intent
         try:
             self.strategy.query_order(cached, client_id=self._client(intent.venue))
@@ -725,10 +772,21 @@ class NativeOrderGateway:
             signature = _fill_signature(fill)
             if key in self.seen_fills:
                 if self.seen_fills[key] != signature:
+                    previous = self.seen_fills[key]
+                    if (previous["commission_amount"] is None and signature["commission_amount"] is not None
+                            and all(previous[k] == value for k, value in signature.items()
+                                    if k not in {"commission_amount", "commission_currency"})):
+                        self.on_fill(fill)
+                        self.seen_fills[key] = signature
+                        owned.setdefault("pending_fee_ids", set()).discard(trade_id)
+                        self._flush_terminal(cid, now_ns)
+                        return
                     raise ValueError("conflicting replay of native execution identity")
                 return
             self.on_fill(fill)
             self.seen_fills[key] = signature
+            if fee is None:
+                owned.setdefault("pending_fee_ids", set()).add(trade_id)
             owned["processed_qty"] += Fraction(quantity)
             self._receipt(submit, "fill", execution_id=fill["execution_id"], quantity=quantity)
             if any((submit.request_id, terminal, "") in self.emitted for terminal in ("terminal", "rejected")):
@@ -739,6 +797,7 @@ class NativeOrderGateway:
                 self.terminals[cid] = ("terminal", submit)
             self._flush_terminal(cid, now_ns)
         elif kind == "accepted":
+            owned["submission_acknowledged"] = True
             self._receipt(submit, "accepted")
         elif kind == "updated":
             intent = self.active_request_map.get((cid, "modify"))
@@ -775,12 +834,19 @@ class NativeOrderGateway:
         if owned.get("final_query_started"):
             return
         owned["final_query_started"] = True
+        self._query_original(owned, cached, now_ns)
+
+    def _query_original(self, owned, cached, now_ns):
+        """Retry the original identity independently of economic/account admission."""
         submit = owned["intent"]
         self.requests[submit.request_id]["queried_ns"] = now_ns
+        owned["query_attempts"] = owned.get("query_attempts", 0) + 1
+        owned["last_query_ns"] = now_ns
         try:
             self.strategy.query_order(cached, client_id=self._client(submit.venue))
         except Exception:
-            self.last_error = "final original-order query failed; reconciliation remains fenced"
+            owned["query_dispatch_failures"] = owned.get("query_dispatch_failures", 0) + 1
+            self.last_error = "original-ID query dispatch failed; periodic query remains scheduled"
 
     def _flush_terminal(self, cid, now_ns):
         pending = self.terminals.get(cid)
@@ -790,14 +856,19 @@ class NativeOrderGateway:
         owned = self.orders[cid]
         if cached is None or not cached.is_closed:
             return
-        if Fraction(_decimal(cached.filled_qty)) != owned["processed_qty"]:
-            if any((owned["intent"].request_id, kind, "") in self.emitted
-                   for kind in ("terminal", "rejected")):
-                self._receipt(owned["intent"], "reconciliation_required")
-            return
         final_quantity, final_source = None, ""
         submit = owned["intent"]
-        if submit.venue == "LIGHTER":
+        if str(cached.status).split(".")[-1].upper() == "DENIED":
+            if (getattr(cached, "venue_order_id", None) is not None
+                    or owned.get("submission_acknowledged")
+                    or owned["processed_qty"] != 0 or _decimal(cached.filled_qty) != 0):
+                self._receipt(submit, "reconciliation_required")
+                self._request_final_evidence(owned, cached, now_ns)
+                return
+            # DENIED is the native pre-submission terminal state. RiskEngine may deny
+            # before the adapter sees the command, so no adapter evidence can exist.
+            final_quantity, final_source = Decimal(0), "native_order_denied"
+        elif submit.venue == "LIGHTER":
             # Cache closure and even 0 == 0 are not exchange cumulative evidence.
             # The control is shared with this exact execution client/account.
             control = self.native_controls.get("LIGHTER")
@@ -806,19 +877,23 @@ class NativeOrderGateway:
                 proof = json.loads(raw) if raw else None
                 if (not proof or proof.get("client_order_id") != cid
                         or proof.get("instrument_id") != submit.instrument_id
-                        or proof.get("source") not in {"websocket_terminal_order", "http_order_status"}):
+                        or proof.get("source") not in {"websocket_terminal_order", "http_order_status", "submission_rejected"}):
                     self._request_final_evidence(owned, cached, now_ns)
                     return
                 if proof.get("conflicting") is not False:
                     self._receipt(submit, "reconciliation_required")
                     self._request_final_evidence(owned, cached, now_ns)
                     return
-                if proof["source"] != "http_order_status":
+                final_quantity = _decimal(proof["final_filled_quantity"])
+                if proof["source"] == "submission_rejected" and (
+                        final_quantity != 0 or proof.get("venue_order_id") is not None
+                        or str(cached.status).split(".")[-1].lower() not in {"rejected", "denied"}
+                        or owned["processed_qty"] != 0):
+                    self._receipt(submit, "reconciliation_required")
                     self._request_final_evidence(owned, cached, now_ns)
                     return
-                final_quantity = _decimal(proof["final_filled_quantity"])
                 if (final_quantity < 0 or Fraction(final_quantity) > Fraction(submit.quantity)
-                        or Fraction(final_quantity) != owned["processed_qty"]):
+                        or Fraction(final_quantity) < owned["processed_qty"]):
                     if any((submit.request_id, kind, "") in self.emitted for kind in ("terminal", "rejected")):
                         self._receipt(submit, "reconciliation_required")
                     return
@@ -827,8 +902,22 @@ class NativeOrderGateway:
                 self.last_error = "Lighter final cumulative fill evidence is unavailable; order remains unresolved"
                 self._request_final_evidence(owned, cached, now_ns)
                 return
-        elif owned["processed_qty"] == Fraction(submit.quantity):
-            final_quantity, final_source = _decimal(submit.quantity), "fully_filled_order"
+        else:
+            final_quantity = _decimal(cached.filled_qty)
+            if not owned["processed_qty"] <= Fraction(final_quantity) <= Fraction(submit.quantity):
+                return
+            final_source = "fully_filled_order" if owned["processed_qty"] == Fraction(submit.quantity) else "native_terminal_order"
+        if (Fraction(final_quantity) != owned["processed_qty"]
+                or Fraction(_decimal(cached.filled_qty)) != owned["processed_qty"]
+                or final_source == "lighter_websocket_terminal_order"):
+            # Proven lifecycle closure is independent of delivery of trade details.
+            # It permits a fresh flat-account boundary, never synthetic economics.
+            if not owned.get("execution_closed_reported"):
+                self._receipt(submit, "execution_closed", final_quantity=final_quantity,
+                    final_source=final_source, native_status=str(cached.status).split(".")[-1].lower())
+                owned["execution_closed_reported"] = True
+            self._request_final_evidence(owned, cached, now_ns)
+            return
         kind, intent = pending
         already_terminal = any((submit.request_id, k, "") in self.emitted for k in ("terminal", "rejected"))
         diagnostic = owned.get("terminal_diagnostic", {})
@@ -842,9 +931,20 @@ class NativeOrderGateway:
                 owned["needs_final_query"] = False
             elif self._receipt(submit, "terminal_evidence", final_quantity=final_quantity, final_source=final_source):
                 owned["needs_final_query"] = False
+        # Once lifecycle and quantity agree, only missing fees need background
+        # queries. Completed old orders must not be polled forever.
+        owned["needs_final_query"] = bool(owned.get("pending_fee_ids"))
 
     @timed("gateway.poll")
     def poll(self, now_ns):
+        if self.closed:
+            return
+        try:
+            self._poll_observations(now_ns)
+        finally:
+            self._poll_order_queries(now_ns)
+
+    def _poll_observations(self, now_ns):
         if self.closed:
             return
         # Expire before consuming a newly available result: completion after
@@ -852,8 +952,8 @@ class NativeOrderGateway:
         self._expire_account_reads(now_ns)
         control = self.native_controls.get("BACKPACK")
         if control is not None:
-            # Native fill consumption durably checkpoints real cache/receipt facts.
-            # Without this ACK Backpack intentionally retains outstanding reservations.
+            # Preserve actual economics independently of inactive order capacity.
+            # Storage failures still fence new financial writes.
             try:
                 wall_ms = time.time_ns() // 1_000_000
                 if wall_ms >= self.next_authority_renewal_ms:
@@ -927,6 +1027,8 @@ class NativeOrderGateway:
                     self.terminals[cid] = ("terminal", owned["intent"])
         for cid in tuple(self.terminals):
             self._flush_terminal(cid, now_ns)
+
+    def _poll_order_queries(self, now_ns):
         for request in tuple(self.requests.values()):
             intent = request["intent"]
             if intent.action in {"connect", "reconcile"}:
@@ -938,12 +1040,14 @@ class NativeOrderGateway:
                 continue
             if now_ns - request["queried_ns"] >= self.timeout_ns and intent.client_order_id in self.orders:
                 request["queried_ns"] = now_ns
-                self._receipt(intent, "unknown", reason_code="receipt_timeout", reason_source="python_timeout")
+                owned = self.orders[intent.client_order_id]
+                order = self._cached(intent.client_order_id) or owned["native"]
                 try:
-                    order = self._cached(intent.client_order_id) or self.orders[intent.client_order_id]["native"]
-                    self.strategy.query_order(order, client_id=self._client(intent.venue))
+                    self._receipt(intent, "unknown", reason_code="receipt_timeout", reason_source="python_timeout")
                 except Exception:
-                    self.last_error = "original-ID order query failed; submission remains unresolved"
+                    self.last_error = "timeout callback failed; original-ID query remains active"
+                finally:
+                    self._query_original(owned, order, now_ns)
 
     @timed("shutdown.gateway_close")
     def close(self):

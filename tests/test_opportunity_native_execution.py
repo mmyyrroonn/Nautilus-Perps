@@ -92,19 +92,19 @@ def test_partial_fill_cancel_terminal_waits_for_distinct_fills(harness):
     cached = strategy.cached["owned-1"]
     cached.is_closed, cached.status, cached.filled_qty = True, "CANCELED", D(".007")
     gateway.on_native_event("canceled", event(), 1_000_000_002)
-    assert receipts == []
+    assert [r.kind for r in receipts] == ["execution_closed"]
     gateway.on_native_event("filled", event(trade_id="trade-1", order_side="BUY",
         last_qty=D(".003"), last_px=D("100"), commission=None), 1_000_000_003)
     gateway.on_native_event("filled", event(trade_id="trade-1", order_side="BUY",
         last_qty=D(".003"), last_px=D("100"), commission=None), 1_000_000_004)
-    assert [r.kind for r in receipts] == ["fill"]
+    assert [r.kind for r in receipts] == ["execution_closed", "fill"]
     gateway.on_native_event("filled", event(trade_id="trade-2", order_side="BUY",
         last_qty=D(".004"), last_px=D("101"), commission=None), 1_000_000_005)
-    assert [r.kind for r in receipts] == ["fill", "fill", "canceled", "terminal"]
+    assert [r.kind for r in receipts] == ["execution_closed", "fill", "fill", "canceled", "terminal"]
     assert receipts[-2].request_id == "cancel-1" and receipts[-1].request_id == "submit-1"
     assert len(fills) == 2 and fills[0]["quantity"] == D(".003")
     gateway.poll(1_000_000_006)
-    assert len(receipts) == 4
+    assert len(receipts) == 5
 
 
 def test_conflicting_duplicate_fill_is_not_silently_accepted(harness):
@@ -325,8 +325,8 @@ def test_restart_cached_original_is_only_queried_and_missing_fills_block_termina
         filled_qty=D(".003"), is_closed=True, status="FILLED", venue_order_id="77")
     assert gateway.restore_pending(intent(), [], 1_000_000_000) is True
     gateway.poll(1_000_000_001)
-    assert [c[0] for c in strategy.calls] == ["query"]
-    assert [r.kind for r in receipts] == ["unknown"]
+    assert [c[0] for c in strategy.calls] == ["query", "query"]
+    assert [r.kind for r in receipts] == ["unknown", "execution_closed"]
 
 
 def test_restart_decimal_strings_deduplicate_native_replay(harness):
@@ -439,6 +439,7 @@ def test_actual_five_venue_builder_preserves_native_config_and_caps_offline(tmp_
         assert ondo.continuous_execution.max_gross_exposure_usd == D(500)
         assert len(ondo.continuous_execution.instrument_ids) == 2
         backpack = next(c for name, _, c in configs if name == "BACKPACK")
+        assert backpack.account_config.recovery_interval_ms == 5000
         assert backpack.authority.max_order_notional == "100" and backpack.authority.max_reserved_notional == "500"
         assert set(controls) == {"ONDO", "BACKPACK", "LIGHTER"}
         assert controls["LIGHTER"].terminal_fill_evidence_json("unsubmitted-order") is None

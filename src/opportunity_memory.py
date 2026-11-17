@@ -116,6 +116,8 @@ class MemoryDiagnostics:
         self.previous_sample_ns = None
         self.books = None
         self.account_checks = None
+        self.native_admission = {}
+        self.backpack_public_health = {}
         self.next_book_sample_ns = 0
         self.counters = {venue: {"batches": 0, "price_updates": 0} for venue in VENUES}
         self.latencies = {venue: deque(maxlen=LATENCY_SAMPLES) for venue in VENUES}
@@ -158,6 +160,23 @@ class MemoryDiagnostics:
             self.books = summarize_books(observer, state, now_ns)
             self.account_checks = {domain: dict(row)
                                    for domain, row in getattr(state, "account_check_metrics", {}).items()}
+            public = getattr(observer, "backpack_public_health", {})
+            self.backpack_public_health = {key: public.get(key) for key in (
+                "connection_epoch", "connected", "metadata_ready", "stale_reason",
+                "last_fault_reason", "last_fault_epoch", "recovery_timeouts")}
+            self.backpack_public_health.update({key: public[key] for key in (
+                "input_queue_high_water", "input_queue_overflows", "max_queue_wait_ns") if key in public})
+            if "fault_history" in public:
+                self.backpack_public_health["fault_history"] = [
+                    {key: row.get(key) for key in ("unix_ns", "epoch", "reason", "queued_frames", "max_queue_wait_ns")}
+                    for row in public["fault_history"][-32:]]
+            self.native_admission = {venue: {
+                "checked_ns": row.get("checked_ns"), "global_ready": row.get("global_ready"),
+                "reason": row.get("reason"),
+                "all_markets_ready": row.get("ready"), "market_count": len(row.get("markets", {})),
+                "ready_instruments": sorted(key for key, market in row.get("markets", {}).items()
+                                            if market.get("ready") is True),
+            } for venue, row in getattr(state, "native_admission", {}).items()}
         except Exception:
             self.errors += 1
 
@@ -216,6 +235,8 @@ class MemoryDiagnostics:
             "native_rates": rates, "market_batches": batches, "books": books,
             "processing_timings": timing,
             "account_checks": self.account_checks,
+            "native_admission": self.native_admission,
+            "backpack_public_health": self.backpack_public_health,
             "market_timer": timer,
             "book_sample_age_ms": None if books is None else (now_ns - books["sampled_at_unix_ns"]) / 1e6,
             "notes": ["Queue depth counts events; one book event can contain many price updates.",

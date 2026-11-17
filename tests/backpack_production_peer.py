@@ -74,6 +74,9 @@ class ProductionPeer:
         self.delete_received = asyncio.Event()
         self.release_fill = asyncio.Event()
         self.fault_used = False
+        self.history_gate = None
+        self.metadata_gate = None
+        self.history_waiting = asyncio.Event()
 
     async def __aenter__(self):
         self.http = await asyncio.start_server(self.request, "127.0.0.1", 0)
@@ -131,6 +134,8 @@ class ProductionPeer:
             if self.fault == "postfill_policy" and any(self.net.values()):
                 # A newly read signed policy may become inadmissible after a valid fill.
                 body["autoBorrowSettlements"] = True
+            if self.fault == "postfill_auto_lend" and any(self.net.values()):
+                body["autoLend"] = True
             return body
         if path == "/api/v1/capital":
             return {"USDC": {"available": "1000", "locked": "0", "staked": "0"}}
@@ -192,6 +197,8 @@ class ProductionPeer:
             else:
                 assert not any(key.startswith("x-") for key in headers)
             if path == "/api/v1/markets":
+                if self.metadata_gate is not None:
+                    await self.metadata_gate.wait()
                 rows = []
                 for symbol in SYMBOLS:
                     row = deepcopy(MARKET)
@@ -204,6 +211,9 @@ class ProductionPeer:
             if path in INSTRUCTIONS and "/history/" not in path:
                 return await self.response(writer, self.account_body(path))
             if "/history/" in path:
+                if self.history_gate is not None:
+                    self.history_waiting.set()
+                    await self.history_gate.wait()
                 rows = self.fills if path.endswith("fills") else self.history
                 symbol = params.get("symbol")
                 rows = [deepcopy(row) for row in rows if symbol is None or row["symbol"] == symbol]

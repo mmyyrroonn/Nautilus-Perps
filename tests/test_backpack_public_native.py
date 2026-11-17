@@ -205,6 +205,56 @@ def test_installed_native_external_cancellation_writes_evidence_and_closes_trans
     asyncio.run(scenario())
 
 
+def test_installed_native_recovers_after_public_bootstrap_budget_expires(tmp_path, monkeypatch):
+    require_native()
+    import nautilus_trader.adapters.backpack as adapter
+    original = adapter.BackpackDataClientConfig
+
+    def bounded_config(*args, **kwargs):
+        kwargs.update(ws_connect_timeout_secs=1, reconnect_timeout_secs=2)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "BackpackDataClientConfig", bounded_config)
+
+    class RecoveryPeer(PublicPeer):
+        def __init__(self):
+            super().__init__()
+            self.metadata_delay_secs = 0
+            self.current_socket = None
+
+        async def request(self, reader, writer):
+            if self.metadata_delay_secs:
+                await asyncio.sleep(self.metadata_delay_secs)
+            await super().request(reader, writer)
+
+        async def stream(self, ws):
+            self.current_socket = ws
+            await super().stream(ws)
+
+    async def scenario():
+        async with RecoveryPeer() as peer:
+            task = asyncio.create_task(run_public(plan_for(peer, tmp_path, duration=8)))
+            await asyncio.wait_for(peer.ready.wait(), 4)
+            peer.metadata_delay_secs = 5
+            await peer.current_socket.close()
+            await asyncio.sleep(3.2)
+            peer.metadata_delay_secs = 0
+            summary, path = await asyncio.wait_for(task, 15)
+            assert summary["status"] == "completed" and summary["shutdown_complete"], summary
+            rows = records(path)
+            health = [row["health"] for row in rows if row["kind"] == "native_health"]
+            exhausted = next(i for i, h in enumerate(health) if h["recovery_timeouts"] > 0)
+            assert not health[exhausted]["connected"]
+            assert not health[exhausted]["quotes_fresh"]
+            assert any(h["connected"] and h["quotes_fresh"].get(SYMBOL)
+                       for h in health[exhausted + 1:]), health
+            assert any(h["last_fault_reason"] == "metadata refresh failed" for h in health)
+            assert summary["native_health"]["recovery_timeouts"] > 0
+            assert not summary["native_health"]["connected"] and peer.active == 0
+            peer.assert_public_only()
+    asyncio.run(scenario())
+
+
 def test_installed_native_failed_startup_publishes_failure_without_private_requests(tmp_path):
     require_native()
     async def scenario():

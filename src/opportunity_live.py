@@ -10,7 +10,11 @@ from opportunity_timing import (begin_entry_trace, record_entry_stage, record_la
                                 span, start_latency, timed)
 from opportunity_entry_evidence import entry_pair_result
 from opportunity_leverage import leverage_check, leverage_integer
+from opportunity_lighter_margin import margin_check
 from opportunity_entry_admission import EntryAdmissionPolicy
+from opportunity_history import (apply_commission_update, archive_flat_positions, historical_receipt,
+    order_has_execution_risk, position_orders, record_execution_closed, record_historical_conflict,
+    refresh_historical_economics)
 
 from collections import Counter
 from copy import deepcopy
@@ -114,6 +118,7 @@ class LiveTradeState(ScanState):
         self.pricer.books, self.pricer.metadata = self.books, self.metadata
         self.store, self.event_sink = store, event_sink
         self.positions, self.orders, self.executions, self.last_closed = {}, {}, {}, {}
+        self._execution_orders = {}
         self.instruments, self.accounts, self.account_requests = {}, {}, {}
         self.account_request_ids, self.account_last_reads, self.account_pauses = {}, {}, {}
         # The runner binds exactly one locked account per venue. Every configured
@@ -140,12 +145,15 @@ class LiveTradeState(ScanState):
         self.sequence = self.request_sequence = self.completed = 0
         self.realized_net = F(0)
         self.pending_economics = {}
+        self.historical_positions = {}
         self.legacy_realized_net = None
         self.event_counts = Counter()
         self.phase, self.halt_reason = "waiting_preflight", None
         self.order_reconciliations = {}
         self.validated_final_orders = set()  # Current-process order evidence only.
         self.cleanup_allowed = True
+        self.persistence_failed = False
+        self.diagnostic_failures = 0
         self.stopping = False
         self.entry_pause_reason = None
         # Current-process observations only; an old ledger cannot grant admission.
@@ -167,6 +175,7 @@ class LiveTradeState(ScanState):
         if saved["schema_version"] == 2:
             self.realized_net = F(saved["realized_net_usd"])
             self.pending_economics = deepcopy(saved["pending_economics"])
+            self.historical_positions = deepcopy(saved.get("historical_positions", {}))
             self.legacy_realized_net = saved.get("legacy_realized_net_usd")
         elif self.completed:
             # V1 aggregates can include estimated fees and have no per-pair
@@ -174,6 +183,7 @@ class LiveTradeState(ScanState):
             self.legacy_realized_net = saved["realized_net_usd"]
         self.event_counts.update(saved["event_counts"])
         self.orders, self.executions = deepcopy(saved["orders"]), deepcopy(saved["executions"])
+        self._execution_orders = {cid: order for cid, order in self.orders.items() if order_has_execution_risk(order)}
         self.order_reconciliations = deepcopy(saved.get("order_reconciliations", {}))
         self.leverage_rejections = deepcopy(saved.get("leverage_rejections", {}))
         for instrument, evidence in saved.get("aster_leverage_initializations", {}).items():
@@ -203,7 +213,7 @@ class LiveTradeState(ScanState):
             position.setdefault("unhedged_base", _number(delta))
             self.positions[key] = position
         # Process-local account evidence and pending dispatches are never replayed.
-        if any(o["terminal_ns"] is None for o in self.orders.values()):
+        if any(order_has_execution_risk(o) for o in self.orders.values()):
             self.phase = "recovery_blocked"
             self.halt_reason = "unresolved persisted order IDs require execution reconciliation"
         else:
@@ -234,6 +244,7 @@ class LiveTradeState(ScanState):
             "sequence": self.sequence, "request_sequence": self.request_sequence,
             "completed": self.completed, "realized_net_usd": _number(self.realized_net),
             "pending_economics": self.pending_economics,
+            "historical_positions": self.historical_positions,
             "legacy_realized_net_usd": self.legacy_realized_net,
             "event_counts": dict(self.event_counts), "positions": list(self.positions.values()),
             "orders": self.orders, "executions": self.executions, "fences": self.fences,
@@ -256,17 +267,26 @@ class LiveTradeState(ScanState):
                           "observed_ns": now_ns, **fields})
         self.event_counts[kind] += 1
         try:
-            if self.store:
+            if self.store and not self.persistence_failed:
                 self.store.save(self.snapshot(), [event])
-            if self.event_sink:
-                self.event_sink(event)
         except Exception:
             self.halt_reason = "ledger persistence failed"
-            self.cleanup_allowed = False
-            self.outbox.clear()
+            self.persistence_failed = True
+            # A broken journal closes entry admission, never the reduction loop.
+            # Keep process-local identities; a restart still requires reconciliation.
+            for intent in self.outbox:
+                order = self.orders.get(intent.client_order_id)
+                if intent.action == "submit" and not intent.reduce_only and order is not None:
+                    order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
+            self.outbox = [i for i in self.outbox if i.action != "submit" or i.reduce_only]
             self.entry_timings.clear()
             self.entry_clocks.clear()
-            raise
+        if self.event_sink:
+            try:
+                self.event_sink(event)
+            except Exception:
+                self.diagnostic_failures += 1
+                self.halt_reason = self.halt_reason or "diagnostic persistence failed"
 
     def activate(self, now_ns):
         if self.halt_reason or self.order_reconciliations or self.phase == "recovery_blocked":
@@ -290,7 +310,7 @@ class LiveTradeState(ScanState):
         """
         representatives = [self._account_representative(instruments) for instruments in self.account_scopes.values()]
         self.flat_account_problems = {}
-        ready = not self.positions and not any(o["terminal_ns"] is None for o in self.orders.values())
+        ready = not self.positions and not any(self.execution_orders())
         for instrument in representatives:
             account = self.accounts.get(instrument)
             reason = self._account_problem(instrument, now_ns, check_age=False)
@@ -373,6 +393,8 @@ class LiveTradeState(ScanState):
             status = dict(status)
             if not 0 <= now_ns - status["checked_ns"] <= self.native_admission_max_age_ns:
                 status.update(ready=False, reason="native_admission_stale")
+                if "global_ready" in status:
+                    status.update(global_ready=False, markets={})
             previous = self.native_admission.get(venue)
             self.native_admission[venue] = status
             previous_fresh = previous is not None and (
@@ -391,6 +413,18 @@ class LiveTradeState(ScanState):
         age = now_ns - status["checked_ns"]
         if age < 0 or age > self.native_admission_max_age_ns:
             return "native_admission_stale"
+        if "global_ready" in status:
+            if status["global_ready"] is not True:
+                return status["reason"]
+            for instrument_id in instrument_ids:
+                if self.markets[instrument_id].venue != "BACKPACK":
+                    continue
+                row = status.get("markets", {}).get(instrument_id)
+                if row is None:
+                    return "native_market_admission_unavailable"
+                if row["ready"] is not True:
+                    return row["reason"]
+            return None
         return None if status["ready"] is True else status["reason"]
 
     def discard_native_entry(self, intent, now_ns, *, dispatched=()):
@@ -434,16 +468,24 @@ class LiveTradeState(ScanState):
             # An unresolved entry may still fill its entire persisted limit.
             for cid in position["entry_ids"]:
                 order = self.orders[cid]
-                if order["terminal_ns"] is None:
+                if order_has_execution_risk(order):
                     market = self.markets[order["instrument_id"]]
                     multiplier = F(position["entry"][f"{order['leg']}_metadata"]["multiplier"]) / F(market.canonical_multiplier)
                     value += (F(order["quantity"]) - F(order["filled_quantity"])) * F(order["price"]) * multiplier * F(market.quote_to_usd)
             total += max(value, F(position["reserved_gross_usd"])) if reserve else value
         return total
 
+    def execution_orders(self):
+        # History remains durable but never joins per-tick risk scans. Terminal
+        # callbacks and local dispatch refusals are pruned lazily in one place.
+        for cid, order in tuple(self._execution_orders.items()):
+            if order_has_execution_risk(order):
+                yield order
+            else:
+                self._execution_orders.pop(cid, None)
+
     def _pending(self, instrument_id):
-        return [o for o in self.orders.values() if o["instrument_id"] == instrument_id
-                and o["terminal_ns"] is None]
+        return [o for o in self.execution_orders() if o["instrument_id"] == instrument_id]
 
     def _initialize_leverage_targets(self, now_ns, instrument_id=None):
         """Resolve only missing targets, once, from verified account settings."""
@@ -466,6 +508,20 @@ class LiveTradeState(ScanState):
                 self.aster_leverage_pending.discard(instrument)
 
     def leverage_problem(self, instrument_id, price, quantity, now_ns):
+        if self.markets[instrument_id].venue == "LIGHTER":
+            account = self.accounts.get(instrument_id)
+            reason, evidence = margin_check(account.lighter_margin if account else None,
+                instrument_id, now_ns, self.aster_leverage_max_age_ns)
+            if reason:
+                self._request_account(instrument_id, now_ns)
+                if self.leverage_blocks.get(instrument_id) != reason:
+                    self.leverage_blocks[instrument_id] = reason
+                    self.emit("margin_admission_blocked", now_ns, instrument_id=instrument_id,
+                              reason=reason, evidence=evidence)
+            elif instrument_id in self.leverage_blocks:
+                self.leverage_blocks.pop(instrument_id, None)
+                self.emit("margin_admission_recovered", now_ns, instrument_id=instrument_id, evidence=evidence)
+            return reason, evidence
         if self.markets[instrument_id].venue != "ASTER":
             return None, {}
         target = self.aster_leverage_targets.get(instrument_id)
@@ -546,7 +602,7 @@ class LiveTradeState(ScanState):
 
     def resume_exits(self, account, now_ns):
         """Wake only existing inventory work after an account read completes."""
-        if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
+        if self.phase not in {"active", "draining", "recovery_blocked"}:
             return
         covered = set(self._account_coverage(account))
         for key, position in tuple(self.positions.items()):
@@ -742,9 +798,9 @@ class LiveTradeState(ScanState):
         """Release only the late-fill fence after durable order and account proof."""
         if not self.order_reconciliations or not self.cleanup_allowed:
             return
-        if any(o["terminal_ns"] is None or o["status"] == "unknown" for o in self.orders.values()):
+        if any(self.execution_orders()):
             return
-        if self.pending_economics or any(p["unknown_commission"] for p in self.positions.values()):
+        if any(p["unknown_commission"] for p in self.positions.values()):
             return
         for cid in self.order_reconciliations:
             order = self.orders[cid]
@@ -851,6 +907,7 @@ class LiveTradeState(ScanState):
                             position_quantity=positions.get(covered, Decimal(0)),
                             open_order_ids=tuple(cid for i, cid in account.account_open_orders if i == covered),
                             bid=None, ask=None, book_observed_ns=None)
+        archive_flat_positions(self, now_ns)
         problem = self._account_problem(instrument_id, now_ns)
         self.emit("account_read_completed", now_ns, instrument_id=instrument_id, request_id=request_id,
                   requested_ns=requested_ns, read_started_ns=account.observed_ns,
@@ -938,6 +995,7 @@ class LiveTradeState(ScanState):
             "preparation_account_fence_ns": self.fences.get(instrument_id, 0),
             "accepted_ns": None, "first_fill_ns": None, "terminal_ns": None,
             "status": "prepared", "filled_quantity": "0"}
+        self._execution_orders[cid] = self.orders[cid]
         self.fences[instrument_id] = now_ns
         self.last_attempt[instrument_id] = now_ns
         position[f"{purpose}_ids"].append(cid)
@@ -968,6 +1026,15 @@ class LiveTradeState(ScanState):
                       if any(self.orders[i.client_order_id]["purpose"] == "entry" for i in intents) else None)
         for intent in intents:
             record_entry_stage(intent.request_id, "persisted", capture_wall=True)
+        if self.halt_reason or self.persistence_failed:
+            retained = []
+            for intent in intents:
+                if intent.reduce_only:
+                    retained.append(intent)
+                else:
+                    order = self.orders[intent.client_order_id]
+                    order.update(terminal_ns=now_ns, status="local_not_dispatched")
+            intents = retained
         self.outbox.extend(intents)
         if intents and self.intent_notifier is not None:
             for intent in intents:
@@ -978,7 +1045,7 @@ class LiveTradeState(ScanState):
 
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
-        if self.entry_pause_reason:
+        if self.entry_pause_reason or self.halt_reason or self.persistence_failed:
             return False
         if self.native_entry_problem((buy_id, sell_id), now_ns) is not None:
             return False
@@ -1102,7 +1169,8 @@ class LiveTradeState(ScanState):
         return True
 
     def _position(self, position_id):
-        return next((p for p in self.positions.values() if p["position_id"] == position_id), None)
+        return next((p for p in self.positions.values() if p["position_id"] == position_id),
+                    self.historical_positions.get(str(position_id)))
 
     @timed("strategy.fill")
     def on_fill(self, fill, now_ns):
@@ -1114,6 +1182,7 @@ class LiveTradeState(ScanState):
             return
         instrument_id, leg = order["instrument_id"], order["leg"]
         position = self._position(order["position_id"])
+        historical = str(order["position_id"]) in self.historical_positions
         identity = f"{self.markets[instrument_id].venue}:{cid}:{fill['trade_id']}"
         quantity = F(_positive(fill.get("native_qty", fill.get("quantity")), "fill quantity"))
         price = F(_positive(fill.get("native_price", fill.get("price")), "fill price"))
@@ -1122,11 +1191,19 @@ class LiveTradeState(ScanState):
                      "commission_currency": str(fill.get("commission_currency"))}
         if identity in self.executions:
             if self.executions[identity] != signature:
+                if apply_commission_update(self, position, order, fill, identity, signature, now_ns):
+                    return
+                if historical:
+                    record_historical_conflict(self, position, order, now_ns, signature)
+                    return
                 self.halt_reason = "conflicting execution replay"
                 self.emit("conflicting_fill", now_ns, execution_id=identity)
             return
         if (position is None or fill["instrument_id"] != instrument_id or fill["side"] != order["side"]
                 or F(order["filled_quantity"]) + quantity > F(order["quantity"])):
+            if historical:
+                record_historical_conflict(self, position, order, now_ns, signature)
+                return
             self.halt_reason = "execution violates persisted order ownership"
             self.emit("invalid_fill", now_ns, client_order_id=cid, execution_id=identity)
             return
@@ -1134,10 +1211,12 @@ class LiveTradeState(ScanState):
         base = quantity * F(position["entry"][f"{leg}_metadata"]["multiplier"])
         cash = quantity * price * F(native["native_multiplier"]) * F(market.quote_to_usd)
         remaining_field = f"remaining_{leg}_base"
-        if order["purpose"] != "entry" and base > F(position[remaining_field]):
-            self.halt_reason = "exit fill exceeds confirmed pair inventory"
-            self.emit("invalid_exit_fill", now_ns, client_order_id=cid)
-            return
+        unmatched_field = f"unmatched_exit_{leg}_base"
+        unmatched = F(position.get(unmatched_field, "0"))
+        if not historical and order["purpose"] != "entry" and base > F(position[remaining_field]):
+            # Exit confirmation may precede a delayed entry fill. Retain the true
+            # execution and its economic debt; never discard a real risk reduction.
+            self.halt_reason = self.halt_reason or "exit fill precedes owned entry reconciliation"
         fee_amount, fee_currency = fill.get("commission_amount"), fill.get("commission_currency")
         stable_parity = (market.quote_to_usd == 1 and
             {fee_currency, native["quote_currency"]} <= {"USD", "USDC", "USDT"})
@@ -1166,7 +1245,10 @@ class LiveTradeState(ScanState):
                 "fee_source": meta.fee_source if estimated_fee is not None else None,
             }
         if order["purpose"] == "entry":
-            position[remaining_field] = _number(F(position[remaining_field]) + base)
+            offset = min(unmatched, base)
+            if offset:
+                position[unmatched_field] = _number(unmatched - offset)
+            position[remaining_field] = _number(F(position[remaining_field]) + base - offset)
             position[f"entry_{leg}_base"] = _number(F(position[f"entry_{leg}_base"]) + base)
             actual = position["actual_entry"]
             actual[f"{leg}_notional_usd"] = _number(F(actual[f"{leg}_notional_usd"]) + cash)
@@ -1174,7 +1256,10 @@ class LiveTradeState(ScanState):
             if position["opened_ns"] is None:
                 position["opened_ns"] = now_ns
         else:
-            position[remaining_field] = _number(F(position[remaining_field]) - base)
+            remaining = F(position[remaining_field]) - base
+            if remaining < 0:
+                position[unmatched_field] = _number(unmatched - remaining)
+            position[remaining_field] = _number(max(_ZERO, remaining))
             field = "closing_long_cash_usd" if leg == "buy" else "closing_short_cash_usd"
             position[field] = _number(F(position[field]) + cash)
             position["closing_fees_usd"] = _number(F(position["closing_fees_usd"]) + fee)
@@ -1182,6 +1267,16 @@ class LiveTradeState(ScanState):
         order["filled_quantity"] = _number(F(order["filled_quantity"]) + quantity)
         record_entry_stage(order["request_id"], "strategy_fill", wall_ns=now_ns)
         order["first_fill_ns"] = order["first_fill_ns"] or now_ns
+        if historical:
+            # The original order can no longer execute. Delayed details belong
+            # to its old position, never the replacement pair or current fences.
+            refresh_historical_economics(self, position, now_ns)
+            self.emit("historical_fill", now_ns, execution_id=identity,
+                position_id=position["position_id"], client_order_id=cid,
+                native_quantity=_number(quantity), native_price=_number(price),
+                fee_usd=_number(fee) if known_fee else None,
+                accounting_pending=not position["historical_economics_complete"])
+            return
         self.fences[instrument_id] = now_ns
         if order["terminal_ns"] is not None:
             # Preserve the late inventory, stop admission and demand a new read.
@@ -1224,6 +1319,11 @@ class LiveTradeState(ScanState):
         order = self.orders.get(receipt.client_order_id)
         if order is None or receipt.request_id != order["request_id"] or receipt.kind == "fill":
             return
+        if receipt.kind == "execution_closed":
+            record_execution_closed(self, order, receipt, now_ns)
+            return
+        if historical_receipt(self, order, receipt, now_ns):
+            return
         if (self.markets[order["instrument_id"]].venue == "ASTER"
                 and receipt.kind in {"configuration_rejected", "rejected", "denied"}
                 and receipt.reason_code == "leverage_configuration"
@@ -1260,10 +1360,18 @@ class LiveTradeState(ScanState):
         if receipt.kind in TERMINALS or receipt.kind == "terminal_evidence":
             final = receipt.final_filled_quantity
             if final is not None and receipt.final_fill_source in {
-                    "lighter_websocket_terminal_order", "lighter_http_order_status", "fully_filled_order"}:
+                    "lighter_websocket_terminal_order", "lighter_http_order_status", "fully_filled_order",
+                    "native_terminal_order", "lighter_submission_rejected", "native_order_denied"}:
                 final = F(final)
                 if (final < 0 or final > F(order["quantity"]) or final != F(order["filled_quantity"])
-                        or (receipt.final_fill_source == "fully_filled_order" and final != F(order["quantity"]))):
+                        or (receipt.final_fill_source == "fully_filled_order" and final != F(order["quantity"]))
+                        or (receipt.final_fill_source in {"lighter_submission_rejected", "native_order_denied"} and (
+                            final != 0
+                            or (receipt.final_fill_source == "lighter_submission_rejected"
+                                and not order["instrument_id"].endswith(".LIGHTER"))
+                            or (receipt.final_fill_source == "native_order_denied"
+                                and receipt.native_status != "denied")
+                            or receipt.kind not in {"rejected", "denied", "terminal_evidence"}))):
                     self.order_reconciliations[receipt.client_order_id] = {"since_ns": now_ns}
                     self.validated_final_orders.discard(receipt.client_order_id)
                     order.pop("final_fill_evidence", None)
@@ -1298,9 +1406,12 @@ class LiveTradeState(ScanState):
         elif receipt.kind == "unknown":
             if order["terminal_ns"] is None and order["status"] != "unknown":
                 order["status"] = "unknown"
+                order["unknown_ns"] = now_ns
+                self.fences[order["instrument_id"]] = max(self.fences.get(order["instrument_id"], 0), now_ns + 1)
                 self.emit("order_unknown", now_ns, client_order_id=receipt.client_order_id,
                           position_id=order["position_id"], reason_code=getattr(receipt, "reason_code", ""),
                           reason_source=getattr(receipt, "reason_source", ""))
+                self._request_account(order["instrument_id"], now_ns)
 
     def _pnl(self, position):
         actual = position["actual_entry"]
@@ -1331,13 +1442,13 @@ class LiveTradeState(ScanState):
                 "legacy_fee_accounting": position.get("legacy_fee_accounting", False)}
 
     def _hard_exit_reason(self, position, now_ns):
-        if position["opened_ns"] is None:
-            return None
-        age = now_ns - position["opened_ns"]
         if self.stopping:
             return "operator_stop"
         if self.halt_reason:
             return "execution_halt"
+        if position["opened_ns"] is None:
+            return None
+        age = now_ns - position["opened_ns"]
         if self.gross_exposure() > self.max_gross:
             return "exposure_limit"
         if age >= self.policy.force_close_after_secs * 1_000_000_000:
@@ -1413,8 +1524,46 @@ class LiveTradeState(ScanState):
             return "positive_after_wait"
         return None
 
+    def _target_exit_account(self, instrument_id, now_ns):
+        """Use only a current target position, independently of account-wide reconciliation."""
+        account = self.accounts.get(instrument_id)
+        if (account is not None and account.authoritative and account.connected
+                and 0 <= now_ns - account.observed_ns <= self.account_max_age_ns
+                and account.observed_ns >= self.fences.get(instrument_id, 0)):
+            return account
+        return None
+
+    def has_exit_risk(self, now_ns):
+        """Economic uncertainty alone cannot keep a flat process in its drain loop."""
+        # An unresolved entry can still create exposure; retain its query/cancel path.
+        if any(not o["reduce_only"] for o in self.execution_orders()):
+            return True
+        for position in self.positions.values():
+            for leg in ("buy", "sell"):
+                if not F(position[f"remaining_{leg}_base"]):
+                    continue
+                account = self._target_exit_account(position[f"{leg}_id"], now_ns)
+                if account is None or account.position_quantity:
+                    return True
+        return False
+
+    def _exit_quantity(self, position, leg, now_ns):
+        """Bound target-account reduction by this pair's original entry authorization."""
+        quantity = F(position[f"remaining_{leg}_base"])
+        account = self._target_exit_account(position[f"{leg}_id"], now_ns)
+        if account is None:
+            return quantity
+        target = F(account.position_quantity) * (1 if leg == "buy" else -1)
+        multiplier = F(position["entry"][f"{leg}_metadata"]["multiplier"])
+        pending_entry = sum((F(o["quantity"]) - F(o["filled_quantity"])
+                             for cid in position["entry_ids"]
+                             if (o := self.orders[cid])["leg"] == leg and o["terminal_ns"] is None), _ZERO)
+        unmatched = F(position.get(f"unmatched_exit_{leg}_base", "0"))
+        authorized = max(_ZERO, (quantity - unmatched) / multiplier + pending_entry)
+        return max(quantity, min(max(_ZERO, target), authorized) * multiplier)
+
     def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True,
-                         allow_pending_entry=False):
+                         allow_pending_entry=False, allow_unknown_reduction=False):
         instrument_id = position[f"{leg}_id"]
         if not qty:
             return None
@@ -1422,7 +1571,15 @@ class LiveTradeState(ScanState):
             self._exit_wait(position, leg, now_ns, "order_retry_throttled",
                             retry_at_ns=self.last_attempt[instrument_id] + self.retry_ns)
             return None
-        if not self._account_ready(instrument_id, now_ns,
+        if allow_unknown_reduction:
+            # Await only this leg's recent reduction response, not an account audit.
+            # Unknown outcomes are retried under the venue's reduce-only cap.
+            if any(o["position_id"] == position["position_id"] and o["purpose"] != "entry"
+                    and o["status"] != "unknown" and now_ns - o["sent_ns"] < self.order_timeout_ns
+                    for o in self._pending(instrument_id)):
+                self._exit_wait(position, leg, now_ns, "reduction_in_flight")
+                return None
+        elif not self._account_ready(instrument_id, now_ns,
                 pending_entry_owner=position["position_id"] if allow_pending_entry else None):
             account = self.accounts.get(instrument_id)
             problem = self._account_problem(instrument_id, now_ns)
@@ -1459,6 +1616,18 @@ class LiveTradeState(ScanState):
         delta = -native_remaining if leg == "buy" else native_remaining
         net = self.expected_native(instrument_id)
         reducing = net * delta < 0 and abs(delta) <= abs(net)
+        if allow_unknown_reduction:
+            # Confirmed owned inventory is a finite fallback when account reads fail.
+            # A newer target reading can only tighten that bound, never adopt exposure.
+            reducing = True
+            account = self._target_exit_account(instrument_id, now_ns)
+            if account is not None:
+                native_position = F(account.position_quantity)
+                available = max(_ZERO, native_position if leg == "buy" else -native_position)
+                qty = min(qty, available * F(original["multiplier"]))
+                if not qty:
+                    self._exit_wait(position, leg, now_ns, "target_position_flat_or_opposite")
+                    return None
         bound = self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
                             now_ns, partial=True, reduce_only=reducing, require_fees=require_fees)
         if bound is None:
@@ -1524,10 +1693,16 @@ class LiveTradeState(ScanState):
             elif position["exit_reason"] not in HARD_EXITS:
                 return
         remains = [F(position[f"remaining_{leg}_base"]) for leg in ("buy", "sell")]
+        if position["exit_reason"] in HARD_EXITS:
+            remains = [self._exit_quantity(position, leg, now_ns) for leg in ("buy", "sell")]
         if not any(remains):
             position["status"] = "flat_pending"
             ready = [self._account_ready(i, now_ns) for i in ids]
-            if not all(ready):
+            if not all(ready) or any(F(position.get(f"unmatched_exit_{leg}_base", "0")) for leg in ("buy", "sell")):
+                return
+            if any(o["client_order_id"] in self.order_reconciliations for o in position_orders(self, position)):
+                # Keep ownership until the stronger flat-account archive path
+                # releases the fence; fee arrival is not a prerequisite there.
                 return
             economics = self._economics(position)
             self.positions.pop(key)
@@ -1536,8 +1711,11 @@ class LiveTradeState(ScanState):
             if economics["fee_confirmed"]:
                 self.realized_net += F(economics["net_usd"])
             else:
-                self.pending_economics[str(position["position_id"])] = {
-                    **economics, "closed_ns": now_ns, "reason": position["exit_reason"]}
+                position.update(status="historical", risk_closed_ns=now_ns,
+                    historical_final_quantities={o["client_order_id"]: o["filled_quantity"]
+                        for o in position_orders(self, position)})
+                self.historical_positions[str(position["position_id"])] = position
+                refresh_historical_economics(self, position, now_ns)
             self.emit("closed", now_ns, position_id=position["position_id"], pair=list(key),
                       net_usd=economics["net_usd"], fee_confirmed=economics["fee_confirmed"],
                       provisional_net_usd=economics["provisional_net_usd"],
@@ -1567,23 +1745,27 @@ class LiveTradeState(ScanState):
         if position["exit_ids"] and remains[0] != remains[1] and position["exit_reason"] not in HARD_EXITS:
             position["exit_reason"] = "exit_imbalance"
             position["status"] = "exit_pending"
-        reason = self._exit_reason(position, now_ns)
+        reason = (self._hard_exit_reason(position, now_ns) if position["exit_ids"]
+                  else self._exit_reason(position, now_ns))
         if (position["status"] == "rebalancing" and position["exit_reason"] not in HARD_EXITS
                 and reason not in HARD_EXITS):
             self._rebalance_entry(position, now_ns)
             return
-        if position["exit_reason"] not in HARD_EXITS:
+        if position["exit_reason"] not in HARD_EXITS and not position["exit_ids"]:
             if reason is None:
                 position["status"], position["exit_reason"] = "open", None
                 return
             if position["exit_reason"] != reason:
                 position.update(status="exit_pending", exit_reason=reason, exit_requested_ns=now_ns)
                 self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=reason)
-        hard = position["exit_reason"] in HARD_EXITS
+        # Once any exit has been committed, remaining legs reduce independently.
+        # A partial profitable exit must not wait for the pair's profit or account gates again.
+        hard = position["exit_reason"] in HARD_EXITS or bool(position["exit_ids"])
         bounds = {}
         for leg, qty in zip(("buy", "sell"), remains):
             bound = self._reduction_bound(position, leg, qty, now_ns, require_fees=not hard,
-                                          allow_pending_entry=bool(position.get("unhedged_breach")))
+                                          allow_pending_entry=bool(position.get("unhedged_breach")),
+                                          allow_unknown_reduction=hard)
             if bound is not None:
                 bounds[leg] = bound
         if not bounds or (not hard and len(bounds) != sum(q > 0 for q in remains)):
@@ -1641,15 +1823,15 @@ class LiveTradeState(ScanState):
 
     @timed("strategy.evaluate_symbol")
     def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):
-        if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
+        if self.phase not in {"active", "draining", "recovery_blocked"}:
             return
         for key in tuple(self.positions):
             if key[0] == symbol:
                 self.observe(key, now_ns)
         if (self.stopping or self.entry_pause_reason or self.halt_reason or self.order_reconciliations or symbol not in self.trade_symbols
                 or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
-                o["terminal_ns"] is None and (o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns)
-                for o in self.orders.values())):
+                o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns
+                for o in self.execution_orders())):
             return
         affected = {changed_id} if changed_id is not None else changed_ids
         if self.positions or symbol in self.full_evaluation_symbols:
@@ -1666,11 +1848,12 @@ class LiveTradeState(ScanState):
 
     @timed("strategy.evaluation_timer")
     def on_evaluation_timer(self, now_ns):
-        if self.phase not in {"active", "draining"} or not self.cleanup_allowed:
+        if self.phase not in {"active", "draining", "recovery_blocked"}:
             return
-        self.reconcile_accounts(now_ns)
+        archive_flat_positions(self, now_ns)
         for key in tuple(self.positions):
             self.observe(key, now_ns)
+        self.reconcile_accounts(now_ns)
 
     def stop_entries(self, now_ns, reason="operator_stop"):
         self.stopping = True
@@ -1696,6 +1879,8 @@ class LiveTradeState(ScanState):
 
     def document(self):
         return {"mode": "live", "phase": self.phase, "halt_reason": self.halt_reason,
+                "persistence_failed": self.persistence_failed,
+                "diagnostic_failures": self.diagnostic_failures,
                 "order_reconciliations": deepcopy(self.order_reconciliations),
                 "entry_pause_reason": self.entry_pause_reason,
                 "native_admission": deepcopy(self.native_admission),
@@ -1717,7 +1902,10 @@ class LiveTradeState(ScanState):
                 "realized_net_scope": "closed pairs with confirmed commissions",
                 "pending_economics": deepcopy(self.pending_economics),
                 "legacy_realized_net_usd": self.legacy_realized_net,
-                "pending_orders": sum(o["terminal_ns"] is None for o in self.orders.values()),
+                "pending_orders": sum(order_has_execution_risk(o) for o in self.orders.values()),
+                "historical_positions": len(self.historical_positions),
+                "accounting_pending_orders": sum(o["terminal_ns"] is None and not order_has_execution_risk(o)
+                                                  for o in self.orders.values()),
                 "event_counts": dict(self.event_counts),
                 "net_native_by_instrument": {i: _number(self.expected_native(i)) for i in self.markets
                     if self.expected_native(i)}, "pnl_excludes": ["funding", "borrow_costs"],

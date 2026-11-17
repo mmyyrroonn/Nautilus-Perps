@@ -24,6 +24,9 @@ max_age_ms = 5000
 ```
 
 Manual targets accept integers from 1 to 125, subject to the current venue limit.
+Account settings retain the same supported range. Exchange tier ceilings are
+parsed separately as positive integers: a ceiling such as 150, 200, or 300 does
+not change the account setting or become the automatic target.
 The freshness budget defaults to 5000 ms and can be set from 1 to 15000 ms.
 Absent manual targets are resolved automatically. A missing, stale, failed, or
 already over-limit account proof cannot initialize a target; entry remains
@@ -49,6 +52,9 @@ Both candidate creation and each actual entry dispatch check the original two
 legs. The gate requires actual leverage to equal the explicit target and both
 to fit the tier for conservative projected exposure: existing absolute position
 plus the proposed quantity, valued at the greater of mark and order-limit price.
+A zero mark is accepted only for a verified zero position, where new exposure
+is valued at the order-limit price. A nonzero position still requires a positive
+mark; negative and nonfinite marks always invalidate the proof.
 An exact tier boundary uses the next tier; exceeding coverage blocks admission.
 The existing book, account, notional, unhedged-risk and native checks still run.
 No HTTP observation can guarantee that the venue will not change a limit after

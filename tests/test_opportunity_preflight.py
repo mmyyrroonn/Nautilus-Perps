@@ -220,6 +220,13 @@ def test_late_fill_on_prior_venue_is_not_ignored_when_next_venue_connects():
     assert state.result == "blocked"
     assert state.document()["late_residuals_by_venue"] == {"HL": "0.001"}
     assert state.owned_quantity == 0
+    original_read, = state.on_timer(NOW+1_000*MS)
+    assert original_read.venue == "HL" and original_read.action == "reconcile"
+    closing, = state.on_account(account(state, NOW+2_000*MS, quantity="0.001"), NOW+2_000*MS)
+    assert closing.venue == "HL" and closing.reduce_only and closing.quantity == D("0.001")
+    fill_terminal(state, closing, NOW+2_001*MS, execution_id="late-cleanup")
+    state.on_account(account(state, NOW+2_004*MS), NOW+2_004*MS)
+    assert state.result == "failed" and not state.has_exit_risk(NOW+2_004*MS)
 
 
 def test_accepted_ioc_is_not_a_fill_and_zero_fill_terminal_cannot_pass():
@@ -252,16 +259,16 @@ def test_duplicate_fill_does_not_double_inventory_and_disordered_receipt_cannot_
     assert state.owned_quantity == F(opening.quantity)
 
 
-def test_partial_open_below_conservative_close_minimum_stays_visible():
+def test_partial_open_below_entry_notional_minimum_still_attempts_reduce_only():
     state = machine((replace(market(), min_notional=D(0)),))
     # An exact two-lot requested minimum allows one confirmed lot to be closed.
     state = machine((replace(state.market, min_quantity=D("0.001"), min_notional=D("0.1")),))
     opening = reach_open(state)
     assert opening.quantity == D("0.002")
     fill_terminal(state, opening, NOW+10*MS, quantity="0.001")
-    # Preserve a partial below current notional minimum rather than claiming flat.
-    assert state.on_account(account(state, NOW+13*MS, quantity="0.001"), NOW+13*MS) == ()
-    assert state.result == "blocked" and state.owned_quantity == F("0.001")
+    closing, = state.on_account(account(state, NOW+13*MS, quantity="0.001"), NOW+13*MS)
+    assert closing.reduce_only and closing.quantity == D("0.001")
+    assert state.owned_quantity == F("0.001")
     assert state.document()["results"] == []
 
 
@@ -302,8 +309,9 @@ def test_partial_close_terminal_never_claims_flat_and_reconciles_residual():
     assert read.action == "reconcile"
     assert state.owned_quantity == F("0.031")
     assert state.result == "running" and state.document()["results"] == []
-    state.on_account(account(state, NOW+17*MS, quantity="0.031"), NOW+17*MS)
-    assert state.result == "blocked" and state.owned_quantity == F("0.031")
+    retry, = state.on_account(account(state, NOW+17*MS, quantity="0.031"), NOW+17*MS)
+    assert retry.reduce_only and retry.quantity == D("0.031")
+    assert state.owned_quantity == F("0.031")
 
 
 def test_modify_rejection_requests_only_own_cancel_and_does_not_pass():
@@ -312,7 +320,8 @@ def test_modify_rejection_requests_only_own_cancel_and_does_not_pass():
     adjust, = state.on_receipt(receipt(probe, "accepted"), NOW+3*MS)
     reconcile, = state.on_receipt(receipt(adjust, "rejected"), NOW+4*MS)
     assert reconcile.action == "reconcile"
-    cancel, = state.on_account(account(state, NOW+5*MS, orders=(probe.client_order_id,)), NOW+5*MS)
+    cancel, read = state.on_account(account(state, NOW+5*MS, orders=(probe.client_order_id,)), NOW+5*MS)
+    assert read.action == "reconcile"
     assert cancel.action == "cancel" and cancel.client_order_id == probe.client_order_id
     state.on_receipt(receipt(cancel, "canceled"), NOW+6*MS)
     state.on_account(account(state, NOW+7*MS), NOW+7*MS)
@@ -326,7 +335,9 @@ def test_uncertain_submission_preserves_identity_and_requires_reconciliation(kin
     read, = state.on_receipt(receipt(opening, kind), NOW+10*MS)
     assert read.action == "reconcile" and read.client_order_id == opening.client_order_id
     assert opening.client_order_id in state.document()["unresolved_client_order_ids"]
-    assert state.on_account(account(state, NOW+11*MS), NOW+11*MS) == ()
+    cancel, read = state.on_account(account(state, NOW+11*MS), NOW+11*MS)
+    assert cancel.action == "cancel" and read.action == "reconcile"
+    assert cancel.client_order_id == read.client_order_id == opening.client_order_id
     assert state.result == "blocked"
     assert sum(intent.action == "submit" and intent.time_in_force == "IOC"
                for intent in state.requests.values()) == 1
@@ -339,7 +350,8 @@ def test_timeout_reads_state_without_resubmitting_unknown_order():
     read, = state.on_timer(NOW+2*MS+1000*MS)
     assert read.action == "reconcile" and read.client_order_id == probe.client_order_id
     assert state.result == "blocked"
-    assert state.on_timer(NOW+3_000*MS) == ()
+    cancel, read = state.on_timer(NOW+3_000*MS)
+    assert cancel.action == "cancel" and read.action == "reconcile"
     assert len([intent for intent in state.requests.values() if intent.action == "submit"]) == 1
 
 
@@ -385,3 +397,24 @@ def test_native_quantity_multiplier_and_quote_conversion_are_included_in_cap():
     assert probe.quantity % D("0.001") == 0
     assert probe.quantity * 10 * probe.price >= 5
     assert probe.quantity * 10 * D("100.23") * D("1.01") <= 50
+
+
+def test_unknown_close_retries_past_attempt_threshold_despite_account_mismatch():
+    state = machine(max_close_attempts=1)
+    opening = reach_open(state)
+    fill_terminal(state, opening, NOW+10*MS, execution_id="opening")
+    closing, = state.on_account(account(state, NOW+13*MS, quantity=opening.quantity), NOW+13*MS)
+    state.on_receipt(receipt(closing, "unknown"), NOW+14*MS)
+    now = NOW+2_000*MS
+    retry, = state.on_account(account(state, now, quantity="0.03", orders=("foreign",)), now)
+    assert retry.reduce_only and retry.quantity == D("0.03")
+    assert state.close_attempts == 2 and state.has_exit_risk(now)
+    assert not state.orders[closing.client_order_id]["terminal"]
+    state.on_receipt(receipt(closing, "terminal"), now+MS)
+    assert state.orders[closing.client_order_id]["terminal"]
+    # No subsequent account response: a current book plus bounded owned quantity
+    # still permits a retry after the IOC timeout.
+    state.snapshot = replace(state.snapshot, book_observed_ns=now+20_000*MS)
+    later, = state.on_timer(now+20_000*MS)
+    assert later.reduce_only and later.quantity == opening.quantity
+    assert state.close_attempts == 3
