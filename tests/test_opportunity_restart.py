@@ -4,7 +4,6 @@ from dataclasses import replace
 from decimal import Decimal as D
 from pathlib import Path
 import json
-import sqlite3
 import sys
 
 import pytest
@@ -283,15 +282,27 @@ def test_sqlite_archival_and_new_session_are_atomic(tmp_path):
         store.connection.execute("""CREATE TRIGGER fail_restart BEFORE UPDATE ON state
             WHEN json_extract(NEW.snapshot, '$.live.session_id') != json_extract(OLD.snapshot, '$.live.session_id')
             BEGIN SELECT RAISE(ABORT, 'offline disk failure'); END""")
-        with pytest.raises(sqlite3.IntegrityError, match="offline disk failure"):
-            coordinator.tick(NOW + 1)
+        coordinator.tick(NOW + 1)
+        assert coordinator.failure == "runtime check failed: IntegrityError"
+        assert coordinator.finished and coordinator.stop_reason == "runtime_check_failed"
         assert proxy.restart_pending and live.phase != "active"
         assert store.load()["live"] == saved["live"]
         assert not store.connection.execute("SELECT 1 FROM events WHERE kind='previous_session_archived'").fetchall()
+        retained = store.load()
         store.connection.execute("DROP TRIGGER fail_restart")
+        # A failed startup stays stopped; retry through a fresh coordinator.
+        proxy = SessionStoreProxy(store, restart_from_flat=True)
+        live = LiveTradeState(template.plan.scan, template.plan.policy, max_pairs=1,
+                              max_gross_notional_usd="500", store=proxy)
+        coordinator = LiveCoordinator(template.plan, live, proxy)
+        coordinator.attach(FakeGateway())
         coordinator.tick(NOW + 2)
+        prove_accounts(coordinator, NOW + 3)
+        coordinator.tick(NOW + 3)
+        assert not proxy.restart_pending and coordinator.phase == "waiting_books"
+        assert not coordinator.finished
         payload, = store.connection.execute("SELECT payload FROM events WHERE kind='previous_session_archived'").fetchone()
-        assert json.loads(payload)["previous_session"] == saved
+        assert json.loads(payload)["previous_session"] == retained
         assert store.load()["live"]["session_id"] == live.session_id
     finally:
         store.close()

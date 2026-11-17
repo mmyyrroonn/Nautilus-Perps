@@ -608,13 +608,11 @@ class LiveCoordinator:
         self.live.on_account(snapshot, now_ns)
         self.live.resume_exits(snapshot, now_ns)
         if self.phase in {"preflight", "preflight_draining"}:
-            snapshot = getattr(self.preflight, "snapshot", None)
-            if snapshot is not None:
-                try:
-                    bid, ask, stamp = native_quote(self.live, snapshot.instrument_id, now_ns)
-                    self.preflight.snapshot = replace(snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
-                except ValueError:
-                    pass
+            try:
+                bid, ask, stamp = native_quote(self.live, snapshot.instrument_id, now_ns)
+                snapshot = replace(snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
+            except ValueError:
+                pass
             self._startup_intents(self.preflight.on_account(snapshot, now_ns), now_ns)
         self._live_intents(now_ns)
 

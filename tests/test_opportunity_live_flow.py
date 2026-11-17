@@ -128,7 +128,7 @@ def test_five_startup_checks_are_integrated_before_continuous_roundtrip(startup_
             break
         assert not live.positions
         assert not any(intent.client_order_id.startswith("L") for intent in transport.sent)
-    assert coordinator.phase == "active"
+    assert coordinator.phase == "active", coordinator.failure
     assert transport.balance_queries == (list(VENUES) if startup_balance_check else [])
     assert proxy.balance_check["result"] == ("passed" if startup_balance_check else "disabled")
     if startup_self_test:
