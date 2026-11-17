@@ -477,6 +477,7 @@ class LiveCoordinator:
         self.account_recovery_after_ns = None
         self.stop_requested_ns = None
         self.finished = False
+        self.startup_persistence_failed = False
         if proxy.saved:
             if not proxy.restart_pending:
                 raise ValueError("live restart must stage a fresh state before account reconciliation")
@@ -496,7 +497,22 @@ class LiveCoordinator:
             raise ValueError("explicit BTC self-test needs its preflight controller")
 
     def _startup_intents(self, intents, now_ns):
-        self.proxy.checkpoint_startup(self.preflight)
+        if not self.startup_persistence_failed:
+            try:
+                self.proxy.checkpoint_startup(self.preflight)
+            except Exception:
+                self.startup_persistence_failed = True
+        if self.startup_persistence_failed:
+            self.failure = "startup persistence failed; continuing risk reduction"
+            self.preflight.failure = True
+            self.preflight.result, self.preflight.stage = "blocked", "blocked"
+            for intent in intents:
+                if intent.action == "submit" and not intent.reduce_only:
+                    order = self.preflight.orders.get(intent.client_order_id)
+                    if order is not None:
+                        order["terminal"] = True
+                        order["local_not_dispatched"] = True
+            intents = tuple(i for i in intents if i.action != "submit" or i.reduce_only)
         for intent in intents:
             self.gateway.dispatch(intent, now_ns)
 
@@ -592,6 +608,11 @@ class LiveCoordinator:
         self.live.on_account(snapshot, now_ns)
         self.live.resume_exits(snapshot, now_ns)
         if self.phase in {"preflight", "preflight_draining"}:
+            try:
+                bid, ask, stamp = native_quote(self.live, snapshot.instrument_id, now_ns)
+                snapshot = replace(snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
+            except ValueError:
+                pass
             self._startup_intents(self.preflight.on_account(snapshot, now_ns), now_ns)
         self._live_intents(now_ns)
 
@@ -629,6 +650,20 @@ class LiveCoordinator:
 
     @timed("coordinator.tick")
     def tick(self, now_ns):
+        try:
+            self._tick(now_ns)
+        except Exception as exc:
+            # Secondary monitoring/checkpoint failures must fence new risk while
+            # leaving the same callback's reduction path available.
+            self.failure = "runtime check failed: " + type(exc).__name__
+            self.request_stop(now_ns, "runtime_check_failed")
+            if self.phase == "draining":
+                self.live.on_evaluation_timer(now_ns)
+                self._live_intents(now_ns)
+            elif self.phase == "preflight_draining":
+                self._startup_intents(self.preflight.on_timer(now_ns), now_ns)
+
+    def _tick(self, now_ns):
         from opportunity_price_timing import pending_stage
         pending_stage(self.live, "tick_started")
         if self.finished:
@@ -643,9 +678,17 @@ class LiveCoordinator:
         if self.phase == "active" and self.loss_monitor.due(now_ns):
             # Fence quote callbacks before processing any pending receipts.
             self.live.set_entry_pause("session_loss_check", now_ns)
-        self.gateway.poll(now_ns)
+        try:
+            self.gateway.poll(now_ns)
+        except Exception as exc:
+            self.failure = "execution observations failed: " + type(exc).__name__
+            self.request_stop(now_ns, "execution_observations_failed")
         pending_stage(self.live, "gateway_poll_completed")
         self.live.update_native_admission(getattr(self.gateway, "native_admission", {}), now_ns)
+        from opportunity_history import RECOVERABLE_HISTORY_HALTS
+        if (self.phase == "active" and self.live.halt_reason
+                and self.live.halt_reason not in RECOVERABLE_HISTORY_HALTS):
+            self.request_stop(now_ns, "execution_halt")
         if self.phase == "waiting_balances":
             self.balance_check.tick(self.gateway, now_ns)
             self.proxy.checkpoint_balance_check(self.balance_check.document())
@@ -748,6 +791,13 @@ class LiveCoordinator:
         if self.phase in {"preflight", "preflight_draining"}:
             if self.phase == "preflight" and self.plan.duration_secs and now_ns-self.started_ns >= self.plan.duration_secs*1_000_000_000:
                 self.request_stop(now_ns, "duration_elapsed")
+            snapshot = getattr(self.preflight, "snapshot", None)
+            if snapshot is not None:
+                try:
+                    bid, ask, stamp = native_quote(self.live, snapshot.instrument_id, now_ns)
+                    self.preflight.snapshot = replace(snapshot, bid=bid, ask=ask, book_observed_ns=stamp)
+                except ValueError:
+                    pass
             self._startup_intents(self.preflight.on_timer(now_ns), now_ns)
             if self.preflight.result == "passed":
                 if self.stop_requested_ns is not None:
@@ -769,13 +819,15 @@ class LiveCoordinator:
                 # Do not stop cleanup while its confirmed owned residual is draining.
                 expired = (self.stop_requested_ns is not None and
                     now_ns-self.stop_requested_ns >= self.plan.drain_timeout_secs*1_000_000_000)
-                if self.preflight.stage in {"blocked", "finished"} or expired:
+                if (self.preflight.stage in {"blocked", "finished"} or expired) and not self.preflight.has_exit_risk(now_ns):
                     self.finished = True
                     self.stop()
                 return
             if self.phase == "preflight_draining" and now_ns-self.stop_requested_ns >= self.plan.drain_timeout_secs*1_000_000_000:
-                self.failure, self.finished = "startup cleanup deadline reached; BTC ownership remains durable", True
-                self.stop()
+                self.failure = "startup cleanup deadline reached; continuing risk reduction"
+                if not self.preflight.has_exit_risk(now_ns):
+                    self.finished = True
+                    self.stop()
                 return
         if self.phase in {"active", "draining"}:
             if self.phase == "active" and self.plan.duration_secs and now_ns-self.started_ns >= self.plan.duration_secs*1_000_000_000:
@@ -788,11 +840,15 @@ class LiveCoordinator:
                 self.finished = True
                 self.stop()
             elif now_ns-self.stop_requested_ns >= self.plan.drain_timeout_secs*1_000_000_000:
-                self.failure, self.finished = "drain deadline reached; residual ownership remains durable", True
-                self.stop()
+                if self.live.has_exit_risk(now_ns):
+                    self.failure = "drain deadline reached; continuing risk reduction and original-ID queries"
+                else:
+                    self.failure, self.finished = "risk flat; economic reconciliation remains pending", True
+                    self.stop()
 
     def document(self):
         return {"phase": self.phase, "failure": self.failure, "finished": self.finished,
+                "startup_persistence_failed": self.startup_persistence_failed,
                 "stop_reason": self.stop_reason, "loss_monitor": self.loss_monitor.document(),
                 "account_binding": self.proxy.account_binding,
                 "last_execution_error": getattr(self.gateway, "last_error", None),

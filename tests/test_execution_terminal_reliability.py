@@ -44,7 +44,7 @@ def test_lighter_cache_zero_cannot_finish_before_final_evidence(harness):
         gateway.on_native_event("filled", message, NOW + 12_000_000_000)
         gateway.on_native_event("filled", message, NOW + 12_000_000_001)
     assert len(fills) == 2
-    assert [r.kind for r in receipts] == ["fill", "fill", "terminal"]
+    assert [r.kind for r in receipts] == ["fill", "execution_closed", "fill", "terminal"]
     assert receipts[-1].final_filled_quantity == D(".007")
 
 
@@ -71,7 +71,9 @@ def test_invalid_final_evidence_stays_pending(harness, fault):
         gateway.native_controls["LIGHTER"].terminal_fill_evidence_json = fail
     strategy.cached[order.client_order_id].is_closed = True
     gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
-    assert [r.kind for r in receipts] == (["reconciliation_required"] if fault == "conflicting" else [])
+    expected = ["reconciliation_required"] if fault == "conflicting" else ["execution_closed"] if fault == "mismatch" else []
+    assert [r.kind for r in receipts] == expected
+    assert not any(r.kind == "terminal" for r in receipts)
 
 
 def test_explicit_zero_terminal_evidence(harness):
@@ -84,16 +86,69 @@ def test_explicit_zero_terminal_evidence(harness):
     assert receipts[0].final_filled_quantity == 0
 
 
+def test_original_id_queries_continue_when_account_admission_poll_raises(harness):
+    proof = [None]
+    gateway, strategy, receipts, _, order = lighter(harness, proof)
+    def fail(*args):
+        raise RuntimeError("synthetic account diagnostic failure")
+    gateway.refresh_native_admission = fail
+    for attempt in (1, 2):
+        with pytest.raises(RuntimeError, match="synthetic account"):
+            gateway.poll(NOW + attempt * gateway.timeout_ns + attempt)
+    assert [call[0] for call in strategy.calls] == ["submit", "query", "query"]
+    assert gateway.orders[order.client_order_id]["query_attempts"] == 2
+    assert [r.kind for r in receipts] == ["unknown"]
+
+
+def test_original_id_query_survives_broken_timeout_callback(harness):
+    gateway, strategy, _, _, order = lighter(harness, [None])
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic callback failure")
+    gateway._receipt = fail
+    for attempt in (1, 2):
+        gateway.poll(NOW + attempt * gateway.timeout_ns + attempt)
+    assert [call[0] for call in strategy.calls] == ["submit", "query", "query"]
+    assert gateway.orders[order.client_order_id]["query_attempts"] == 2
+
+
+def test_partial_timeout_retries_failed_query_then_recovers_without_resubmit(harness):
+    proof = [None]
+    gateway, strategy, receipts, fills, order = lighter(harness, proof)
+    cached = strategy.cached[order.client_order_id]
+    cached.filled_qty = D(".003")
+    message = event(instrument_id=order.instrument_id, trade_id="partial", order_side="BUY",
+                    last_qty=D(".003"), last_px=D(100), commission=None)
+    gateway.on_native_event("filled", message, NOW + 1)
+    original_query = strategy.query_order
+    def fail(*args, **kwargs):
+        raise RuntimeError("disconnected")
+    strategy.query_order = fail
+    gateway.poll(NOW + gateway.timeout_ns + 1)
+    assert receipts[-1].kind == "unknown"
+    strategy.query_order = original_query
+    gateway.poll(NOW + 2 * gateway.timeout_ns + 2)
+    assert [call[0] for call in strategy.calls] == ["submit", "query"]
+    cached.is_closed, cached.status = True, "CANCELED"
+    proof[0] = evidence(order, ".003")
+    gateway.on_native_event("filled", message, NOW + 2 * gateway.timeout_ns + 3)
+    gateway.poll(NOW + 2 * gateway.timeout_ns + 4)
+    assert len(fills) == 1
+    assert [r.kind for r in receipts] == ["fill", "unknown", "terminal"]
+    assert receipts[-1].final_filled_quantity == D(".003")
+    assert sum(call[0] == "submit" for call in strategy.calls) == 1
+
+
 def test_stream_zero_requires_original_order_query_before_release(harness):
     proof = [None]
     gateway, strategy, receipts, _, order = lighter(harness, proof)
     proof[0] = {**evidence(order, "0"), "source": "websocket_terminal_order"}
     strategy.cached[order.client_order_id].is_closed = True
     gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
-    assert not receipts and [call[0] for call in strategy.calls] == ["submit", "query"]
+    assert [r.kind for r in receipts] == ["execution_closed"]
+    assert [call[0] for call in strategy.calls] == ["submit", "query"]
     proof[0]["source"] = "http_order_status"
     gateway.poll(NOW + 2)
-    assert [r.kind for r in receipts] == ["terminal"]
+    assert [r.kind for r in receipts] == ["execution_closed", "terminal"]
 
 
 def test_fill_before_terminal_and_conflicting_final_update(harness):

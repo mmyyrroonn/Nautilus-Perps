@@ -97,9 +97,8 @@ def entry_dispatch_evidence(live, position, now_ns):
     if (live.phase != "active" or live.stopping or not live.cleanup_allowed
             or live.entry_pause_reason or live.halt_reason or live.order_reconciliations
             or any(p.get("unhedged_breach") for p in live.positions.values())
-            or any(o["terminal_ns"] is None and (o["status"] == "unknown"
-                    or now_ns - o["sent_ns"] >= live.order_timeout_ns)
-                   for o in live.orders.values())):
+            or any(o["status"] == "unknown" or now_ns - o["sent_ns"] >= live.order_timeout_ns
+                   for o in live.execution_orders())):
         return "entry_admission_changed", evidence
     reserve_bps = getattr(live, "entry_unhedged_reserve_bps", F(10))
     risk_budget = min(F(live.policy.order_notional_usd),

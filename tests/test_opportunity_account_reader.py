@@ -136,6 +136,10 @@ def test_never_touched_lighter_market_flat_with_complete_global_counts_and_share
     calls = []
     def transport(*args):
         calls.append(args)
+        if "orderBookDetails" in args[1]:
+            return {"code": 200, "order_book_details": [
+                {"symbol": symbol, "market_config": {"market_margin_mode": 0}}
+                for symbol in ("BTC", "ETH")]}
         return {"code": 200, "accounts": [{"index": 42, "positions": [],
             "total_order_count": 0, "pending_order_count": 0, "total_isolated_order_count": 0}]}
     reader = ReadOnlyAccountReader(environ={"LIGHTER_ACCOUNT_INDEX": "42"}, transport=transport,
@@ -144,10 +148,10 @@ def test_never_touched_lighter_market_flat_with_complete_global_counts_and_share
     second = reader.read(market("LIGHTER", "ETH-USD-PERP.LIGHTER"), D(100), D(101), 60)
     assert first.position_quantity == second.position_quantity == 0
     assert first.open_order_ids == second.open_order_ids == ()
-    assert first.observed_ns == second.observed_ns == 50 and len(calls) == 1
+    assert first.observed_ns == second.observed_ns == 50 and len(calls) == 2
     reader.invalidate("LIGHTER")
     third = reader.read(market("LIGHTER", "BTC-USD-PERP.LIGHTER"), D(100), D(101), 70)
-    assert third.observed_ns == 70 and len(calls) == 2
+    assert third.observed_ns == 70 and len(calls) == 4
 
 
 def test_missing_lighter_target_with_global_pending_orders_cannot_pass_flat():
@@ -212,4 +216,5 @@ def test_rate_limit_cooldown_survives_cache_invalidation_and_market_changes():
     assert caught.value.retry_after_secs == 40 and len(calls) == 1
     now[0] += 40_000_000_000
     snapshot = reader.read(market("LIGHTER", "ETH-PERP.LIGHTER"), None, None, now[0])
-    assert snapshot.account_positions == () and len(calls) == 2
+    assert snapshot.account_positions == () and len(calls) == 3
+    assert "orderBookDetails" in calls[-1][1]

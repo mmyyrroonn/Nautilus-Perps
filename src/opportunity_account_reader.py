@@ -133,9 +133,12 @@ class ReadOnlyAccountReader:
         venue = "HL" if venue == "HYPERLIQUID" else venue
         with self._cache_lock:
             self._epochs[venue] = self._epochs.get(venue, 0) + 1
+            scopes = (venue, "LIGHTER_MARGIN") if venue == "LIGHTER" else (venue,)
+            if venue == "LIGHTER":
+                self._epochs["LIGHTER_MARGIN"] = self._epochs.get("LIGHTER_MARGIN", 0) + 1
             self._native_evidence.pop(venue, None)
             for key in tuple(self._cache):
-                if key[0] == venue:
+                if key[0] in scopes:
                     self._cache.pop(key)
 
     @timed("account.capture_native", labels=lambda self, venue, *a, **kw: (venue, ""))
@@ -358,10 +361,12 @@ class ReadOnlyAccountReader:
     def read(self, market, bid, ask, observed_ns):
         venue = market.venue
         leverage, leverage_error = None, ""
+        lighter_margin, lighter_margin_error = None, ""
         if venue in {"HL", "HYPERLIQUID"}:
             position, orders, started_ns, positions, all_orders = self._hyperliquid(market.instrument_id, observed_ns)
         elif venue == "LIGHTER":
-            position, orders, started_ns, positions, all_orders = self._lighter(market.instrument_id, observed_ns)
+            position, orders, started_ns, positions, all_orders, lighter_margin, lighter_margin_error = self._lighter(
+                market.instrument_id, observed_ns)
         elif venue == "ASTER":
             position, orders, started_ns, positions, all_orders, leverage, leverage_error = self._aster(
                 market.instrument_id, observed_ns)
@@ -375,7 +380,8 @@ class ReadOnlyAccountReader:
                                position, tuple(orders), connected=True, authoritative=True,
                                book_observed_ns=None if account_only else observed_ns, account_positions=tuple(positions.items()),
                                account_open_orders=tuple(all_orders),
-                               aster_leverage=leverage, aster_leverage_error=leverage_error)
+                               aster_leverage=leverage, aster_leverage_error=leverage_error,
+                               lighter_margin=lighter_margin, lighter_margin_error=lighter_margin_error)
 
     def _hyperliquid(self, instrument_id, observed_ns):
         prefix = "HYPERLIQUID_" if self.environment == "mainnet" else "HYPERLIQUID_TESTNET_"
@@ -431,7 +437,7 @@ class ReadOnlyAccountReader:
         base = ("https://mainnet.zklighter.elliot.ai" if self.environment == "mainnet"
                 else "https://testnet.zklighter.elliot.ai")
         payload, started_ns = self._cached_read(("LIGHTER", base, index), lambda: self.transport(
-            "GET", base + "/api/v1/account?" + urlencode({"by": "index", "value": index})), observed_ns)
+            "GET", base + "/api/v1/account?" + urlencode({"by": "index", "value": index, "active_only": "false"})), observed_ns)
         if not isinstance(payload, dict) or payload.get("code") != 200:
             raise AccountReadError("Lighter account read did not succeed")
         accounts = _rows(payload.get("accounts"), "Lighter accounts")
@@ -491,7 +497,24 @@ class ReadOnlyAccountReader:
                     raise AccountReadError("invalid Lighter global order count")
                 if count:
                     all_orders.append(("account.LIGHTER", f"unidentified:Lighter:{name}:{count}"))
-        return position, ids, started_ns, positions, all_orders
+        margin, margin_error = None, ""
+        try:
+            from opportunity_lighter_margin import LighterMarginSnapshot, account_margin_modes, market_margin_modes
+            def fetch_margin():
+                url = base + "/api/v1/orderBookDetails"
+                # Optional admission metadata has a shorter I/O budget than
+                # position/order reconciliation and its own endpoint cooldown.
+                if self.transport is http_json:
+                    return self.transport("GET", url, timeout=1)
+                return self.transport("GET", url)
+            metadata, metadata_ns = self._cached_read(("LIGHTER_MARGIN", base, "market_margin"),
+                fetch_margin, observed_ns)
+            margin = LighterMarginSnapshot(min(started_ns, metadata_ns), market_margin_modes(metadata),
+                                          account_margin_modes(account["positions"]))
+        except (AccountReadError, ValueError, TypeError, KeyError, AttributeError):
+            # Position/order evidence remains usable by reductions if margin admission fails.
+            margin_error = "lighter_margin_read_failed"
+        return position, ids, started_ns, positions, all_orders, margin, margin_error
 
     def _signed_aster_query(self, symbol=None):
         prefix = "ASTER_MAINNET_" if self.environment == "mainnet" else "ASTER_"

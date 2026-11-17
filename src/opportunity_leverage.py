@@ -32,11 +32,21 @@ class AsterLeverageSnapshot:
 
 
 def leverage_integer(value):
+    """Validate account/target leverage within the locally supported range."""
     if type(value) is int and 1 <= value <= 125:
         return value
     if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,2}", value):
         return leverage_integer(int(value))
     raise ValueError("invalid Aster leverage")
+
+
+def tier_leverage_integer(value):
+    """Read a venue tier ceiling without treating it as an account setting."""
+    if type(value) is int and value > 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value):
+        return int(value)
+    raise ValueError("invalid Aster tier leverage")
 
 
 def parse_leverage(positions, brackets, started_ns):
@@ -50,7 +60,7 @@ def parse_leverage(positions, brackets, started_ns):
         values = []
         for tier in _rows(row.get("brackets"), "Aster leverage tiers"):
             floor, cap = exact(tier.get("notionalFloor")), exact(tier.get("notionalCap"))
-            maximum = leverage_integer(tier.get("initialLeverage"))
+            maximum = tier_leverage_integer(tier.get("initialLeverage"))
             if floor < 0 or cap <= floor:
                 raise ValueError("invalid Aster leverage tier")
             values.append((floor, cap, maximum))
@@ -70,11 +80,14 @@ def parse_leverage(positions, brackets, started_ns):
         # Missing symbols remain explicitly unavailable at admission.
         if symbol not in tiers:
             continue
+        position = exact(row.get("positionAmt"))
         mark = exact(row.get("markPrice"))
-        if mark <= 0:
+        # Aster can return a zero mark for flat symbols. There is no existing
+        # exposure to value; any new exposure still uses the order-limit price.
+        if mark < 0 or (mark == 0 and position != 0):
             raise ValueError("invalid Aster mark price")
         result.append(AsterLeverage(symbol + "-PERP.ASTER", leverage_integer(row.get("leverage")),
-            exact(row.get("positionAmt")), mark, tiers[symbol]))
+            position, mark, tiers[symbol]))
     if type(started_ns) is not int or started_ns <= 0:
         raise ValueError("invalid Aster leverage timestamp")
     return AsterLeverageSnapshot(started_ns, tuple(result))

@@ -246,6 +246,7 @@ def test_public_quote_health_fences_even_when_preparation_api_is_ready(native_ga
 
 
 def test_every_symbol_in_scope_must_have_fresh_public_quote(native_gateway):
+    """An older wheel without independent market gates remains conservative."""
     gateway, _ = native_gateway
     gateway.markets["SOL.BACKPACK"] = NS(venue="BACKPACK", instrument_id="SOL.BACKPACK")
     gateway.poll(NOW)
@@ -256,3 +257,97 @@ def test_every_symbol_in_scope_must_have_fresh_public_quote(native_gateway):
         "connected": True, "metadata_ready": True, "quotes_fresh": {"BTC": True, "SOL": True}})
     gateway.poll(NOW)
     assert gateway.native_admission == status()
+
+
+def market_status(*, target_ready=True, global_ready=True, checked_ns=NOW):
+    return {"BACKPACK": {"ready": False, "reason": "unrelated quote stale" if global_ready else "account stale",
+        "checked_ns": checked_ns, "global_ready": global_ready, "markets": {
+            "BTC.BACKPACK": {"ready": target_ready, "reason": None if target_ready else "target quote stale"},
+            "SOL.BACKPACK": {"ready": False, "reason": "unrelated quote stale"},
+        } if global_ready else {}}}
+
+
+@pytest.mark.parametrize("backpack_first", [False, True])
+def test_unrelated_stale_market_does_not_block_either_leg(backpack_first):
+    live, _ = prepared(backpack_first=backpack_first)
+    calls = []
+    run_dispatch(live, lambda now: market_status(checked_ns=now), calls)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("result", [
+    market_status(target_ready=False), market_status(global_ready=False),
+    market_status(checked_ns=NOW - 2 * SECOND), market_status(checked_ns=NOW + SECOND),
+])
+def test_scoped_market_or_global_failure_blocks_both_legs(result):
+    live, _ = prepared()
+    calls = []
+    run_dispatch(live, lambda now: result, calls)
+    assert calls == []
+    assert all(o["status"] == "local_not_dispatched" for o in live.orders.values())
+
+
+def test_target_is_rechecked_before_second_leg_with_partial_market_readiness():
+    live, _ = prepared()
+    calls = []
+    def refresh(now):
+        return market_status(target_ready=not calls, checked_ns=now)
+    def dispatch(intent, now, **kw):
+        calls.append(intent)
+        fill(live, intent, now, terminal=False)
+    run_dispatch(live, refresh, calls, dispatch=dispatch)
+    assert len(calls) == 1
+    assert live.orders[calls[0].client_order_id]["terminal_ns"] is None
+    assert next(iter(live.positions.values()))["remaining_buy_base"] != "0"
+
+
+def test_gateway_reports_independent_markets_and_public_quote_veto(native_gateway):
+    gateway, control = native_gateway
+    gateway.markets["SOL.BACKPACK"] = NS(venue="BACKPACK", instrument_id="SOL.BACKPACK")
+    value = market_status()["BACKPACK"]
+    control.admission_status_json = lambda: json.dumps(value)
+    gateway.poll(NOW)
+    assert gateway.native_admission == market_status()
+    # Native readiness is necessary but public quote freshness is also required per target.
+    value["ready"], value["reason"] = True, None
+    value["markets"]["SOL.BACKPACK"] = {"ready": True, "reason": None}
+    gateway.poll(NOW)
+    row = gateway.native_admission["BACKPACK"]
+    assert row["global_ready"] is True and row["ready"] is False
+    assert row["markets"]["BTC.BACKPACK"]["ready"] is True
+    assert row["markets"]["SOL.BACKPACK"]["reason"] == "native_public_quotes_not_ready"
+    gateway.backpack_public_config.telemetry_snapshot_json = lambda: json.dumps({
+        "connected": False, "metadata_ready": True, "quotes_fresh": {"BTC": True, "SOL": True}})
+    gateway.poll(NOW)
+    row = gateway.native_admission["BACKPACK"]
+    assert row["global_ready"] is False and row["markets"] == {}
+    assert row["reason"] == "native_public_session_not_ready"
+
+
+@pytest.mark.parametrize("changes", [
+    {"global_ready": 1}, {"global_ready": False}, {"markets": None}, {"markets": {}},
+    {"markets": {"WRONG.BACKPACK": {"ready": True, "reason": None}}},
+    {"markets": {"BTC.BACKPACK": {"ready": 1, "reason": None}}},
+    {"markets": {"BTC.BACKPACK": {"ready": True, "reason": "failure"}}},
+    {"markets": {"BTC.BACKPACK": {"ready": False, "reason": "failure"}}},
+])
+def test_invalid_market_schema_never_leaves_partial_success(native_gateway, changes):
+    gateway, control = native_gateway
+    value = {"ready": True, "reason": None, "global_ready": True,
+             "markets": {"BTC.BACKPACK": {"ready": True, "reason": None}}}
+    value.update(changes)
+    control.admission_status_json = lambda: json.dumps(value)
+    gateway.poll(NOW)
+    assert gateway.native_admission == status(False, "native_admission_invalid_json")
+
+
+def test_scoped_global_failure_and_missing_target_fail_closed(native_gateway):
+    gateway, control = native_gateway
+    control.admission_status_json = lambda: json.dumps(market_status(global_ready=False)["BACKPACK"])
+    gateway.poll(NOW)
+    assert gateway.native_admission == market_status(global_ready=False)
+    live, _ = prepared()
+    value = market_status()
+    value["BACKPACK"]["markets"].pop("BTC.BACKPACK")
+    live.update_native_admission(value, NOW)
+    assert live.native_entry_problem(("BTC.HL", "BTC.BACKPACK"), NOW) == "native_market_admission_unavailable"

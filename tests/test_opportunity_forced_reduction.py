@@ -93,7 +93,7 @@ def test_rule_change_or_invalid_metadata_blocks_only_affected_leg_and_retains_ri
 
 
 @pytest.mark.parametrize("problem", ["mismatch", "missing", "foreign_order", "stale_book", "unknown_order"])
-def test_missing_fees_never_bypass_account_ownership_or_market_evidence(problem):
+def test_forced_reduction_ignores_secondary_account_checks_but_keeps_price_evidence(problem):
     live, _ = state()
     position, entries = open_pair(live)
     lose_fees(live)
@@ -111,8 +111,11 @@ def test_missing_fees_never_bypass_account_ownership_or_market_evidence(problem)
         order = live.orders[entries[0].client_order_id]
         order.update(status="unknown", terminal_ns=None)
     live.on_evaluation_timer(now)
-    exit_order, = submissions(live)
-    assert exit_order.instrument_id == "BTC.ASTER"
+    exits = submissions(live)
+    assert len(exits) == (1 if problem == "stale_book" else 2)
+    assert all(order.reduce_only and order.quantity <= D("0.99") for order in exits)
+    if problem == "stale_book":
+        assert exits[0].instrument_id == "BTC.ASTER"
     assert F(position["remaining_buy_base"]) == F("0.99") and live.positions
 
 
@@ -188,7 +191,7 @@ def test_open_pending_commission_survives_restart_and_keeps_soft_exit_blocked():
     assert len(hard) == 2
 
 
-def test_partial_missing_fee_close_retries_only_owned_residual_after_new_account_proof():
+def test_partial_missing_fee_close_retries_owned_residual_without_waiting_for_account_proof():
     live, _ = state()
     position, _ = open_pair(live)
     lose_fees(live)
@@ -200,11 +203,11 @@ def test_partial_missing_fee_close_retries_only_owned_residual_after_new_account
     set_book(live, "HL", "99.99", "100", later)
     set_book(live, "ASTER", "99.28", "99.29", later)
     live.on_evaluation_timer(later)
-    assert not submissions(live)
+    rest = submissions(live)
+    assert len(rest) == 2 and all(intent.quantity == D("0.69") and intent.reduce_only for intent in rest)
     accounts(live, later + 1)
     live.on_evaluation_timer(later + 1)
-    rest = submissions(live)
-    assert len(rest) == 2 and all(intent.quantity == D("0.69") for intent in rest)
+    assert not submissions(live)
     assert len(position["pending_commissions"]) == 2
 
 

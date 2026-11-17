@@ -155,6 +155,56 @@ def test_late_depth_subscriptions_bridge_actual_snapshot_on_each_connection():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("quiet_mode", ["missing", "stale"])
+def test_actual_native_submit_is_scoped_to_target_market(tmp_path, quiet_mode):
+    """One quiet market must not veto a fresh market at the native HTTP boundary."""
+    native_adapter()
+
+    async def scenario():
+        from opportunity_native_execution import NativeOrderGateway
+        async with QuoteCachePeer((SYMBOLS[1],)) as peer:
+            peer.quote_modes[SYMBOLS[1]] = quiet_mode
+            node, observer, state, probe, control, public = build_observer_node(peer, tmp_path)
+            gateway = NativeOrderGateway(probe, state.plan.markets, lambda _: None, lambda _: None,
+                lambda _: None, native_controls={"BACKPACK": control}, backpack_public_config=public, environ={})
+            task = asyncio.ensure_future(node.run_async())
+            async def wait(predicate):
+                return await eventually(predicate, node_task=task, observer=observer, peer=peer, control=control)
+            def target_ready():
+                gateway.poll(time.time_ns())
+                status = gateway.native_admission["BACKPACK"]
+                return status if (status.get("global_ready") and
+                    status["markets"][SYMBOLS[0] + ".BACKPACK"]["ready"]) else None
+            try:
+                status = await wait(target_ready)
+                assert status["ready"] is False
+                assert status["markets"][SYMBOLS[1] + ".BACKPACK"]["ready"] is False
+                accepted = probe.submit_probe(SYMBOLS[0])
+                outcome = await wait(lambda: next((row for row in probe.events
+                    if row[1] == str(accepted.client_order_id)), None))
+                assert outcome[0] == "accepted", json.dumps({"outcome": outcome,
+                    "admission": json.loads(control.admission_status_json()),
+                    "public": json.loads(public.telemetry_snapshot_json()),
+                    "private": json.loads(control.telemetry_snapshot_json())})
+                assert len(peer.posts) == 1 and peer.posts[0]["symbol"] == SYMBOLS[0]
+                probe.cancel_order(accepted.client_order_id)
+                await wait(lambda: any(row[:2] == ("canceled", str(accepted.client_order_id)) for row in probe.events))
+                assert len(peer.deletes) == 1 and not peer.fills
+                blocked = probe.submit_probe(SYMBOLS[1])
+                await wait(lambda: any(row[:2] == ("denied", str(blocked.client_order_id)) for row in probe.events))
+                assert len(peer.posts) == 1
+            finally:
+                gateway.close()
+                node.handle().stop()
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), 8)
+                finally:
+                    node.dispose()
+            assert not peer.errors
+
+    asyncio.run(scenario())
+
+
 def build_observer_node(peer, directory):
     bp = native_adapter()
     from nautilus_trader.common import CacheConfig, Environment, LoggerConfig, LogLevel
@@ -298,7 +348,7 @@ def test_actual_observer_populates_native_cache_and_recovers_production_admissio
                 status = admission()
                 assert status["ready"] is False and "native quote cache is empty" in status["reason"]
                 assert gateway_status()["ready"] is False
-                denied = probe.submit_probe()
+                denied = probe.submit_probe(missing[0])
                 await wait(lambda: any(row[:2] == ("denied", str(denied.client_order_id)) for row in probe.events))
                 assert "native quote cache is empty" in probe.events[-1][2]
                 no_writes()
@@ -319,7 +369,7 @@ def test_actual_observer_populates_native_cache_and_recovers_production_admissio
                     await wait(lambda: not health()["quotes_fresh"].get(SYMBOLS[1], False))
                     assert cache.quote(ids[SYMBOLS[1]]) is not None
                     assert gateway_status()["ready"] is False
-                    blocked = probe.submit_probe()
+                    blocked = probe.submit_probe(SYMBOLS[1])
                     await wait(lambda: any(row[:2] == ("denied", str(blocked.client_order_id)) for row in probe.events))
                     no_writes()
                     peer.quote_modes[SYMBOLS[1]] = "fresh"
@@ -327,9 +377,22 @@ def test_actual_observer_populates_native_cache_and_recovers_production_admissio
                 assert peer.invalid_quote_frames == 1
                 request.node.user_properties.append(("invalid_quote_frames", peer.invalid_quote_frames))
 
-                accepted = probe.submit_probe()
-                outcome = await wait(lambda: next((row for row in probe.events if row[1] == str(accepted.client_order_id)), None))
-                assert outcome[0] == "accepted", {"outcome": outcome, "public": health(), "admission": admission()}
+                async def submit_current():
+                    for _ in range(3):
+                        await wait(ready)
+                        posts = len(peer.posts)
+                        order = probe.submit_probe()
+                        outcome = await wait(lambda: next((row for row in probe.events
+                            if row[1] == str(order.client_order_id)), None))
+                        if outcome[0] == "accepted":
+                            return order
+                        assert outcome[0] == "denied" and outcome[2] == "GuardedLocalRefusal", outcome
+                        cached = cache.order(order.client_order_id)
+                        assert str(cached.status) == "DENIED" and cached.filled_qty.as_decimal() == 0
+                        assert cached.venue_order_id is None and len(peer.posts) == posts
+                        await asyncio.sleep(0.05)
+                    raise AssertionError("bounded proven-NotSent admission retries exhausted")
+                accepted = await submit_current()
                 assert len(peer.posts) == 1
                 assert peer.posts[0]["symbol"] == SYMBOLS[0]
                 probe.cancel_order(accepted.client_order_id)
@@ -353,17 +416,14 @@ def test_actual_observer_populates_native_cache_and_recovers_production_admissio
                 await wait(lambda: health()["connection_epoch"] != old_epoch and health()["connected"])
                 assert cache.quote(ids[SYMBOLS[1]]) is not None
                 assert gateway_status()["ready"] is False
-                blocked = probe.submit_probe()
+                blocked = probe.submit_probe(SYMBOLS[1])
                 await wait(lambda: any(row[:2] == ("denied", str(blocked.client_order_id)) for row in probe.events))
                 assert len(peer.posts) == len(peer.deletes) == 1
                 peer.quote_modes[SYMBOLS[1]] = "fresh"
                 await wait(ready)
                 assert_single_reconnect()
                 recovered_quote_time = cache.quote(ids[SYMBOLS[1]]).ts_event
-                recovered = probe.submit_probe()
-                outcome = await wait(lambda: next((row for row in probe.events if row[1] == str(recovered.client_order_id)), None))
-                assert outcome[0] == "accepted", json.dumps({"outcome": outcome,
-                    "public": health(), "admission": admission()})
+                recovered = await submit_current()
                 assert len(peer.posts) == 2
                 probe.cancel_order(recovered.client_order_id)
                 await wait(lambda: any(row[:2] == ("canceled", str(recovered.client_order_id)) for row in probe.events))

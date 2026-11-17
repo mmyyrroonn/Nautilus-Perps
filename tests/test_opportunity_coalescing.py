@@ -104,6 +104,44 @@ def test_evaluation_deadline_survives_faster_subscription_timer(tmp_path, monkey
     assert len(state.books) == 2 and state.saved == 1 and not observer.dirty
 
 
+@pytest.mark.parametrize("interval_ms", [20, 100])
+def test_publication_keeps_cadence_when_evaluation_takes_time(tmp_path, monkeypatch, interval_ms):
+    _, state, observer, ids, _, _ = native_observer(tmp_path, monkeypatch,
+        evaluation_interval_ms=interval_ms, refresh_ms=5000)
+    now = moving_clock(monkeypatch)
+    evaluated = []
+
+    def evaluate(now_ns):
+        evaluated.append(now_ns)
+        now[0] += 10_000_000  # Pricing/risk work must not postpone the next batch.
+
+    monkeypatch.setattr(state, "on_evaluation_timer", evaluate)
+    for tick, jitter_ms in enumerate((2, 1, 3, 1, 2), start=1):
+        now[0] = NS + (tick * interval_ms + jitter_ms) * 1_000_000
+        observer.on_book_deltas(batch(ids[0], "99.00", "100.00"))
+        observer.on_book_deltas(batch(ids[1], "102.00", "103.00"))
+        assert observer.dirty
+        observer.on_time_event(None)
+        assert observer.failure is None
+        assert not observer.dirty, "a completed batch must publish on every due timer tick"
+        assert len(evaluated) == tick
+
+
+def test_delayed_timer_evaluates_once_and_keeps_next_publication_deadline(tmp_path, monkeypatch):
+    _, state, observer, ids, _, _ = native_observer(tmp_path, monkeypatch,
+        evaluation_interval_ms=100, refresh_ms=5000)
+    now = moving_clock(monkeypatch)
+    evaluated = []
+    monkeypatch.setattr(state, "on_evaluation_timer", evaluated.append)
+    for elapsed_ms, expected in ((101, 1), (375, 2), (399, 2), (401, 3)):
+        now[0] = NS + elapsed_ms * 1_000_000
+        observer.on_book_deltas(batch(ids[0], "99.00", "100.00"))
+        observer.on_time_event(None)
+        assert observer.failure is None
+        assert len(evaluated) == expected
+        assert bool(observer.dirty) is (elapsed_ms == 399)
+
+
 def test_partial_increment_discards_dirty_complete_batch_until_last(tmp_path, monkeypatch):
     native = pytest.importorskip("nautilus_trader.model")
     _, state, observer, ids, _, _ = native_observer(

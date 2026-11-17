@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation, localcontext
 from fractions import Fraction as F
 from opportunity_leverage import AsterLeverageSnapshot
+from opportunity_lighter_margin import LighterMarginSnapshot
 
 
 HARD_MAX_NOTIONAL_USD = Decimal("50")
@@ -89,6 +90,8 @@ class AccountSnapshot:
     account_open_orders: tuple[tuple[str, str], ...] | None = None
     aster_leverage: AsterLeverageSnapshot | None = None
     aster_leverage_error: str = ""
+    lighter_margin: LighterMarginSnapshot | None = None
+    lighter_margin_error: str = ""
 
     def __post_init__(self):
         account_only = self.bid is None and self.ask is None
@@ -232,6 +235,9 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
         self.failure = False
         self.timings = {}
         self.late_residuals = {}
+        self.last_cleanup_ns = 0
+        self.last_cancel_ns = {}
+        self.activity_ns = 0
 
     @property
     def market(self):
@@ -299,6 +305,58 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
                 and 0 < snapshot.book_observed_ns <= now_ns
                 and now_ns-snapshot.book_observed_ns <= self.max_book_age_ns)
 
+    def _fresh_book(self, now_ns):
+        snapshot = self.snapshot
+        return (snapshot is not None and snapshot.bid is not None and snapshot.ask is not None
+                and 0 < snapshot.bid < snapshot.ask and snapshot.book_observed_ns is not None
+                and 0 <= now_ns-snapshot.book_observed_ns <= self.max_book_age_ns)
+
+    def has_exit_risk(self, now_ns):
+        if any(not o["terminal"] and o["role"] != "close" for o in self.orders.values()):
+            return True
+        if any(self.late_residuals.values()):
+            return True
+        if self.owned_quantity <= 0:
+            return False
+        snapshot = self.snapshot
+        return not (snapshot and snapshot.authoritative and snapshot.connected
+                    and snapshot.observed_ns >= self.activity_ns
+                    and 0 <= now_ns-snapshot.observed_ns <= self.max_account_age_ns
+                    and snapshot.position_quantity == 0)
+
+    def _cleanup(self, now_ns):
+        """Keep original-ID cancellation and bounded reduction alive after failure."""
+        if now_ns-self.last_cleanup_ns < 1_000_000_000:
+            return ()
+        # A recent reduction can still be executing. Unknown or timed-out orders
+        # no longer reserve the entire position against a subsequent reduce-only.
+        if any(o["role"] == "close" and not o["terminal"] and not o.get("unknown")
+               and now_ns-o["sent_ns"] < self.timeout_ns for o in self.orders.values()):
+            return ()
+        self.last_cleanup_ns = now_ns
+        if self.owned_quantity <= 0 and not any(
+                o["venue"] == self.market.venue and o["role"] != "close" and not o["terminal"]
+                for o in self.orders.values()):
+            prior = next((venue for venue, quantity in self.late_residuals.items() if quantity > 0), None)
+            if prior is not None:
+                self.index = next(i for i, market in enumerate(self.markets) if market.venue == prior)
+                self.owned_quantity = self.late_residuals.pop(prior)
+                self.snapshot = None
+        intents = []
+        for cid, order in self.orders.items():
+            if (order["venue"] == self.market.venue and order["role"] != "close"
+                    and not order["terminal"]
+                    and now_ns-self.last_cancel_ns.get(cid, 0) >= self.timeout_ns):
+                self.last_cancel_ns[cid] = now_ns
+                intents.extend(self._emit("cancel", now_ns, client_order_id=cid))
+        if self.owned_quantity > 0 and self._fresh_book(now_ns):
+            intents.extend(self._close(now_ns))
+        else:
+            unresolved = next((cid for cid, o in self.orders.items()
+                               if o["venue"] == self.market.venue and not o["terminal"]), "")
+            intents.extend(self._read("cleanup_reconcile", now_ns, unresolved))
+        return tuple(intents)
+
     def _prices(self):
         step = F(self.market.price_increment)
         bid, ask = F(self.snapshot.bid), F(self.snapshot.ask)
@@ -331,7 +389,9 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
     def _submit(self, role, quantity, price, now_ns, *, post_only=False):
         client_id = f"{self.session_id}-v{self.index}-{role}-{self.sequence+1}"
         self.orders[client_id] = {"role": role, "quantity": F(quantity), "filled": F(0),
-                                  "terminal": False, "accepted": False, "venue": self.market.venue}
+                                  "terminal": False, "accepted": False, "venue": self.market.venue,
+                                  "sent_ns": now_ns}
+        self.activity_ns = now_ns + 1
         self.stage = {"probe": "probe_accept", "replacement": "replacement_accept",
                       "open": "open_terminal", "close": "close_terminal"}[role]
         return self._emit("submit", now_ns, client_order_id=client_id,
@@ -352,23 +412,31 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
     def _close(self, now_ns):
         if self.owned_quantity <= 0:
             return self._read("final_reconcile", now_ns)
-        if not self._fresh(self.snapshot, now_ns):
+        if not self._fresh_book(now_ns):
             return self._read("close_reconcile", now_ns)
         if self.close_attempts >= self.max_close_attempts:
-            return self._blocked("close attempt limit reached; confirmed residual remains", now_ns)
+            self.failure = True
+            self.reason = "close retry threshold exceeded; continuing risk reduction"
         quantity = self.owned_quantity
+        snapshot = self.snapshot
+        if (snapshot.authoritative and snapshot.connected and snapshot.observed_ns >= self.activity_ns
+                and 0 <= now_ns-snapshot.observed_ns <= self.max_account_age_ns):
+            quantity = min(quantity, max(F(0), F(snapshot.position_quantity)))
+        if quantity <= 0:
+            return self._read("final_reconcile", now_ns)
         step = F(self.market.size_increment)
         price = self._prices()[3]
-        if quantity % step or quantity < F(self.market.min_quantity) or (
-                quantity*F(self.market.multiplier)*price < F(self.market.min_notional)):
-            return self._blocked("confirmed residual does not meet current conservative close minima", now_ns)
-        if quantity*F(self.market.multiplier)*price*F(self.market.quote_to_usd) > F(self.max_notional_usd):
-            return self._blocked("close notional exceeds applied USD cap; residual remains", now_ns)
+        if price <= 0:
+            return self._blocked("no positive protected close price", now_ns)
+        cap = F(self.max_notional_usd)/(F(self.market.multiplier)*price*F(self.market.quote_to_usd))
+        quantity = (min(quantity, cap)//step)*step
+        if quantity <= 0:
+            return self._blocked("confirmed residual is below the native quantity step", now_ns)
         self.close_attempts += 1
         return self._submit("close", quantity, price, now_ns)
 
     def on_account(self, snapshot, now_ns):
-        if self.result in {"passed", "failed"} or self.stage == "blocked":
+        if self.result in {"passed", "failed"}:
             return ()
         if snapshot.venue != self.market.venue or snapshot.instrument_id != self.market.instrument_id:
             return ()
@@ -381,6 +449,8 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
             return self._blocked("account or BBO snapshot is stale, crossed, disconnected or non-authoritative",
                                  now_ns)
         self.snapshot = snapshot
+        if self.failure and self.has_exit_risk(now_ns):
+            return self._cleanup(now_ns)
         if self.stage not in {"initial_reconcile", "probe_clean_reconcile", "replacement_reconcile", "close_reconcile",
                               "final_reconcile", "cleanup_reconcile", "uncertain_reconcile"}:
             return ()
@@ -458,6 +528,7 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
             if order["filled"]+quantity > order["quantity"]:
                 return self._blocked("fill quantity exceeds owned order quantity", now_ns, reconcile=True)
             self.executions[receipt.execution_id] = identity
+            self.activity_ns = now_ns + 1
             order["filled"] += quantity
             if intent.venue != self.market.venue:
                 sign = -1 if order["role"] == "close" else 1
@@ -474,9 +545,14 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
                 return self._blocked("late fill arrived after terminal evidence; reconcile owned residual", now_ns,
                                      reconcile=True)
             return ()
-        if self.result in {"passed", "failed"} or self.stage == "blocked":
+        if receipt.kind in {"terminal", "canceled", "rejected"} and order and (
+                receipt.kind != "rejected" or intent.action == "submit"):
+            order["terminal"] = True
+        if self.result in {"passed", "failed"}:
             return ()
         if receipt.kind in {"unknown", "disconnected"}:
+            if order:
+                order["unknown"] = True
             self._timing(receipt.request_id, now_ns, receipt.kind, complete=True)
             return self._blocked(f"{receipt.kind} receipt; preserve client order identity for reconciliation",
                                  now_ns, reconcile=True)
@@ -487,6 +563,8 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
             return self._fail("venue rejected a required capability operation", now_ns)
         if receipt.kind in {"terminal", "canceled"} and order:
             order["terminal"] = True
+        if self.failure and self.stage == "blocked":
+            return self._cleanup(now_ns)
         if self.pending is None or receipt.request_id != self.pending[0].request_id:
             self.ignored_receipts += 1
             return ()
@@ -544,6 +622,8 @@ the executor must send an IOC ``terminal`` receipt after all fill receipts.
         return ()
 
     def on_timer(self, now_ns):
+        if self.failure and self.has_exit_risk(now_ns):
+            return self._cleanup(now_ns)
         if self.result in {"passed", "failed"} or self.stage == "blocked" or self.pending is None:
             return ()
         if now_ns-self.pending[1] < self.timeout_ns:

@@ -1,0 +1,104 @@
+{
+  "metadata": {
+    "code": 200,
+    "order_book_details": [
+      {
+        "symbol": "ETH",
+        "market_id": 0,
+        "market_type": "perp",
+        "base_asset_id": 0,
+        "quote_asset_id": 0,
+        "status": "active",
+        "taker_fee": "0.0000",
+        "is_taker_fee_enabled": true,
+        "maker_fee": "0.0000",
+        "is_maker_fee_enabled": true,
+        "liquidation_fee": "1.0000",
+        "min_base_amount": "0.0050",
+        "min_quote_amount": "10.000000",
+        "order_quote_limit": "281474976.710655",
+        "supported_size_decimals": 4,
+        "supported_price_decimals": 2,
+        "supported_quote_decimals": 6,
+        "size_decimals": 4,
+        "price_decimals": 2,
+        "quote_multiplier": 1,
+        "default_initial_margin_fraction": 500,
+        "min_initial_margin_fraction": 200,
+        "maintenance_margin_fraction": 120,
+        "closeout_margin_fraction": 80,
+        "last_trade_price": 2361.31,
+        "daily_trades_count": 428074,
+        "daily_base_token_volume": 195399.1521,
+        "daily_quote_token_volume": 460664167.955905,
+        "daily_price_low": 2313.36,
+        "daily_price_high": 2398,
+        "daily_price_change": -0.5215684126709949,
+        "open_interest": 27350.8981,
+        "daily_chart": {},
+        "market_config": {
+          "market_margin_mode": 0,
+          "insurance_fund_account_index": 281474976710655,
+          "liquidation_mode": 0,
+          "force_reduce_only": false,
+          "trading_hours": "",
+          "funding_fee_discounts_enabled": false,
+          "hidden": false,
+          "rfq_enabled": true
+        },
+        "strategy_index": 2
+      }
+    ],
+    "spot_order_book_details": []
+  },
+  "account": {
+    "code": 200,
+    "total": 1,
+    "accounts": [
+      {
+        "code": 0,
+        "account_type": 0,
+        "index": 12345,
+        "l1_address": "0x0000000000000000000000000000000000000000",
+        "cancel_all_time": 0,
+        "total_order_count": 0,
+        "total_isolated_order_count": 0,
+        "pending_order_count": 0,
+        "available_balance": "1000",
+        "status": 1,
+        "collateral": "1000",
+        "transaction_time": 0,
+        "account_trading_mode": 0,
+        "account_index": 12345,
+        "name": "",
+        "description": "",
+        "can_invite": false,
+        "referral_points_percentage": "",
+        "can_rfq": false,
+        "can_rfq_market_ids": null,
+        "created_at": 0,
+        "metadata": {
+          "color": ""
+        },
+        "positions": [],
+        "assets": [],
+        "total_asset_value": "1000",
+        "cross_asset_value": "1000",
+        "cross_initial_margin_requirement": "0.000000",
+        "cross_maintenance_margin_requirement": "0.000000",
+        "shares": [],
+        "pending_unlocks": [],
+        "approved_integrators": []
+      }
+    ]
+  },
+  "stats": {
+    "account_trading_mode": 0,
+    "available_balance": "1000",
+    "buying_power": "0",
+    "collateral": "1000",
+    "leverage": "0.00",
+    "margin_usage": "0.00",
+    "portfolio_value": "1000"
+  }
+}

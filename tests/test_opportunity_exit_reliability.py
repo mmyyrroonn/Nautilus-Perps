@@ -168,7 +168,7 @@ def test_configured_reserve_can_only_increase_limits_floor(tmp_path):
     assert plan.max_unhedged_notional_usd == 100
 
 
-def test_account_queries_notify_dispatch_and_slow_cross_fill_reads_fail_closed():
+def test_slow_cross_fill_account_read_is_rejected_without_blocking_confirmed_exit():
     live, events = state()
     wakeups = []
     live.intent_notifier = lambda: wakeups.append(True)
@@ -186,16 +186,18 @@ def test_account_queries_notify_dispatch_and_slow_cross_fill_reads_fail_closed()
     # The read began before the fill/terminal fence, even though it completed later.
     old = proof(live, buy.instrument_id, NOW + SECOND // 10)
     coordinator.on_account(old, now)
-    assert not any(i.action == "submit" for i in sent)
+    exits = [i for i in sent if i.action == "submit"]
+    assert len(exits) == 1 and exits[0].quantity == D("0.4") and exits[0].reduce_only
     rejected = [e for e in events if e["event"] == "account_read_completed" and not e["accepted"]]
     assert rejected[-1]["reason"] == "predates_activity"
     assert rejected[-1]["request_to_complete_ms"] == "1900"
+    live.reconcile_accounts(now)
+    coordinator._live_intents(now)
     assert any(i.action == "reconcile" for i in sent)
     sent.clear()
     fresh = proof(live, buy.instrument_id, now + 1)
     coordinator.on_account(fresh, now + 2)
-    exits = [i for i in sent if i.action == "submit"]
-    assert len(exits) == 1 and exits[0].quantity == D("0.4") and exits[0].reduce_only
+    assert not any(i.action == "submit" for i in sent)  # The recent reduction is still in flight.
     sent.clear()
     coordinator.on_account(fresh, now + 3)
     assert not any(i.action == "submit" for i in sent)
@@ -203,7 +205,7 @@ def test_account_queries_notify_dispatch_and_slow_cross_fill_reads_fail_closed()
 
 
 @pytest.mark.parametrize("problem", ["foreign_position", "foreign_order", "incomplete", "disconnected"])
-def test_account_completion_wakeup_retains_complete_ownership_barriers(problem):
+def test_account_completion_wakeup_keeps_confirmed_reduction_independent_of_full_audit(problem):
     live, _ = state()
     publish(live)
     buy, sell = submissions(live)
@@ -223,7 +225,9 @@ def test_account_completion_wakeup_retains_complete_ownership_barriers(problem):
         snapshot = replace(snapshot, connected=False)
     coordinator, sent = coordinator_callback(live)
     coordinator.on_account(snapshot, now)
-    assert not any(i.action == "submit" for i in sent)
+    exits = [i for i in sent if i.action == "submit"]
+    assert len(exits) == 1 and exits[0].reduce_only and exits[0].quantity == D("0.4")
+    assert not live._account_ready(buy.instrument_id, now)
 
 
 def test_retry_wait_is_recorded_without_shortening_one_second_interval():

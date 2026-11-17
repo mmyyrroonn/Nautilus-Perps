@@ -13,6 +13,7 @@ from opportunity_live import LiveTradeState
 from opportunity_preflight import AccountSnapshot, ExecutionReceipt
 from opportunity_trade import TradePolicy
 from opportunity_leverage import AsterLeverage, AsterLeverageSnapshot
+from opportunity_lighter_margin import LighterMarginSnapshot
 from test_opportunity_trade import NOW, SECOND, make_plan, publish, set_book
 
 
@@ -57,7 +58,10 @@ def accounts(live, now, *, observed_ns=None, authoritative=True, connected=True,
             D(live.expected_native(market.instrument_id).numerator)/D(live.expected_native(market.instrument_id).denominator),
             open_orders, connected=connected, authoritative=authoritative,
             aster_leverage=leverage_snapshot(live.plan.markets, now if observed_ns is None else observed_ns)
-                if market.venue == "ASTER" else None), now)
+                if market.venue == "ASTER" else None,
+            lighter_margin=LighterMarginSnapshot(now if observed_ns is None else observed_ns,
+                {m.symbol: 0 for m in live.plan.markets if m.venue == "LIGHTER"}, {})
+                if market.venue == "LIGHTER" else None), now)
 
 
 def submissions(live):
@@ -167,8 +171,7 @@ def test_failed_prepared_transaction_never_exposes_mutating_dispatch_intents():
                 raise OSError("synthetic durable write failure")
             super().save(snapshot, events)
     live, _ = state(store=BrokenStore())
-    with pytest.raises(OSError, match="synthetic durable"):
-        publish(live)
+    publish(live)
     assert not live.drain_intents()
     assert live.halt_reason == "ledger persistence failed"
 
@@ -533,7 +536,7 @@ def test_restore_confirmed_inventory_preserves_original_open_time_and_lock():
     assert not submissions(resumed) and len(resumed.positions) == 1
 
 
-def test_opposite_shared_leg_exits_use_account_net_instead_of_unconditional_reduce_only():
+def test_forced_exit_does_not_reopen_an_already_netted_shared_leg():
     live, _ = state(make_plan(venues=("HL", "ASTER", "LIGHTER")),
         policy=TradePolicy(take_profit_bps=D(1000), max_loss_bps=D(1000)))
     first, _ = open_pair(live)
@@ -555,9 +558,8 @@ def test_opposite_shared_leg_exits_use_account_net_instead_of_unconditional_redu
     set_book(live, "LIGHTER", "99.99", "100", deadline)
     live.on_evaluation_timer(deadline)
     exits = submissions(live)
-    shared = next(i for i in exits if i.instrument_id == "BTC.HL")
-    assert shared.side == "SELL" and shared.reduce_only is False
-    assert all(i.reduce_only for i in exits if i.instrument_id != "BTC.HL")
+    assert not any(i.instrument_id == "BTC.HL" for i in exits)
+    assert len(exits) == 2 and all(i.reduce_only for i in exits)
 
 
 @pytest.mark.parametrize("kwargs", [{"max_pairs": 0}, {"max_pairs": True},

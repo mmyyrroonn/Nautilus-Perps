@@ -445,6 +445,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             if config is None:
                 return
             health = json.loads(config.telemetry_snapshot_json())
+            self.backpack_public_health = health
             epoch = health.get("connection_epoch")
             for instrument_id, market in self.markets.items():
                 if market.venue != "BACKPACK":
@@ -667,7 +668,13 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 self.check_backpack()
                 now_ns = time.time_ns()
                 self.advance_subscriptions(now_ns)
-                if now_ns - self.last_evaluation_ns >= plan.evaluation_interval_ms * 1_000_000:
+                interval_ns = plan.evaluation_interval_ms * 1_000_000
+                elapsed_ns = now_ns - self.last_evaluation_ns
+                if elapsed_ns >= interval_ns:
+                    # Keep the original cadence across processing time and timer jitter.
+                    # A late callback publishes once, without replaying missed intervals.
+                    self.last_evaluation_ns = (self.last_evaluation_ns +
+                        (elapsed_ns // interval_ns) * interval_ns) if interval_ns else now_ns
                     changed = set(self.pending_symbols)
                     affected = self.pending_instruments.copy()
                     self.pending_symbols.clear()
@@ -683,7 +690,6 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                         self.evaluate_published(symbol, changed_ids=affected)
                     if drive_evaluation_timer:
                         state.on_evaluation_timer(time.time_ns())
-                    self.last_evaluation_ns = time.time_ns()
                 if time.time_ns() - self.last_display_ns >= plan.refresh_ms * 1_000_000:
                     if plan.evaluation_interval_ms:
                         blocked = self.pending_symbols | {self.markets[i].symbol for i in self.dirty}

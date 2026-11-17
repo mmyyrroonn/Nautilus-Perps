@@ -88,17 +88,25 @@ def test_balanced_fill_does_not_complete_rebalance_before_terminal_and_fresh_acc
     assert sum(event["event"] == "entry_rebalanced" for event in events) == 1
 
 
-def test_unknown_trim_never_replaced_and_blocks_restart_activation():
+def test_unknown_trim_allows_bounded_exit_and_blocks_restart_activation():
     store = MemoryStore()
     live, _ = state(store=store)
     position, _ = enter(live)
     trim, = refresh(live, NOW+SECOND)
     live.on_receipt(receipt(trim, "unknown"), NOW+SECOND+1)
     assert not refresh(live, NOW+2*SECOND)
-    exit_order, = refresh(live, NOW+11*SECOND)
-    assert exit_order.instrument_id == "BTC.ASTER" and exit_order.quantity == D("0.5")
+    exits = refresh(live, NOW+11*SECOND)
+    assert {(i.instrument_id, i.side, i.quantity) for i in exits} == {
+        ("BTC.HL", "SELL", D("0.8")), ("BTC.ASTER", "BUY", D("0.5"))}
+    assert len(exits) == 2 and all(i.reduce_only for i in exits)
     assert position["exit_reason"] == "unhedged_timeout"
-    assert not refresh(live, NOW+25*SECOND)
+    assert not refresh(live, NOW+12*SECOND)
+    retries = refresh(live, NOW+25*SECOND)
+    assert {(i.instrument_id, i.side, i.quantity) for i in retries} == {
+        ("BTC.HL", "SELL", D("0.8")), ("BTC.ASTER", "BUY", D("0.5"))}
+    assert len(retries) == 2 and all(i.reduce_only for i in retries)
+    assert live.orders[trim.client_order_id]["status"] == "unknown"
+    assert live.orders[trim.client_order_id]["terminal_ns"] is None
     assert position["rebalance_ids"] == [trim.client_order_id]
     restored, _ = state(store=store, activate=False)
     assert restored.phase == "recovery_blocked" and not restored.activate(NOW+26*SECOND)

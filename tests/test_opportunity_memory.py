@@ -168,6 +168,49 @@ def test_reporting_failure_does_not_change_wrapped_result(tmp_path, monkeypatch)
     assert memory.current_diagnostics() is None
 
 
+def test_market_admission_diagnostics_copy_only_public_gate_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(memory, "summarize_books", lambda *args: {"sampled_at_unix_ns": 100})
+    state = SimpleNamespace(native_admission={"BACKPACK": {"checked_ns": 90,
+        "global_ready": True, "ready": False, "reason": "unrelated market",
+        "markets": {"BTC.BACKPACK": {"ready": True, "reason": None},
+                    "SOL.BACKPACK": {"ready": False, "reason": "stale"}}}})
+    diagnostics = memory.MemoryDiagnostics(tmp_path)
+    diagnostics.capture_books(None, state, 100)
+    state.native_admission["BACKPACK"]["markets"]["BTC.BACKPACK"]["ready"] = False
+    assert diagnostics.sample()["native_admission"] == {"BACKPACK": {"checked_ns": 90,
+        "global_ready": True, "reason": "unrelated market", "all_markets_ready": False, "market_count": 2,
+        "ready_instruments": ["BTC.BACKPACK"]}}
+
+
+def test_public_recovery_diagnostics_preserve_reason_without_payloads(tmp_path, monkeypatch):
+    monkeypatch.setattr(memory, "summarize_books", lambda *args: {"sampled_at_unix_ns": 100})
+    public = {"connection_epoch": 23, "connected": True, "metadata_ready": True,
+              "stale_reason": None, "last_fault_reason": "depth snapshot failed",
+              "last_fault_epoch": 22, "recovery_timeouts": 2}
+    observer = SimpleNamespace(backpack_public_health={**public, "raw_frame": "not for reports"})
+    diagnostics = memory.MemoryDiagnostics(tmp_path)
+    diagnostics.capture_books(observer, SimpleNamespace(), 100)
+    observer.backpack_public_health["last_fault_reason"] = "changed"
+    assert diagnostics.sample()["backpack_public_health"] == public
+
+
+def test_public_fault_history_is_bounded_copied_and_payload_free(tmp_path, monkeypatch):
+    monkeypatch.setattr(memory, "summarize_books", lambda *args: {"sampled_at_unix_ns": 100})
+    history = [{"unix_ns": str(i), "epoch": i, "reason": "public frame queue overflow",
+        "queued_frames": 64, "max_queue_wait_ns": 123, "raw_frame": "discard"} for i in range(40)]
+    observer = SimpleNamespace(backpack_public_health={"fault_history": history,
+        "input_queue_high_water": 64, "input_queue_overflows": 7, "max_queue_wait_ns": 123})
+    diagnostics = memory.MemoryDiagnostics(tmp_path)
+    diagnostics.capture_books(observer, SimpleNamespace(), 100)
+    history[-1]["reason"] = "changed"
+    public = diagnostics.sample()["backpack_public_health"]
+    assert public["input_queue_overflows"] == 7 and public["input_queue_high_water"] == 64
+    assert len(public["fault_history"]) == 32
+    assert public["fault_history"][0]["epoch"] == 8
+    assert public["fault_history"][-1]["reason"] == "public frame queue overflow"
+    assert all("raw_frame" not in row for row in public["fault_history"])
+
+
 def test_batch_diagnostic_failure_is_isolated(tmp_path, monkeypatch):
     diagnostics = memory.MemoryDiagnostics(tmp_path)
     diagnostics.counters["HL"]["batches"] = 127

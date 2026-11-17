@@ -470,6 +470,8 @@ class FakeLive(ScanState):
         self.stops.append((now, reason))
     def document(self):
         return {"active_pairs": self.active_pairs, "positions": []}
+    def has_exit_risk(self, now):
+        return bool(self.active_pairs)
 
 
 class FakePreflight:
@@ -488,6 +490,8 @@ class FakePreflight:
         return (intent,)
     def on_timer(self, now):
         return ()
+    def has_exit_risk(self, now):
+        return bool(D(self.owned_quantity))
     def on_receipt(self, receipt, now):
         return ()
     def on_account(self, snapshot, now):
@@ -595,7 +599,10 @@ def test_stop_drains_owned_residuals_and_keeps_nonzero_result_on_deadline(tmp_pa
     state.tick(NOW+29_000_000_000)
     assert not stopped
     state.tick(NOW+30_000_000_002)
-    assert stopped and state.failure and live.active_pairs == 1
+    assert not stopped and not state.finished and state.failure and live.active_pairs == 1
+    live.active_pairs = 0
+    state.tick(NOW+31_000_000_002)
+    assert stopped and state.finished
 
 
 def test_interrupt_during_preflight_keeps_btc_residual_and_cleanup_active(tmp_path):
@@ -608,7 +615,41 @@ def test_interrupt_during_preflight_keeps_btc_residual_and_cleanup_active(tmp_pa
     assert store.saved["startup"]["owned_quantity"] == "0.001"
     assert state._has_residual() and not live.activated and not stopped
     state.tick(NOW+30_000_000_001)
-    assert stopped and state.failure and state._has_residual()
+    assert not stopped and state.failure and state._has_residual()
+    preflight.owned_quantity = "0"
+    state.tick(NOW+31_000_000_001)
+    assert stopped and state.finished
+
+
+def test_secondary_runtime_exception_still_drives_reduction_in_same_tick(tmp_path):
+    state, live, preflight, gateway, store, stopped = coordinator(tmp_path)
+    state.phase = "active"
+    live.active_pairs = 1
+    calls = []
+    def fail(*args):
+        raise RuntimeError("synthetic secondary monitor failure")
+    state.loss_monitor.due = fail
+    live.on_evaluation_timer = lambda now: calls.append(now)
+    state.tick(NOW)
+    assert state.phase == "draining" and not stopped
+    assert calls == [NOW] and state.failure == "runtime check failed: RuntimeError"
+
+
+def test_startup_checkpoint_failure_discards_unsent_entries_and_keeps_reduction(tmp_path):
+    state, live, preflight, gateway, store, stopped = coordinator(tmp_path)
+    calls = []
+    def fail(*args):
+        calls.append(True)
+        raise OSError("synthetic checkpoint failure")
+    state.proxy.checkpoint_startup = fail
+    entry = OrderIntent("submit", "HL", "BTC.HL", "entry-r", "entry-c", "BUY", D("0.1"))
+    close = OrderIntent("submit", "HL", "BTC.HL", "close-r", "close-c", "SELL", D("0.1"), reduce_only=True)
+    preflight.orders[entry.client_order_id] = {"terminal": False}
+    state._startup_intents((entry, close), NOW)
+    state._startup_intents((), NOW+1)
+    assert gateway.sent == [close] and not stopped
+    assert preflight.orders[entry.client_order_id]["local_not_dispatched"]
+    assert state.startup_persistence_failed and len(calls) == 1
 
 
 def test_resume_document_retains_saved_btc_residual_evidence(tmp_path):
