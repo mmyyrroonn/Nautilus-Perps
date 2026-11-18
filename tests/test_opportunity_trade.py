@@ -447,7 +447,9 @@ def test_restart_rechecks_soft_exit_profit_before_filling(tmp_path, reason, trig
 @pytest.mark.parametrize("field,value", [
     ("order_notional_usd", 0), ("entry_edge_bps", "NaN"), ("take_profit_bps", "Infinity"),
     ("max_loss_bps", -1), ("max_loss_bps", True), ("take_profit_bps", 0.5),
-    ("slippage_bps", -1), ("slippage_bps", 10000), ("breakeven_after_secs", True),
+    ("slippage_bps", -1), ("slippage_bps", 10000),
+    ("hard_exit_slippage_bps", -1), ("hard_exit_slippage_bps", 10000), ("hard_exit_slippage_bps", "NaN"),
+    ("breakeven_after_secs", True),
     ("force_close_after_secs", 1.5), ("force_close_after_secs", 180),
     ("breakeven_after_secs", 300), ("force_close_after_secs", 86401),
     ("loss_stop_enabled", "false"), ("loss_stop_enabled", 1),
@@ -707,3 +709,16 @@ def test_shutdown_preserves_open_pair_for_resume():
     state.finish(NOW+2*SECOND)
     assert state.document()["opened_pairs"] == 1
     assert sum(e["event"] == "stopped" for e in events) == 1
+
+
+@pytest.mark.parametrize("bps,pending", [(100, False), (-20, True)])
+def test_paper_missing_fee_metadata_allows_max_loss_and_blocks_soft_profit(bps, pending):
+    state, events = make_state()
+    publish(state)
+    state.metadata["BTC.ASTER"] = replace(state.metadata["BTC.ASTER"], taker_fee_bps=None, fee_source="unknown")
+    mark_bps(state, bps)
+    if pending:
+        assert not state.positions and events[-1]["reason"] == "max_loss"
+    else:
+        assert len(state.positions) == 1
+        assert next(iter(state.positions.values()))["status"] == "open"

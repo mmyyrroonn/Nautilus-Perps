@@ -121,6 +121,7 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert set(plan.venues) == {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
     assert len(plan.trade_symbols) > 2 and plan.ready
     assert plan.policy.order_notional_usd == 100 and plan.max_gross_notional_usd == 500
+    assert plan.policy.slippage_bps == 0 and plan.policy.hard_exit_slippage_bps == 10
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
     assert plan.startup_self_test is False
     assert plan.document()["startup"]["account_gate_required"] is True
@@ -1030,3 +1031,27 @@ def test_native_build_refusal_reports_safe_stage_and_code(tmp_path, monkeypatch,
     output = capsys.readouterr().err
     assert "stage=native_build" in output and f"code={code}" in output
     assert "error_type=RuntimeError" in output and "SECRET_CREDENTIAL" not in output
+
+
+def test_tick_drains_pending_intents_before_evaluation_timer_and_reconcile(tmp_path):
+    state, live, gateway, _, _ = readonly_coordinator(tmp_path)
+    state.phase = "active"
+    live.activate(NOW)
+    live.drain_intents()
+    pending_reconcile = OrderIntent("reconcile", "HL", "BTC.HL", "pre-r", "", account_check=True)
+    timer_reconcile = OrderIntent("reconcile", "ASTER", "BTC.ASTER", "post-r", "", account_check=True)
+    order_of_work = []
+    live.outbox.append(pending_reconcile)
+    original_timer = live.on_evaluation_timer
+    def tracked_timer(stamp):
+        order_of_work.append(("timer", stamp))
+        live.outbox.append(timer_reconcile)
+        original_timer(stamp)
+    def tracked_dispatch(intent, stamp, **kwargs):
+        order_of_work.append(("dispatch", intent.request_id))
+        gateway.sent.append(intent)
+    live.on_evaluation_timer = tracked_timer
+    gateway.dispatch = tracked_dispatch
+    state.tick(NOW + 1)
+    assert order_of_work[:2] == [("dispatch", "pre-r"), ("timer", NOW + 1)]
+    assert ("dispatch", "post-r") in order_of_work[2:]

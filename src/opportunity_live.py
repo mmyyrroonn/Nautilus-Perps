@@ -138,6 +138,7 @@ class LiveTradeState(ScanState):
         self.flat_account_problems = {}
         self.account_read_failures, self.account_retry_after_ns = {}, {}
         self.fences, self.last_attempt = {}, {}
+        self._attempt_timestamps = {}
         self.outbox = []
         self.intent_notifier = None
         self.entry_timings = {}  # Process-local only; never persisted or restored.
@@ -788,10 +789,15 @@ class LiveTradeState(ScanState):
         """Schedule read-only work; never wait for a network read on the scan loop."""
         for domain in self.account_domains:
             self._account_domain_ready(domain, now_ns)
-        for instrument_id in self.markets:
-            account = self.accounts.get(instrument_id)
-            if account is None or now_ns - account.observed_ns >= self.account_max_age_ns // 2:
-                self._request_account(instrument_id, now_ns)
+        for instruments in self.account_scopes.values():
+            representative = self._account_representative(instruments)
+            rep_account = self.accounts.get(representative)
+            targets = (instruments if rep_account is not None and rep_account.account_positions is None
+                       else (representative,))
+            for instrument_id in targets:
+                account = self.accounts.get(instrument_id)
+                if account is None or now_ns - account.observed_ns >= self.account_max_age_ns // 2:
+                    self._request_account(instrument_id, now_ns)
         self._recover_order_reconciliations(now_ns)
 
     def _recover_order_reconciliations(self, now_ns):
@@ -928,8 +934,22 @@ class LiveTradeState(ScanState):
                       open_orders=len(account.open_order_ids), read_started_ns=account.observed_ns)
         self._recover_order_reconciliations(now_ns)
 
+    def _attempt_timestamp(self, kind, instrument_id):
+        return self._attempt_timestamps.get(kind, {}).get(instrument_id, 0)
+
+    def _observe_position(self, order, now_ns):
+        if (self.phase not in {"active", "draining", "recovery_blocked"} or not self.cleanup_allowed
+                or order["client_order_id"] in self.order_reconciliations):
+            return
+        position = self._position(order["position_id"])
+        if position is None:
+            return
+        key = self.pair_key(position["buy_id"], position["sell_id"])
+        if key in self.positions:
+            self.observe(key, now_ns)
+
     def _limit(self, instrument_id, side, base_quantity, now_ns, *, partial=False,
-               reduce_only=False, require_fees=True):
+               reduce_only=False, require_fees=True, slippage_bps=None):
         book, meta = self.books.get(instrument_id), self.metadata.get(instrument_id)
         native = self.instruments.get(instrument_id)
         if (book is None or meta is None or native is None or meta.instrument_id != instrument_id
@@ -957,7 +977,8 @@ class LiveTradeState(ScanState):
             price = F(px) * F(market.canonical_multiplier) / F(market.quote_to_usd)
             if remaining == 0:
                 break
-        factor = 1 + F(self.policy.slippage_bps) / 10000 if side == "BUY" else 1 - F(self.policy.slippage_bps) / 10000
+        slip = F(self.policy.slippage_bps if slippage_bps is None else slippage_bps) / 10000
+        factor = 1 + slip if side == "BUY" else 1 - slip
         tick = F(native["price_increment"])
         px = price * factor
         px = -(-px // tick) * tick if side == "BUY" else (px // tick) * tick
@@ -980,7 +1001,7 @@ class LiveTradeState(ScanState):
                 "fee": cash * F(meta.taker_fee_bps) / 10000 if fees_ready else None,
                 "reduce_only": reduce_only}
 
-    def _make_order(self, position, leg, purpose, bound, now_ns):
+    def _make_order(self, position, leg, purpose, bound, now_ns, *, attempt_kind=None):
         instrument_id = position[f"{leg}_id"]
         side = ("BUY" if leg == "buy" else "SELL") if purpose == "entry" else ("SELL" if leg == "buy" else "BUY")
         request_id = self._request_id("S")
@@ -998,6 +1019,7 @@ class LiveTradeState(ScanState):
         self._execution_orders[cid] = self.orders[cid]
         self.fences[instrument_id] = now_ns
         self.last_attempt[instrument_id] = now_ns
+        self._attempt_timestamps.setdefault(attempt_kind or purpose, {})[instrument_id] = now_ns
         position[f"{purpose}_ids"].append(cid)
         if purpose != "entry":
             self._exit_stage(position, "reduction_prepared_" + leg, now_ns,
@@ -1051,6 +1073,9 @@ class LiveTradeState(ScanState):
             return False
         key = self.pair_key(buy_id, sell_id)
         if key in self.positions or len(self.positions) >= self.max_pairs:
+            return False
+        if any(buy_id == pos["sell_id"] or sell_id == pos["buy_id"]
+               for pos in self.positions.values()):
             return False
         for position in self.positions.values():
             for leg in ("buy", "sell"):
@@ -1287,6 +1312,9 @@ class LiveTradeState(ScanState):
         self._update_unhedged(position, now_ns)
         if order["purpose"] != "entry":
             self._exit_stage(position, "reduction_fill_" + leg, now_ns, client_order_id=cid)
+            if order["purpose"] == "exit":
+                hard_attempts = self._attempt_timestamps.setdefault("hard_exit", {})
+                hard_attempts[instrument_id] = max(hard_attempts.get(instrument_id, 0), order["sent_ns"])
         if not F(position["remaining_buy_base"]) and not F(position["remaining_sell_base"]):
             self._exit_stage(position, "inventory_flat", now_ns)
         self.emit("fill", now_ns, execution_id=identity, position_id=position["position_id"],
@@ -1297,6 +1325,7 @@ class LiveTradeState(ScanState):
                   latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
         entry_pair_result(self, order)
         self._request_account(instrument_id, now_ns)
+        self._observe_position(order, now_ns)
 
     @timed("strategy.receipt")
     def on_receipt(self, receipt, now_ns):
@@ -1403,6 +1432,7 @@ class LiveTradeState(ScanState):
                       latency_ms=_number(F(now_ns - order["sent_ns"], 1_000_000)))
             entry_pair_result(self, order)
             self._request_account(order["instrument_id"], now_ns)
+            self._observe_position(order, now_ns)
         elif receipt.kind == "unknown":
             if order["terminal_ns"] is None and order["status"] != "unknown":
                 order["status"] = "unknown"
@@ -1563,13 +1593,16 @@ class LiveTradeState(ScanState):
         return max(quantity, min(max(_ZERO, target), authorized) * multiplier)
 
     def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True,
-                         allow_pending_entry=False, allow_unknown_reduction=False):
+                         allow_pending_entry=False, allow_unknown_reduction=False,
+                         hard_slippage=False, attempt_kind=None):
         instrument_id = position[f"{leg}_id"]
         if not qty:
             return None
-        if now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
+        attempt_kind = attempt_kind or ("hard_exit" if allow_unknown_reduction else "soft_exit")
+        last_attempt = self._attempt_timestamp(attempt_kind, instrument_id)
+        if now_ns - last_attempt < self.retry_ns:
             self._exit_wait(position, leg, now_ns, "order_retry_throttled",
-                            retry_at_ns=self.last_attempt[instrument_id] + self.retry_ns)
+                            retry_at_ns=last_attempt + self.retry_ns)
             return None
         if allow_unknown_reduction:
             # Await only this leg's recent reduction response, not an account audit.
@@ -1628,8 +1661,10 @@ class LiveTradeState(ScanState):
                 if not qty:
                     self._exit_wait(position, leg, now_ns, "target_position_flat_or_opposite")
                     return None
+        slip = self.policy.hard_exit_slippage_bps if (allow_unknown_reduction or hard_slippage) else None
         bound = self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
-                            now_ns, partial=True, reduce_only=reducing, require_fees=require_fees)
+                            now_ns, partial=True, reduce_only=reducing,
+                            require_fees=require_fees, slippage_bps=slip)
         if bound is None:
             self._exit_wait(position, leg, now_ns, "no_executable_bound")
         else:
@@ -1646,11 +1681,13 @@ class LiveTradeState(ScanState):
             self.halt_reason = "entry rebalance inventory differs from its durable target"
             self.emit("rebalance_inventory_mismatch", now_ns, position_id=position["position_id"])
             return
-        ready = [self._account_ready(position[f"{side}_id"], now_ns) for side in ("buy", "sell")]
-        if not all(ready):
-            return
         excess = remaining - target
         if excess == 0:
+            if not all(self.orders[cid]["terminal_ns"] is not None for cid in position["rebalance_ids"]):
+                return
+            ready = [self._account_ready(position[f"{side}_id"], now_ns) for side in ("buy", "sell")]
+            if not all(ready):
+                return
             position.update(status="open", rebalance_completed_ns=now_ns)
             position.pop("rebalance_blocked", None)
             self.emit("entry_rebalanced", now_ns, position_id=position["position_id"],
@@ -1659,10 +1696,20 @@ class LiveTradeState(ScanState):
             self.emit("opened", now_ns, position_id=position["position_id"],
                       buy_base=_number(target), sell_base=_number(target), rebalanced=True)
             return
-        instrument_id = position[f"{leg}_id"]
-        if now_ns - self.last_attempt.get(instrument_id, 0) < self.retry_ns:
+        if any(self.orders[cid]["terminal_ns"] is None and self.orders[cid]["status"] != "unknown"
+               for cid in position["rebalance_ids"]):
             return
-        bound = self._reduction_bound(position, leg, excess, now_ns, require_fees=False)
+        initial = not position["rebalance_ids"]
+        instrument_id = position[f"{leg}_id"]
+        if not initial:
+            ready = [self._account_ready(position[f"{side}_id"], now_ns) for side in ("buy", "sell")]
+            if not all(ready):
+                return
+            if now_ns - self._attempt_timestamp("rebalance", instrument_id) < self.retry_ns:
+                return
+        bound = self._reduction_bound(position, leg, excess, now_ns, require_fees=False,
+                                      allow_unknown_reduction=initial, hard_slippage=True,
+                                      attempt_kind="rebalance")
         if bound is None:
             if not position.get("rebalance_blocked"):
                 position["rebalance_blocked"] = True
@@ -1742,30 +1789,41 @@ class LiveTradeState(ScanState):
                 position["exit_requested_ns"] = now_ns
                 self.emit("entry_imbalance", now_ns, position_id=position["position_id"],
                           buy_base=_number(remains[0]), sell_base=_number(remains[1]))
-        if position["exit_ids"] and remains[0] != remains[1] and position["exit_reason"] not in HARD_EXITS:
+        exit_orders = [self.orders[cid] for cid in position["exit_ids"]]
+        in_flight_exit = any(o["terminal_ns"] is None for o in exit_orders)
+        exit_committed = any(F(o["filled_quantity"]) > 0 for o in exit_orders)
+        if exit_orders and remains[0] != remains[1] and position["exit_reason"] not in HARD_EXITS:
             position["exit_reason"] = "exit_imbalance"
             position["status"] = "exit_pending"
-        reason = (self._hard_exit_reason(position, now_ns) if position["exit_ids"]
+        reason = (self._hard_exit_reason(position, now_ns)
+                  if (position["exit_reason"] in HARD_EXITS or exit_committed)
                   else self._exit_reason(position, now_ns))
         if (position["status"] == "rebalancing" and position["exit_reason"] not in HARD_EXITS
                 and reason not in HARD_EXITS):
             self._rebalance_entry(position, now_ns)
             return
-        if position["exit_reason"] not in HARD_EXITS and not position["exit_ids"]:
-            if reason is None:
-                position["status"], position["exit_reason"] = "open", None
+        if position["exit_reason"] not in HARD_EXITS and not exit_committed:
+            if in_flight_exit:
+                if reason in HARD_EXITS:
+                    position.update(status="exit_pending", exit_reason=reason, exit_requested_ns=now_ns)
+                    self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=reason)
+                else:
+                    return
+            elif reason is None:
+                position.update(status="open", exit_reason=None, exit_requested_ns=None)
                 return
-            if position["exit_reason"] != reason:
+            elif position["exit_reason"] != reason:
                 position.update(status="exit_pending", exit_reason=reason, exit_requested_ns=now_ns)
                 self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=reason)
-        # Once any exit has been committed, remaining legs reduce independently.
+        # Once any hard exit or real exit fill has been committed, remaining legs reduce independently.
         # A partial profitable exit must not wait for the pair's profit or account gates again.
-        hard = position["exit_reason"] in HARD_EXITS or bool(position["exit_ids"])
+        hard = position["exit_reason"] in HARD_EXITS or exit_committed
         bounds = {}
         for leg, qty in zip(("buy", "sell"), remains):
             bound = self._reduction_bound(position, leg, qty, now_ns, require_fees=not hard,
                                           allow_pending_entry=bool(position.get("unhedged_breach")),
-                                          allow_unknown_reduction=hard)
+                                          allow_unknown_reduction=hard,
+                                          attempt_kind="hard_exit" if hard else "soft_exit")
             if bound is not None:
                 bounds[leg] = bound
         if not bounds or (not hard and len(bounds) != sum(q > 0 for q in remains)):
@@ -1792,7 +1850,9 @@ class LiveTradeState(ScanState):
                     paired_quantity, now_ns, reduce_only=old["reduce_only"])
             if any(bound is None for bound in bounds.values()):
                 return
-        intents = [self._make_order(position, leg, "exit", bound, now_ns) for leg, bound in bounds.items()]
+        intents = [self._make_order(position, leg, "exit", bound, now_ns,
+                                    attempt_kind="hard_exit" if hard else "soft_exit")
+                   for leg, bound in bounds.items()]
         self._publish_orders(intents, now_ns, position)
 
     def pending_evaluation_symbols(self):

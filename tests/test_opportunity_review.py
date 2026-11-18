@@ -37,7 +37,7 @@ def closed_trade(*, fee="0.01", exit_fee="0.02", exit_bps=10):
 
 
 def test_actual_trade_report_reconciles_cashflows_and_all_four_fees():
-    live, events = closed_trade(exit_fee="1")
+    live, events = closed_trade(exit_fee="1", exit_bps=30)
     trade = review_events(events)["trades"][0]
     assert trade["net_usd"] == live.document()["realized_net_usd"]
     assert D(trade["accounting"]["confirmed_fees_usd"]) == D("2.02")

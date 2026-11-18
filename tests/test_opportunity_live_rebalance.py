@@ -40,10 +40,11 @@ def test_trim_only_excess_preserves_pair_clock_budget_and_actual_cash(buy_qty, s
     live, events = state()
     position, _ = enter(live, buy_qty, sell_qty)
     opened_ns, actual_entry = position["opened_ns"], deepcopy(position["actual_entry"])
-    trim, = refresh(live, NOW+SECOND)
+    trim, = submissions(live)
     assert (trim.venue, trim.side, trim.quantity, trim.reduce_only) == (venue, side, D("0.3"), True)
     assert live.orders[trim.client_order_id]["purpose"] == "rebalance"
     assert position["exit_ids"] == [] and position["status"] == "rebalancing"
+    assert not refresh(live, NOW+SECOND)
     payload = fill(live, trim, NOW+SECOND+1, fee="0.001")
     live.on_fill(payload, NOW+SECOND+3)
     assert not refresh(live, NOW+2*SECOND)
@@ -55,7 +56,7 @@ def test_trim_only_excess_preserves_pair_clock_budget_and_actual_cash(buy_qty, s
     assert F(position["closing_fees_usd"]) == F("0.001")
     assert live.completed == 0 and live.gross_exposure(reserve=True) == F(200)
     completed, = [event for event in events if event["event"] == "entry_rebalanced"]
-    assert F(completed["elapsed_ms"]) == 1000
+    assert F(completed["elapsed_ms"]) == F(NOW+2*SECOND-position["rebalance_started_ns"], 1_000_000)
 
 
 def test_partial_trim_retries_only_remaining_excess_after_terminal_and_account_proof():
@@ -161,6 +162,8 @@ def test_unknown_entry_is_not_classified_as_confirmed_single_leg_or_rebalanced()
 def test_existing_hard_risk_exit_overrides_retain_balanced_pair(trigger):
     live, _ = state()
     position, _ = enter(live)
+    trim, = submissions(live)
+    live.on_receipt(receipt(trim, "canceled"), NOW+SECOND//2)
     live.on_evaluation_timer(NOW+SECOND//2)
     assert position["status"] == "rebalancing"
     now = NOW+SECOND
@@ -193,21 +196,26 @@ def test_untradeable_excess_is_retained_and_reported_without_rounding_up_or_trim
     assert sum(event["event"] == "entry_rebalance_blocked" for event in events) == 1
 
 
-def test_shared_net_zero_leg_rebalances_only_owned_difference_with_ordinary_ioc():
+def test_opposing_shared_leg_is_blocked_and_same_direction_trims_reduce_only():
     live, _ = state(make_plan(venues=("HL", "ASTER", "LIGHTER")))
     position, _ = enter(live, "0.5", "0.8")
+    initial_trim, = submissions(live)
+    assert initial_trim.instrument_id == "BTC.ASTER" and initial_trim.reduce_only
+    live.on_receipt(receipt(initial_trim, "canceled"), NOW+SECOND//2)
     now = NOW+SECOND
     accounts(live, now)
     set_book(live, "HL", "99.99", "100", now)
     set_book(live, "ASTER", "100.3", "100.31", now)
     set_book(live, "LIGHTER", "100.7", "100.71", now)
-    assert live._entry("BTC.ASTER", "BTC.LIGHTER", now)
+    assert not live._entry("BTC.ASTER", "BTC.LIGHTER", now)
+    assert not live._entry("BTC.LIGHTER", "BTC.HL", now)
+    assert live._entry("BTC.HL", "BTC.LIGHTER", now)
     for intent in submissions(live):
         fill(live, intent, now+1, quantity="0.8")
-    assert live.expected_native("BTC.ASTER") == 0
-    accounts(live, now+SECOND)
-    live.on_evaluation_timer(now+SECOND)
+    assert live.expected_native("BTC.ASTER") < 0
+    accounts(live, now+2*SECOND)
+    live.on_evaluation_timer(now+2*SECOND)
     trim, = submissions(live)
     assert trim.instrument_id == "BTC.ASTER" and trim.side == "BUY" and trim.quantity == D("0.3")
-    assert not trim.reduce_only
+    assert trim.reduce_only
     assert live.orders[trim.client_order_id]["position_id"] == position["position_id"]

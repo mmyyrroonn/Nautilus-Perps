@@ -29,6 +29,7 @@ class TradePolicy:
     breakeven_after_secs: int = 180
     force_close_after_secs: int = 300
     slippage_bps: Decimal = Decimal("0")
+    hard_exit_slippage_bps: Decimal = Decimal("10")
 
     def __post_init__(self):
         if type(self.loss_stop_enabled) is not bool:
@@ -36,10 +37,11 @@ class TradePolicy:
         for name in ("order_notional_usd", "entry_edge_bps", "take_profit_bps", "max_loss_bps"):
             value = decimal_value(getattr(self, name), name, positive=True)
             object.__setattr__(self, name, value)
-        slip = decimal_value(self.slippage_bps, "slippage_bps", nonnegative=True)
-        if slip >= 10000:
-            raise ScanConfigError("slippage_bps must be below 10000")
-        object.__setattr__(self, "slippage_bps", slip)
+        for name in ("slippage_bps", "hard_exit_slippage_bps"):
+            slip = decimal_value(getattr(self, name), name, nonnegative=True)
+            if slip >= 10000:
+                raise ScanConfigError(f"{name} must be below 10000")
+            object.__setattr__(self, name, slip)
         soft = integer_value(self.breakeven_after_secs, "breakeven_after_secs", 1, 86400)
         hard = integer_value(self.force_close_after_secs, "force_close_after_secs", 1, 86400)
         if soft >= hard:
