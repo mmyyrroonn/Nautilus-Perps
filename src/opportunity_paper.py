@@ -13,8 +13,9 @@ from fractions import Fraction as F
 from itertools import combinations
 import sys
 
-from opportunity_core import (_best_quotes_rule_out, _book_valid, _budget_quantity, _metadata_valid, _number,
-                              _walk, evaluate_opportunity, exact_decimal)
+from opportunity_core import (_best_quotes_rule_out, _book_valid, _budget_quantity,
+                              _execution_metadata_valid, _fee_metadata_valid, _metadata_valid,
+                              _number, _walk, evaluate_opportunity, exact_decimal)
 from opportunity_runtime import ScanState
 from opportunity_trade import TradePolicy
 from opportunity_timing import sampled_timed, span
@@ -230,7 +231,7 @@ class PaperTradeState(ScanState):
         book, meta = self.books.get(instrument_id), self.metadata.get(instrument_id)
         if book is None or meta is None or meta.instrument_id != instrument_id:
             return None
-        if not _metadata_valid(meta) or not _book_valid(book, self.plan.settings, now_ns):
+        if not _execution_metadata_valid(meta) or not _book_valid(book, self.plan.settings, now_ns):
             return None
         old = position["entry"][f"{opening_side}_metadata"]
         if F(meta.multiplier) != F(old["multiplier"]) or F(meta.size_increment) != F(old["size_increment"]):
@@ -272,7 +273,11 @@ class PaperTradeState(ScanState):
                 original = self.books[position[f"{opening_side}_id"]]
                 value = F(getattr(original, book_side)[0][0]) * quantity
             cash[opening_side] = value * factor
-            fees[opening_side] = value * factor * F(meta.taker_fee_bps) / 10000
+            if _fee_metadata_valid(meta):
+                fees[opening_side] = value * factor * F(meta.taker_fee_bps) / 10000
+            else:
+                executable = False
+                fees[opening_side] = F(0)
         if len(stamps) == 2 and abs(stamps[0] - stamps[1]) > self.plan.settings.max_skew_ms * 1_000_000:
             return None
         return {**self._pnl(position, cash["buy"], cash["sell"], fees["buy"], fees["sell"]),
@@ -288,6 +293,9 @@ class PaperTradeState(ScanState):
         if ready is None:
             return None
         book, meta = ready
+        fees_valid = _fee_metadata_valid(meta)
+        if not partial and not fees_valid:
+            return None
         book_side = "bids" if opening_side == "buy" else "asks"
         levels = getattr(book, book_side)
         multiplier = F(meta.multiplier)
@@ -325,7 +333,8 @@ class PaperTradeState(ScanState):
         return {"instrument_id": position[f"{opening_side}_id"],
                 "side": "SELL" if opening_side == "buy" else "BUY", "opening_side": opening_side,
                 "base_quantity": _number(quantity), "native_quantity": _number(native_quantity),
-                "cash_usd": _number(cash), "fee_usd": _number(cash * F(meta.taker_fee_bps) / 10000),
+                "cash_usd": _number(cash),
+                "fee_usd": _number(cash * F(meta.taker_fee_bps) / 10000 if fees_valid else F(0)),
                 "fee_source": meta.fee_source, "source_ns": book.ts_event_ns}
 
     def _apply_reductions(self, position, fills):

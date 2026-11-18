@@ -546,18 +546,34 @@ def test_forced_exit_does_not_reopen_an_already_netted_shared_leg():
     set_book(live, "ASTER", "100.1", "100.11", now)
     set_book(live, "LIGHTER", "99.99", "100", now)
     live.evaluate_symbol("BTC", now)
-    second = submissions(live)
-    assert len(second) == 2
-    for intent in second:
-        fill(live, intent, now+100_000_000)
-    assert live.expected_native("BTC.HL") == 0
+    assert not submissions(live) and len(live.positions) == 1
+    assert not live._entry("BTC.LIGHTER", "BTC.HL", now)
+    # A legacy snapshot that restored opposing positions must still not reopen HL.
+    helper, _ = state(make_plan(venues=("HL", "ASTER", "LIGHTER")),
+        policy=TradePolicy(take_profit_bps=D(1000), max_loss_bps=D(1000)))
+    set_book(helper, "LIGHTER", "99.99", "100", NOW)
+    set_book(helper, "HL", "100.3", "100.31", NOW)
+    helper.evaluate_symbol("BTC", NOW)
+    for intent in submissions(helper):
+        fill(helper, intent, now+100_000_000)
+    accounts(helper, now+100_000_002)
+    helper.on_evaluation_timer(now+100_000_002)
+    legacy = live.snapshot()
+    legacy_other = helper.snapshot()
+    legacy["positions"].append(legacy_other["positions"][0])
+    legacy["orders"].update(legacy_other["orders"])
+    legacy["executions"].update(legacy_other["executions"])
+    restored, _ = state(make_plan(venues=("HL", "ASTER", "LIGHTER")),
+        policy=TradePolicy(take_profit_bps=D(1000), max_loss_bps=D(1000)),
+        store=MemoryStore(legacy))
+    assert restored.expected_native("BTC.HL") == 0
     deadline = now+100_000_000+300*SECOND
-    accounts(live, deadline)
-    set_book(live, "HL", "100.3", "100.31", deadline)
-    set_book(live, "ASTER", "100.1", "100.11", deadline)
-    set_book(live, "LIGHTER", "99.99", "100", deadline)
-    live.on_evaluation_timer(deadline)
-    exits = submissions(live)
+    accounts(restored, deadline)
+    set_book(restored, "HL", "100.3", "100.31", deadline)
+    set_book(restored, "ASTER", "100.1", "100.11", deadline)
+    set_book(restored, "LIGHTER", "99.99", "100", deadline)
+    restored.on_evaluation_timer(deadline)
+    exits = submissions(restored)
     assert not any(i.instrument_id == "BTC.HL" for i in exits)
     assert len(exits) == 2 and all(i.reduce_only for i in exits)
 
@@ -567,3 +583,58 @@ def test_forced_exit_does_not_reopen_an_already_netted_shared_leg():
 def test_live_hard_risk_invalid_configuration_is_rejected(kwargs):
     with pytest.raises(ValueError):
         state(**kwargs)
+
+
+def test_zero_fill_soft_exit_does_not_latch_hard_and_rechecks_fees_and_profit():
+    live, _ = state()
+    position, _ = open_pair(live)
+    now, first_exits = mark(live, 10)
+    assert len(first_exits) == 2 and position["exit_reason"] == "take_profit"
+    for intent in first_exits:
+        live.on_receipt(receipt(intent, "rejected"), now + 1)
+    assert not submissions(live)
+    # After spread retreats below take_profit_bps, position returns cleanly to open (no hard=True latch).
+    _, none_exits = mark(live, 0, 2)
+    assert not none_exits and position["status"] == "open" and position["exit_reason"] is None
+    # Still stays blocked when accounts fail or fee metadata is missing (hard=False).
+    miss_now = now + 3 * SECOND
+    live.accounts.clear()
+    set_book(live, "HL", "99.99", "100", miss_now)
+    set_book(live, "ASTER", "100.18", "100.19", miss_now)
+    live.on_evaluation_timer(miss_now)
+    assert not submissions(live) and position["status"] == "exit_pending"
+    # Fresh accounts + qualifying soft profit cleanly retry with slippage_bps=0 (not hard_exit_slippage_bps).
+    retry_now, retries = mark(live, 10, 5)
+    assert len(retries) == 2 and position["exit_reason"] == "take_profit"
+    assert {i.price for i in retries} == {D("99.99"), D("100.19")}
+
+
+def test_inflight_soft_exit_escalates_on_max_loss_without_duplicating_soft_orders():
+    live, _ = state()
+    position, _ = open_pair(live)
+    now, first_exits = mark(live, 10)
+    assert len(first_exits) == 2
+    live.on_evaluation_timer(now + 1)
+    assert not submissions(live) and position["exit_reason"] == "take_profit"
+    live.on_receipt(receipt(first_exits[0], "rejected"), now + 2)
+    live.on_receipt(receipt(first_exits[1], "accepted"), now + 3)
+    # One soft leg rejected 0, second still in flight; max_loss escalates cleanly on rejected leg only.
+    _, loss_exits = mark(live, -25, 2)
+    assert position["exit_reason"] == "max_loss"
+    assert len(loss_exits) == 1 and loss_exits[0].instrument_id == first_exits[0].instrument_id
+
+
+def test_reconcile_accounts_requests_scope_representatives_for_native_snapshots():
+    symbols = tuple(f"S{i}" for i in range(50))
+    live = LiveTradeState(make_plan(symbols=symbols, venues=("HL", "ASTER")),
+                          TradePolicy(), max_pairs=2, max_gross_notional_usd=D(500))
+    for instruments in live.account_scopes.values():
+        rep = live._account_representative(instruments)
+        live.on_account(AccountSnapshot(live.markets[rep].venue, rep, None, None, NOW, D(0),
+                                        account_positions=(), account_open_orders=()), NOW)
+    live.drain_intents()
+    live.reconcile_accounts(NOW + live.account_max_age_ns // 2)
+    reads = live.drain_intents()
+    assert len(reads) == 2 and all(i.action == "reconcile" for i in reads)
+    assert {i.instrument_id for i in reads} == {
+        live._account_representative(instruments) for instruments in live.account_scopes.values()}

@@ -517,10 +517,14 @@ class LiveCoordinator:
             self.gateway.dispatch(intent, now_ns)
 
     def _live_intents(self, now_ns):
-        from opportunity_entry_evidence import discard_invalid_entry
+        from opportunity_entry_evidence import (
+            block_unfilled_entry_pair, discard_invalid_entry, discard_invalid_soft_exit,
+            entry_pair_snapshot, entry_pair_valid_until,
+        )
         from opportunity_timing import record_entry_stage
         from opportunity_price_timing import pending_stage
         dispatched = set()
+        entry_states = {}
         dispatch_started = time.perf_counter_ns()
         pending_stage(self.live, "dispatch_release_started")
         intents = self.live.drain_intents()
@@ -540,13 +544,26 @@ class LiveCoordinator:
             if entry_clock is not None:
                 check_ns = max(check_ns, entry_clock[0] + max(0, time.perf_counter_ns() - entry_clock[1]))
             order = self.live.orders.get(intent.client_order_id)
+            cached = None
+            position = None
             if intent.action == "submit" and order and order["purpose"] == "entry":
                 # The caller may have spent time processing other symbols or
                 # lifecycle events before creating this candidate.
                 check_ns = max(check_ns, time.time_ns())
                 position = self.live._position(order["position_id"])
-                if any(self.live.markets[position[f"{leg}_id"]].venue == "BACKPACK"
-                       for leg in ("buy", "sell")):
+                prior = entry_states.get(order["position_id"])
+                if prior is not None:
+                    first_order = self.live.orders.get(prior["first_cid"])
+                    if (first_order is not None and first_order["terminal_ns"] is not None
+                            and Decimal(first_order["filled_quantity"]) == 0):
+                        block_unfilled_entry_pair(self.live, intent, "first_leg_unfilled",
+                                                  check_ns, dispatched=dispatched)
+                        continue
+                    if (entry_pair_snapshot(self.live, position) == prior["snapshot"]
+                            and check_ns <= prior["valid_until_ns"]):
+                        cached = prior["evidence"]
+                if cached is None and any(self.live.markets[position[f"{leg}_id"]].venue == "BACKPACK"
+                                          for leg in ("buy", "sell")):
                     refresh = getattr(self.gateway, "refresh_native_admission", None)
                     self.live.update_native_admission(
                         refresh(check_ns) if refresh is not None else {}, check_ns)
@@ -556,8 +573,19 @@ class LiveCoordinator:
                         check_ns = max(check_ns, entry_clock[0] + max(0, time.perf_counter_ns() - entry_clock[1]))
                     if self.live.discard_native_entry(intent, check_ns, dispatched=dispatched):
                         continue
-            if discard_invalid_entry(self.live, intent, check_ns, dispatched=dispatched):
+            if discard_invalid_entry(self.live, intent, check_ns, dispatched=dispatched,
+                                     cached_evidence=cached):
                 continue
+            if discard_invalid_soft_exit(self.live, intent, check_ns, dispatched=dispatched):
+                continue
+            if (intent.action == "submit" and order and order["purpose"] == "entry"
+                    and order["position_id"] not in entry_states):
+                entry_states[order["position_id"]] = {
+                    "first_cid": intent.client_order_id,
+                    "snapshot": entry_pair_snapshot(self.live, position),
+                    "valid_until_ns": entry_pair_valid_until(self.live, position),
+                    "evidence": order["entry_dispatch"]["evidence"],
+                }
             dispatched.add(intent.client_order_id)
             self.live.record_exit_dispatch(intent, check_ns)
             if marker is None:
@@ -832,6 +860,7 @@ class LiveCoordinator:
         if self.phase in {"active", "draining"}:
             if self.phase == "active" and self.plan.duration_secs and now_ns-self.started_ns >= self.plan.duration_secs*1_000_000_000:
                 self.request_stop(now_ns, "duration_elapsed")
+            self._live_intents(now_ns)
             self.live.on_evaluation_timer(now_ns)
             pending_stage(self.live, "evaluation_completed")
             self._live_intents(now_ns)

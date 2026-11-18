@@ -2,10 +2,12 @@
 from fractions import Fraction as F
 import time
 
-from opportunity_core import _book_valid, _number
+from opportunity_core import _book_valid, _metadata_valid, _number
 from opportunity_book_diagnostics import book_problem
 from opportunity_entry_admission import temporal_entry_evidence
 from opportunity_timing import record_entry_stage, record_entry_pair
+
+SOFT_EXITS = frozenset({"take_profit", "positive_after_wait"})
 
 
 def entry_market_snapshot(live, intent, now_ns):
@@ -192,38 +194,18 @@ def entry_dispatch_evidence(live, position, now_ns):
     return (temporal_reason if all(ready) else "account_admission_changed"), evidence
 
 
-def discard_invalid_entry(live, intent, now_ns, *, dispatched=()):
-    order = live.orders.get(intent.client_order_id)
-    if intent.action != "submit" or order is None or order["purpose"] != "entry":
-        return False
-    if order["status"] == "local_not_dispatched":
-        return True
-    if order["status"] != "dispatch_released":
-        return False
-    position = live._position(order["position_id"])
-    started = time.perf_counter_ns()
-    reason, evidence = entry_dispatch_evidence(live, position, now_ns)
-    # Include the check itself (depth, exact economics and account admission) in
-    # the handoff budget. This clock does not depend on optional timing sampling.
-    if reason == "valid":
-        now_ns = max(time.time_ns(), now_ns + max(0, time.perf_counter_ns() - started))
-        reason, latest = temporal_entry_evidence(live, position, now_ns)
-        for leg in ("buy", "sell"):
-            evidence[leg].update(latest.pop(leg, {}))
-            for source, target in (("source_age_ns", "source_age_ms"), ("receive_age_ns", "receive_age_ms")):
+def _temporal_refresh(live, position, evidence, now_ns):
+    reason, latest = temporal_entry_evidence(live, position, now_ns)
+    for leg in ("buy", "sell"):
+        evidence.setdefault(leg, {}).update(latest.pop(leg, {}))
+        for source, target in (("source_age_ns", "source_age_ms"), ("receive_age_ns", "receive_age_ms")):
+            if source in evidence[leg]:
                 evidence[leg][target] = _number(F(evidence[leg][source], 1_000_000))
-        evidence.update(latest)
-    decision = {"result": "allowed" if reason == "valid" else "blocked", "reason": reason, "evidence": evidence}
-    # Piggyback on existing receipt/block ledger transactions, never insert a
-    # synchronous durability write between the last check and native dispatch.
-    order["entry_dispatch"] = decision
-    from opportunity_price_timing import entry_quotes
-    from opportunity_timing import diagnostics_enabled
-    quotes = entry_quotes(live, position["buy_id"], position["sell_id"]) if diagnostics_enabled() else None
-    record_entry_stage(intent.request_id, "send_check", wall_ns=now_ns, evidence=evidence,
-                       reason=reason, quotes=quotes)
-    if reason == "valid":
-        return False
+    evidence.update(latest)
+    return reason
+
+
+def _block_entry_pair(live, position, reason, decision, now_ns, *, dispatched=()):
     blocked = []
     for cid in position["entry_ids"]:
         pending = live.orders[cid]
@@ -237,6 +219,214 @@ def discard_invalid_entry(live, intent, now_ns, *, dispatched=()):
         record_entry_stage(pending["request_id"], "local_blocked", wall_ns=now_ns, reason=reason)
     live.emit("entry_dispatch_blocked", now_ns, client_order_ids=blocked, reason=reason,
               entry_dispatch=decision)
+
+
+def entry_pair_snapshot(live, position):
+    """Cheap immutable token covering every state input read by entry admission."""
+    buy_id, sell_id = position["buy_id"], position["sell_id"]
+    return (
+        id(live.books.get(buy_id)), id(live.books.get(sell_id)),
+        id(live.metadata.get(buy_id)), id(live.metadata.get(sell_id)),
+        id(live.instruments.get(buy_id)), id(live.instruments.get(sell_id)),
+        id(live.accounts.get(buy_id)), id(live.accounts.get(sell_id)),
+        live.fences.get(buy_id, 0), live.fences.get(sell_id, 0),
+        id(live.aster_leverage), len(live.leverage_rejections), len(live.leverage_blocks),
+        id(live.native_admission.get("BACKPACK")),
+        tuple(sorted(live.account_pauses)),
+        live.phase, live.stopping, live.cleanup_allowed,
+        live.entry_pause_reason, live.halt_reason, len(live.order_reconciliations),
+        any(p.get("unhedged_breach") for p in live.positions.values()),
+        sum(o["status"] == "unknown" for o in live.execution_orders()),
+    )
+
+
+def entry_pair_valid_until(live, position):
+    """Return earliest account/native admission/timeout expiry across both legs."""
+    deadlines = [o["sent_ns"] + live.order_timeout_ns - 1 for o in live.execution_orders()]
+    domains = {live._account_domain(live.markets[position[f"{leg}_id"]].venue)
+               for leg in ("buy", "sell")}
+    for domain in domains:
+        for instrument_id in live.account_domains.get(domain, ()):
+            account = live.accounts.get(instrument_id)
+            if account is not None:
+                deadlines.append(account.observed_ns + live.account_max_age_ns)
+    if any(live.markets[position[f"{leg}_id"]].venue == "BACKPACK" for leg in ("buy", "sell")):
+        status = live.native_admission.get("BACKPACK")
+        if status is not None and "checked_ns" in status:
+            deadlines.append(status["checked_ns"] + live.native_admission_max_age_ns)
+    return min(deadlines) if deadlines else 0
+
+
+def block_unfilled_entry_pair(live, intent, reason, now_ns, *, dispatched=()):
+    order = live.orders.get(intent.client_order_id)
+    if intent.action != "submit" or order is None or order["purpose"] != "entry":
+        return False
+    if order["status"] == "local_not_dispatched":
+        return True
+    if order["status"] != "dispatch_released":
+        return False
+    position = live._position(order["position_id"])
+    decision = {"result": "blocked", "reason": reason, "evidence": {"checked_wall_ns": now_ns}}
+    order["entry_dispatch"] = decision
+    record_entry_stage(intent.request_id, "send_check", wall_ns=now_ns,
+                       evidence=decision["evidence"], reason=reason)
+    _block_entry_pair(live, position, reason, decision, now_ns, dispatched=dispatched)
+    return True
+
+
+def _record_entry_check(live, intent, position, reason, evidence, now_ns):
+    decision = {"result": "allowed" if reason == "valid" else "blocked", "reason": reason, "evidence": evidence}
+    # Piggyback on existing receipt/block ledger transactions, never insert a
+    # synchronous durability write between the last check and native dispatch.
+    live.orders[intent.client_order_id]["entry_dispatch"] = decision
+    from opportunity_price_timing import entry_quotes
+    from opportunity_timing import diagnostics_enabled
+    quotes = entry_quotes(live, position["buy_id"], position["sell_id"]) if diagnostics_enabled() else None
+    record_entry_stage(intent.request_id, "send_check", wall_ns=now_ns, evidence=evidence,
+                       reason=reason, quotes=quotes)
+    return decision
+
+
+def discard_invalid_entry(live, intent, now_ns, *, dispatched=(), cached_evidence=None):
+    order = live.orders.get(intent.client_order_id)
+    if intent.action != "submit" or order is None or order["purpose"] != "entry":
+        return False
+    if order["status"] == "local_not_dispatched":
+        return True
+    if order["status"] != "dispatch_released":
+        return False
+    position = live._position(order["position_id"])
+    if cached_evidence is not None:
+        evidence = {**cached_evidence,
+                    "buy": dict(cached_evidence.get("buy", {})),
+                    "sell": dict(cached_evidence.get("sell", {}))}
+        reason = _temporal_refresh(live, position, evidence, now_ns)
+    else:
+        started = time.perf_counter_ns()
+        reason, evidence = entry_dispatch_evidence(live, position, now_ns)
+        # Include the check itself (depth, exact economics and account admission) in
+        # the handoff budget. This clock does not depend on optional timing sampling.
+        if reason == "valid":
+            now_ns = max(time.time_ns(), now_ns + max(0, time.perf_counter_ns() - started))
+            reason = _temporal_refresh(live, position, evidence, now_ns)
+    decision = _record_entry_check(live, intent, position, reason, evidence, now_ns)
+    if reason == "valid":
+        return False
+    _block_entry_pair(live, position, reason, decision, now_ns, dispatched=dispatched)
+    return True
+
+
+def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
+    evidence = {"checked_wall_ns": now_ns, "exit_reason": position["exit_reason"]}
+    if live.phase != "active" or live.stopping or live.halt_reason:
+        return "exit_admission_changed", evidence
+    if position["unknown_commission"]:
+        return "unknown_commission", evidence
+    remains = {leg: F(position[f"remaining_{leg}_base"]) for leg in ("buy", "sell")}
+    if remains["buy"] <= 0 or remains["buy"] != remains["sell"]:
+        return "exit_imbalance", evidence
+    by_leg = {o["leg"]: o for o in batch_orders}
+    if len(by_leg) != 2 or set(by_leg) != {"buy", "sell"}:
+        return "exit_pair_incomplete", evidence
+    bounds = {}
+    for leg in ("buy", "sell"):
+        instrument = position[f"{leg}_id"]
+        order = by_leg[leg]
+        book, meta = live.books.get(instrument), live.metadata.get(instrument)
+        row = evidence[leg] = {"limit_price": order["price"], "quantity": order["quantity"]}
+        if book is None:
+            return "missing_book", evidence
+        row.update(source_wall_ns=book.ts_event_ns, received_wall_ns=book.ts_received_ns,
+                   source_age_ms=_number(F(now_ns - book.ts_event_ns, 1_000_000)),
+                   receive_age_ms=_number(F(now_ns - book.ts_received_ns, 1_000_000)))
+        if not _book_valid(book, live.plan.settings, now_ns):
+            return "stale_or_invalid_book", evidence
+        if meta is None or meta.instrument_id != instrument or not _metadata_valid(meta):
+            return "metadata_unavailable", evidence
+        native_rules = position.get("native_rules", {}).get(leg)
+        if (native_rules is not None
+                and native_rules != {k: str(v) for k, v in live.instruments.get(instrument, {}).items()}):
+            return "metadata_changed", evidence
+        if any(str(getattr(meta, k)) != str(position["entry"][f"{leg}_metadata"].get(k))
+               for k in ("multiplier", "size_increment")):
+            return "metadata_changed", evidence
+        levels = book.bids if leg == "buy" else book.asks
+        quantity, limit = F(order["quantity"]), F(order["price"])
+        market = live.markets[instrument]
+        conversion = F(market.canonical_multiplier) / F(market.quote_to_usd)
+        row["available_quantity"] = _number(sum((F(q) for _, q in levels), F(0)))
+        executable = [(F(p) * conversion, F(q)) for p, q in levels
+                      if (F(p) * conversion >= limit if leg == "buy" else F(p) * conversion <= limit)]
+        row["depth_within_limit"] = _number(sum((q for _, q in executable), F(0)))
+        if F(row["available_quantity"]) < quantity:
+            return "insufficient_depth", evidence
+        if F(row["depth_within_limit"]) < quantity:
+            return "price_outside_limit", evidence
+        base = quantity * F(meta.multiplier)
+        bound = live._limit(instrument, order["side"], base, now_ns, reduce_only=order["reduce_only"])
+        if bound is None:
+            return "invalid_execution_rules_or_fees", evidence
+        row["current_bound_price"] = str(bound["price"])
+        if ((leg == "buy" and F(bound["price"]) < limit)
+                or (leg == "sell" and F(bound["price"]) > limit)):
+            return "price_outside_limit", evidence
+        limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
+        limit_fee = limit_cash * F(meta.taker_fee_bps) / 10000
+        scale = remains[leg] / base
+        bounds[leg] = ((limit_cash if leg == "buy" else -limit_cash) - limit_fee) * scale
+        row.update(limit_cash_usd=_number(limit_cash), fee_usd=_number(limit_fee))
+    if abs(live.books[position["buy_id"]].ts_event_ns - live.books[position["sell_id"]].ts_event_ns) > live.plan.settings.max_skew_ms * 1_000_000:
+        return "book_skew", evidence
+    pnl = live._pnl(position) + bounds["buy"] + bounds["sell"]
+    capital = F(position["actual_entry"]["buy_notional_usd"])
+    required = F(live.policy.take_profit_bps) * capital if position["exit_reason"] == "take_profit" else F(0)
+    evidence.update(net_usd=_number(pnl), capital_usd=_number(capital))
+    if capital <= 0:
+        return "entry_imbalance", evidence
+    if position["exit_reason"] == "take_profit" and pnl * 10000 < required:
+        return "net_edge_insufficient", evidence
+    if position["exit_reason"] == "positive_after_wait" and pnl <= 0:
+        return "net_edge_insufficient", evidence
+    return "valid", evidence
+
+
+def discard_invalid_soft_exit(live, intent, now_ns, *, dispatched=()):
+    """Revalidate pending paired soft exits before Leg 1 dispatches; never block HARD_EXITS or rebalance."""
+    order = live.orders.get(intent.client_order_id)
+    if intent.action != "submit" or order is None or order["purpose"] != "exit":
+        return False
+    if order["status"] == "local_not_dispatched":
+        return True
+    if order["status"] != "dispatch_released":
+        return False
+    position = live._position(order["position_id"])
+    if position is None or position["exit_reason"] not in SOFT_EXITS:
+        return False
+    if intent.client_order_id not in position["exit_ids"]:
+        return False
+    batch_ids = [cid for cid in position["exit_ids"]
+                 if cid in dispatched or live.orders[cid]["status"] in {"prepared", "dispatch_released"}]
+    if any(cid in dispatched for cid in batch_ids) or any(F(live.orders[cid]["filled_quantity"]) > 0 for cid in position["exit_ids"]):
+        return False
+    reason, evidence = _soft_exit_dispatch_evidence(
+        live, position, [live.orders[cid] for cid in batch_ids], now_ns)
+    decision = {"result": "allowed" if reason == "valid" else "blocked", "reason": reason, "evidence": evidence}
+    order["exit_dispatch"] = decision
+    if reason == "valid":
+        return False
+    previous_reason = position["exit_reason"]
+    blocked = []
+    for cid in batch_ids:
+        pending = live.orders[cid]
+        if cid in dispatched or pending["status"] not in {"prepared", "dispatch_released"}:
+            continue
+        pending["terminal_ns"], pending["status"] = now_ns, "local_not_dispatched"
+        pending["exit_dispatch"] = decision
+        blocked.append(cid)
+    position.update(status="open", exit_reason=None, exit_requested_ns=None)
+    live.emit("exit_dispatch_blocked", now_ns, position_id=position["position_id"],
+              client_order_ids=blocked, reason=reason, previous_exit_reason=previous_reason,
+              exit_dispatch=decision)
     return True
 
 

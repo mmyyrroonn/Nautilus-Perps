@@ -21,6 +21,7 @@ loss_stop_enabled = true
 breakeven_after_secs = 180
 force_close_after_secs = 300
 slippage_bps = "0"
+hard_exit_slippage_bps = "10"
 
 [entry_admission]
 # Local entry handoff budgets, validated offline; no guarantee of venue execution.

@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from test_opportunity_live import accounts, fill, receipt, state, submissions
+from test_opportunity_live import accounts, fill, mark, open_pair, receipt, state, submissions
 from test_opportunity_live_runner import configs
 from test_opportunity_trade import NOW, SECOND, make_plan, publish, set_book
 from opportunity_core import BookSnapshot, exact_decimal
@@ -17,7 +17,7 @@ from opportunity_preflight import AccountSnapshot
 
 def coordinator_callback(live):
     coordinator = object.__new__(LiveCoordinator)
-    coordinator.live, coordinator.phase = live, "active"
+    coordinator.live, coordinator.phase, coordinator.preflight = live, "active", None
     sent = []
     coordinator.proxy = NS(restart_pending=False)
     coordinator.gateway = NS(dispatch=lambda intent, now, **kwargs: sent.append(intent))
@@ -180,6 +180,9 @@ def test_slow_cross_fill_account_read_is_rejected_without_blocking_confirmed_exi
     assert wakeups  # Account read enters the same immediate dispatch wakeup path.
     requests = live.drain_intents()
     assert any(i.action == "reconcile" for i in requests)
+    first_unwind, = [i for i in requests if i.action == "submit"]
+    assert first_unwind.quantity == D("0.4") and first_unwind.reduce_only
+    live.on_receipt(receipt(first_unwind, "rejected"), NOW + SECOND // 10 + 3)
     coordinator, sent = coordinator_callback(live)
     now = NOW + 2 * SECOND
     set_book(live, "HL", "99.99", "100", now)
@@ -201,7 +204,7 @@ def test_slow_cross_fill_account_read_is_rejected_without_blocking_confirmed_exi
     sent.clear()
     coordinator.on_account(fresh, now + 3)
     assert not any(i.action == "submit" for i in sent)
-    assert len(next(iter(live.positions.values()))["exit_ids"]) == 1
+    assert len(next(iter(live.positions.values()))["exit_ids"]) == 2
 
 
 @pytest.mark.parametrize("problem", ["foreign_position", "foreign_order", "incomplete", "disconnected"])
@@ -211,8 +214,9 @@ def test_account_completion_wakeup_keeps_confirmed_reduction_independent_of_full
     buy, sell = submissions(live)
     fill(live, buy, NOW + 1, quantity="0.4")
     live.on_receipt(receipt(sell, "rejected"), NOW + 2)
-    live.drain_intents()
-    now = NOW + SECOND
+    first_unwind, = [i for i in live.drain_intents() if i.action == "submit"]
+    live.on_receipt(receipt(first_unwind, "rejected"), NOW + 3)
+    now = NOW + 2 * SECOND
     set_book(live, "HL", "99.99", "100", now)
     snapshot = proof(live, buy.instrument_id, now)
     if problem == "foreign_position":
@@ -236,12 +240,14 @@ def test_retry_wait_is_recorded_without_shortening_one_second_interval():
     buy, sell = submissions(live)
     fill(live, buy, NOW + 1, quantity="0.4")
     live.on_receipt(receipt(sell, "rejected"), NOW + 2)
+    # Entry cooldown no longer blocks the first confirmed imbalance exit.
+    first_unwind, = submissions(live)
+    live.on_receipt(receipt(first_unwind, "rejected"), NOW + 3)
     accounts(live, NOW + 3)
-    position = next(iter(live.positions.values()))
     live.observe(next(iter(live.positions)), NOW + 4)
     waits = [e for e in events if e["event"] == "exit_wait"]
     assert waits[-1]["reason"] == "order_retry_throttled"
-    assert waits[-1]["retry_at_ns"] == NOW + SECOND
+    assert waits[-1]["retry_at_ns"] == NOW + 2 + SECOND
     before = len(waits)
     live.observe(next(iter(live.positions)), NOW + 5)
     assert sum(e["event"] == "exit_wait" for e in events) == before
@@ -253,19 +259,16 @@ def test_event_woken_exit_books_duplicate_fills_fees_and_pnl_once():
     publish(live)
     buy, sell = submissions(live)
     fill(live, buy, NOW + 1, quantity="0.4", fee="0.02")
-    live.on_receipt(receipt(sell, "rejected"), NOW + 2)
-    live.drain_intents()
     coordinator, sent = coordinator_callback(live)
-    now = NOW + SECOND
-    set_book(live, "HL", "99.99", "100", now)
-    coordinator.on_account(proof(live, buy.instrument_id, now), now)
+    coordinator.on_receipt(receipt(sell, "rejected"), NOW + 2)
     exit_order, = [i for i in sent if i.action == "submit"]
-    payload = fill(live, exit_order, now + 1, fee="0.01")
-    live.on_fill(payload, now + 3)
+    assert exit_order.price == D("99.89")
+    payload = fill(live, exit_order, NOW + 3, fee="0.01")
+    live.on_fill(payload, NOW + 4)
     for instrument in (buy.instrument_id, sell.instrument_id):
-        coordinator.on_account(proof(live, instrument, now + 4), now + 4)
+        coordinator.on_account(proof(live, instrument, NOW + 5), NOW + 5)
     assert not live.positions and live.completed == 1
-    assert live.realized_net == F("-0.034")
+    assert live.realized_net == F("-0.074")
     dispatched = [e for e in events if e["event"] == "exit_python_dispatch"]
     assert len(dispatched) == 1 and dispatched[0]["client_order_id"] == exit_order.client_order_id
     assert F(dispatched[0]["prepared_to_dispatch_ms"]) >= 0
@@ -273,3 +276,52 @@ def test_event_woken_exit_books_duplicate_fills_fees_and_pnl_once():
     assert stages.count("reduction_fill_buy") == 1
     assert {"first_unbalanced", "entries_terminal", "account_accepted_buy",
             "reduction_prepared_buy", "reduction_fill_buy", "inventory_flat"} <= set(stages)
+
+
+@pytest.mark.parametrize("trigger", ["entry_imbalance", "unhedged_notional"])
+def test_entry_cooldown_never_blocks_first_hard_exit_and_reacts_on_callback(trigger):
+    live, _ = state(max_unhedged_notional_usd="80")
+    publish(live, NOW)
+    buy, sell = submissions(live)
+    if trigger == "unhedged_notional":
+        set_book(live, "HL", "101.99", "102", NOW + 1)
+        fill(live, buy, NOW + 2)
+    else:
+        fill(live, buy, NOW + 2, quantity="0.4")
+        live.on_receipt(receipt(sell, "rejected"), NOW + 3)
+    unwind, = submissions(live)
+    assert unwind.instrument_id == buy.instrument_id and unwind.reduce_only and unwind.side == "SELL"
+
+
+def test_failed_soft_exit_does_not_throttle_first_hard_exit():
+    live, _ = state()
+    position, _ = open_pair(live)
+    now, soft_exits = mark(live, 10)
+    assert position["exit_reason"] == "take_profit" and len(soft_exits) == 2
+    for intent in soft_exits:
+        live.on_receipt(receipt(intent, "rejected"), now + 1)
+    assert not submissions(live)
+    # 2ns after soft exits fail 0/0, a max_loss must immediately fire without waiting 1s.
+    loss_now = now + 2
+    set_book(live, "HL", "97.99", "98", loss_now)
+    set_book(live, "ASTER", "100.3", "100.31", loss_now)
+    live.observe(next(iter(live.positions)), loss_now)
+    hard_exits = submissions(live)
+    assert position["exit_reason"] == "max_loss" and len(hard_exits) == 2
+    buy_exit = next(i for i in hard_exits if i.side == "SELL")
+    sell_exit = next(i for i in hard_exits if i.side == "BUY")
+    assert buy_exit.price == D("97.89") and sell_exit.price == D("100.42")
+
+
+def test_entry_cooldown_does_not_throttle_first_soft_exit():
+    live, _ = state()
+    publish(live, NOW)
+    entries = submissions(live)
+    for intent in entries:
+        fill(live, intent, NOW + 1)
+    # 5ms after entry (well below 1s retry_interval_ms), qualifying soft exit still dispatches.
+    soon = NOW + 5_000_000
+    accounts(live, soon)
+    publish(live, soon, sell_bid="100.18", sell_ask="100.19")
+    soft_exits = submissions(live)
+    assert len(soft_exits) == 2 and next(iter(live.positions.values()))["exit_reason"] == "take_profit"

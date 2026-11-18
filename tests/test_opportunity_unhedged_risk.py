@@ -78,6 +78,8 @@ def test_amount_limit_latches_on_fill_before_timer_and_blocks_other_pair_admissi
     # Admission reserves headroom; a real subsequent jump still trips the cap.
     set_book(live, "HL", "101.99", "102", NOW + 1)
     fill(live, buy, NOW + SECOND // 10)
+    unwind, = submissions(live)
+    assert unwind.instrument_id == buy.instrument_id and unwind.reduce_only
     position = next(iter(live.positions.values()))
     assert position["exit_reason"] == "unhedged_notional"
     assert F(position["unhedged_breach"]["notional_usd"]) > 80
@@ -285,6 +287,8 @@ def test_legacy_unbalanced_ledger_does_not_gain_a_new_grace_period():
     store = MemoryStore()
     live, _ = state(store=store)
     position, _ = enter(live)
+    trim, = submissions(live)
+    live.on_receipt(receipt(trim, "canceled"), NOW + SECOND // 10 + 2)
     saved = live.snapshot()
     for key in tuple(saved["positions"][0]):
         if key.startswith("unhedged_"):
@@ -362,25 +366,42 @@ def test_shared_leg_account_net_zero_does_not_cancel_pair_exposure_or_expand_own
     live, _ = state(make_plan(venues=("HL", "ASTER", "LIGHTER")),
                     policy=TradePolicy(loss_stop_enabled=False))
     first, _ = enter(live, "0.5", "0.8")
+    trim, = submissions(live)
+    live.on_receipt(receipt(trim, "canceled"), NOW + SECOND // 10 + 2)
     now = NOW + SECOND
     accounts(live, now)
     set_book(live, "HL", "99.99", "100", now)
     set_book(live, "ASTER", "100.3", "100.31", now)
     set_book(live, "LIGHTER", "100.7", "100.71", now)
-    assert live._entry("BTC.ASTER", "BTC.LIGHTER", now)
-    for intent in submissions(live):
-        fill(live, intent, now + 1, quantity="0.8")
-    assert live.expected_native("BTC.ASTER") == 0
+    assert not live._entry("BTC.ASTER", "BTC.LIGHTER", now)
+    # Even if a legacy restored ledger held opposing pairs netting ASTER to 0,
+    # unhedged pair exposure on first stays independent without expanding risk.
+    helper, _ = state(make_plan(venues=("HL", "ASTER", "LIGHTER")),
+                      policy=TradePolicy(loss_stop_enabled=False))
+    set_book(helper, "ASTER", "100.3", "100.31", now)
+    set_book(helper, "LIGHTER", "100.7", "100.71", now)
+    assert helper._entry("BTC.ASTER", "BTC.LIGHTER", now)
+    for intent in submissions(helper):
+        fill(helper, intent, now + 1, quantity="0.8")
+    legacy, legacy_other = live.snapshot(), helper.snapshot()
+    legacy["positions"].append(legacy_other["positions"][0])
+    legacy["orders"].update(legacy_other["orders"])
+    legacy["executions"].update(legacy_other["executions"])
+    restored, _ = state(make_plan(venues=("HL", "ASTER", "LIGHTER")),
+                        policy=TradePolicy(loss_stop_enabled=False),
+                        store=MemoryStore(legacy))
+    assert restored.expected_native("BTC.ASTER") == 0
+    restored_first = next(p for p in restored.positions.values() if p["position_id"] == first["position_id"])
     now = first["opened_ns"] + 10 * SECOND
-    accounts(live, now)
+    accounts(restored, now)
     for venue, bid, ask in (("HL", "99.99", "100"), ("ASTER", "100.3", "100.31"), ("LIGHTER", "100.7", "100.71")):
-        set_book(live, venue, bid, ask, now)
-    live.on_evaluation_timer(now)
-    exits = submissions(live)
-    assert len(exits) == 1 and live.orders[exits[0].client_order_id]["position_id"] == first["position_id"]
+        set_book(restored, venue, bid, ask, now)
+    restored.on_evaluation_timer(now)
+    exits = submissions(restored)
+    assert len(exits) == 1 and restored.orders[exits[0].client_order_id]["position_id"] == first["position_id"]
     assert exits[0].instrument_id == "BTC.HL" and exits[0].reduce_only
     assert exits[0].quantity == D("0.5")  # Never reopen the already-flat shared net position.
-    assert F(first["unhedged_base"]) == F("-0.3")
+    assert F(restored_first["unhedged_base"]) == F("-0.3")
 
 
 @pytest.mark.parametrize("kwargs", [

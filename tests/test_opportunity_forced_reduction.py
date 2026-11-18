@@ -11,6 +11,7 @@ from test_opportunity_live import (
 from test_opportunity_live_rebalance import enter, refresh
 from test_opportunity_trade import NOW, SECOND, publish, set_book
 from opportunity_live import HARD_EXITS
+from opportunity_trade import TradePolicy
 from opportunity_trade_store import TradeStore
 
 
@@ -137,11 +138,47 @@ def test_unknown_other_entry_keeps_original_id_while_confirmed_leg_reduces_witho
 
 def test_confirmed_excess_entry_is_trimmed_without_fees():
     live, _ = state()
-    position, _ = enter(live)
+    publish(live)
+    buy, sell = submissions(live)
+    fill(live, buy, NOW + SECOND // 10, quantity="0.8")
     lose_fees(live)
-    reduction, = refresh(live, NOW + SECOND)
-    assert reduction.quantity == D("0.3") and reduction.side == "SELL"
-    assert position["rebalance_target_base"] == "0.5"
+    fill(live, sell, NOW + SECOND // 10, quantity="0.5")
+    reduction, = submissions(live)
+    assert reduction.quantity == D("0.3") and reduction.side == "SELL" and reduction.reduce_only
+    assert next(iter(live.positions.values()))["rebalance_target_base"] == "0.5"
+    assert reduction.price == D("99.89")  # hard_exit_slippage_bps = 10 on SELL 99.99
+
+
+def test_live_missing_fee_metadata_triggers_max_loss_while_blocking_soft_profit():
+    live, _ = state()
+    position, _ = open_pair(live)
+    lose_fees(live)
+    _, soft = mark(live, 100)
+    assert not soft and position["status"] == "open"
+    _, exits = mark(live, -20)
+    assert len(exits) == 2 and position["exit_reason"] == "max_loss"
+    sell_exit = next(i for i in exits if i.side == "SELL")
+    buy_exit = next(i for i in exits if i.side == "BUY")
+    assert sell_exit.price == D("99.89") and buy_exit.price == D("100.6")
+
+
+def test_hard_exit_slippage_isolated_from_entry_and_soft_exit():
+    live, _ = state(policy=TradePolicy(slippage_bps=D(0), hard_exit_slippage_bps=D(10)))
+    publish(live)
+    buy_entry, sell_entry = submissions(live)
+    assert buy_entry.price == D("100") and sell_entry.price == D("100.3")
+    for intent in (buy_entry, sell_entry):
+        fill(live, intent, NOW + SECOND // 10)
+    accounts(live, NOW + SECOND // 10 + 2)
+    live.on_evaluation_timer(NOW + SECOND // 10 + 2)
+    _, soft_exits = mark(live, 10)
+    assert {i.price for i in soft_exits} == {D("99.99"), D("100.19")}
+    for intent in soft_exits:
+        live.on_receipt(receipt(intent, "rejected"), NOW + 2 * SECOND)
+    _, hard_exits = mark(live, 10, 300)
+    hard_buy = next(i for i in hard_exits if i.side == "BUY")
+    hard_sell = next(i for i in hard_exits if i.side == "SELL")
+    assert hard_sell.price == D("99.89") and hard_buy.price == D("100.3")
 
 
 @pytest.mark.parametrize("rule,value", [("price_increment", "0.1"), ("native_multiplier", "2"),
