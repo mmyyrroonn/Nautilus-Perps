@@ -79,8 +79,9 @@ def recovery(request):
         reconcile_terminal_evidence=lambda: None, admission_status_json=lambda: None)
     gateway = NativeOrderGateway(strategy, plan.markets, on_receipt, on_account, lambda _: None,
         reader=reader, model=MODEL, native_controls={venue: control}, account_timeout_secs=20)
-    gateway.worker.shutdown(wait=True)
-    state.worker = gateway.worker = AccountWorker()
+    for worker in gateway.workers.values():
+        worker.shutdown(wait=True)
+    state.worker = gateway.workers[venue] = AccountWorker()
     state.gateway, state.strategy = gateway, strategy
     yield state
     gateway.close()
@@ -260,3 +261,47 @@ def test_persistent_future_snapshot_still_expires_original_account_request(recov
     state.gateway.poll(state.now)
     assert [(r.request_id, r.kind) for r in state.receipts] == [(original.request_id, "unknown")]
     assert not state.accounts and not state.worker.jobs and not state.gateway.native_reads
+
+
+def test_multi_venue_account_reads_do_not_head_of_line_block():
+    import threading
+    from opportunity_preflight import OrderIntent
+    hl_started = threading.Event()
+    hl_release = threading.Event()
+    accounts = []
+    aster_snapshot = AccountSnapshot("ASTER", "BTCUSDT-PERP.ASTER", None, None, NOW, D(0),
+                                     account_positions=(), account_open_orders=())
+    hl_snapshot = AccountSnapshot("HL", "BTC-USD-PERP.HYPERLIQUID", None, None, NOW, D(0),
+                                  account_positions=(), account_open_orders=())
+
+    def read(market, bid, ask, now):
+        if market.venue == "HL":
+            hl_started.set()
+            assert hl_release.wait(3)
+            return hl_snapshot
+        return aster_snapshot
+
+    markets = [NS(venue="HL", instrument_id="BTC-USD-PERP.HYPERLIQUID"),
+               NS(venue="ASTER", instrument_id="BTCUSDT-PERP.ASTER")]
+    gateway = NativeOrderGateway(FakeStrategy(), markets, lambda _: None, accounts.append,
+                                 lambda _: None, reader=NS(read=read), model=MODEL)
+    try:
+        hl_intent = OrderIntent("reconcile", "HL", "BTC-USD-PERP.HYPERLIQUID",
+                                "req-hl", "", account_check=True)
+        aster_intent = OrderIntent("reconcile", "ASTER", "BTCUSDT-PERP.ASTER",
+                                   "req-aster", "", account_check=True)
+        gateway.dispatch(hl_intent, NOW)
+        assert hl_started.wait(2)
+        gateway.dispatch(aster_intent, NOW)
+        assert gateway.reads["req-aster"].result(timeout=2) == aster_snapshot
+        gateway.poll(NOW + 1)
+        assert accounts == [aster_snapshot]
+        assert set(gateway.workers) == {"HYPERLIQUID", "ASTER"}
+        hl_release.set()
+        assert gateway.reads["req-hl"].result(timeout=2) == hl_snapshot
+        gateway.poll(NOW + 2)
+        assert accounts == [aster_snapshot, hl_snapshot]
+    finally:
+        hl_release.set()
+        gateway.close()
+    assert gateway.workers and all(worker._shutdown for worker in gateway.workers.values())
