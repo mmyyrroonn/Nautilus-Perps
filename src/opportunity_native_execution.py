@@ -16,6 +16,7 @@ import os
 import json
 import re
 from pathlib import Path
+import threading
 import time
 
 from opportunity_account_reader import AccountReadError, ReadOnlyAccountReader
@@ -293,7 +294,8 @@ class NativeOrderGateway:
         self.backpack_public_config = backpack_public_config
         self.backpack_market_health = {}
         self.next_authority_renewal_ms = 0
-        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="account-readonly")
+        self.workers = {}
+        self._workers_lock = threading.Lock()
         self.reads = {}
         self.native_reads = {}
         self.requests = {}
@@ -396,6 +398,20 @@ class NativeOrderGateway:
         if unavailable:
             return "native_public_quotes_not_ready"
         return None
+
+    def _worker(self, venue):
+        key = "HYPERLIQUID" if venue in {"HL", "HYPERLIQUID"} else venue
+        with self._workers_lock:
+            if self.closed:
+                raise RuntimeError("native execution gateway is closed")
+            worker = self.workers.get(key)
+            if worker is None:
+                worker = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix=f"account-readonly-{key.lower()}",
+                )
+                self.workers[key] = worker
+            return worker
 
     def _client(self, venue):
         return self.model.ClientId.from_str("HYPERLIQUID" if venue in {"HL", "HYPERLIQUID"} else venue)
@@ -520,7 +536,7 @@ class NativeOrderGateway:
                 bid, ask = (None, None) if intent.account_check else self._quote(intent.instrument_id, now_ns)[:2]
                 # Snapshot time is the read's start fence, not the older quote's
                 # event time and never the response completion time.
-                self.reads[intent.request_id] = self.worker.submit(self.reader.read, market, bid, ask, now_ns)
+                self.reads[intent.request_id] = self._worker(intent.venue).submit(self.reader.read, market, bid, ask, now_ns)
             except Exception:
                 self._reject(intent, "account read could not start" if intent.account_check else
                              "account read could not start with a valid current quote")
@@ -647,7 +663,7 @@ class NativeOrderGateway:
                 min_quantity=step if minimum is None else _decimal(minimum),
                 min_notional=Decimal(0) if minimum_notional is None else _decimal(minimum_notional),
                 multiplier=_decimal(getattr(instrument, "multiplier", Decimal(1))))
-            self.reads[intent.request_id] = self.worker.submit(self.reader.read, market, bid, ask, now_ns)
+            self.reads[intent.request_id] = self._worker(intent.venue).submit(self.reader.read, market, bid, ask, now_ns)
             self.native_reads.pop(intent.request_id, None)
         except AccountReadError as exc:
             # A rejected observation is a failed read, not a cycle still being
@@ -1051,10 +1067,13 @@ class NativeOrderGateway:
 
     @timed("shutdown.gateway_close")
     def close(self):
-        if self.closed:
-            return
-        self.closed = True
+        with self._workers_lock:
+            if self.closed:
+                return
+            self.closed = True
+            workers = tuple(self.workers.values())
         self.submit_timings.clear()
         for future in self.reads.values():
             future.cancel()
-        self.worker.shutdown(wait=False, cancel_futures=True)
+        for worker in workers:
+            worker.shutdown(wait=False, cancel_futures=True)

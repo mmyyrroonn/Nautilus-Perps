@@ -10,13 +10,12 @@ from opportunity_timing import span, timed
 
 from decimal import Decimal
 from fractions import Fraction
+import http.client
 import json
 import os
 import threading
 import time
-from urllib.parse import quote, urlencode
-from urllib.error import HTTPError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.parse import quote, urlencode, urlsplit
 from email.utils import parsedate_to_datetime
 from math import ceil
 
@@ -73,32 +72,116 @@ def aster_signature(message, key, signer_address, environment):
         raise AccountReadError("Aster account read signing failed; credentials omitted") from None
 
 
-def http_json(method, url, payload=None, *, timeout=10):
+_HTTP_POOL_LOCK = threading.Lock()
+_HTTP_POOL = {}
+_MAX_POOL_PER_ORIGIN = 8
+
+
+def _new_connection(origin):
+    scheme, host, port, timeout = origin
+    conn_cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+    return conn_cls(host, port, timeout=timeout)
+
+
+def _checkout_connection(origin):
+    with _HTTP_POOL_LOCK:
+        bucket = _HTTP_POOL.get(origin)
+        if bucket:
+            return bucket.pop(), True
+    return _new_connection(origin), False
+
+
+def _checkin_connection(origin, conn):
+    with _HTTP_POOL_LOCK:
+        bucket = _HTTP_POOL.setdefault(origin, [])
+        if len(bucket) < _MAX_POOL_PER_ORIGIN:
+            bucket.append(conn)
+            return
+    _close_quietly(conn)
+
+
+def _close_quietly(conn):
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _is_stale_connection_error(exc):
+    if isinstance(exc, (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError)):
+        return True
+    if isinstance(exc, http.client.BadStatusLine):
+        line = getattr(exc, "line", "") or ""
+        return not line.strip() or line in {"''", '""'}
+    return False
+
+
+def http_json(method, url, payload=None, *, timeout=3):
     """Fixed read-only HTTP transport; no redirects to another origin are accepted."""
     if method not in {"GET", "POST"}:
         raise AccountReadError("unsupported account read method")
-    body = json.dumps(payload).encode() if payload is not None else None
-    request = Request(url, data=body, method=method,
-                      headers={"Content-Type": "application/json", "Accept": "application/json"})
-    class NoRedirect(HTTPRedirectHandler):
-        def redirect_request(self, *args, **kwargs):
-            raise AccountReadError("account read redirect refused")
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname
+    if scheme not in {"http", "https"} or not host:
+        raise AccountReadError("account read failed; private response omitted")
+    port = parsed.port or (443 if scheme == "https" else 80)
+    target = parsed.path or "/"
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
     try:
-        with build_opener(NoRedirect()).open(request, timeout=timeout) as response:
-            if response.geturl() != url:
-                raise AccountReadError("account read redirect refused")
-            return json.loads(response.read(), parse_float=Decimal)
-    except HTTPError as exc:
-        retry = 0
-        if exc.code in {429, 418}:
-            raw = exc.headers.get("Retry-After", "").strip() if exc.headers else ""
-            retry = 120 if exc.code == 418 else 10
-            try:
-                retry = max(1, int(raw) if raw.isdigit() else ceil(parsedate_to_datetime(raw).timestamp() - time.time()))
-            except (ValueError, TypeError, OverflowError):
-                pass
-        raise AccountReadError(f"account read HTTP {exc.code}; private response omitted",
-                               retry_after_secs=retry) from None
+        body = json.dumps(payload).encode() if payload is not None else None
+    except Exception:
+        raise AccountReadError("account read failed; private response omitted") from None
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "Connection": "keep-alive"}
+    origin = (scheme, host, port, timeout)
+
+    for attempt in (0, 1):
+        conn, reused = (_checkout_connection(origin) if attempt == 0
+                        else (_new_connection(origin), False))
+        try:
+            conn.request(method, target, body=body, headers=headers)
+            response = conn.getresponse()
+        except Exception as exc:
+            _close_quietly(conn)
+            if attempt == 0 and reused and _is_stale_connection_error(exc):
+                continue
+            raise AccountReadError("account read failed; private response omitted") from None
+        break
+
+    try:
+        status = response.status
+        if 300 <= status < 400:
+            _close_quietly(conn)
+            raise AccountReadError("account read redirect refused")
+        if status != 200:
+            retry = 0
+            if status in {429, 418}:
+                raw = (response.getheader("Retry-After") or "").strip()
+                retry = 120 if status == 418 else 10
+                try:
+                    retry = max(1, int(raw) if raw.isdigit()
+                                else ceil(parsedate_to_datetime(raw).timestamp() - time.time()))
+                except (ValueError, TypeError, OverflowError):
+                    pass
+            _close_quietly(conn)
+            raise AccountReadError(f"account read HTTP {status}; private response omitted",
+                                   retry_after_secs=retry)
+        raw_body = response.read()
+    except AccountReadError:
+        raise
+    except Exception:
+        _close_quietly(conn)
+        raise AccountReadError("account read failed; private response omitted") from None
+
+    if getattr(response, "will_close", False):
+        _close_quietly(conn)
+    else:
+        _checkin_connection(origin, conn)
+
+    try:
+        return json.loads(raw_body, parse_float=Decimal)
     except Exception:
         raise AccountReadError("account read failed; private response omitted") from None
 

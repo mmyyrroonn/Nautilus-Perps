@@ -1,6 +1,9 @@
 from decimal import Decimal as D
+import inspect
 from pathlib import Path
+import socket
 import sys
+import threading
 from types import SimpleNamespace as NS
 
 import pytest
@@ -180,21 +183,281 @@ def test_lighter_complete_account_uses_configured_instrument_suffix_without_quot
     assert snapshot.bid is None and snapshot.ask is None and snapshot.book_observed_ns is None
 
 
+def _start_raw_server(handle_connection):
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    srv.settimeout(0.05)
+    state = NS(accepts=0, stop=threading.Event(), sockets=[], threads=[])
+
+    def run():
+        while not state.stop.is_set():
+            try:
+                conn, _ = srv.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            state.accepts += 1
+            state.sockets.append(conn)
+            idx = state.accepts
+            t = threading.Thread(target=handle_connection, args=(conn, idx, state.stop), daemon=True)
+            state.threads.append(t)
+            t.start()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+
+    def close():
+        state.stop.set()
+        try:
+            srv.close()
+        except OSError:
+            pass
+        for s in state.sockets:
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                s.close()
+            except OSError:
+                pass
+        thread.join(timeout=2)
+        for t in state.threads:
+            t.join(timeout=2)
+
+    return srv.getsockname()[1], state, close
+
+
+def _read_http_request(conn):
+    conn.settimeout(2)
+    buf = b""
+    try:
+        while b"\r\n\r\n" not in buf:
+            chunk = conn.recv(4096)
+            if not chunk:
+                return None
+            buf += chunk
+        head, rest = buf.split(b"\r\n\r\n", 1)
+        length = 0
+        for line in head.split(b"\r\n")[1:]:
+            if line.lower().startswith(b"content-length:"):
+                length = int(line.split(b":", 1)[1].strip())
+        while len(rest) < length:
+            chunk = conn.recv(4096)
+            if not chunk:
+                return None
+            rest += chunk
+    except (TimeoutError, OSError):
+        return None
+    return head.decode("ascii", errors="replace")
+
+
+def _clear_http_pool(module):
+    with module._HTTP_POOL_LOCK:
+        for bucket in module._HTTP_POOL.values():
+            for conn in bucket:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        module._HTTP_POOL.clear()
+
+
+def test_http_json_default_timeout_is_3_seconds():
+    import opportunity_account_reader as module
+    assert inspect.signature(module.http_json).parameters["timeout"].default == 3
+    _clear_http_pool(module)
+
+    def handle(conn, _idx, _stop):
+        if _read_http_request(conn) is not None:
+            body = b'{"ok":true}'
+            conn.sendall(f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+        conn.close()
+
+    port, _, stop = _start_raw_server(handle)
+    try:
+        assert module.http_json("GET", f"http://127.0.0.1:{port}/ping") == {"ok": True}
+        assert ("http", "127.0.0.1", port, 3) in module._HTTP_POOL
+    finally:
+        _clear_http_pool(module)
+        stop()
+
+
+def test_http_json_reuses_keepalive_socket_per_origin():
+    import opportunity_account_reader as module
+    _clear_http_pool(module)
+    counts = {"requests": 0}
+
+    def handle(conn, _idx, stop):
+        while not stop.is_set():
+            req = _read_http_request(conn)
+            if req is None:
+                break
+            counts["requests"] += 1
+            body = f'{{"seq":{counts["requests"]}}}'.encode()
+            conn.sendall(f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+
+    port, state, stop = _start_raw_server(handle)
+    try:
+        url = f"http://127.0.0.1:{port}/info"
+        assert module.http_json("GET", url) == {"seq": 1}
+        assert module.http_json("GET", url) == {"seq": 2}
+        assert module.http_json("POST", url, {"type": "clearinghouseState"}) == {"seq": 3}
+        assert state.accepts == 1 and counts["requests"] == 3
+    finally:
+        _clear_http_pool(module)
+        stop()
+
+
+def test_http_json_retries_once_on_stale_keepalive_eof_and_not_on_fresh_eof():
+    import opportunity_account_reader as module
+    _clear_http_pool(module)
+    close_first = threading.Event()
+    closed_first = threading.Event()
+
+    def handle_stale(conn, idx, _stop):
+        if _read_http_request(conn) is None:
+            conn.close()
+            return
+        body = f'{{"attempt":{idx}}}'.encode()
+        conn.sendall(f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+        if idx == 1:
+            close_first.wait(2)
+            conn.close()
+            closed_first.set()
+
+    port, state, stop = _start_raw_server(handle_stale)
+    try:
+        url = f"http://127.0.0.1:{port}/stale"
+        assert module.http_json("GET", url) == {"attempt": 1}
+        close_first.set()
+        assert closed_first.wait(2)
+        assert module.http_json("GET", url) == {"attempt": 2}
+        assert state.accepts == 2
+    finally:
+        _clear_http_pool(module)
+        stop()
+
+    def handle_immediate_eof(conn, _idx, _stop):
+        _read_http_request(conn)
+        conn.close()
+
+    eof_port, eof_state, stop_eof = _start_raw_server(handle_immediate_eof)
+    try:
+        with pytest.raises(AccountReadError, match="account read failed; private response omitted"):
+            module.http_json("GET", f"http://127.0.0.1:{eof_port}/fresh-eof")
+        assert eof_state.accepts == 1
+    finally:
+        _clear_http_pool(module)
+        stop_eof()
+
+
+def test_http_json_refuses_3xx_redirect_and_closes_socket():
+    import opportunity_account_reader as module
+    _clear_http_pool(module)
+    saw_close = threading.Event()
+
+    def handle(conn, _idx, _stop):
+        if _read_http_request(conn) is not None:
+            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/other\r\nContent-Length: 0\r\n\r\n")
+            try:
+                if conn.recv(16) == b"":
+                    saw_close.set()
+            except OSError:
+                saw_close.set()
+        conn.close()
+
+    port, _, stop = _start_raw_server(handle)
+    try:
+        with pytest.raises(AccountReadError, match="account read redirect refused"):
+            module.http_json("GET", f"http://127.0.0.1:{port}/redirect")
+        assert saw_close.wait(2)
+        assert ("http", "127.0.0.1", port, 3) not in module._HTTP_POOL
+    finally:
+        _clear_http_pool(module)
+        stop()
+
+
 @pytest.mark.parametrize("status,header,expected", [
     (429, "45", 45), (429, "Thu, 01 Jan 1970 00:02:25 GMT", 45),
     (429, "invalid", 10), (418, "", 120), (500, "45", 0),
 ])
 def test_http_failure_preserves_retry_after_without_private_response(monkeypatch, status, header, expected):
     import opportunity_account_reader as module
-    from urllib.error import HTTPError
-    def fail(*args, **kwargs):
-        raise HTTPError("https://private.invalid/secret", status, "private message", {"Retry-After": header}, None)
-    monkeypatch.setattr(module, "build_opener", lambda *args: NS(open=fail))
+    _clear_http_pool(module)
+
+    def handle(conn, _idx, _stop):
+        if _read_http_request(conn) is not None:
+            extra = f"Retry-After: {header}\r\n" if header else ""
+            body = b'{"secret":"private message"}'
+            conn.sendall((f"HTTP/1.1 {status} Err\r\n{extra}"
+                          f"Content-Length: {len(body)}\r\n\r\n").encode() + body)
+        conn.close()
+
+    port, _, stop = _start_raw_server(handle)
     monkeypatch.setattr(module.time, "time", lambda: 100)
-    with pytest.raises(AccountReadError) as caught:
-        module.http_json("GET", "https://private.invalid/secret")
-    assert caught.value.retry_after_secs == expected
-    assert str(caught.value) == f"account read HTTP {status}; private response omitted"
+    try:
+        with pytest.raises(AccountReadError) as caught:
+            module.http_json("GET", f"http://127.0.0.1:{port}/secret")
+        assert caught.value.retry_after_secs == expected
+        assert str(caught.value) == f"account read HTTP {status}; private response omitted"
+        assert "private message" not in str(caught.value)
+        assert ("http", "127.0.0.1", port, 3) not in module._HTTP_POOL
+    finally:
+        _clear_http_pool(module)
+        stop()
+
+
+def test_http_json_concurrent_same_origin_uses_distinct_pooled_sockets():
+    from concurrent.futures import ThreadPoolExecutor
+    import opportunity_account_reader as module
+    _clear_http_pool(module)
+    barrier = threading.Barrier(2, timeout=2)
+
+    def handle(conn, idx, _stop):
+        if _read_http_request(conn) is not None:
+            barrier.wait()
+            body = f'{{"conn":{idx}}}'.encode()
+            conn.sendall(f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+
+    port, state, stop = _start_raw_server(handle)
+    try:
+        url = f"http://127.0.0.1:{port}/concurrent"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: module.http_json("GET", url), (1, 2)))
+        assert sorted(r["conn"] for r in results) == [1, 2]
+        assert state.accepts == 2
+        assert len(module._HTTP_POOL[("http", "127.0.0.1", port, 3)]) == 2
+    finally:
+        _clear_http_pool(module)
+        stop()
+
+
+def test_http_json_non_empty_bad_status_line_does_not_retry():
+    import opportunity_account_reader as module
+    _clear_http_pool(module)
+
+    def handle(conn, _idx, _stop):
+        if _read_http_request(conn) is not None:
+            body = b'{"ok":true}'
+            conn.sendall(f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+        if _read_http_request(conn) is not None:
+            conn.sendall(b"NOT-HTTP\r\n\r\n")
+        conn.close()
+
+    port, state, stop = _start_raw_server(handle)
+    try:
+        url = f"http://127.0.0.1:{port}/malformed"
+        assert module.http_json("GET", url) == {"ok": True}
+        with pytest.raises(AccountReadError, match="account read failed; private response omitted"):
+            module.http_json("GET", url)
+        assert state.accepts == 1
+    finally:
+        _clear_http_pool(module)
+        stop()
 
 
 def test_rate_limit_cooldown_survives_cache_invalidation_and_market_changes():
