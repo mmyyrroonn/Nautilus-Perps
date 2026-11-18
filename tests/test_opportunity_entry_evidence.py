@@ -502,3 +502,55 @@ def test_backpack_paired_entry_fast_path_calls_native_refresh_once_unless_expire
     LiveCoordinator._live_intents(coord2, NOW)
     assert len(sent2) == 1 and len(refreshes2) == 2
     assert any(e.get('reason') == 'native_admission_not_ready' for e in events2)
+
+
+@pytest.mark.parametrize('venue,expected_reason', [
+    ('ASTER', 'leverage_stale'),
+    ('LIGHTER', 'lighter_margin_stale'),
+])
+def test_paired_entry_fast_path_respects_leverage_and_margin_expiry(monkeypatch, venue, expected_reason):
+    import opportunity_entry_evidence as ev
+    tick = [0]
+    monkeypatch.setattr('opportunity_live_runner.time.perf_counter_ns', lambda: tick[0])
+
+    # Within aster_leverage_max_age_ns, Leg 2 reuses cached Leg 1 admission evidence.
+    live_ok, _ = state(make_plan(venues=('HL', venue)), aster_leverage_max_age_ms=10)
+    set_book(live_ok, 'HL', '99.99', '100', NOW)
+    set_book(live_ok, venue, '100.3', '100.31', NOW)
+    live_ok.evaluate_symbol('BTC', NOW)
+    position_ok = next(iter(live_ok.positions.values()))
+    assert ev.entry_pair_valid_until(live_ok, position_ok) == NOW + 10_000_000
+    calls_ok, sent_ok = [], []
+    real_evidence = ev.entry_dispatch_evidence
+    def spy_ok(state_arg, pos_arg, now_arg):
+        calls_ok.append(now_arg)
+        return real_evidence(state_arg, pos_arg, now_arg)
+    monkeypatch.setattr(ev, 'entry_dispatch_evidence', spy_ok)
+    def dispatch_ok(intent, stamp, **kwargs):
+        sent_ok.append(intent)
+        tick[0] += 5_000_000
+    LiveCoordinator._live_intents(coordinator(live_ok, dispatch_ok), NOW)
+    assert len(sent_ok) == 2 and len(calls_ok) == 1
+
+    # Exceeding aster_leverage_max_age_ns between Leg 1 and Leg 2 invalidates cached fast-path.
+    tick[0] = 0
+    live, events = state(make_plan(venues=('HL', venue)), aster_leverage_max_age_ms=10)
+    set_book(live, 'HL', '99.99', '100', NOW)
+    set_book(live, venue, '100.3', '100.31', NOW)
+    live.evaluate_symbol('BTC', NOW)
+    position = next(iter(live.positions.values()))
+    assert ev.entry_pair_valid_until(live, position) == NOW + 10_000_000
+    calls, sent = [], []
+    def spy_expired(state_arg, pos_arg, now_arg):
+        calls.append(now_arg)
+        return real_evidence(state_arg, pos_arg, now_arg)
+    monkeypatch.setattr(ev, 'entry_dispatch_evidence', spy_expired)
+    def dispatch_expired(intent, stamp, **kwargs):
+        sent.append(intent)
+        tick[0] += 20_000_000  # Exceeds aster_leverage_max_age_ns (10 ms) while < account/book max age
+    LiveCoordinator._live_intents(coordinator(live, dispatch_expired), NOW)
+    assert len(sent) == 1 and len(calls) == 2
+    other = next(o for cid, o in live.orders.items() if cid != sent[0].client_order_id)
+    assert other['status'] == 'local_not_dispatched'
+    blocked = [e for e in events if e['event'] == 'entry_dispatch_blocked']
+    assert blocked and blocked[-1]['reason'] == expected_reason

@@ -241,7 +241,7 @@ def entry_pair_snapshot(live, position):
 
 
 def entry_pair_valid_until(live, position):
-    """Return earliest account/native admission/timeout expiry across both legs."""
+    """Return earliest account/leverage/native admission/timeout expiry across both legs."""
     deadlines = [o["sent_ns"] + live.order_timeout_ns - 1 for o in live.execution_orders()]
     domains = {live._account_domain(live.markets[position[f"{leg}_id"]].venue)
                for leg in ("buy", "sell")}
@@ -254,6 +254,16 @@ def entry_pair_valid_until(live, position):
         status = live.native_admission.get("BACKPACK")
         if status is not None and "checked_ns" in status:
             deadlines.append(status["checked_ns"] + live.native_admission_max_age_ns)
+    if any(live.markets[position[f"{leg}_id"]].venue == "ASTER" for leg in ("buy", "sell")):
+        if live.aster_leverage is not None:
+            deadlines.append(live.aster_leverage.started_ns + live.aster_leverage_max_age_ns)
+    for leg in ("buy", "sell"):
+        instrument_id = position[f"{leg}_id"]
+        if live.markets[instrument_id].venue != "LIGHTER":
+            continue
+        account = live.accounts.get(instrument_id)
+        if account is not None and account.lighter_margin is not None:
+            deadlines.append(account.lighter_margin.started_ns + live.aster_leverage_max_age_ns)
     return min(deadlines) if deadlines else 0
 
 
