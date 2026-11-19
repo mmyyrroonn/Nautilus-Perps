@@ -64,6 +64,10 @@ def classify_rejection(reason, venue=None):
             re.search(r"\baster error -(2027|2028|4028)(?=[: ])", reason)
             or ("leverage" in reason and any(word in reason for word in ("max", "exceed", "invalid")))):
         return "leverage_configuration"
+    if "open interest" in reason and "cap" in reason:
+        return "open_interest_cap"
+    if any(phrase in reason for phrase in ("reduce only", "reduce-only", "close only", "close-only", "delisted")):
+        return "reduce_only_market"
     if ("ioc" in reason or "immediate" in reason) and any(
             word in reason for word in ("match", "fill", "cancel")):
         return "ioc_no_match"
@@ -294,6 +298,8 @@ class NativeOrderGateway:
         self.backpack_public_config = backpack_public_config
         self.backpack_market_health = {}
         self.next_authority_renewal_ms = 0
+        self.next_backpack_persist_ns = 0
+        self._backpack_dirty = True
         self.workers = {}
         self._workers_lock = threading.Lock()
         self.reads = {}
@@ -506,6 +512,8 @@ class NativeOrderGateway:
     def dispatch(self, intent, now_ns, *, candidate_marker=None):
         if self.closed:
             raise RuntimeError("native gateway is closed")
+        if intent.venue == "BACKPACK" and intent.action in {"submit", "modify", "cancel"}:
+            self._backpack_dirty = True
         if intent.request_id in self.requests:
             if self.requests[intent.request_id]["intent"] != intent:
                 raise ValueError("request ID was reused with a different intent")
@@ -745,6 +753,8 @@ class NativeOrderGateway:
         owned = self.orders.get(cid)
         if owned is None:
             return
+        if owned["intent"].venue == "BACKPACK":
+            self._backpack_dirty = True
         kind = kind.removeprefix("on_order_").removeprefix("Order").lower()
         if str(getattr(event, "instrument_id", owned["intent"].instrument_id)) != owned["intent"].instrument_id:
             raise ValueError("native event market differs from its owned order")
@@ -975,8 +985,12 @@ class NativeOrderGateway:
                 if wall_ms >= self.next_authority_renewal_ms:
                     control.renew_authority(wall_ms + 300_000)
                     self.next_authority_renewal_ms = wall_ms + 30_000
-                with span("gateway.backpack.persist_economics"):
-                    control.persist_economics()
+                if (self._backpack_dirty or not self.backpack_checkpoint_ready
+                        or now_ns >= self.next_backpack_persist_ns):
+                    with span("gateway.backpack.persist_economics"):
+                        control.persist_economics()
+                    self._backpack_dirty = False
+                    self.next_backpack_persist_ns = now_ns + 1_000_000_000
                 with span("gateway.backpack.reconcile_terminals"):
                     control.reconcile_terminal_evidence()
                 self.backpack_checkpoint_ready = True
@@ -991,6 +1005,7 @@ class NativeOrderGateway:
                 continue
             if self.requests[request_id].get("read_timed_out"):
                 self.reads.pop(request_id)
+                self.requests.pop(request_id, None)
                 continue
             intent = self.requests[request_id]["intent"]
             try:
@@ -1004,10 +1019,12 @@ class NativeOrderGateway:
                     # available; never report an aged quote as startup success.
                     continue
                 self.reads.pop(request_id)
+                self.requests.pop(request_id, None)
                 self.last_error = str(exc) if type(exc).__name__ == "AccountReadError" else "authoritative account read failed"
                 self._receipt(intent, "unknown", retry_after_secs=getattr(exc, "retry_after_secs", 0))
                 continue
             self.reads.pop(request_id)
+            self.requests.pop(request_id, None)
             if not snapshot.authoritative or not snapshot.connected or snapshot.venue != intent.venue or snapshot.instrument_id != intent.instrument_id:
                 self._reject(intent, "account reader returned unverified or mismatched evidence")
                 continue
@@ -1043,6 +1060,27 @@ class NativeOrderGateway:
                     self.terminals[cid] = ("terminal", owned["intent"])
         for cid in tuple(self.terminals):
             self._flush_terminal(cid, now_ns)
+        self._prune_completed_state()
+
+    def _prune_completed_state(self, max_retained_orders=512):
+        if len(self.orders) <= max_retained_orders:
+            return
+        removable = []
+        for cid, owned in self.orders.items():
+            if cid in self.terminals or owned.get("needs_final_query"):
+                continue
+            req_id = owned["intent"].request_id
+            if not any((req_id, k, "") in self.emitted for k in ("terminal", "rejected", "canceled")):
+                continue
+            removable.append((cid, req_id))
+        excess = len(self.orders) - max_retained_orders
+        for cid, req_id in removable[:excess]:
+            self.orders.pop(cid, None)
+            self.requests.pop(req_id, None)
+            self.evidence_receipts.pop(cid, None)
+            for key in [k for k in self.active_request_map if k[0] == cid]:
+                self.active_request_map.pop(key, None)
+            self.emitted = {k for k in self.emitted if k[0] != req_id}
 
     def _poll_order_queries(self, now_ns):
         for request in tuple(self.requests.values()):

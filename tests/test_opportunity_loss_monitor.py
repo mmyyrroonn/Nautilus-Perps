@@ -334,7 +334,7 @@ def test_invalid_monitor_configuration_is_rejected(tmp_path, setting):
 def test_shipped_monitor_is_enabled_with_user_selected_frequency_and_legacy_identity(tmp_path):
     root = Path(__file__).resolve().parents[1]
     policy = load_live_plan(root / "config/opportunity-trade.live.toml").loss_monitor
-    assert policy.enabled and policy.interval_secs == 600 and policy.max_loss_usd == 200
+    assert policy.enabled and policy.interval_secs == 600 and policy.max_loss_usd == 20
     path = configs(tmp_path)
     old = load_live_plan(path)
     path.write_text(path.read_text() + '\n[loss_monitor]\nenabled = true\n')

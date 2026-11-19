@@ -47,6 +47,15 @@ HARD_EXITS = {"max_hold", "max_loss", "entry_imbalance", "exit_imbalance", "oper
               "unhedged_notional", "unhedged_timeout"}
 
 
+_ADMISSION_REOPENING_EVENTS = frozenset({
+    "order_terminal", "closed", "fill", "account_reconciled",
+    "account_domain_recovered", "entry_pause_changed", "strategy_enabled",
+    "order_reconciliation_recovered", "leverage_configuration_rejected",
+    "instrument_entry_blocked", "risk_circuit_breaker", "entry_rebalanced",
+})
+MAX_HOT_UNSENT_ORDERS = 64
+
+
 def _positive(value, name):
     if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
         raise ValueError(f"{name} requires an exact decimal")
@@ -64,7 +73,11 @@ class LiveTradeState(ScanState):
                  max_unhedged_secs=HARD_MAX_UNHEDGED_SECS,
                  entry_unhedged_reserve_bps=MIN_ENTRY_UNHEDGED_RESERVE_BPS,
                  aster_leverage_targets=(), aster_leverage_max_age_ms=5000,
-                 entry_admission=EntryAdmissionPolicy()):
+                 entry_admission=EntryAdmissionPolicy(),
+                 max_session_realized_loss_usd=None,
+                 max_consecutive_losses=None,
+                 max_consecutive_single_legs=None,
+                 entry_reject_block_secs=1800):
         if type(max_pairs) is not int or not 1 <= max_pairs <= HARD_MAX_PAIRS:
             raise ValueError("max_pairs is outside the live hard cap")
         gross = _positive(max_gross_notional_usd, "max_gross_notional_usd")
@@ -157,6 +170,23 @@ class LiveTradeState(ScanState):
         self.diagnostic_failures = 0
         self.stopping = False
         self.entry_pause_reason = None
+        self.circuit_breaker_reason = None
+        self.max_session_realized_loss = (
+            F(_positive(max_session_realized_loss_usd, "max_session_realized_loss_usd"))
+            if max_session_realized_loss_usd is not None else None)
+        if max_consecutive_losses is not None and (type(max_consecutive_losses) is not int or max_consecutive_losses <= 0):
+            raise ValueError("max_consecutive_losses must be a positive integer")
+        if max_consecutive_single_legs is not None and (type(max_consecutive_single_legs) is not int or max_consecutive_single_legs <= 0):
+            raise ValueError("max_consecutive_single_legs must be a positive integer")
+        if type(entry_reject_block_secs) is not int or entry_reject_block_secs < 0:
+            raise ValueError("entry_reject_block_secs must be a non-negative integer")
+        self.max_consecutive_losses = max_consecutive_losses
+        self.max_consecutive_single_legs = max_consecutive_single_legs
+        self.entry_reject_block_ns = entry_reject_block_secs * 1_000_000_000
+        self.consecutive_losses = 0
+        self.consecutive_single_legs = 0
+        self.instrument_entry_blocks = {}
+        self.pair_cooldowns = {}
         # Current-process observations only; an old ledger cannot grant admission.
         self.native_admission = {}
         self.native_admission_max_age_ns = 1_000_000_000
@@ -239,9 +269,8 @@ class LiveTradeState(ScanState):
         self.instruments[instrument_id] = value
         self.full_evaluation_symbols.update(self.trade_symbols)
 
-    @timed("strategy.snapshot")
-    def snapshot(self):
-        return deepcopy({"schema_version": 2, "mode": "live", "session_id": self.session_id,
+    def _snapshot_view(self):
+        return {"schema_version": 2, "mode": "live", "session_id": self.session_id,
             "sequence": self.sequence, "request_sequence": self.request_sequence,
             "completed": self.completed, "realized_net_usd": _number(self.realized_net),
             "pending_economics": self.pending_economics,
@@ -254,24 +283,45 @@ class LiveTradeState(ScanState):
             "order_reconciliations": self.order_reconciliations,
             "leverage_rejections": self.leverage_rejections,
             "aster_leverage_initializations": self.aster_leverage_initializations,
-            "account_pauses": self.account_pauses, "entry_pause_reason": self.entry_pause_reason})
+            "account_pauses": self.account_pauses, "entry_pause_reason": self.entry_pause_reason}
+
+    @timed("strategy.snapshot")
+    def snapshot(self):
+        return deepcopy(self._snapshot_view())
+
+    def _prune_unsent_orders(self):
+        if len(self.orders) <= MAX_HOT_UNSENT_ORDERS:
+            return
+        protected = set(self.order_reconciliations) | set(self._execution_orders)
+        for pos in (*self.positions.values(), *self.historical_positions.values()):
+            protected.update(pos.get("entry_ids", ()))
+            protected.update(pos.get("exit_ids", ()))
+            protected.update(pos.get("rebalance_ids", ()))
+        removable = [cid for cid, order in self.orders.items()
+                     if cid not in protected and order.get("status") == "local_not_dispatched"]
+        excess = len(self.orders) - MAX_HOT_UNSENT_ORDERS
+        for cid in removable[:excess]:
+            self.orders.pop(cid, None)
 
     def emit(self, kind, now_ns, **fields):
-        # Account, order, ownership and lifecycle transitions can reopen admission
-        # for an unchanged pair, including a pair on another symbol.
-        self.full_evaluation_symbols.update(self.trade_symbols)
+        # Only events that can reopen admission need a cross-symbol recheck.
+        if kind in _ADMISSION_REOPENING_EVENTS:
+            self.full_evaluation_symbols.update(self.trade_symbols)
         if kind in {"order_accepted", "order_terminal", "order_unknown"}:
             order = self.orders.get(fields.get("client_order_id"), {})
             if "entry_dispatch" in order:
                 fields["entry_dispatch"] = order["entry_dispatch"]
-        event = deepcopy({"event": kind, "mode": "live", "session_id": self.session_id,
-                          "observed_ns": now_ns, **fields})
+        direct = bool(self.store and getattr(self.store, "serializes_immediately", False))
+        raw_event = {"event": kind, "mode": "live", "session_id": self.session_id,
+                     "observed_ns": now_ns, **fields}
+        event = raw_event if (direct and self.event_sink is None) else deepcopy(raw_event)
         self.event_counts[kind] += 1
         try:
             if self.store and not self.persistence_failed:
                 analytics = current_analytics()
                 started = time.perf_counter_ns() if analytics is not None else None
-                self.store.save(self.snapshot(), [event])
+                snap = self._snapshot_view() if direct else self.snapshot()
+                self.store.save(snap, [event])
                 if started is not None:
                     analytics.record_persist(time.perf_counter_ns() - started)
         except Exception:
@@ -302,6 +352,8 @@ class LiveTradeState(ScanState):
 
     def set_entry_pause(self, reason, now_ns):
         """Pause new pairs without changing any existing pair's exit policy."""
+        if reason is None and self.circuit_breaker_reason is not None:
+            reason = self.circuit_breaker_reason
         if self.entry_pause_reason != reason:
             self.entry_pause_reason = reason
             self.emit("entry_pause_changed", now_ns, reason=reason)
@@ -1082,7 +1134,22 @@ class LiveTradeState(ScanState):
             if analytics is not None:
                 analytics.record_pre_gate("native_admission")
             return False
+        for inst_id in (buy_id, sell_id):
+            block = self.instrument_entry_blocks.get(inst_id)
+            if block is not None:
+                if now_ns < block["until_ns"]:
+                    if analytics is not None:
+                        analytics.record_pre_gate("instrument_entry_blocked")
+                    return False
+                self.instrument_entry_blocks.pop(inst_id, None)
         key = self.pair_key(buy_id, sell_id)
+        cooldown = self.pair_cooldowns.get(key)
+        if cooldown is not None:
+            if now_ns < cooldown["until_ns"]:
+                if analytics is not None:
+                    analytics.record_pre_gate("pair_loss_cooldown")
+                return False
+            # Keep strikes for escalation until a profitable close clears them.
         if key in self.positions or len(self.positions) >= self.max_pairs:
             if analytics is not None:
                 analytics.record_pre_gate("pair_open" if key in self.positions else "max_pairs")
@@ -1175,6 +1242,24 @@ class LiveTradeState(ScanState):
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="rounded_limit_edge_insufficient")
             return False
+        if self.policy.max_exit_reversal_bps is not None:
+            from opportunity_analytics import compute_exit_liquidity
+            exit_liq = compute_exit_liquidity(
+                self.books[buy_id], self.metadata[buy_id],
+                self.books[sell_id], self.metadata[sell_id],
+                quantity, buy["cash"] / quantity, sell["cash"] / quantity,
+            )
+            if exit_liq is None or not exit_liq["both_exit_full"]:
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "live_rejected", detail="exit_liquidity_insufficient")
+                return False
+            rev_bps = exit_liq["instant_reversal_slippage_bps"]
+            if rev_bps is None or Decimal(str(rev_bps)) > self.policy.max_exit_reversal_bps:
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "live_rejected", detail="exit_reversal_too_wide")
+                return False
         estimate["estimate_type"] = "live_limit_entry"
         for leg, bound in bounds.items():
             estimate["sizing"][f"{leg}_vwap"] = _number(bound["cash"] / quantity)
@@ -1416,6 +1501,20 @@ class LiveTradeState(ScanState):
             self.emit("leverage_configuration_rejected", now_ns,
                       instrument_id=order["instrument_id"], client_order_id=receipt.client_order_id,
                       **diagnostic)
+        if (order["purpose"] == "entry"
+                and receipt.kind in {"rejected", "denied"}
+                and receipt.reason_code in {"open_interest_cap", "reduce_only_market"}
+                and self.entry_reject_block_ns > 0
+                and not order.get("entry_block_recorded")):
+            order["entry_block_recorded"] = True
+            until_ns = now_ns + self.entry_reject_block_ns
+            self.instrument_entry_blocks[order["instrument_id"]] = {
+                "until_ns": until_ns, "reason": receipt.reason_code,
+            }
+            self.emit("instrument_entry_blocked", now_ns,
+                      instrument_id=order["instrument_id"],
+                      client_order_id=receipt.client_order_id,
+                      reason_code=receipt.reason_code, until_ns=until_ns)
         if receipt.kind == "configuration_rejected":
             return  # The original ID still needs terminal/fill reconciliation.
         if receipt.kind == "reconciliation_required":
@@ -1811,11 +1910,14 @@ class LiveTradeState(ScanState):
                         for o in position_orders(self, position)})
                 self.historical_positions[str(position["position_id"])] = position
                 refresh_historical_economics(self, position, now_ns)
+            close_reason = position["exit_reason"] or "entry_unfilled"
+            self._prune_unsent_orders()
             self.emit("closed", now_ns, position_id=position["position_id"], pair=list(key),
                       net_usd=economics["net_usd"], fee_confirmed=economics["fee_confirmed"],
                       provisional_net_usd=economics["provisional_net_usd"],
                       economics=economics,
-                      reason=position["exit_reason"] or "entry_unfilled")
+                      reason=close_reason)
+            self._update_post_close_guards(key, position, economics, close_reason, now_ns)
             return
         if position["status"] == "entering" and entry_done:
             balanced = remains[0] == remains[1] and remains[0] > 0
@@ -1908,10 +2010,13 @@ class LiveTradeState(ScanState):
             return set()
         return self.full_evaluation_symbols.copy()
 
+    def _is_owned_instrument(self, instrument_id):
+        return any(instrument_id in (p["buy_id"], p["sell_id"]) for p in self.positions.values())
+
     def update_book(self, instrument_id, book, now_ns, *, raw_book=None, evaluate=True):
-        # Owned inventory shares a global gross limit. Its valuation/freshness
-        # can change admission on every symbol, not just the updated leg.
-        if self.positions:
+        # Owned inventory shares a global gross limit. Only an update to an owned
+        # leg can change shared risk valuation/freshness for other symbols.
+        if self.positions and self._is_owned_instrument(instrument_id):
             self.full_evaluation_symbols.update(self.trade_symbols)
         super().update_book(instrument_id, book, now_ns, raw_book=raw_book, evaluate=False)
         self.book_publications[instrument_id] = (book, now_ns)
@@ -1922,13 +2027,13 @@ class LiveTradeState(ScanState):
             self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
 
     def update_metadata(self, instrument_id, metadata, now_ns, *, evaluate=True):
-        if self.positions:
+        if self.positions and self._is_owned_instrument(instrument_id):
             self.full_evaluation_symbols.update(self.trade_symbols)
         super().update_metadata(instrument_id, metadata, now_ns, evaluate=evaluate)
 
     def invalidate(self, instrument_id, now_ns, *, metadata=False, reason="invalidated"):
         self.book_publications.pop(instrument_id, None)
-        if self.positions:
+        if self.positions and self._is_owned_instrument(instrument_id):
             self.full_evaluation_symbols.update(self.trade_symbols)
         super().invalidate(instrument_id, now_ns, metadata=metadata, reason=reason)
 
@@ -1950,7 +2055,7 @@ class LiveTradeState(ScanState):
                     for o in self.execution_orders())):
                 return
             affected = {changed_id} if changed_id is not None else changed_ids
-            if self.positions or symbol in self.full_evaluation_symbols:
+            if symbol in self.full_evaluation_symbols:
                 affected = None
             full_scan = affected is None
             self.full_evaluation_symbols.discard(symbol)
@@ -1997,6 +2102,43 @@ class LiveTradeState(ScanState):
             position.update(exit_reason="operator_stop", exit_requested_ns=now_ns)
         self.emit("drain_requested", now_ns, reason=reason, local_not_dispatched=canceled)
 
+    def _update_post_close_guards(self, key, position, economics, close_reason, now_ns):
+        filled = F(position["entry_buy_base"]) > 0 or F(position["entry_sell_base"]) > 0
+        if not filled:
+            return
+        single_leg = close_reason in {"entry_imbalance", "unhedged_notional", "unhedged_duration", "unhedged_timeout"}
+        net_str = economics["net_usd"] if economics["fee_confirmed"] else economics["provisional_net_usd"]
+        effective_net = F(net_str) if net_str is not None else F(0)
+        is_loss = single_leg or close_reason in {"max_loss", "loss_stop", "exit_imbalance"} or effective_net < 0
+        if self.policy.loss_cooldown_secs > 0:
+            if is_loss:
+                prev = self.pair_cooldowns.get(key)
+                strikes = min((prev["strikes"] if prev else 0) + 1, 6)
+                cooldown_secs = min(self.policy.loss_cooldown_secs * (3 ** (strikes - 1)), 1800)
+                self.pair_cooldowns[key] = {
+                    "until_ns": now_ns + cooldown_secs * 1_000_000_000,
+                    "strikes": strikes,
+                    "reason": close_reason,
+                }
+            else:
+                self.pair_cooldowns.pop(key, None)
+        self.consecutive_single_legs = (self.consecutive_single_legs + 1) if single_leg else 0
+        self.consecutive_losses = (self.consecutive_losses + 1) if is_loss else 0
+        trigger = None
+        if self.max_session_realized_loss is not None and self.realized_net <= -self.max_session_realized_loss:
+            trigger = "session_realized_loss_limit"
+        elif self.max_consecutive_single_legs is not None and self.consecutive_single_legs >= self.max_consecutive_single_legs:
+            trigger = "consecutive_single_leg_limit"
+        elif self.max_consecutive_losses is not None and self.consecutive_losses >= self.max_consecutive_losses:
+            trigger = "consecutive_loss_limit"
+        if trigger is not None and self.circuit_breaker_reason is None:
+            self.circuit_breaker_reason = trigger
+            self.entry_pause_reason = trigger
+            self.emit("risk_circuit_breaker", now_ns, reason=trigger,
+                      realized_net_usd=_number(F(self.realized_net)),
+                      consecutive_losses=self.consecutive_losses,
+                      consecutive_single_legs=self.consecutive_single_legs)
+
     def prune(self, now_ns, blocked_symbols=()):
         pass
 
@@ -2006,6 +2148,11 @@ class LiveTradeState(ScanState):
                 "diagnostic_failures": self.diagnostic_failures,
                 "order_reconciliations": deepcopy(self.order_reconciliations),
                 "entry_pause_reason": self.entry_pause_reason,
+                "circuit_breaker_reason": self.circuit_breaker_reason,
+                "consecutive_losses": self.consecutive_losses,
+                "consecutive_single_legs": self.consecutive_single_legs,
+                "instrument_entry_blocks": deepcopy(self.instrument_entry_blocks),
+                "pair_cooldowns": {":".join(k): dict(v) for k, v in self.pair_cooldowns.items()},
                 "native_admission": deepcopy(self.native_admission),
                 "account_pauses": deepcopy(self.account_pauses),
                 "leverage_blocks": dict(self.leverage_blocks),

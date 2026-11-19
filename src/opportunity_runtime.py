@@ -280,6 +280,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.publication_timings = {}
             self.last_display_ns = 0
             self.last_evaluation_ns = 0
+            self.last_backpack_check_ns = 0
             self.pending_symbols = set()
             self.pending_instruments = set()
             from opportunity_memory import current_diagnostics
@@ -444,6 +445,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             config = client_configs.get("BACKPACK")
             if config is None:
                 return
+            self.last_backpack_check_ns = time.monotonic_ns()
             health = json.loads(config.telemetry_snapshot_json())
             self.backpack_public_health = health
             epoch = health.get("connection_epoch")
@@ -477,7 +479,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             sampled_delivery_age(batch.ts_init, venue=self.markets[batch.instrument_id].venue)
             try:
                 if not plan.evaluation_interval_ms:
-                    self.check_backpack()
+                    if time.monotonic_ns() - self.last_backpack_check_ns >= 100_000_000:
+                        self.check_backpack()
                 instrument_id = batch.instrument_id
                 market = self.markets[instrument_id]
                 deltas = batch.deltas

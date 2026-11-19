@@ -80,6 +80,11 @@ class LiveRunPlan:
     aster_leverage_targets: tuple[tuple[str, int], ...] = ()
     aster_leverage_max_age_ms: int = 5000
     entry_admission: EntryAdmissionPolicy = EntryAdmissionPolicy()
+    excluded_symbols: tuple[str, ...] = ()
+    max_session_realized_loss_usd: Decimal | None = None
+    max_consecutive_losses: int | None = None
+    max_consecutive_single_legs: int | None = None
+    entry_reject_block_secs: int = 1800
 
     @property
     def ready(self):
@@ -116,17 +121,26 @@ class LiveRunPlan:
             missing.append("risk.max_pairs")
         if self.max_gross_notional_usd <= 0:
             missing.append("risk.max_gross_notional_usd")
-        return _plain({"schema_version": 1, "mode": "live", "environment": self.environment,
+        risk_doc = {"max_pairs": self.max_pairs, "max_gross_notional_usd": self.max_gross_notional_usd,
+            "max_unhedged_notional_usd": self.max_unhedged_notional_usd,
+            "max_unhedged_secs": self.max_unhedged_secs,
+            "entry_unhedged_reserve_bps": self.entry_unhedged_reserve_bps}
+        if self.max_session_realized_loss_usd is not None:
+            risk_doc["max_session_realized_loss_usd"] = self.max_session_realized_loss_usd
+        if self.max_consecutive_losses is not None:
+            risk_doc["max_consecutive_losses"] = self.max_consecutive_losses
+        if self.max_consecutive_single_legs is not None:
+            risk_doc["max_consecutive_single_legs"] = self.max_consecutive_single_legs
+        if self.entry_reject_block_secs != 1800:
+            risk_doc["entry_reject_block_secs"] = self.entry_reject_block_secs
+        doc = {"schema_version": 1, "mode": "live", "environment": self.environment,
             "runtime_started": False, "remote_writes_allowed": False,
             "execution_requires_flag": "--execute-live", "ready_for_operator_start": self.ready,
             "required_configuration": missing, "venues": self.venues,
             "execution_route": "Nautilus LiveNode / Strategy / native ExecutionClientFactory",
             "native_dependency_check": "required at execution startup; dry-run only validates configuration",
             "trade_symbols": self.trade_symbols, "policy": self.policy.document(),
-            "risk": {"max_pairs": self.max_pairs, "max_gross_notional_usd": self.max_gross_notional_usd,
-                "max_unhedged_notional_usd": self.max_unhedged_notional_usd,
-                "max_unhedged_secs": self.max_unhedged_secs,
-                "entry_unhedged_reserve_bps": self.entry_unhedged_reserve_bps},
+            "risk": risk_doc,
             "loss_monitor": self.loss_monitor.document(),
             "aster_leverage": {"targets": dict(self.aster_leverage_targets),
                 "max_age_ms": self.aster_leverage_max_age_ms,
@@ -147,7 +161,10 @@ class LiveRunPlan:
             "duration_secs": self.duration_secs, "drain_timeout_secs": self.drain_timeout_secs,
             "fingerprint": self.fingerprint(), "fingerprint_scope": "configuration_only",
             "account_binding": "resolved and locked at execution startup",
-            "scan": self.scan.document()})
+            "scan": self.scan.document()}
+        if self.excluded_symbols:
+            doc["excluded_symbols"] = self.excluded_symbols
+        return _plain(doc)
 
 
 @timed("config.live_plan")
@@ -157,7 +174,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     with path.open("rb") as handle:
         document = tomllib.load(handle, parse_float=Decimal)
     allowed_keys(document, {"schema_version", "mode", "environment", "scan_config", "state_path",
-        "limits_path", "venues", "trade", "risk", "startup", "runtime", "loss_monitor",
+        "limits_path", "venues", "excluded_symbols", "trade", "risk", "startup", "runtime", "loss_monitor",
         "aster_leverage", "entry_admission"}, "live root")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise ScanConfigError("live schema_version must be 1")
@@ -195,9 +212,15 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     leverage_targets = tuple(sorted((instrument, integer_value(target, "Aster target leverage", 1, 125))
                                     for instrument, target in leverage_targets.items()))
     leverage_age = integer_value(leverage.get("max_age_ms", 5000), "aster_leverage.max_age_ms", 1, 15000)
+    raw_excluded = document.get("excluded_symbols", [])
+    if not isinstance(raw_excluded, list) or any(not isinstance(s, str) or not s.strip() for s in raw_excluded):
+        raise ScanConfigError("excluded_symbols must be a list of non-empty symbol strings")
+    excluded_symbols = tuple(sorted(set(raw_excluded)))
     risk = document.get("risk", {})
     unhedged_keys = {"max_unhedged_notional_usd", "max_unhedged_secs", "entry_unhedged_reserve_bps"}
-    allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"} | unhedged_keys, "live risk")
+    guard_keys = {"max_session_realized_loss_usd", "max_consecutive_losses",
+                  "max_consecutive_single_legs", "entry_reject_block_secs"}
+    allowed_keys(risk, {"max_pairs", "max_gross_notional_usd"} | unhedged_keys | guard_keys, "live risk")
     if not {"max_pairs", "max_gross_notional_usd"} <= risk.keys():
         raise ScanConfigError("risk requires explicit max_pairs and max_gross_notional_usd")
     pairs = integer_value(risk["max_pairs"] if max_pairs is None else max_pairs, "max_pairs", 0, 100000)
@@ -208,6 +231,17 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     reserve = decimal_value(risk.get("entry_unhedged_reserve_bps", "10"), "entry_unhedged_reserve_bps", positive=True)
     if not Decimal("10") <= reserve < 10000:
         raise ScanConfigError("entry_unhedged_reserve_bps must be at least 10 and below 10000")
+    max_session_realized_loss = (
+        decimal_value(risk["max_session_realized_loss_usd"], "max_session_realized_loss_usd", positive=True)
+        if "max_session_realized_loss_usd" in risk else None)
+    max_consecutive_losses = (
+        integer_value(risk["max_consecutive_losses"], "max_consecutive_losses", 1, 1000)
+        if "max_consecutive_losses" in risk else None)
+    max_consecutive_single_legs = (
+        integer_value(risk["max_consecutive_single_legs"], "max_consecutive_single_legs", 1, 1000)
+        if "max_consecutive_single_legs" in risk else None)
+    entry_reject_block_secs = integer_value(
+        risk.get("entry_reject_block_secs", 1800), "entry_reject_block_secs", 0, 86400)
     startup = document.get("startup", {})
     allowed_keys(startup, {"mandatory", "self_test_enabled", "balance_check_enabled", "max_notional_usd", "slippage_bps", "timeout_secs"}, "live startup")
     for key in ("mandatory", "self_test_enabled", "balance_check_enabled"):
@@ -268,7 +302,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     if loss_monitor.enabled and any(m.venue == "HL" and ":" in m.instrument_id for m in filtered):
         raise ScanConfigError("loss monitor cannot value Hyperliquid DEX collateral from native balances")
     counts = Counter(m.symbol for m in filtered)
-    available = {symbol for symbol, count in counts.items() if count >= 2}
+    available = {symbol for symbol, count in counts.items() if count >= 2} - set(excluded_symbols)
     if {m.venue for m in filtered} != set(venues):
         raise ScanConfigError("each requested venue needs a configured market for account checks")
     if self_test and {m.venue for m in filtered if m.symbol == "BTC"} != set(venues):
@@ -301,7 +335,12 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         entry_unhedged_reserve_bps=reserve, loss_monitor=loss_monitor,
         aster_leverage_targets=tuple((i, target) for i, target in leverage_targets
                                     if i in {m.instrument_id for m in scan.markets}),
-        aster_leverage_max_age_ms=leverage_age, entry_admission=entry_admission)
+        aster_leverage_max_age_ms=leverage_age, entry_admission=entry_admission,
+        excluded_symbols=excluded_symbols,
+        max_session_realized_loss_usd=max_session_realized_loss,
+        max_consecutive_losses=max_consecutive_losses,
+        max_consecutive_single_legs=max_consecutive_single_legs,
+        entry_reject_block_secs=entry_reject_block_secs)
 
 
 class NativeBuildError(RuntimeError):
@@ -318,6 +357,7 @@ class SessionStoreProxy:
     """Keep startup evidence and live ownership in one transactional state row."""
     def __init__(self, store, *, restart_from_flat=False):
         self.store = store
+        self.serializes_immediately = bool(getattr(store, "serializes_immediately", False))
         saved = store.load()
         if saved and (saved.get("schema_version") != 1 or saved.get("mode", "live") != "live"):
             raise ValueError("unknown live session envelope version")
@@ -1111,6 +1151,10 @@ def run_live(plan, *, self_test_only=False):
                 aster_leverage_targets=plan.aster_leverage_targets,
                 aster_leverage_max_age_ms=plan.aster_leverage_max_age_ms,
                 entry_admission=plan.entry_admission,
+                max_session_realized_loss_usd=plan.max_session_realized_loss_usd,
+                max_consecutive_losses=plan.max_consecutive_losses,
+                max_consecutive_single_legs=plan.max_consecutive_single_legs,
+                entry_reject_block_secs=plan.entry_reject_block_secs,
                 account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
                 retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
             coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,
