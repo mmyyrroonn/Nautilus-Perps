@@ -111,6 +111,9 @@ def entry_dispatch_evidence(live, position, now_ns):
         instrument = position[f"{leg}_id"]
         order = next(live.orders[cid] for cid in position["entry_ids"]
                      if live.orders[cid]["leg"] == leg)
+        block = getattr(live, "instrument_entry_blocks", {}).get(instrument)
+        if block is not None and now_ns < block["until_ns"]:
+            return "instrument_entry_blocked", evidence
         book, meta = live.books.get(instrument), live.metadata.get(instrument)
         row = evidence.setdefault(leg, {})
         row.update(limit_price=order["price"], quantity=order["quantity"])

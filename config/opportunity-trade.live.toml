@@ -1,5 +1,5 @@
 # Operator-run multi-venue trading. Default CLI action validates without connecting.
-# User-selected initial total scale: USD 500, at most two concurrent pairs.
+# Tightened trial scale: USD 20 per leg, USD 100 gross cap, at most two concurrent pairs.
 schema_version = 1
 # Aster targets default to verified account leverage at initialization.
 # Optional per-instrument targets override this default. No venue setting is changed.
@@ -11,9 +11,11 @@ state_path = "../reports/opportunity-trading/live.sqlite3"
 limits_path = "limits.toml"
 # All order mutations use the matching native Nautilus execution factory.
 venues = ["HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"]
+# Exclude broken/invalid cross-venue book mappings identified in live diagnostics.
+excluded_symbols = ["EDGE"]
 
 [trade]
-order_notional_usd = "100"
+order_notional_usd = "20"
 entry_edge_bps = "30"
 take_profit_bps = "5"
 max_loss_bps = "150"
@@ -22,6 +24,8 @@ breakeven_after_secs = 180
 force_close_after_secs = 300
 slippage_bps = "0"
 hard_exit_slippage_bps = "10"
+loss_cooldown_secs = 60
+max_exit_reversal_bps = "20"
 
 [entry_admission]
 # Local entry handoff budgets, validated offline; no guarantee of venue execution.
@@ -36,18 +40,23 @@ max_dispatch_delay_ms = 100
 [risk]
 # Zero refuses all execution; values can only tighten the total USD 500 hard cap.
 max_pairs = 2
-max_gross_notional_usd = "500"
+max_gross_notional_usd = "100"
 # Per-pair confirmed canonical delta. Either limit triggers a latched hard exit.
 # Independent of order queries and maximum holding time; may only be tightened.
-max_unhedged_notional_usd = "100"
+max_unhedged_notional_usd = "25"
 max_unhedged_secs = 10
 # Minimum reserve below each standalone leg's conservative ask/limit valuation.
 # Quantities round down after this reserve; price jumps still trigger the hard cap.
 entry_unhedged_reserve_bps = "10"
+# Immediate intra-window circuit breakers (do not wait for the 600s equity check).
+max_session_realized_loss_usd = "10"
+max_consecutive_losses = 5
+max_consecutive_single_legs = 3
+entry_reject_block_secs = 1800
 
 [loss_monitor]
 enabled = true
-max_loss_usd = "200"
+max_loss_usd = "20"
 interval_secs = 600
 read_timeout_secs = 60
 retry_interval_secs = 5

@@ -30,6 +30,8 @@ class TradePolicy:
     force_close_after_secs: int = 300
     slippage_bps: Decimal = Decimal("0")
     hard_exit_slippage_bps: Decimal = Decimal("10")
+    loss_cooldown_secs: int = 0
+    max_exit_reversal_bps: Decimal | None = None
 
     def __post_init__(self):
         if type(self.loss_stop_enabled) is not bool:
@@ -46,10 +48,22 @@ class TradePolicy:
         hard = integer_value(self.force_close_after_secs, "force_close_after_secs", 1, 86400)
         if soft >= hard:
             raise ScanConfigError("breakeven_after_secs must be below force_close_after_secs")
+        integer_value(self.loss_cooldown_secs, "loss_cooldown_secs", 0, 86400)
+        if self.max_exit_reversal_bps is not None:
+            rev = decimal_value(self.max_exit_reversal_bps, "max_exit_reversal_bps", positive=True)
+            if rev >= 10000:
+                raise ScanConfigError("max_exit_reversal_bps must be below 10000")
+            object.__setattr__(self, "max_exit_reversal_bps", rev)
 
     def document(self):
-        return {key: str(value) if isinstance(value, Decimal) else value
-                for key, value in asdict(self).items()}
+        result = {}
+        for key, value in asdict(self).items():
+            if key == "loss_cooldown_secs" and value == 0:
+                continue
+            if key == "max_exit_reversal_bps" and value is None:
+                continue
+            result[key] = str(value) if isinstance(value, Decimal) else value
+        return result
 
 
 @dataclass(frozen=True)

@@ -50,6 +50,8 @@ class FileLock:
 
 
 class TradeStore:
+    serializes_immediately = True
+
     @timed("store.open")
     def __init__(self, path: Path, fingerprint: str, *, account_binding=None):
         self.path = Path(path).resolve()
@@ -60,6 +62,7 @@ class TradeStore:
         self.account_binding = account_binding
         try:
             self.connection = sqlite3.connect(self.path)
+            self.connection.execute("PRAGMA journal_mode=WAL")
             self.connection.execute("PRAGMA synchronous=FULL")
             self.connection.execute(
                 "CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), "
