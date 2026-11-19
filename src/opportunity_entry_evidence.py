@@ -5,7 +5,7 @@ import time
 from opportunity_core import _book_valid, _metadata_valid, _number
 from opportunity_book_diagnostics import book_problem
 from opportunity_entry_admission import temporal_entry_evidence
-from opportunity_timing import record_entry_stage, record_entry_pair
+from opportunity_timing import current_analytics, record_entry_stage, record_entry_pair
 
 SOFT_EXITS = frozenset({"take_profit", "positive_after_wait"})
 
@@ -278,6 +278,11 @@ def block_unfilled_entry_pair(live, intent, reason, now_ns, *, dispatched=()):
     position = live._position(order["position_id"])
     decision = {"result": "blocked", "reason": reason, "evidence": {"checked_wall_ns": now_ns}}
     order["entry_dispatch"] = decision
+    analytics = current_analytics()
+    if analytics is not None:
+        buy_m = live.markets[position["buy_id"]]
+        sell_m = live.markets[position["sell_id"]]
+        analytics.record_funnel(buy_m.symbol, buy_m.venue, sell_m.venue, "dispatch_blocked", detail=reason)
     record_entry_stage(intent.request_id, "send_check", wall_ns=now_ns,
                        evidence=decision["evidence"], reason=reason)
     _block_entry_pair(live, position, reason, decision, now_ns, dispatched=dispatched)
@@ -289,6 +294,14 @@ def _record_entry_check(live, intent, position, reason, evidence, now_ns):
     # Piggyback on existing receipt/block ledger transactions, never insert a
     # synchronous durability write between the last check and native dispatch.
     live.orders[intent.client_order_id]["entry_dispatch"] = decision
+    analytics = current_analytics()
+    if analytics is not None:
+        buy_m = live.markets[position["buy_id"]]
+        sell_m = live.markets[position["sell_id"]]
+        if reason == "valid":
+            analytics.record_funnel(buy_m.symbol, buy_m.venue, sell_m.venue, "dispatch_allowed")
+        else:
+            analytics.record_funnel(buy_m.symbol, buy_m.venue, sell_m.venue, "dispatch_blocked", detail=reason)
     from opportunity_price_timing import entry_quotes
     from opportunity_timing import diagnostics_enabled
     quotes = entry_quotes(live, position["buy_id"], position["sell_id"]) if diagnostics_enabled() else None

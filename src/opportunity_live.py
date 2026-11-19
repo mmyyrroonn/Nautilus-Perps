@@ -6,8 +6,8 @@ every instrument between orders. Pair inventory is separate from venue netting.
 """
 from __future__ import annotations
 
-from opportunity_timing import (begin_entry_trace, record_entry_stage, record_latency,
-                                span, start_latency, timed)
+from opportunity_timing import (begin_entry_trace, current_analytics, record_entry_stage,
+                                record_latency, span, start_latency, timed)
 from opportunity_entry_evidence import entry_pair_result
 from opportunity_leverage import leverage_check, leverage_integer
 from opportunity_lighter_margin import margin_check
@@ -269,7 +269,11 @@ class LiveTradeState(ScanState):
         self.event_counts[kind] += 1
         try:
             if self.store and not self.persistence_failed:
+                analytics = current_analytics()
+                started = time.perf_counter_ns() if analytics is not None else None
                 self.store.save(self.snapshot(), [event])
+                if started is not None:
+                    analytics.record_persist(time.perf_counter_ns() - started)
         except Exception:
             self.halt_reason = "ledger persistence failed"
             self.persistence_failed = True
@@ -1067,42 +1071,65 @@ class LiveTradeState(ScanState):
 
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
+        analytics = current_analytics()
         if self.entry_pause_reason or self.halt_reason or self.persistence_failed:
+            if analytics is not None:
+                analytics.record_pre_gate(
+                    "persistence_failed" if self.persistence_failed
+                    else "halt" if self.halt_reason else "entry_pause")
             return False
         if self.native_entry_problem((buy_id, sell_id), now_ns) is not None:
+            if analytics is not None:
+                analytics.record_pre_gate("native_admission")
             return False
         key = self.pair_key(buy_id, sell_id)
         if key in self.positions or len(self.positions) >= self.max_pairs:
+            if analytics is not None:
+                analytics.record_pre_gate("pair_open" if key in self.positions else "max_pairs")
             return False
         if any(buy_id == pos["sell_id"] or sell_id == pos["buy_id"]
                for pos in self.positions.values()):
+            if analytics is not None:
+                analytics.record_pre_gate("cross_venue_conflict")
             return False
         for position in self.positions.values():
             for leg in ("buy", "sell"):
                 if F(position[f"remaining_{leg}_base"]) > 0:
                     book = self.books.get(position[f"{leg}_id"])
                     if book is None or not _book_valid(book, self.plan.settings, now_ns):
+                        if analytics is not None:
+                            analytics.record_pre_gate("open_book_invalid")
                         return False
         # Reserve both complete entry budgets until a pair has reconciled flat.
         reserved = self.gross_exposure(reserve=True)
         if reserved + 2 * F(self.policy.order_notional_usd) > self.max_gross:
+            if analytics is not None:
+                analytics.record_pre_gate("gross_limit")
             return False
         if any(self._pending(i) for i in (buy_id, sell_id)):
+            if analytics is not None:
+                analytics.record_pre_gate("pending_order")
             return False
         if key in self.last_closed and any(i not in self.books or self.books[i].ts_event_ns <= self.last_closed[key]
                                           for i in (buy_id, sell_id)):
+            if analytics is not None:
+                analytics.record_pre_gate("last_closed_cooldown")
             return False
         entry_clock = (now_ns, time.perf_counter_ns())
         pricing_marker = start_latency()
         estimate = self.pricer.entry(buy_id, sell_id, now_ns)
         if estimate is None:
             return False
+        buy_market, sell_market = self.markets[buy_id], self.markets[sell_id]
         record_latency(pricing_marker, "entry.qualified_pricing")
         candidate_marker = start_latency()
         with span("entry.executable_bounds"):
             bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns, partial=True)
                       for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "live_rejected", detail="limit_bounds_failed")
             return False
         # Either venue can fill alone. SELL proceeds/limits do not cap the
         # short's ask valuation, and BUY price rounding can exceed raw VWAP.
@@ -1117,10 +1144,16 @@ class LiveTradeState(ScanState):
         quantity = (min(*(b["base_quantity"] for b in bounds.values()),
                         *(cap / p for p in risk_prices.values())) // step) * step
         if quantity <= 0:
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "live_rejected", detail="unhedged_budget_zero_qty")
             return False
         bounds = {leg: self._limit(i, side, quantity, now_ns)
                   for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "live_rejected", detail="rounded_limit_bounds_failed")
             return False
         estimate["entry_risk"] = {"reserve_bps": _number(self.entry_unhedged_reserve_bps),
             "per_leg_budget_usd": _number(cap), "buy_standalone_usd": _number(quantity * risk_prices["buy"]),
@@ -1132,9 +1165,15 @@ class LiveTradeState(ScanState):
         estimate["sizing"]["base_quantity"] = _number(quantity)
         buy, sell = bounds["buy"], bounds["sell"]
         if max(buy["cash"], sell["cash"]) > F(self.policy.order_notional_usd):
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "live_rejected", detail="rounded_limit_notional_cap")
             return False
         net = sell["cash"] - buy["cash"] - buy["fee"] - sell["fee"] - buy["cash"] * F(self.plan.settings.reserve_bps) / 10000
         if net * 10000 < F(self.policy.entry_edge_bps) * buy["cash"]:
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "live_rejected", detail="rounded_limit_edge_insufficient")
             return False
         estimate["estimate_type"] = "live_limit_entry"
         for leg, bound in bounds.items():
@@ -1150,11 +1189,20 @@ class LiveTradeState(ScanState):
             ready.extend(self._account_domain_ready(domain, now_ns) for domain in sorted({
                 self._account_domain(self.markets[i].venue) for i in (buy_id, sell_id)}))
         if not all(ready):
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "live_rejected", detail="account_not_ready")
             return False
         leverage = {leg: self.leverage_problem(i, bounds[leg]["price"], bounds[leg]["quantity"], now_ns)
                     for leg, i in (("buy", buy_id), ("sell", sell_id))}
         if any(reason for reason, _ in leverage.values()):
+            if analytics is not None:
+                first_reason = next(reason for reason, _ in leverage.values() if reason)
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "live_rejected", detail=first_reason)
             return False
+        if analytics is not None:
+            analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue, "prepared")
         estimate["leverage"] = {leg: evidence for leg, (_, evidence) in leverage.items() if evidence}
         self.sequence += 1
         estimate.pop("paper_fills", None)
@@ -1867,6 +1915,9 @@ class LiveTradeState(ScanState):
             self.full_evaluation_symbols.update(self.trade_symbols)
         super().update_book(instrument_id, book, now_ns, raw_book=raw_book, evaluate=False)
         self.book_publications[instrument_id] = (book, now_ns)
+        analytics = current_analytics()
+        if analytics is not None and analytics.has_active_decay():
+            analytics.sample_decay(self, now_ns, symbol=self.markets[instrument_id].symbol)
         if evaluate:
             self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
 
@@ -1885,31 +1936,43 @@ class LiveTradeState(ScanState):
     def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):
         if self.phase not in {"active", "draining", "recovery_blocked"}:
             return
-        for key in tuple(self.positions):
-            if key[0] == symbol:
-                self.observe(key, now_ns)
-        if (self.stopping or self.entry_pause_reason or self.halt_reason or self.order_reconciliations or symbol not in self.trade_symbols
-                or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
-                o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns
-                for o in self.execution_orders())):
-            return
-        affected = {changed_id} if changed_id is not None else changed_ids
-        if self.positions or symbol in self.full_evaluation_symbols:
-            affected = None
-        self.full_evaluation_symbols.discard(symbol)
-        for first, second in combinations(sorted(self.groups[symbol]), 2):
-            if affected is not None and first not in affected and second not in affected:
-                continue
-            if self.markets[first].venue == self.markets[second].venue:
-                continue
-            for buy_id, sell_id in ((first, second), (second, first)):
-                if self._entry(buy_id, sell_id, now_ns):
-                    break
+        analytics = current_analytics()
+        started_ns = time.perf_counter_ns() if analytics is not None else None
+        holding_at_start = bool(self.positions)
+        full_scan = False
+        try:
+            for key in tuple(self.positions):
+                if key[0] == symbol:
+                    self.observe(key, now_ns)
+            if (self.stopping or self.entry_pause_reason or self.halt_reason or self.order_reconciliations or symbol not in self.trade_symbols
+                    or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
+                    o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns
+                    for o in self.execution_orders())):
+                return
+            affected = {changed_id} if changed_id is not None else changed_ids
+            if self.positions or symbol in self.full_evaluation_symbols:
+                affected = None
+            full_scan = affected is None
+            self.full_evaluation_symbols.discard(symbol)
+            for first, second in combinations(sorted(self.groups[symbol]), 2):
+                if affected is not None and first not in affected and second not in affected:
+                    continue
+                if self.markets[first].venue == self.markets[second].venue:
+                    continue
+                for buy_id, sell_id in ((first, second), (second, first)):
+                    if self._entry(buy_id, sell_id, now_ns):
+                        break
+        finally:
+            if started_ns is not None:
+                analytics.record_eval_mode(holding_at_start, full_scan, time.perf_counter_ns() - started_ns)
 
     @timed("strategy.evaluation_timer")
     def on_evaluation_timer(self, now_ns):
         if self.phase not in {"active", "draining", "recovery_blocked"}:
             return
+        analytics = current_analytics()
+        if analytics is not None and analytics.has_active_decay():
+            analytics.sample_decay(self, now_ns)
         archive_flat_positions(self, now_ns)
         for key in tuple(self.positions):
             self.observe(key, now_ns)
