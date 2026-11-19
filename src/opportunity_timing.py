@@ -38,6 +38,11 @@ def diagnostics_enabled():
     return _active is not None and not _active.closed
 
 
+def current_analytics():
+    recorder = _active
+    return None if recorder is None or recorder.closed else recorder.analytics
+
+
 def _labels(venue, outcome):
     venue = "HL" if venue == "HYPERLIQUID" else venue
     return (venue if isinstance(venue, str) and venue in _VENUES else "",
@@ -92,6 +97,8 @@ class TimingRecorder:
         self.entry_pair_reclassifications = 0
         self.entry_trace_evictions = 0
         self.clock_anchor = self._clock_anchor()
+        from opportunity_analytics import AnalyticsCollector
+        self.analytics = AnalyticsCollector()
 
     @staticmethod
     def _clock_anchor():
@@ -187,7 +194,8 @@ class TimingRecorder:
                 "pair_reclassifications": reclassifications,
                 "bilateral_completion_rate": pair_counts["bilateral_full"] / sum(pair_counts.values()) if sum(pair_counts.values()) else None,
                 "single_leg_rate": pair_counts["single_leg"] / sum(pair_counts.values()) if sum(pair_counts.values()) else None,
-                "limitations": "Opt-in process-local observations; restored orders and evicted traces lack full correlation. Percentiles are bounded recent samples; market load differs between windows."}}
+                "limitations": "Opt-in process-local observations; restored orders and evicted traces lack full correlation. Percentiles are bounded recent samples; market load differs between windows."},
+            "analysis": self.analytics.document()}
 
     def write(self):
         try:

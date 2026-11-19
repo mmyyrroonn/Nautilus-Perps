@@ -12,13 +12,14 @@ from dataclasses import replace
 from fractions import Fraction as F
 from itertools import combinations
 import sys
+import time
 
 from opportunity_core import (_best_quotes_rule_out, _book_valid, _budget_quantity,
                               _execution_metadata_valid, _fee_metadata_valid, _metadata_valid,
                               _number, _walk, evaluate_opportunity, exact_decimal)
 from opportunity_runtime import ScanState
 from opportunity_trade import TradePolicy
-from opportunity_timing import sampled_timed, span
+from opportunity_timing import current_analytics, sampled_timed, span
 
 
 class PaperTradeState(ScanState):
@@ -73,7 +74,11 @@ class PaperTradeState(ScanState):
         self.last_event = event
         try:
             if self.store:
+                analytics = current_analytics()
+                started = time.perf_counter_ns() if analytics is not None else None
                 self.store.save(self.snapshot(), [event])
+                if started is not None:
+                    analytics.record_persist(time.perf_counter_ns() - started)
             if self.event_sink:
                 self.event_sink(event)
         except Exception:
@@ -132,14 +137,28 @@ class PaperTradeState(ScanState):
         if _best_quotes_rule_out(self.books[buy_id], self.metadata[buy_id],
                                  self.books[sell_id], self.metadata[sell_id], self.plan.settings):
             return None
+        analytics = current_analytics()
+        buy_market = self.markets[buy_id]
+        sell_market = self.markets[sell_id]
+        if analytics is not None:
+            analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue, "bbo_qualified")
         pair = self._pair(buy_id, sell_id, now_ns)
         if pair is None:
+            if analytics is not None:
+                from opportunity_analytics import classify_pair_rejection
+                reason = classify_pair_rejection(
+                    self.books, self.metadata, buy_id, sell_id, self.plan.settings, now_ns)
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "pair_invalid", detail=reason)
             return None
         books, metadata = pair
         settings = self.plan.settings
         with span("scan.evaluate_pair"):
             entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1], settings, now_ns)
         if entry is None:
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "pricing_rejected", detail="depth_or_edge")
             return None
         slip = F(self.policy.slippage_bps) / 10000
         quantity = F(entry["sizing"]["base_quantity"])
@@ -150,9 +169,15 @@ class PaperTradeState(ScanState):
             if F(entry["sizing"][f"{side}_notional"]) * factor > cap:
                 upper = _budget_quantity(levels, F(meta.multiplier), cap / factor)
                 if upper is None:
+                    if analytics is not None:
+                        analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                                "pricing_rejected", detail="notional_cap_depth")
                     return None
                 quantity = min(quantity, (upper // step) * step)
         if quantity <= 0:
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "pricing_rejected", detail="zero_common_lot")
             return None
         if quantity != F(entry["sizing"]["base_quantity"]):
             budget = _walk(books[0].asks, F(metadata[0].multiplier), quantity)
@@ -160,21 +185,40 @@ class PaperTradeState(ScanState):
                 entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1],
                     replace(settings, target_notional=exact_decimal(budget)), now_ns)
             if entry is None:
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "pricing_rejected", detail="rescaled_depth_or_edge")
                 return None
         buy_cash = F(entry["sizing"]["buy_notional"]) * (1 + slip)
         sell_cash = F(entry["sizing"]["sell_notional"]) * (1 - slip)
         if max(buy_cash, sell_cash) > cap:
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "pricing_rejected", detail="notional_cap")
             return None
         buy_fee = buy_cash * F(metadata[0].taker_fee_bps) / 10000
         sell_fee = sell_cash * F(metadata[1].taker_fee_bps) / 10000
         reserve = buy_cash * F(settings.reserve_bps) / 10000
         net = sell_cash - buy_cash - buy_fee - sell_fee - reserve
         if net * 10000 < F(self.policy.entry_edge_bps) * buy_cash:
+            if analytics is not None:
+                analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                        "pricing_rejected", detail="edge_after_slippage")
             return None
         entry["paper_fills"] = {"buy_notional_usd": _number(buy_cash),
             "sell_notional_usd": _number(sell_cash), "buy_fee_usd": _number(buy_fee),
             "sell_fee_usd": _number(sell_fee), "slippage_bps": str(self.policy.slippage_bps),
             "entry_after_fees_slippage_and_reserve_bps": _number(net * 10000 / buy_cash)}
+        if analytics is not None:
+            edge_bps = net * 10000 / buy_cash
+            analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue, "priced_qualified")
+            analytics.observe_exit_liquidity(
+                buy_market.symbol, books[0], metadata[0], books[1], metadata[1],
+                quantity, entry["sizing"]["buy_vwap"], entry["sizing"]["sell_vwap"],
+                edge_bps, now_ns, stage="priced_qualified")
+            analytics.track_candidate_decay(
+                buy_market.symbol, buy_id, sell_id, buy_market.venue, sell_market.venue,
+                edge_bps, self.policy.entry_edge_bps, now_ns)
         return entry
 
     def _stamps(self, buy_id, sell_id):
@@ -193,6 +237,9 @@ class PaperTradeState(ScanState):
     def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):
         if self.halted or self.finished:
             return
+        analytics = current_analytics()
+        if analytics is not None and analytics.has_active_decay():
+            analytics.sample_decay(self, now_ns, symbol=symbol)
         affected = {changed_id} if changed_id is not None else changed_ids
         pairs = []
         for first, second in combinations(sorted(self.groups[symbol]), 2):
@@ -418,6 +465,9 @@ class PaperTradeState(ScanState):
     def on_evaluation_timer(self, now_ns):
         if self.halted or self.finished:
             return
+        analytics = current_analytics()
+        if analytics is not None and analytics.has_active_decay():
+            analytics.sample_decay(self, now_ns)
         for key in tuple(self.positions):
             self.observe(key, now_ns)
 

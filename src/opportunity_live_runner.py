@@ -1010,6 +1010,8 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                     entry_evidence_provider=lambda intent, now_ns: entry_market_snapshot(live, intent, now_ns),
                     quote_provider=lambda instrument_id, now_ns: native_quote(live, instrument_id, now_ns))
                 coordinator.attach(gateway, preflight)
+                if observer.memory_diagnostics is not None:
+                    observer.memory_diagnostics.attach_gateway(gateway)
                 self.clock.set_timer("opportunity-trade", timedelta(milliseconds=plan.timer_interval_ms))
                 from opportunity_wakeup import IntentWakeup
                 self.intent_wakeup = IntentWakeup(self.clock, self.on_time_event)

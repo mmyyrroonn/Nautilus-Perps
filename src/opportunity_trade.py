@@ -115,6 +115,8 @@ def run_paper(plan: TradePlan) -> int:
         state = PaperTradeState(plan.scan, plan.policy, store=store)
         node, observer, _ = build_node(plan.scan, state_factory=lambda _: state)
         handle = node.handle()
+        if observer.memory_diagnostics is not None:
+            observer.memory_diagnostics.attach_handle(handle)
         timer = threading.Timer(plan.scan.duration_secs, handle.stop) if plan.scan.duration_secs else None
         if timer:
             timer.daemon = True
@@ -153,8 +155,13 @@ def main(argv=None) -> int:
     parser.add_argument("--duration-secs", type=int)
     parser.add_argument("--symbols")
     add_timing_arguments(parser)
+    from opportunity_memory import add_memory_arguments, run_with_memory
+    add_memory_arguments(parser)
     args = parser.parse_args(raw_args)
-    return run_timed(lambda: _run(args), enabled=args.timing, directory=args.timing_dir)
+    if args.memory_tracemalloc and not args.memory_diagnostics:
+        parser.error("--memory-tracemalloc requires --memory-diagnostics")
+    return run_with_memory(
+        lambda: run_timed(lambda: _run(args), enabled=args.timing, directory=args.timing_dir), args)
 
 
 def _run(args):
