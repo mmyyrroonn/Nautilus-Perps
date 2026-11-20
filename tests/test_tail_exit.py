@@ -30,7 +30,7 @@ def venue_pair(venue, side):
     peer = "ASTER" if venue == "HL" else "HL"
     buy, sell = (venue, peer) if side == "buy" else (peer, venue)
     live, _ = state(make_plan(venues=(buy, sell)))
-    if venue == "BACKPACK":
+    if venue in {"BACKPACK", "ONDO"}:
         live.update_native_admission({venue: {"ready": True, "reason": "ready", "checked_ns": NOW}}, NOW)
     set_book(live, buy, "99.99", "100")
     set_book(live, sell, "100.3", "100.31")

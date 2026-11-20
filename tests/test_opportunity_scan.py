@@ -354,8 +354,9 @@ def native_observer(tmp_path, monkeypatch, *, backpack=False, drive_evaluation_t
 def test_backpack_quotes_cover_entire_scope_and_clean_up_across_restart(tmp_path, monkeypatch):
     _, state, observer, ids, calls, _ = native_observer(tmp_path, monkeypatch, backpack=70)
     quote_ids = [i for kind, i in observer.operations if kind == "quotes"]
-    assert quote_ids == ids[1:]
-    assert len(observer.subscription_ids["quotes"]) == 70
+    # Both ONDO (ids[0]) and BACKPACK (ids[1:]) require native QuoteTick subscriptions.
+    assert quote_ids == ids
+    assert len(observer.subscription_ids["quotes"]) == 71
     assert observer.subscribed == set(ids)
     before = list(observer.operations)
     observer.on_start()
@@ -365,7 +366,7 @@ def test_backpack_quotes_cover_entire_scope_and_clean_up_across_restart(tmp_path
     assert state.books
     observer.on_stop()
     cleaned_quotes = [i for kind, i in observer.operations if kind == "unsubscribe_quotes"]
-    assert len(cleaned_quotes) == 70 and set(cleaned_quotes) == set(ids[1:])
+    assert len(cleaned_quotes) == 71 and set(cleaned_quotes) == set(ids)
     assert not observer.subscribed and not any(observer.subscription_ids.values())
     assert not state.books and not observer.snapshot_seen
     stopped = list(observer.operations)
@@ -373,7 +374,7 @@ def test_backpack_quotes_cover_entire_scope_and_clean_up_across_restart(tmp_path
     assert observer.operations == stopped and calls.count("cancel_timer") == 1
     observer.on_start()
     assert observer.running and observer.failure is None
-    assert sum(kind == "quotes" for kind, _ in observer.operations) == 140
+    assert sum(kind == "quotes" for kind, _ in observer.operations) == 142
     observer.on_book_deltas(batch(ids[0], "99.00", "100.00", snapshot=False))
     assert not state.books
     observer.on_stop()
@@ -398,10 +399,11 @@ def test_backpack_partial_start_failure_cleans_up_every_successful_subscription(
 
 
 def test_non_backpack_markets_do_not_subscribe_quotes(tmp_path, monkeypatch):
-    _, _, observer, _, _, _ = native_observer(tmp_path, monkeypatch)
-    assert all(kind != "quotes" for kind, _ in observer.operations)
+    _, _, observer, ids, _, _ = native_observer(tmp_path, monkeypatch)
+    # ONDO (ids[0]) requires quotes for native continuous execution; HL (ids[1]) does not.
+    assert [i for kind, i in observer.operations if kind == "quotes"] == [ids[0]]
     observer.on_stop()
-    assert all(kind != "unsubscribe_quotes" for kind, _ in observer.operations)
+    assert [i for kind, i in observer.operations if kind == "unsubscribe_quotes"] == [ids[0]]
 
 
 def test_backpack_failed_unsubscribe_is_retried_before_restart(tmp_path, monkeypatch):
@@ -410,7 +412,7 @@ def test_backpack_failed_unsubscribe_is_retried_before_restart(tmp_path, monkeyp
     attempts = []
     def fail_once(self, instrument_id, **kwargs):
         attempts.append(instrument_id)
-        if len(attempts) == 1:
+        if instrument_id == ids[1] and attempts.count(ids[1]) == 1:
             raise RuntimeError("injected unsubscribe failure")
         return original(self, instrument_id, **kwargs)
     monkeypatch.setattr(type(observer), "unsubscribe_quotes", fail_once)
@@ -419,9 +421,9 @@ def test_backpack_failed_unsubscribe_is_retried_before_restart(tmp_path, monkeyp
     assert not observer.subscription_ids["book_deltas"]
     assert not observer.subscription_ids["instrument"]
     observer.on_start()
-    assert attempts == [ids[1], ids[1]]
+    assert attempts.count(ids[1]) == 2
     assert observer.running and observer.failure is None
-    assert sum(kind == "quotes" for kind, _ in observer.operations) == 2
+    assert sum(kind == "quotes" for kind, _ in observer.operations) == 4
     observer.on_stop()
 
 

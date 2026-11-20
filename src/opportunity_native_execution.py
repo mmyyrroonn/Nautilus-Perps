@@ -276,7 +276,8 @@ class NativeOrderGateway:
     def __init__(self, strategy, markets, on_receipt, on_account, on_fill, *,
                  reader=None, environment="mainnet", model=None, timeout_secs=10,
                  quote_provider=None, native_controls=None, account_timeout_secs=None, environ=None,
-                 account_max_age_ms=15000, backpack_public_config=None, entry_evidence_provider=None):
+                 account_max_age_ms=15000, backpack_public_config=None, entry_evidence_provider=None,
+                 final_query_retry_ms=500):
         self.strategy = strategy
         rows = markets.values() if isinstance(markets, dict) else markets
         self.markets = {m.instrument_id: m for m in rows}
@@ -286,6 +287,9 @@ class NativeOrderGateway:
         self.environment = environment
         self.model = model or _native()
         self.timeout_ns = timeout_secs * 1_000_000_000
+        if type(final_query_retry_ms) is not int or final_query_retry_ms <= 0:
+            raise ValueError("final query retry interval must be positive integer milliseconds")
+        self.final_query_retry_ns = final_query_retry_ms * 1_000_000
         read_timeout = timeout_secs if account_timeout_secs is None else account_timeout_secs
         if type(read_timeout) is not int or read_timeout <= 0:
             raise ValueError("native account read timeout must be positive integer seconds")
@@ -318,38 +322,62 @@ class NativeOrderGateway:
 
     def refresh_native_admission(self, now_ns):
         """Read global account/session trust and independent native market gates."""
-        if not any(m.venue == "BACKPACK" for m in self.markets.values()):
+        has_backpack = any(m.venue == "BACKPACK" for m in self.markets.values())
+        ondo_ids = sorted(m.instrument_id for m in self.markets.values() if m.venue == "ONDO")
+        if not has_backpack and not ondo_ids:
             return {}
-        self.backpack_market_health = {}
-        status = {"ready": False, "reason": "native_admission_unavailable", "checked_ns": now_ns}
-        control = self.native_controls.get("BACKPACK")
-        if self.closed:
-            status["reason"] = "native_gateway_closed"
-        elif control is not None and self.backpack_checkpoint_ready:
-            try:
-                with span("gateway.backpack.admission_status"):
-                    value = json.loads(control.admission_status_json())
-                status.update(self._backpack_admission(value))
-                scoped = status.get("global_ready") is True
-                reason = self._backpack_quote_problem(status["markets"] if scoped else None)
-                if scoped:
-                    if reason is not None:
-                        status.update(global_ready=False, markets={})
-                    else:
-                        reason = next((row["reason"] for row in status["markets"].values()
-                                       if not row["ready"]), None)
-                    status.update(ready=reason is None, reason=reason)
-                elif status["ready"] and reason is not None:
-                    status.update(ready=False, reason=reason)
-            except (ValueError, TypeError):
-                status = {"ready": False, "reason": "native_admission_invalid_json", "checked_ns": now_ns}
-            except Exception:
-                # Exceptions can contain transport details; retain a fixed diagnostic.
-                status = {"ready": False, "reason": "native_admission_api_error", "checked_ns": now_ns}
-        elif control is not None:
-            status["reason"] = "native_checkpoint_not_ready"
-        self.native_admission["BACKPACK"] = status
+        if has_backpack:
+            self.backpack_market_health = {}
+            status = {"ready": False, "reason": "native_admission_unavailable", "checked_ns": now_ns}
+            control = self.native_controls.get("BACKPACK")
+            if self.closed:
+                status["reason"] = "native_gateway_closed"
+            elif control is not None and self.backpack_checkpoint_ready:
+                try:
+                    with span("gateway.backpack.admission_status"):
+                        value = json.loads(control.admission_status_json())
+                    status.update(self._backpack_admission(value))
+                    scoped = status.get("global_ready") is True
+                    reason = self._backpack_quote_problem(status["markets"] if scoped else None)
+                    if scoped:
+                        if reason is not None:
+                            status.update(global_ready=False, markets={})
+                        else:
+                            reason = next((row["reason"] for row in status["markets"].values()
+                                           if not row["ready"]), None)
+                        status.update(ready=reason is None, reason=reason)
+                    elif status["ready"] and reason is not None:
+                        status.update(ready=False, reason=reason)
+                except (ValueError, TypeError):
+                    status = {"ready": False, "reason": "native_admission_invalid_json", "checked_ns": now_ns}
+                except Exception:
+                    # Exceptions can contain transport details; retain a fixed diagnostic.
+                    status = {"ready": False, "reason": "native_admission_api_error", "checked_ns": now_ns}
+            elif control is not None:
+                status["reason"] = "native_checkpoint_not_ready"
+            self.native_admission["BACKPACK"] = status
+        if ondo_ids:
+            self.native_admission["ONDO"] = self._ondo_admission(ondo_ids, now_ns)
         return {venue: dict(row) for venue, row in self.native_admission.items()}
+
+    def _ondo_admission(self, ondo_ids, now_ns):
+        if self.closed:
+            return {"ready": False, "reason": "native_gateway_closed", "checked_ns": now_ns}
+        try:
+            markets = {}
+            for instrument_id in ondo_ids:
+                native_id = self.model.InstrumentId.from_str(instrument_id)
+                if self.strategy.cache.instrument(native_id) is None:
+                    markets[instrument_id] = {"ready": False, "reason": "native_instrument_unavailable"}
+                elif self.strategy.cache.quote_tick(native_id) is None:
+                    markets[instrument_id] = {"ready": False, "reason": "native_quote_unavailable"}
+                else:
+                    markets[instrument_id] = {"ready": True, "reason": None}
+            first_reason = next((row["reason"] for row in markets.values() if not row["ready"]), None)
+            return {"ready": first_reason is None, "reason": first_reason,
+                    "checked_ns": now_ns, "global_ready": True, "markets": markets}
+        except Exception:
+            return {"ready": False, "reason": "native_admission_api_error", "checked_ns": now_ns}
 
     def _backpack_admission(self, value):
         def valid(row):
@@ -862,10 +890,11 @@ class NativeOrderGateway:
         owned["final_query_started"] = True
         self._query_original(owned, cached, now_ns)
 
-    def _query_original(self, owned, cached, now_ns):
+    def _query_original(self, owned, cached, now_ns, *, reset_timeout=True):
         """Retry the original identity independently of economic/account admission."""
         submit = owned["intent"]
-        self.requests[submit.request_id]["queried_ns"] = now_ns
+        if reset_timeout:
+            self.requests[submit.request_id]["queried_ns"] = now_ns
         owned["query_attempts"] = owned.get("query_attempts", 0) + 1
         owned["last_query_ns"] = now_ns
         try:
@@ -1087,21 +1116,33 @@ class NativeOrderGateway:
             intent = request["intent"]
             if intent.action in {"connect", "reconcile"}:
                 continue
-            passive_accepted = intent.action == "submit" and intent.time_in_force == "GTC" and (intent.request_id, "accepted", "") in self.emitted
-            if not self.orders.get(intent.client_order_id, {}).get("needs_final_query") and (
-                    passive_accepted or (intent.request_id, "updated", "") in self.emitted or any(
-                    (intent.request_id, k, "") in self.emitted for k in ("canceled", "terminal", "rejected"))):
+            owned = self.orders.get(intent.client_order_id)
+            needs_final = bool(owned and owned.get("needs_final_query"))
+            already_terminal = any(
+                (intent.request_id, k, "") in self.emitted for k in ("canceled", "terminal", "rejected")
+            )
+            passive_accepted = (intent.action == "submit" and intent.time_in_force == "GTC"
+                                and (intent.request_id, "accepted", "") in self.emitted)
+            if not needs_final and (
+                    passive_accepted or (intent.request_id, "updated", "") in self.emitted or already_terminal):
                 continue
-            if now_ns - request["queried_ns"] >= self.timeout_ns and intent.client_order_id in self.orders:
+            if owned is None:
+                continue
+            order = self._cached(intent.client_order_id) or owned["native"]
+            if now_ns - request["queried_ns"] >= self.timeout_ns:
                 request["queried_ns"] = now_ns
-                owned = self.orders[intent.client_order_id]
-                order = self._cached(intent.client_order_id) or owned["native"]
                 try:
                     self._receipt(intent, "unknown", reason_code="receipt_timeout", reason_source="python_timeout")
                 except Exception:
                     self.last_error = "timeout callback failed; original-ID query remains active"
                 finally:
                     self._query_original(owned, order, now_ns)
+            elif (needs_final and not already_terminal
+                    and now_ns - owned.get("last_query_ns", request["queried_ns"]) >= self.final_query_retry_ns):
+                # Retry HTTP terminal evidence quickly (e.g. Lighter indexer lag
+                # after a WS canceled IOC) without emitting receipt_timeout early
+                # or pushing back the overall timeout deadline.
+                self._query_original(owned, order, now_ns, reset_timeout=False)
 
     @timed("shutdown.gateway_close")
     def close(self):
