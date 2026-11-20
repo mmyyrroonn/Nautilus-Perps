@@ -16,7 +16,7 @@ excluded_symbols = ["EDGE"]
 
 [trade]
 order_notional_usd = "20"
-entry_edge_bps = "30"
+entry_edge_bps = "20"
 take_profit_bps = "5"
 max_loss_bps = "150"
 loss_stop_enabled = true
