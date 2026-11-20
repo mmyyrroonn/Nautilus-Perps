@@ -22,6 +22,8 @@ def test_hyperliquid_reads_external_positions_and_orders_without_cache():
         calls.append((method, url, payload))
         if payload["type"] == "clearinghouseState":
             return {"assetPositions": [{"position": {"coin": "BTC", "szi": "-0.002"}}]}
+        if payload["type"] == "perpsAtOpenInterestCap":
+            return ["RESOLV", "SAGA"]
         return [{"coin": "BTC", "oid": 123, "cloid": "0xabc"}, {"coin": "ETH", "oid": 99}]
     reader = ReadOnlyAccountReader(environ={"HYPERLIQUID_ACCOUNT_ADDRESS": "0x" + "1"*40}, transport=transport)
     result = reader.read(market("HL", "BTC-USD-PERP.HYPERLIQUID"), D("100"), D("101"), 50)
@@ -29,7 +31,88 @@ def test_hyperliquid_reads_external_positions_and_orders_without_cache():
     assert result.open_order_ids == ("venue:123",)
     assert result.account_positions == (("BTC-USD-PERP.HYPERLIQUID", D("-.002")),)
     assert ("ETH-USD-PERP.HYPERLIQUID", "venue:99") in result.account_open_orders
-    assert len(calls) == 2 and {c[2]["type"] for c in calls} == {"clearinghouseState", "openOrders"}
+    assert result.hl_oi_capped == ("RESOLV-USD-PERP.HYPERLIQUID", "SAGA-USD-PERP.HYPERLIQUID")
+    assert len(calls) == 3 and {c[2]["type"] for c in calls} == {
+        "clearinghouseState", "openOrders", "perpsAtOpenInterestCap"}
+
+
+def test_hyperliquid_oi_cap_cache_ttl_and_transient_error_isolation():
+    now = [10_000_000_000]
+    calls = []
+    oi_cap_mode = ["ok"]
+    def transport(method, url, payload):
+        calls.append(payload["type"])
+        if payload["type"] == "clearinghouseState":
+            return {"assetPositions": []}
+        if payload["type"] == "openOrders":
+            return []
+        if oi_cap_mode[0] == "rate_limit":
+            raise AccountReadError("oi cap throttled", retry_after_secs=15)
+        if oi_cap_mode[0] == "malformed":
+            return {"error": "unexpected"}
+        if oi_cap_mode[0] == "empty":
+            return []
+        return ["SAGA", "RESOLV", "SAGA"]
+
+    reader = ReadOnlyAccountReader(
+        environ={"HYPERLIQUID_ACCOUNT_ADDRESS": "0x" + "1" * 40},
+        transport=transport, clock_ns=lambda: now[0], oi_cap_cache_ttl_ms=30000,
+    )
+    btc = market("HL", "BTC-USD-PERP.HYPERLIQUID")
+    first = reader.read(btc, None, None, now[0])
+    assert first.hl_oi_capped == ("RESOLV-USD-PERP.HYPERLIQUID", "SAGA-USD-PERP.HYPERLIQUID")
+    assert calls.count("perpsAtOpenInterestCap") == 1
+
+    # Invalidating HL account proof must NOT force an immediate re-fetch of perpsAtOpenInterestCap within TTL.
+    reader.invalidate("HL")
+    now[0] += 5_000_000_000
+    second = reader.read(btc, None, None, now[0])
+    assert second.hl_oi_capped == ("RESOLV-USD-PERP.HYPERLIQUID", "SAGA-USD-PERP.HYPERLIQUID")
+    assert calls.count("perpsAtOpenInterestCap") == 1
+
+    # After 30s TTL, perpsAtOpenInterestCap refreshes and can recover to empty.
+    oi_cap_mode[0] = "empty"
+    reader.invalidate("HL")
+    now[0] += 30_000_000_000
+    third = reader.read(btc, None, None, now[0])
+    assert third.hl_oi_capped == ()
+    assert calls.count("perpsAtOpenInterestCap") == 2
+
+    # Rate limit on perpsAtOpenInterestCap must NOT block subsequent HL position/order reads.
+    oi_cap_mode[0] = "rate_limit"
+    reader.invalidate("HL")
+    now[0] += 31_000_000_000
+    fourth = reader.read(btc, None, None, now[0])
+    assert fourth.authoritative and fourth.position_quantity == 0 and fourth.hl_oi_capped is None
+    assert calls.count("perpsAtOpenInterestCap") == 3
+
+    reader.invalidate("HL")
+    now[0] += 2_000_000_000
+    fifth = reader.read(btc, None, None, now[0])
+    assert fifth.authoritative and fifth.position_quantity == 0 and fifth.hl_oi_capped is None
+    # Still within 15s HL_OI_CAP cooldown -> no extra OI cap call, while HL state/orders succeeded.
+    assert calls.count("perpsAtOpenInterestCap") == 3
+
+    # Malformed OI cap response also isolates cleanly.
+    oi_cap_mode[0] = "malformed"
+    reader.invalidate("HL")
+    now[0] += 20_000_000_000
+    sixth = reader.read(btc, None, None, now[0])
+    assert sixth.authoritative and sixth.hl_oi_capped is None
+    assert calls.count("perpsAtOpenInterestCap") == 4
+
+
+def test_hyperliquid_oi_cap_hip3_dex_prefix():
+    def transport(method, url, payload):
+        if payload["type"] == "clearinghouseState":
+            return {"assetPositions": []}
+        if payload["type"] == "perpsAtOpenInterestCap":
+            assert payload["dex"] == "xyz"
+            return ["NVDA", "xyz:TSLA"]
+        return []
+    reader = ReadOnlyAccountReader(environ={"HYPERLIQUID_ACCOUNT_ADDRESS": "0x" + "1" * 40}, transport=transport)
+    result = reader.read(market("HL", "xyz:NVDA-USD-PERP.HYPERLIQUID"), None, None, 50)
+    assert result.hl_oi_capped == ("xyz:NVDA-USD-PERP.HYPERLIQUID", "xyz:TSLA-USD-PERP.HYPERLIQUID")
 
 
 def test_hyperliquid_hip3_dex_and_missing_evidence_fail_closed():

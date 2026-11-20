@@ -111,6 +111,8 @@ def entry_dispatch_evidence(live, position, now_ns):
         instrument = position[f"{leg}_id"]
         order = next(live.orders[cid] for cid in position["entry_ids"]
                      if live.orders[cid]["leg"] == leg)
+        if hasattr(live, "_is_hl_oi_capped") and live._is_hl_oi_capped(instrument):
+            return "hl_open_interest_cap", evidence
         block = getattr(live, "instrument_entry_blocks", {}).get(instrument)
         if block is not None and now_ns < block["until_ns"]:
             return "instrument_entry_blocked", evidence

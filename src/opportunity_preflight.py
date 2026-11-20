@@ -92,6 +92,7 @@ class AccountSnapshot:
     aster_leverage_error: str = ""
     lighter_margin: LighterMarginSnapshot | None = None
     lighter_margin_error: str = ""
+    hl_oi_capped: tuple[str, ...] | None = None
 
     def __post_init__(self):
         account_only = self.bid is None and self.ask is None
@@ -146,6 +147,12 @@ class AccountSnapshot:
             if not (type(self.account_open_orders) is tuple
                     and all(type(row) is tuple for row in self.account_open_orders)):
                 object.__setattr__(self, "account_open_orders", orders)
+        if self.hl_oi_capped is not None:
+            capped = tuple(self.hl_oi_capped)
+            if any(not isinstance(item, str) or not item or any(c.isspace() for c in item) for item in capped):
+                raise ValueError("invalid Hyperliquid OI-capped instrument identity")
+            if type(self.hl_oi_capped) is not tuple:
+                object.__setattr__(self, "hl_oi_capped", capped)
 
 
 @dataclass(frozen=True)

@@ -189,7 +189,7 @@ def http_json(method, url, payload=None, *, timeout=3):
 class ReadOnlyAccountReader:
     def __init__(self, *, environment="mainnet", environ=None, transport=http_json,
                  clock_ns=time.time_ns, aster_signer=None, cache_ttl_ms=1000,
-                 max_native_snapshot_age_ms=15000):
+                 max_native_snapshot_age_ms=15000, oi_cap_cache_ttl_ms=30000):
         if environment not in {"mainnet", "testnet"}:
             raise AccountReadError("environment must be mainnet or testnet")
         self.environment = environment
@@ -204,6 +204,9 @@ class ReadOnlyAccountReader:
         self._epochs = {}
         self._cache_lock = threading.RLock()
         self.cache_ttl_ns = cache_ttl_ms * 1_000_000
+        if type(oi_cap_cache_ttl_ms) is not int or oi_cap_cache_ttl_ms <= 0:
+            raise AccountReadError("OI cap cache TTL must be a positive integer")
+        self.oi_cap_cache_ttl_ns = oi_cap_cache_ttl_ms * 1_000_000
         if type(max_native_snapshot_age_ms) is not int or max_native_snapshot_age_ms <= 0:
             raise AccountReadError("native snapshot age must be a positive integer")
         self.max_native_snapshot_age_ns = max_native_snapshot_age_ms * 1_000_000
@@ -407,9 +410,10 @@ class ReadOnlyAccountReader:
                                    account_open_orders=tuple((instrument, client_id or "venue:" + venue_id)
                                        for instrument, client_id, venue_id in evidence["orders"]))
 
-    def _cached_read(self, scope, fetch, observed_ns):
+    def _cached_read(self, scope, fetch, observed_ns, *, ttl_ns=None):
         # Whole-account evidence serves every market, with its original start
         # fence preserved. Reusing it never makes an old observation newer.
+        effective_ttl = self.cache_ttl_ns if ttl_ns is None else ttl_ns
         with self._cache_lock:
             now_ns = self.clock_ns()
             remaining_ns = self._retry_after_ns.get(scope[0], 0) - now_ns
@@ -418,7 +422,7 @@ class ReadOnlyAccountReader:
                                        retry_after_secs=(remaining_ns + 999_999_999) // 1_000_000_000)
             epoch = self._epochs.get(scope[0], 0)
             previous = self._cache.get(scope)
-            if previous and 0 <= now_ns - previous[0] < self.cache_ttl_ns:
+            if previous and 0 <= now_ns - previous[0] < effective_ttl:
                 return previous[2], previous[1]
         try:
             with span("account.fetch", venue=scope[0]):
@@ -445,8 +449,10 @@ class ReadOnlyAccountReader:
         venue = market.venue
         leverage, leverage_error = None, ""
         lighter_margin, lighter_margin_error = None, ""
+        hl_oi_capped = None
         if venue in {"HL", "HYPERLIQUID"}:
-            position, orders, started_ns, positions, all_orders = self._hyperliquid(market.instrument_id, observed_ns)
+            position, orders, started_ns, positions, all_orders, hl_oi_capped = self._hyperliquid(
+                market.instrument_id, observed_ns)
         elif venue == "LIGHTER":
             position, orders, started_ns, positions, all_orders, lighter_margin, lighter_margin_error = self._lighter(
                 market.instrument_id, observed_ns)
@@ -464,7 +470,20 @@ class ReadOnlyAccountReader:
                                book_observed_ns=None if account_only else observed_ns, account_positions=tuple(positions.items()),
                                account_open_orders=tuple(all_orders),
                                aster_leverage=leverage, aster_leverage_error=leverage_error,
-                               lighter_margin=lighter_margin, lighter_margin_error=lighter_margin_error)
+                               lighter_margin=lighter_margin, lighter_margin_error=lighter_margin_error,
+                               hl_oi_capped=hl_oi_capped)
+
+    @staticmethod
+    def _parse_hl_oi_capped(payload, dex=""):
+        if not isinstance(payload, list):
+            raise ValueError("invalid Hyperliquid OI cap response")
+        instruments = set()
+        for coin in payload:
+            if not isinstance(coin, str) or not coin or any(c.isspace() for c in coin):
+                raise ValueError("invalid Hyperliquid OI cap coin")
+            full = coin if (not dex or ":" in coin) else f"{dex}:{coin}"
+            instruments.add(full + "-USD-PERP.HYPERLIQUID")
+        return tuple(sorted(instruments))
 
     def _hyperliquid(self, instrument_id, observed_ns):
         prefix = "HYPERLIQUID_" if self.environment == "mainnet" else "HYPERLIQUID_TESTNET_"
@@ -510,7 +529,20 @@ class ReadOnlyAccountReader:
             if row["coin"] == symbol:
                 # Venue IDs intentionally remain different from owned client IDs.
                 ids.append("venue:" + str(row["oid"]))
-        return position, ids, started_ns, positions, all_orders
+        hl_oi_capped = None
+        try:
+            def fetch_oi_cap():
+                payload = {"type": "perpsAtOpenInterestCap", **({"dex": dex} if dex else {})}
+                if self.transport is http_json:
+                    return self.transport("POST", url, payload, timeout=1)
+                return self.transport("POST", url, payload)
+            raw_capped, _ = self._cached_read(("HL_OI_CAP", url, dex), fetch_oi_cap,
+                                              observed_ns, ttl_ns=self.oi_cap_cache_ttl_ns)
+            hl_oi_capped = self._parse_hl_oi_capped(raw_capped, dex)
+        except (AccountReadError, ValueError, TypeError, KeyError, AttributeError):
+            # Transient OI-cap metadata failures must never degrade position/order proofs or exits.
+            hl_oi_capped = None
+        return position, ids, started_ns, positions, all_orders, hl_oi_capped
 
     def _lighter(self, instrument_id, observed_ns):
         prefix = "LIGHTER_" if self.environment == "mainnet" else "LIGHTER_TESTNET_"
@@ -582,7 +614,8 @@ class ReadOnlyAccountReader:
                     all_orders.append(("account.LIGHTER", f"unidentified:Lighter:{name}:{count}"))
         margin, margin_error = None, ""
         try:
-            from opportunity_lighter_margin import LighterMarginSnapshot, account_margin_modes, market_margin_modes
+            from opportunity_lighter_margin import (
+                LighterMarginSnapshot, account_margin_modes, market_entry_blocks, market_margin_modes)
             def fetch_margin():
                 url = base + "/api/v1/orderBookDetails"
                 # Optional admission metadata has a shorter I/O budget than
@@ -593,7 +626,8 @@ class ReadOnlyAccountReader:
             metadata, metadata_ns = self._cached_read(("LIGHTER_MARGIN", base, "market_margin"),
                 fetch_margin, observed_ns)
             margin = LighterMarginSnapshot(min(started_ns, metadata_ns), market_margin_modes(metadata),
-                                          account_margin_modes(account["positions"]))
+                                          account_margin_modes(account["positions"]),
+                                          market_entry_blocks(metadata))
         except (AccountReadError, ValueError, TypeError, KeyError, AttributeError):
             # Position/order evidence remains usable by reductions if margin admission fails.
             margin_error = "lighter_margin_read_failed"

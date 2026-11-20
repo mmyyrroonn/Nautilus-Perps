@@ -51,7 +51,8 @@ _ADMISSION_REOPENING_EVENTS = frozenset({
     "order_terminal", "closed", "fill", "account_reconciled",
     "account_domain_recovered", "entry_pause_changed", "strategy_enabled",
     "order_reconciliation_recovered", "leverage_configuration_rejected",
-    "instrument_entry_blocked", "risk_circuit_breaker", "entry_rebalanced",
+    "instrument_entry_blocked", "hl_open_interest_cap_updated",
+    "risk_circuit_breaker", "entry_rebalanced",
 })
 MAX_HOT_UNSENT_ORDERS = 64
 
@@ -193,6 +194,7 @@ class LiveTradeState(ScanState):
         self.consecutive_losses = 0
         self.consecutive_single_legs = 0
         self.instrument_entry_blocks = {}
+        self.hl_oi_capped_by_scope = {}
         self.pair_cooldowns = {}
         # Current-process observations only; an old ledger cannot grant admission.
         self.native_admission = {}
@@ -971,6 +973,17 @@ class LiveTradeState(ScanState):
                       accepted=False, reason="older_observation")
             return
         self.accounts[instrument_id] = account
+        if account.venue in {"HL", "HYPERLIQUID"} and account.hl_oi_capped is not None:
+            scope = self._account_scope(instrument_id)
+            updated = frozenset(account.hl_oi_capped)
+            previous = self.hl_oi_capped_by_scope.get(scope, frozenset())
+            if updated != previous:
+                self.hl_oi_capped_by_scope[scope] = updated
+                self.emit("hl_open_interest_cap_updated", now_ns,
+                          added=sorted(updated - previous),
+                          removed=sorted(previous - updated),
+                          capped_count=len(updated),
+                          read_started_ns=account.observed_ns)
         if account.venue == "ASTER":
             self.aster_leverage = account.aster_leverage
             self.aster_leverage_error = account.aster_leverage_error
@@ -1145,6 +1158,12 @@ class LiveTradeState(ScanState):
             for intent in intents:
                 record_entry_stage(intent.request_id, "wakeup_request_returned")
 
+    def _is_hl_oi_capped(self, instrument_id):
+        market = self.markets.get(instrument_id)
+        if market is None or market.venue not in {"HL", "HYPERLIQUID"}:
+            return False
+        return instrument_id in self.hl_oi_capped_by_scope.get(self._account_scope(instrument_id), ())
+
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
         analytics = current_analytics()
@@ -1159,6 +1178,10 @@ class LiveTradeState(ScanState):
                 analytics.record_pre_gate("native_admission")
             return False
         for inst_id in (buy_id, sell_id):
+            if self._is_hl_oi_capped(inst_id):
+                if analytics is not None:
+                    analytics.record_pre_gate("hl_open_interest_cap")
+                return False
             block = self.instrument_entry_blocks.get(inst_id)
             if block is not None:
                 if now_ns < block["until_ns"]:
@@ -2183,6 +2206,9 @@ class LiveTradeState(ScanState):
                 "consecutive_losses": self.consecutive_losses,
                 "consecutive_single_legs": self.consecutive_single_legs,
                 "instrument_entry_blocks": deepcopy(self.instrument_entry_blocks),
+                "hl_oi_capped_instruments": sorted({
+                    inst for items in self.hl_oi_capped_by_scope.values() for inst in items
+                }),
                 "pair_cooldowns": {":".join(k): dict(v) for k, v in self.pair_cooldowns.items()},
                 "native_admission": deepcopy(self.native_admission),
                 "account_pauses": deepcopy(self.account_pauses),

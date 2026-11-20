@@ -23,6 +23,7 @@ from test_opportunity_trade import NOW, SECOND, make_plan, set_book
 def test_classify_rejection_identifies_open_interest_cap_and_reduce_only():
     assert classify_rejection("Cannot increase position when open interest is at cap. asset=198", "HL") == "open_interest_cap"
     assert classify_rejection("Open interest cap exceeded for symbol", "ASTER") == "open_interest_cap"
+    assert classify_rejection("Order breaches open interest limit for market", "BACKPACK") == "open_interest_cap"
     assert classify_rejection("Market is in reduce-only mode", "HL") == "reduce_only_market"
     assert classify_rejection("Symbol is delisted", "ASTER") == "reduce_only_market"
 
@@ -218,3 +219,79 @@ def test_trade_store_uses_wal_and_full_sync(tmp_path):
         assert store.load() == {"ok": True}
     finally:
         store.close()
+
+
+def test_hl_proactive_oi_cap_blocks_entries_recovers_and_preserves_exits(monkeypatch):
+    from dataclasses import replace
+    from opportunity_analytics import AnalyticsCollector
+    from test_opportunity_live import fill
+
+    live, events = state(make_plan(symbols=("BTC", "ETH"), venues=("HL", "ASTER")))
+    analytics = AnalyticsCollector()
+    monkeypatch.setattr("opportunity_live.current_analytics", lambda: analytics)
+    for sym in ("BTC", "ETH"):
+        set_book(live, "HL", "99.95", "100.00", symbol=sym)
+        set_book(live, "ASTER", "100.30", "100.35", symbol=sym)
+
+    # Proactive HL OI-cap poll marks BTC.HL as capped; ETH.HL remains tradable.
+    hl_acct = replace(live.accounts["BTC.HL"], observed_ns=NOW + 1, hl_oi_capped=("BTC.HL",))
+    live.on_account(hl_acct, NOW + 1)
+    assert live.document()["hl_oi_capped_instruments"] == ["BTC.HL"]
+    assert any(e["event"] == "hl_open_interest_cap_updated" and e["added"] == ["BTC.HL"] for e in events)
+
+    # BTC entry is pre-blocked with zero submissions and dedicated pre-gate reason.
+    live.evaluate_symbol("BTC", NOW + 2)
+    assert not submissions(live) and not live.positions
+    assert analytics.pre_gates.get("hl_open_interest_cap", 0) >= 1
+
+    # Transient poll failure (hl_oi_capped=None) keeps existing block intact.
+    live.on_account(replace(hl_acct, observed_ns=NOW + 3, hl_oi_capped=None), NOW + 3)
+    live.evaluate_symbol("BTC", NOW + 4)
+    assert not submissions(live) and not live.positions
+
+    # Open an ETH position while ETH is uncapped, then cap ETH and verify reduce-only exit still works.
+    live.evaluate_symbol("ETH", NOW + 5)
+    eth_entries = submissions(live)
+    assert len(eth_entries) == 2
+    for order in eth_entries:
+        fill(live, order, NOW + 6)
+    pos = next(iter(live.positions.values()))
+    assert pos["status"] == "open"
+
+    # ETH subsequently hits HL OI cap -> dispatch evidence refuses new entries, but exit proceeds normally.
+    live.on_account(replace(hl_acct, observed_ns=NOW + 7, hl_oi_capped=("BTC.HL", "ETH.HL")), NOW + 7)
+    # Trigger exit via take profit (reverse prices) after fresh accounts
+    t_exit = NOW + 8
+    accounts(live, t_exit)
+    live.on_account(replace(live.accounts["ETH.HL"], observed_ns=t_exit, hl_oi_capped=("BTC.HL", "ETH.HL")), t_exit)
+    set_book(live, "HL", "102", "102.1", t_exit, symbol="ETH")
+    set_book(live, "ASTER", "99", "99.1", t_exit, symbol="ETH")
+    live.evaluate_symbol("ETH", t_exit)
+    exits = submissions(live)
+    assert len(exits) == 2 and all(o.reduce_only for o in exits)
+
+    # When BTC drops off perpsAtOpenInterestCap, entries automatically resume without config edits.
+    t_recover = NOW + 9
+    live.positions.clear()
+    live.orders.clear()
+    live._execution_orders.clear()
+    accounts(live, t_recover)
+    live.on_account(replace(live.accounts["BTC.HL"], observed_ns=t_recover, hl_oi_capped=()), t_recover)
+    assert any(e["event"] == "hl_open_interest_cap_updated" and "BTC.HL" in e["removed"] for e in events)
+    set_book(live, "HL", "99.95", "100.00", t_recover, symbol="BTC")
+    set_book(live, "ASTER", "100.30", "100.35", t_recover, symbol="BTC")
+    live.evaluate_symbol("BTC", t_recover)
+    assert len(submissions(live)) == 2
+
+
+def test_entry_dispatch_evidence_blocks_hl_oi_capped_instrument():
+    from dataclasses import replace
+
+    live, _ = state(make_plan(venues=("HL", "ASTER")))
+    set_book(live, "HL", "99", "100")
+    set_book(live, "ASTER", "101", "102")
+    live.evaluate_symbol("BTC", NOW)
+    pos = next(iter(live.positions.values()))
+    live.on_account(replace(live.accounts["BTC.HL"], observed_ns=NOW + 1, hl_oi_capped=("BTC.HL",)), NOW + 1)
+    reason, _ = entry_dispatch_evidence(live, pos, NOW + 2)
+    assert reason == "hl_open_interest_cap"
