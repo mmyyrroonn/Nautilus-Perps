@@ -17,6 +17,11 @@ def market_margin_modes(payload):
         raise ValueError("Lighter market metadata incomplete")
     modes = {}
     for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Lighter market metadata incomplete")
+        status = row.get("status")
+        if status is not None and status != "active":
+            continue
         symbol = row.get("symbol")
         mode = row.get("market_config", {}).get("market_margin_mode")
         if not isinstance(symbol, str) or not symbol or symbol in modes:
@@ -24,6 +29,8 @@ def market_margin_modes(payload):
         if type(mode) is not int or mode not in {0, 1}:
             raise ValueError("Lighter market margin mode unsupported")
         modes[symbol] = mode
+    if not modes:
+        raise ValueError("Lighter market metadata incomplete")
     return modes
 
 
