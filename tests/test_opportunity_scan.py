@@ -162,7 +162,7 @@ def test_stale_prl_config_cannot_bypass_guard_with_cli_symbol_selection(tmp_path
 
 
 @pytest.mark.parametrize("filename,symbol_count,market_count", [
-    ("opportunity-scan.universe.toml", 166, 496),
+    ("opportunity-scan.universe.toml", 171, 508),
     ("opportunity-scan.dg-us.toml", 163, 423),
 ])
 def test_checked_in_generated_configs_exclude_prl_and_still_validate(filename, symbol_count, market_count):
