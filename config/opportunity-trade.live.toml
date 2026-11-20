@@ -25,7 +25,8 @@ force_close_after_secs = 300
 slippage_bps = "0"
 hard_exit_slippage_bps = "10"
 loss_cooldown_secs = 60
-max_exit_reversal_bps = "20"
+max_exit_reversal_bps = "30"
+max_exit_reversal_edge_ratio = "1"
 
 [entry_admission]
 # Local entry handoff budgets, validated offline; no guarantee of venue execution.
@@ -82,5 +83,9 @@ timer_interval_ms = 100
 evaluation_interval_ms = 100
 # Complete native account reads may take several seconds; BBO freshness is separate.
 account_max_age_ms = 60000
+lighter_margin_max_age_ms = 60000
 order_timeout_secs = 10
 retry_interval_ms = 1000
+
+[aster_leverage]
+max_age_ms = 15000

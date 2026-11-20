@@ -92,6 +92,37 @@ def test_reverse_exit_liquidity_and_reversal_spread_gate():
     assert live.positions
 
 
+def test_dynamic_exit_reversal_edge_ratio_gate():
+    policy = TradePolicy(
+        order_notional_usd=D("20"),
+        entry_edge_bps=D("20"),
+        max_exit_reversal_bps=D("30"),
+        max_exit_reversal_edge_ratio=D("1"),
+    )
+    live, _ = state(policy=policy)
+
+    # Case 1: entry net edge = 22 bps (0 fee/reserve in make_plan), reversal spread ~25 bps (> edge, < 30) -> blocked
+    live.update_book("BTC.HL", BookSnapshot(
+        "HL", "BTC", ((D("99.85"), D("10")),), ((D("100.00"), D("10")),), NOW, NOW), NOW, evaluate=False)
+    live.update_book("BTC.ASTER", BookSnapshot(
+        "ASTER", "BTC", ((D("100.22"), D("10")),), ((D("100.32"), D("10")),), NOW, NOW), NOW, evaluate=True)
+    assert not live.positions
+
+    # Case 2: high edge (50 bps) with reversal ~35 bps (> 30 bps hard cap, even though < edge) -> blocked
+    live.update_book("BTC.HL", BookSnapshot(
+        "HL", "BTC", ((D("99.80"), D("10")),), ((D("100.00"), D("10")),), NOW + 1, NOW + 1), NOW + 1, evaluate=False)
+    live.update_book("BTC.ASTER", BookSnapshot(
+        "ASTER", "BTC", ((D("100.50"), D("10")),), ((D("100.65"), D("10")),), NOW + 1, NOW + 1), NOW + 1, evaluate=True)
+    assert not live.positions
+
+    # Case 3: edge = 35 bps with reversal ~25 bps (<= min(30, 35) = 30 bps) -> allowed!
+    live.update_book("BTC.HL", BookSnapshot(
+        "HL", "BTC", ((D("99.85"), D("10")),), ((D("100.00"), D("10")),), NOW + 2, NOW + 2), NOW + 2, evaluate=False)
+    live.update_book("BTC.ASTER", BookSnapshot(
+        "ASTER", "BTC", ((D("100.35"), D("10")),), ((D("100.45"), D("10")),), NOW + 2, NOW + 2), NOW + 2, evaluate=True)
+    assert live.positions
+
+
 def test_pair_loss_cooldown_and_circuit_breakers_persist_across_pause_clear():
     policy = TradePolicy(order_notional_usd=D("20"), entry_edge_bps=D("10"), loss_cooldown_secs=60)
     live, _ = state(policy=policy, max_consecutive_single_legs=3, max_consecutive_losses=5,

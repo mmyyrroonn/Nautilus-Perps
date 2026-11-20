@@ -73,6 +73,7 @@ class LiveTradeState(ScanState):
                  max_unhedged_secs=HARD_MAX_UNHEDGED_SECS,
                  entry_unhedged_reserve_bps=MIN_ENTRY_UNHEDGED_RESERVE_BPS,
                  aster_leverage_targets=(), aster_leverage_max_age_ms=5000,
+                 lighter_margin_max_age_ms=None,
                  entry_admission=EntryAdmissionPolicy(),
                  max_session_realized_loss_usd=None,
                  max_consecutive_losses=None,
@@ -118,6 +119,12 @@ class LiveTradeState(ScanState):
         if type(aster_leverage_max_age_ms) is not int or not 1 <= aster_leverage_max_age_ms <= 15000:
             raise ValueError("Aster leverage age must be between 1 and 15000 ms")
         self.aster_leverage_max_age_ns = aster_leverage_max_age_ms * 1_000_000
+        resolved_margin_age_ms = (
+            aster_leverage_max_age_ms if lighter_margin_max_age_ms is None else lighter_margin_max_age_ms
+        )
+        if type(resolved_margin_age_ms) is not int or not 1 <= resolved_margin_age_ms <= max(account_max_age_ms, 15000):
+            raise ValueError("Lighter margin age must be between 1 and account_max_age_ms")
+        self.lighter_margin_max_age_ns = resolved_margin_age_ms * 1_000_000
         self.aster_leverage = None  # Never restore freshness from a ledger.
         self.aster_leverage_error = ""
         self.aster_leverage_initializations = {}
@@ -568,7 +575,7 @@ class LiveTradeState(ScanState):
         if self.markets[instrument_id].venue == "LIGHTER":
             account = self.accounts.get(instrument_id)
             reason, evidence = margin_check(account.lighter_margin if account else None,
-                instrument_id, now_ns, self.aster_leverage_max_age_ns)
+                instrument_id, now_ns, self.lighter_margin_max_age_ns)
             if reason:
                 self._request_account(instrument_id, now_ns)
                 if self.leverage_blocks.get(instrument_id) != reason:
@@ -840,6 +847,15 @@ class LiveTradeState(ScanState):
                     self._request_account(i, now_ns)
         return ready
 
+    def _account_refresh_after_ns(self, instrument_id, account):
+        venue = self.markets[instrument_id].venue
+        limit_ns = self.account_max_age_ns
+        if venue == "LIGHTER" and account is not None and account.lighter_margin is not None:
+            limit_ns = min(limit_ns, self.lighter_margin_max_age_ns)
+        elif venue == "ASTER" and self.aster_leverage is not None:
+            limit_ns = min(limit_ns, self.aster_leverage_max_age_ns)
+        return max(1, limit_ns // 2)
+
     @timed("strategy.reconcile_accounts")
     def reconcile_accounts(self, now_ns):
         """Schedule read-only work; never wait for a network read on the scan loop."""
@@ -852,7 +868,15 @@ class LiveTradeState(ScanState):
                        else (representative,))
             for instrument_id in targets:
                 account = self.accounts.get(instrument_id)
-                if account is None or now_ns - account.observed_ns >= self.account_max_age_ns // 2:
+                refresh_after_ns = self._account_refresh_after_ns(instrument_id, account)
+                needs_refresh = account is None or now_ns - account.observed_ns >= refresh_after_ns
+                if not needs_refresh:
+                    venue = self.markets[instrument_id].venue
+                    if venue == "LIGHTER" and account.lighter_margin is not None:
+                        needs_refresh = now_ns - account.lighter_margin.started_ns >= refresh_after_ns
+                    elif venue == "ASTER" and self.aster_leverage is not None:
+                        needs_refresh = now_ns - self.aster_leverage.started_ns >= refresh_after_ns
+                if needs_refresh:
                     self._request_account(instrument_id, now_ns)
         self._recover_order_reconciliations(now_ns)
 
@@ -1242,7 +1266,7 @@ class LiveTradeState(ScanState):
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="rounded_limit_edge_insufficient")
             return False
-        if self.policy.max_exit_reversal_bps is not None:
+        if self.policy.max_exit_reversal_bps is not None or self.policy.max_exit_reversal_edge_ratio is not None:
             from opportunity_analytics import compute_exit_liquidity
             exit_liq = compute_exit_liquidity(
                 self.books[buy_id], self.metadata[buy_id],
@@ -1255,7 +1279,14 @@ class LiveTradeState(ScanState):
                                             "live_rejected", detail="exit_liquidity_insufficient")
                 return False
             rev_bps = exit_liq["instant_reversal_slippage_bps"]
-            if rev_bps is None or Decimal(str(rev_bps)) > self.policy.max_exit_reversal_bps:
+            limit_bps = None
+            if self.policy.max_exit_reversal_bps is not None:
+                limit_bps = F(self.policy.max_exit_reversal_bps)
+            if self.policy.max_exit_reversal_edge_ratio is not None:
+                edge_bps_val = net * 10000 / buy["cash"]
+                dynamic_bps = edge_bps_val * F(self.policy.max_exit_reversal_edge_ratio)
+                limit_bps = dynamic_bps if limit_bps is None else min(limit_bps, dynamic_bps)
+            if rev_bps is None or F(Decimal(str(rev_bps))) > limit_bps:
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "live_rejected", detail="exit_reversal_too_wide")

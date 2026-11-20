@@ -125,7 +125,9 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.max_unhedged_notional_usd == 25
     assert plan.max_session_realized_loss_usd == 10
     assert plan.max_consecutive_losses == 5 and plan.max_consecutive_single_legs == 3
-    assert plan.policy.loss_cooldown_secs == 60 and plan.policy.max_exit_reversal_bps == 20
+    assert plan.policy.loss_cooldown_secs == 60 and plan.policy.max_exit_reversal_bps == 30
+    assert plan.policy.max_exit_reversal_edge_ratio == 1
+    assert plan.lighter_margin_max_age_ms == 60000 and plan.aster_leverage_max_age_ms == 15000
     assert plan.policy.slippage_bps == 0 and plan.policy.hard_exit_slippage_bps == 10
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
     assert plan.startup_self_test is False

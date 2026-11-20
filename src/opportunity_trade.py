@@ -32,6 +32,7 @@ class TradePolicy:
     hard_exit_slippage_bps: Decimal = Decimal("10")
     loss_cooldown_secs: int = 0
     max_exit_reversal_bps: Decimal | None = None
+    max_exit_reversal_edge_ratio: Decimal | None = None
 
     def __post_init__(self):
         if type(self.loss_stop_enabled) is not bool:
@@ -54,13 +55,18 @@ class TradePolicy:
             if rev >= 10000:
                 raise ScanConfigError("max_exit_reversal_bps must be below 10000")
             object.__setattr__(self, "max_exit_reversal_bps", rev)
+        if self.max_exit_reversal_edge_ratio is not None:
+            ratio = decimal_value(self.max_exit_reversal_edge_ratio, "max_exit_reversal_edge_ratio", positive=True)
+            if ratio > 10:
+                raise ScanConfigError("max_exit_reversal_edge_ratio must be at most 10")
+            object.__setattr__(self, "max_exit_reversal_edge_ratio", ratio)
 
     def document(self):
         result = {}
         for key, value in asdict(self).items():
             if key == "loss_cooldown_secs" and value == 0:
                 continue
-            if key == "max_exit_reversal_bps" and value is None:
+            if key in {"max_exit_reversal_bps", "max_exit_reversal_edge_ratio"} and value is None:
                 continue
             result[key] = str(value) if isinstance(value, Decimal) else value
         return result
