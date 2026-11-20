@@ -51,8 +51,8 @@ max_unhedged_secs = 10
 entry_unhedged_reserve_bps = "10"
 # Immediate intra-window circuit breakers (do not wait for the 600s equity check).
 max_session_realized_loss_usd = "10"
-max_consecutive_losses = 5
-max_consecutive_single_legs = 3
+max_consecutive_losses = 20
+max_consecutive_single_legs = 20
 entry_reject_block_secs = 1800
 
 [loss_monitor]
