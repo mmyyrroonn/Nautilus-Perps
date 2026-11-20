@@ -346,7 +346,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.subscribe_book_deltas(instrument_id, BookType.L2_MBP,
                                        client_id=client, managed=False, **kwargs)
             self.subscription_ids["book_deltas"].add(instrument_id)
-            if market.venue == "BACKPACK":
+            if market.venue in {"BACKPACK", "ONDO"}:
                 self.subscribe_quotes(instrument_id, client_id=client)
                 self.subscription_ids["quotes"].add(instrument_id)
             if market.venue == "ONDO":

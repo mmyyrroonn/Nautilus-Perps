@@ -237,6 +237,7 @@ def entry_pair_snapshot(live, position):
         live.fences.get(buy_id, 0), live.fences.get(sell_id, 0),
         id(live.aster_leverage), len(live.leverage_rejections), len(live.leverage_blocks),
         id(live.native_admission.get("BACKPACK")),
+        id(live.native_admission.get("ONDO")),
         tuple(sorted(live.account_pauses)),
         live.phase, live.stopping, live.cleanup_allowed,
         live.entry_pause_reason, live.halt_reason, len(live.order_reconciliations),
@@ -255,10 +256,11 @@ def entry_pair_valid_until(live, position):
             account = live.accounts.get(instrument_id)
             if account is not None:
                 deadlines.append(account.observed_ns + live.account_max_age_ns)
-    if any(live.markets[position[f"{leg}_id"]].venue == "BACKPACK" for leg in ("buy", "sell")):
-        status = live.native_admission.get("BACKPACK")
-        if status is not None and "checked_ns" in status:
-            deadlines.append(status["checked_ns"] + live.native_admission_max_age_ns)
+    for venue in ("BACKPACK", "ONDO"):
+        if any(live.markets[position[f"{leg}_id"]].venue == venue for leg in ("buy", "sell")):
+            status = live.native_admission.get(venue)
+            if status is not None and "checked_ns" in status:
+                deadlines.append(status["checked_ns"] + live.native_admission_max_age_ns)
     if any(live.markets[position[f"{leg}_id"]].venue == "ASTER" for leg in ("buy", "sell")):
         if live.aster_leverage is not None:
             deadlines.append(live.aster_leverage.started_ns + live.aster_leverage_max_age_ns)

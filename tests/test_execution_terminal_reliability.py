@@ -315,3 +315,47 @@ def test_restart_flat_proof_archives_unknown_original_submission_unchanged(tmp_p
     assert archives(store)[0]["previous_session"] == saved
     assert not live.orders and not live.positions
     assert all(i.action == "reconcile" for i in gateway.sent)
+
+
+def test_lighter_ws_canceled_fast_retries_http_evidence_without_early_timeout(harness):
+    proof = [None]
+    gateway, strategy, receipts, _, order = lighter(harness, proof)
+    proof[0] = {**evidence(order, "0"), "source": "websocket_terminal_order"}
+    strategy.cached[order.client_order_id].is_closed = True
+    # t+1ns: WS reports canceled -> triggers initial query_order (#1) and execution_closed.
+    gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
+    assert [r.kind for r in receipts] == ["execution_closed"]
+    assert [call[0] for call in strategy.calls] == ["submit", "query"]
+
+    # t+200ms (< 500ms retry interval): no extra query yet.
+    gateway.poll(NOW + 200_000_000)
+    assert [call[0] for call in strategy.calls] == ["submit", "query"]
+
+    # t+500ms (>= final_query_retry_ns, << 10s timeout_ns): fast-retries query_order (#2)
+    # without emitting a false receipt_timeout/unknown.
+    gateway.poll(NOW + 500_000_001)
+    assert [call[0] for call in strategy.calls] == ["submit", "query", "query"]
+    assert [r.kind for r in receipts] == ["execution_closed"]
+
+    # HTTP indexer catches up on retry #2 -> resolves cleanly to terminal with zero timeout!
+    proof[0]["source"] = "http_order_status"
+    gateway.poll(NOW + 600_000_000)
+    assert [r.kind for r in receipts] == ["execution_closed", "terminal"]
+
+
+def test_lighter_fast_retry_preserves_overall_timeout_deadline_when_http_stays_silent(harness):
+    proof = [None]
+    gateway, strategy, receipts, _, order = lighter(harness, proof)
+    proof[0] = {**evidence(order, "0"), "source": "websocket_terminal_order"}
+    strategy.cached[order.client_order_id].is_closed = True
+    gateway.on_native_event("canceled", event(instrument_id=order.instrument_id), NOW + 1)
+
+    # Several fast retries at 1s, 2s, 5s must NOT push back the 10s timeout deadline.
+    for sec in (1, 2, 5):
+        gateway.poll(NOW + sec * 1_000_000_000)
+    assert all(r.kind != "unknown" for r in receipts)
+    assert sum(call[0] == "query" for call in strategy.calls) == 4
+
+    # At 10s + 1ns, receipt_timeout still fires on schedule!
+    gateway.poll(NOW + gateway.timeout_ns + 1)
+    assert receipts[-1].kind == "unknown" and receipts[-1].reason_code == "receipt_timeout"

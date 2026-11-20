@@ -351,3 +351,51 @@ def test_scoped_global_failure_and_missing_target_fail_closed(native_gateway):
     value["BACKPACK"]["markets"].pop("BTC.BACKPACK")
     live.update_native_admission(value, NOW)
     assert live.native_entry_problem(("BTC.HL", "BTC.BACKPACK"), NOW) == "native_market_admission_unavailable"
+
+
+def test_ondo_native_admission_blocks_missing_quote_per_market_and_recovers():
+    strategy = FakeStrategy()
+    # Provide instrument metadata for both BTC and LIT, but QuoteTick only for BTC initially.
+    quotes = {"BTC-USD-PERP.ONDO": NS(bid_price="99.9", ask_price="100.0", ts_event=NOW)}
+    instruments = {"BTC-USD-PERP.ONDO": NS(), "LIT-USD-PERP.ONDO": NS()}
+    strategy.cache = NS(
+        order=strategy.cached.get,
+        instrument=lambda iid: instruments.get(str(iid)),
+        quote_tick=lambda iid: quotes.get(str(iid)),
+    )
+    gateway = NativeOrderGateway(
+        strategy,
+        [NS(venue="ONDO", instrument_id="BTC-USD-PERP.ONDO"),
+         NS(venue="ONDO", instrument_id="LIT-USD-PERP.ONDO")],
+        lambda *a: None, lambda *a: None, lambda *a: None, model=MODEL,
+    )
+    result = gateway.refresh_native_admission(NOW)
+    assert result["ONDO"]["global_ready"] is True and result["ONDO"]["ready"] is False
+    assert result["ONDO"]["markets"]["BTC-USD-PERP.ONDO"] == {"ready": True, "reason": None}
+    assert result["ONDO"]["markets"]["LIT-USD-PERP.ONDO"] == {
+        "ready": False, "reason": "native_quote_unavailable"}
+
+    # Missing quote blocks LIT|ONDO->HL entry before either leg is prepared/dispatched,
+    # while BTC|ONDO->HL remains unaffected.
+    plan = make_plan(symbols=("BTC", "LIT"), venues=("HL", "ONDO"))
+    ondo_markets = tuple(
+        replace(m, instrument_id=f"{m.symbol}-USD-PERP.ONDO") if m.venue == "ONDO" else m
+        for m in plan.markets
+    )
+    live, _ = state(replace(plan, markets=ondo_markets))
+    live.update_native_admission(result, NOW)
+    assert live.native_entry_problem(("BTC.HL", "BTC-USD-PERP.ONDO"), NOW) is None
+    assert live.native_entry_problem(("LIT.HL", "LIT-USD-PERP.ONDO"), NOW) == "native_quote_unavailable"
+
+    # Once LIT QuoteTick arrives in native cache, admission recovers automatically.
+    quotes["LIT-USD-PERP.ONDO"] = NS(bid_price="2.0", ask_price="2.01", ts_event=NOW + 1)
+    recovered = gateway.refresh_native_admission(NOW + 1)
+    live.update_native_admission(recovered, NOW + 1)
+    assert recovered["ONDO"]["ready"] is True
+    assert live.native_entry_problem(("LIT.HL", "LIT-USD-PERP.ONDO"), NOW + 1) is None
+
+    # Missing instrument metadata also fails closed cleanly.
+    instruments.pop("LIT-USD-PERP.ONDO")
+    missing_inst = gateway.refresh_native_admission(NOW + 2)
+    assert missing_inst["ONDO"]["markets"]["LIT-USD-PERP.ONDO"] == {
+        "ready": False, "reason": "native_instrument_unavailable"}

@@ -52,7 +52,7 @@ _ADMISSION_REOPENING_EVENTS = frozenset({
     "account_domain_recovered", "entry_pause_changed", "strategy_enabled",
     "order_reconciliation_recovered", "leverage_configuration_rejected",
     "instrument_entry_blocked", "hl_open_interest_cap_updated",
-    "risk_circuit_breaker", "entry_rebalanced",
+    "native_admission_recovered", "risk_circuit_breaker", "entry_rebalanced",
 })
 MAX_HOT_UNSENT_ORDERS = 64
 
@@ -452,9 +452,10 @@ class LiveTradeState(ScanState):
 
     def update_native_admission(self, statuses, now_ns):
         statuses = dict(statuses)
-        if any(m.venue == "BACKPACK" for m in self.markets.values()):
-            statuses.setdefault("BACKPACK", {"ready": False,
-                "reason": "native_admission_unavailable", "checked_ns": now_ns})
+        for venue in ("BACKPACK", "ONDO"):
+            if any(m.venue == venue for m in self.markets.values()):
+                statuses.setdefault(venue, {"ready": False,
+                    "reason": "native_admission_unavailable", "checked_ns": now_ns})
         for venue, status in statuses.items():
             status = dict(status)
             if not 0 <= now_ns - status["checked_ns"] <= self.native_admission_max_age_ns:
@@ -471,27 +472,29 @@ class LiveTradeState(ScanState):
                           "native_admission_not_ready", now_ns, venue=venue, **status)
 
     def native_entry_problem(self, instrument_ids, now_ns):
-        if not any(self.markets[i].venue == "BACKPACK" for i in instrument_ids):
-            return None
-        status = self.native_admission.get("BACKPACK")
-        if status is None:
-            return "native_admission_unavailable"
-        age = now_ns - status["checked_ns"]
-        if age < 0 or age > self.native_admission_max_age_ns:
-            return "native_admission_stale"
-        if "global_ready" in status:
-            if status["global_ready"] is not True:
+        for venue in ("BACKPACK", "ONDO"):
+            if not any(self.markets[i].venue == venue for i in instrument_ids):
+                continue
+            status = self.native_admission.get(venue)
+            if status is None:
+                return "native_admission_unavailable"
+            age = now_ns - status["checked_ns"]
+            if age < 0 or age > self.native_admission_max_age_ns:
+                return "native_admission_stale"
+            if "global_ready" in status:
+                if status["global_ready"] is not True:
+                    return status["reason"]
+                for instrument_id in instrument_ids:
+                    if self.markets[instrument_id].venue != venue:
+                        continue
+                    row = status.get("markets", {}).get(instrument_id)
+                    if row is None:
+                        return "native_market_admission_unavailable"
+                    if row["ready"] is not True:
+                        return row["reason"]
+            elif status["ready"] is not True:
                 return status["reason"]
-            for instrument_id in instrument_ids:
-                if self.markets[instrument_id].venue != "BACKPACK":
-                    continue
-                row = status.get("markets", {}).get(instrument_id)
-                if row is None:
-                    return "native_market_admission_unavailable"
-                if row["ready"] is not True:
-                    return row["reason"]
-            return None
-        return None if status["ready"] is True else status["reason"]
+        return None
 
     def discard_native_entry(self, intent, now_ns, *, dispatched=()):
         order = self.orders.get(intent.client_order_id)
