@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from opportunity_lighter_margin import LighterMarginSnapshot, margin_check
+from opportunity_lighter_margin import LighterMarginSnapshot, margin_check, market_margin_modes
 from opportunity_account_reader import AccountReadError, ReadOnlyAccountReader
 from opportunity_preflight import ExecutionReceipt
 from test_execution_terminal_reliability import lighter, evidence
@@ -140,3 +140,34 @@ def test_unknown_leg_reduces_other_leg_then_exact_rejection_releases_reserve():
     live.on_evaluation_timer(now + 4)
     assert live.gross_exposure(reserve=True) == 0
     assert not live.positions and live.orders[unknown.client_order_id]["status"] == "rejected"
+
+
+def test_market_margin_modes_ignores_inactive_duplicate_symbols():
+    payload = {
+        "code": 200,
+        "order_book_details": [
+            {"symbol": "ASELS", "status": "inactive", "market_config": {"market_margin_mode": 0}},
+            {"symbol": "ASELS", "status": "active", "market_config": {"market_margin_mode": 1}},
+            {"symbol": "BTC", "status": "active", "market_config": {"market_margin_mode": 0}},
+            {"symbol": "ETH", "market_config": {"market_margin_mode": 0}},
+        ],
+    }
+    assert market_margin_modes(payload) == {"ASELS": 1, "BTC": 0, "ETH": 0}
+
+
+def test_market_margin_modes_still_rejects_duplicate_active_or_empty_active():
+    with pytest.raises(ValueError, match="ambiguous"):
+        market_margin_modes({
+            "code": 200,
+            "order_book_details": [
+                {"symbol": "ASELS", "status": "active", "market_config": {"market_margin_mode": 0}},
+                {"symbol": "ASELS", "status": "active", "market_config": {"market_margin_mode": 1}},
+            ],
+        })
+    with pytest.raises(ValueError, match="incomplete"):
+        market_margin_modes({
+            "code": 200,
+            "order_book_details": [
+                {"symbol": "ASELS", "status": "inactive", "market_config": {"market_margin_mode": 0}},
+            ],
+        })
