@@ -9,7 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from opportunity_lighter_margin import LighterMarginSnapshot, margin_check, market_margin_modes
+from opportunity_lighter_margin import (
+    LighterMarginSnapshot, margin_check, market_entry_blocks, market_margin_modes)
 from opportunity_account_reader import AccountReadError, ReadOnlyAccountReader
 from opportunity_preflight import ExecutionReceipt
 from test_execution_terminal_reliability import lighter, evidence
@@ -212,3 +213,87 @@ def test_aster_proactive_refresh_tracks_leverage_half_life():
     # At 5s (== 10s // 2), reconcile_accounts proactively refreshes Aster before leverage goes stale.
     live.reconcile_accounts(NOW + 5 * SECOND)
     assert any(i.action == "reconcile" and i.instrument_id == "BTC.ASTER" for i in live.outbox)
+
+
+def test_lighter_market_entry_blocks_detects_frozen_and_oi_cap():
+    payload = {
+        "code": 200,
+        "order_book_details": [
+            {"symbol": "FROZ", "status": "active", "is_frozen": True,
+             "open_interest": 10, "open_interest_limit": "1000", "market_config": {"market_margin_mode": 0}},
+            {"symbol": "CAPPED", "status": "active", "is_frozen": False,
+             "open_interest": 1000, "open_interest_limit": "1000", "market_config": {"market_margin_mode": 0}},
+            {"symbol": "OVER", "status": "active", "is_frozen": False,
+             "open_interest": "1001.5", "open_interest_limit": "1000.0", "market_config": {"market_margin_mode": 0}},
+            {"symbol": "OK", "status": "active", "is_frozen": False,
+             "open_interest": 250.5, "open_interest_limit": "1000.0", "market_config": {"market_margin_mode": 0}},
+            {"symbol": "INACTIVE", "status": "inactive", "is_frozen": True,
+             "open_interest": 100, "open_interest_limit": "0", "market_config": {"market_margin_mode": 0}},
+        ],
+    }
+    blocks = market_entry_blocks(payload)
+    assert blocks == {
+        "FROZ": "lighter_market_frozen",
+        "CAPPED": "lighter_open_interest_cap",
+        "OVER": "lighter_open_interest_cap",
+    }
+    snap = LighterMarginSnapshot(NOW, market_margin_modes(payload), {}, blocks)
+    assert margin_check(snap, "FROZ-PERP.LIGHTER", NOW + 1, SECOND)[0] == "lighter_market_frozen"
+    assert margin_check(snap, "CAPPED-PERP.LIGHTER", NOW + 1, SECOND)[0] == "lighter_open_interest_cap"
+    assert margin_check(snap, "OK-PERP.LIGHTER", NOW + 1, SECOND)[0] is None
+
+
+def test_lighter_account_reader_propagates_oi_cap_and_live_preserves_exits():
+    def transport(method, url):
+        if "orderBookDetails" in url:
+            return {
+                "code": 200,
+                "order_book_details": [
+                    {"symbol": "BTC", "status": "active", "is_frozen": False,
+                     "open_interest": 500, "open_interest_limit": "500",
+                     "market_config": {"market_margin_mode": 0}},
+                ],
+            }
+        return {"code": 200, "accounts": [{"index": 42, "positions": [],
+            "total_order_count": 0, "pending_order_count": 0, "total_isolated_order_count": 0}]}
+
+    reader = ReadOnlyAccountReader(environ={"LIGHTER_ACCOUNT_INDEX": "42"}, transport=transport)
+    snap = reader.read(NS(venue="LIGHTER", instrument_id="BTC-PERP.LIGHTER"), None, None, NOW)
+    assert snap.lighter_margin is not None
+    assert snap.lighter_margin.market_blocks == {"BTC": "lighter_open_interest_cap"}
+
+    # LiveTradeState blocks entry when Lighter reports OI cap, recovers when cleared, and never blocks exits.
+    live, events = state(make_plan(venues=("HL", "LIGHTER")))
+    iid = "BTC.LIGHTER"
+    live.accounts[iid] = replace(
+        live.accounts[iid],
+        lighter_margin=LighterMarginSnapshot(NOW, {"BTC": 0}, {}, {"BTC": "lighter_open_interest_cap"}),
+    )
+    set_book(live, "HL", "99.99", "100")
+    set_book(live, "LIGHTER", "100.3", "100.31")
+    live.evaluate_symbol("BTC", NOW)
+    assert not submissions(live) and not live.positions
+    assert any(e["event"] == "margin_admission_blocked" and e["reason"] == "lighter_open_interest_cap" for e in events)
+
+    # Clear OI cap -> entry succeeds, open position fills, then market freezes -> reduce-only exit still succeeds!
+    live.accounts[iid] = replace(
+        live.accounts[iid],
+        lighter_margin=LighterMarginSnapshot(NOW, {"BTC": 0}, {}, {}),
+    )
+    live.evaluate_symbol("BTC", NOW + 1)
+    entries = submissions(live)
+    assert len(entries) == 2
+    for order in entries:
+        fill(live, order, NOW + 2)
+    t_exit = NOW + 3
+    accounts(live, t_exit)
+    live.accounts[iid] = replace(
+        live.accounts[iid],
+        observed_ns=t_exit,
+        lighter_margin=LighterMarginSnapshot(t_exit, {"BTC": 0}, {}, {"BTC": "lighter_market_frozen"}),
+    )
+    set_book(live, "HL", "101", "101.01", t_exit)
+    set_book(live, "LIGHTER", "99", "99.01", t_exit)
+    live.evaluate_symbol("BTC", t_exit)
+    exits = submissions(live)
+    assert len(exits) == 2 and all(o.reduce_only for o in exits)

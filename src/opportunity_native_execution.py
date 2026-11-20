@@ -64,7 +64,7 @@ def classify_rejection(reason, venue=None):
             re.search(r"\baster error -(2027|2028|4028)(?=[: ])", reason)
             or ("leverage" in reason and any(word in reason for word in ("max", "exceed", "invalid")))):
         return "leverage_configuration"
-    if "open interest" in reason and "cap" in reason:
+    if "open interest" in reason and any(word in reason for word in ("cap", "limit")):
         return "open_interest_cap"
     if any(phrase in reason for phrase in ("reduce only", "reduce-only", "close only", "close-only", "delisted")):
         return "reduce_only_market"
