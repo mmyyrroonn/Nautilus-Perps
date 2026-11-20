@@ -79,6 +79,7 @@ class LiveRunPlan:
     loss_monitor: LossMonitorPolicy = LossMonitorPolicy()
     aster_leverage_targets: tuple[tuple[str, int], ...] = ()
     aster_leverage_max_age_ms: int = 5000
+    lighter_margin_max_age_ms: int | None = None
     entry_admission: EntryAdmissionPolicy = EntryAdmissionPolicy()
     excluded_symbols: tuple[str, ...] = ()
     max_session_realized_loss_usd: Decimal | None = None
@@ -312,7 +313,13 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         raise ScanConfigError("formal trading symbols must have two configured supported venues")
     runtime = document.get("runtime", {})
     allowed_keys(runtime, {"duration_secs", "drain_timeout_secs", "timer_interval_ms", "account_max_age_ms",
-                           "order_timeout_secs", "retry_interval_ms", "evaluation_interval_ms"}, "live runtime")
+                           "lighter_margin_max_age_ms", "order_timeout_secs", "retry_interval_ms",
+                           "evaluation_interval_ms"}, "live runtime")
+    account_max_age = integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 60000)
+    lighter_margin_age = (
+        integer_value(runtime["lighter_margin_max_age_ms"], "lighter_margin_max_age_ms", 1, account_max_age)
+        if "lighter_margin_max_age_ms" in runtime else None
+    )
     duration = integer_value(runtime.get("duration_secs", scan.duration_secs) if duration_secs is None else duration_secs,
                              "duration_secs", 0, 2678400)
     anchors = {min((m for m in filtered if m.venue == venue),
@@ -326,7 +333,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         startup_cap, startup_slip, duration,
         drain_timeout_secs=integer_value(runtime.get("drain_timeout_secs", 30), "drain_timeout_secs", 1, 30),
         timer_interval_ms=integer_value(runtime.get("timer_interval_ms", 100), "timer_interval_ms", 50, 1000),
-        account_max_age_ms=integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 60000),
+        account_max_age_ms=account_max_age,
         order_timeout_secs=integer_value(runtime.get("order_timeout_secs", 10), "order_timeout_secs", 1, 30),
         retry_interval_ms=integer_value(runtime.get("retry_interval_ms", 1000), "retry_interval_ms", 100, 10000),
         startup_timeout_secs=startup_timeout, limits_present=limits_present,
@@ -335,7 +342,9 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         entry_unhedged_reserve_bps=reserve, loss_monitor=loss_monitor,
         aster_leverage_targets=tuple((i, target) for i, target in leverage_targets
                                     if i in {m.instrument_id for m in scan.markets}),
-        aster_leverage_max_age_ms=leverage_age, entry_admission=entry_admission,
+        aster_leverage_max_age_ms=leverage_age,
+        lighter_margin_max_age_ms=lighter_margin_age,
+        entry_admission=entry_admission,
         excluded_symbols=excluded_symbols,
         max_session_realized_loss_usd=max_session_realized_loss,
         max_consecutive_losses=max_consecutive_losses,
@@ -1150,6 +1159,7 @@ def run_live(plan, *, self_test_only=False):
                 entry_unhedged_reserve_bps=plan.entry_unhedged_reserve_bps,
                 aster_leverage_targets=plan.aster_leverage_targets,
                 aster_leverage_max_age_ms=plan.aster_leverage_max_age_ms,
+                lighter_margin_max_age_ms=plan.lighter_margin_max_age_ms,
                 entry_admission=plan.entry_admission,
                 max_session_realized_loss_usd=plan.max_session_realized_loss_usd,
                 max_consecutive_losses=plan.max_consecutive_losses,

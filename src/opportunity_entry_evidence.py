@@ -266,7 +266,7 @@ def entry_pair_valid_until(live, position):
             continue
         account = live.accounts.get(instrument_id)
         if account is not None and account.lighter_margin is not None:
-            deadlines.append(account.lighter_margin.started_ns + live.aster_leverage_max_age_ns)
+            deadlines.append(account.lighter_margin.started_ns + live.lighter_margin_max_age_ns)
     return min(deadlines) if deadlines else 0
 
 

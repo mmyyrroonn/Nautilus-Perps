@@ -171,3 +171,44 @@ def test_market_margin_modes_still_rejects_duplicate_active_or_empty_active():
                 {"symbol": "ASELS", "status": "inactive", "market_config": {"market_margin_mode": 0}},
             ],
         })
+
+
+def test_lighter_margin_max_age_and_proactive_refresh_prevent_stale_blocks():
+    live, _ = state(
+        make_plan(venues=("HL", "LIGHTER")),
+        account_max_age_ms=60000,
+        aster_leverage_max_age_ms=5000,
+        lighter_margin_max_age_ms=60000,
+    )
+    iid = "BTC.LIGHTER"
+    live.accounts[iid] = replace(
+        live.accounts[iid],
+        observed_ns=NOW,
+        lighter_margin=LighterMarginSnapshot(NOW, {"BTC": 0}, {}),
+    )
+    # 20s later (> 5s aster_leverage_max_age_ms, < 60s lighter_margin_max_age_ms) -> still fresh!
+    t20 = NOW + 20 * SECOND
+    assert live.leverage_problem(iid, D("100"), D("1"), t20)[0] is None
+    # Before half-life (20s < 30s), reconcile_accounts does not re-request Lighter.
+    live.outbox.clear()
+    live.reconcile_accounts(t20)
+    assert not any(i.action == "reconcile" and i.instrument_id == iid for i in live.outbox)
+    # At half-life (30s), reconcile_accounts proactively refreshes Lighter before expiry.
+    t30 = NOW + 30 * SECOND
+    live.reconcile_accounts(t30)
+    assert any(i.action == "reconcile" and i.instrument_id == iid for i in live.outbox)
+
+
+def test_aster_proactive_refresh_tracks_leverage_half_life():
+    live, _ = state(
+        make_plan(venues=("HL", "ASTER")),
+        account_max_age_ms=60000,
+        aster_leverage_max_age_ms=10000,
+    )
+    live.outbox.clear()
+    # At 4s (< 5s leverage half-life), no proactive Aster refresh yet.
+    live.reconcile_accounts(NOW + 4 * SECOND)
+    assert not any(i.action == "reconcile" and i.instrument_id == "BTC.ASTER" for i in live.outbox)
+    # At 5s (== 10s // 2), reconcile_accounts proactively refreshes Aster before leverage goes stale.
+    live.reconcile_accounts(NOW + 5 * SECOND)
+    assert any(i.action == "reconcile" and i.instrument_id == "BTC.ASTER" for i in live.outbox)
