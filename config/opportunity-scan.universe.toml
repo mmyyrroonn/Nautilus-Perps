@@ -1307,6 +1307,22 @@ source = "Configured"
 source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
+symbol = "DRV"
+venue = "LIGHTER"
+instrument_id = "DRV-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "DRV"
+venue = "ASTER"
+instrument_id = "DRVUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
 symbol = "DYDX"
 venue = "HL"
 instrument_id = "DYDX-USD-PERP.HYPERLIQUID"
@@ -1348,13 +1364,6 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 taker_fee_bps = "4"
 fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
-
-[[markets]]
-symbol = "EDGE"
-venue = "LIGHTER"
-instrument_id = "EDGE-PERP.LIGHTER"
-quote_to_usd = "1"
-valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
 symbol = "EDGE"
@@ -2364,6 +2373,13 @@ fee_source = "Configured public crypto general taker assumption; classification 
 
 [[markets]]
 symbol = "LIT"
+venue = "ONDO"
+instrument_id = "LIT-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "LIT"
 venue = "BACKPACK"
 instrument_id = "LIT_USDC_PERP.BACKPACK"
 quote_to_usd = "1"
@@ -2752,6 +2768,13 @@ fee_source = "Configured public crypto general taker assumption; classification 
 
 [[markets]]
 symbol = "NEAR"
+venue = "ONDO"
+instrument_id = "NEAR-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NEAR"
 venue = "BACKPACK"
 instrument_id = "NEAR_USDC_PERP.BACKPACK"
 quote_to_usd = "1"
@@ -2933,6 +2956,22 @@ maker_fee = "0"
 taker_fee = "0.0005"
 source = "Configured"
 source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
+symbol = "PEARL"
+venue = "ASTER"
+instrument_id = "PEARLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "PEARL"
+venue = "ONDO"
+instrument_id = "PEARL-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
 symbol = "PENDLE"
@@ -3147,13 +3186,6 @@ fee_source = "Configured standard public taker assumption 4.5 bps; account tier 
 
 [[markets]]
 symbol = "PROVE"
-venue = "LIGHTER"
-instrument_id = "PROVE-PERP.LIGHTER"
-quote_to_usd = "1"
-valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
-
-[[markets]]
-symbol = "PROVE"
 venue = "ASTER"
 instrument_id = "PROVEUSDT-PERP.ASTER"
 quote_to_usd = "1"
@@ -3347,6 +3379,24 @@ valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX ra
 symbol = "ROBO"
 venue = "ASTER"
 instrument_id = "ROBOUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "RSR"
+venue = "HL"
+instrument_id = "RSR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "RSR"
+venue = "ASTER"
+instrument_id = "RSRUSDT-PERP.ASTER"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 taker_fee_bps = "4"
@@ -3601,6 +3651,24 @@ maker_fee = "0"
 taker_fee = "0.0005"
 source = "Configured"
 source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
+symbol = "SOPH"
+venue = "HL"
+instrument_id = "SOPH-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SOPH"
+venue = "ASTER"
+instrument_id = "SOPHUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
 
 [[markets]]
 symbol = "SPX"
@@ -4231,6 +4299,15 @@ fee_source = "Configured standard public taker assumption 4.5 bps; account tier 
 
 [[markets]]
 symbol = "W"
+venue = "ASTER"
+instrument_id = "WUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "W"
 venue = "BACKPACK"
 instrument_id = "W_USDC_PERP.BACKPACK"
 quote_to_usd = "1"
@@ -4556,6 +4633,31 @@ maker_fee = "0"
 taker_fee = "0.0005"
 source = "Configured"
 source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
+symbol = "XTEN"
+venue = "HL"
+instrument_id = "XTEN-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XTEN"
+venue = "LIGHTER"
+instrument_id = "XTEN-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XTEN"
+venue = "ASTER"
+instrument_id = "XTENUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
 
 [[markets]]
 symbol = "YGG"

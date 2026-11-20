@@ -11,8 +11,8 @@ state_path = "../reports/opportunity-trading/live.sqlite3"
 limits_path = "limits.toml"
 # All order mutations use the matching native Nautilus execution factory.
 venues = ["HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"]
-# Exclude broken/invalid cross-venue book mappings identified in live diagnostics.
-excluded_symbols = ["EDGE"]
+# Exclude persistent non-converging basis traps identified in live diagnostics.
+excluded_symbols = ["INIT"]
 
 [trade]
 order_notional_usd = "20"

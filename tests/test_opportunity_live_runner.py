@@ -120,7 +120,7 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     plan = load_live_plan(ROOT / "config/opportunity-trade.live.toml")
     assert set(plan.venues) == {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
     assert len(plan.trade_symbols) > 2 and plan.ready
-    assert "EDGE" not in plan.trade_symbols
+    assert "INIT" not in plan.trade_symbols
     assert plan.policy.order_notional_usd == 20 and plan.max_gross_notional_usd == 100
     assert plan.max_unhedged_notional_usd == 25
     assert plan.max_session_realized_loss_usd == 10
