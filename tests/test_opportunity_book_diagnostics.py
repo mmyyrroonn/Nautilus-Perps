@@ -347,3 +347,35 @@ def test_nested_diagnostics_export_only_fixed_fields(monkeypatch):
     assert row["last_complete"] == {"invalidation_reason": "snapshot_rebuilding"}
     assert row["local_pending"] == {"sequence": 5}
     assert "do-not-export" not in json.dumps(report)
+
+
+def test_on_time_event_throttles_backpack_health_checks_to_100ms(tmp_path, monkeypatch):
+    import opportunity_runtime as runtime_mod
+
+    _, _, observer, _, _, _ = native_observer(
+        tmp_path, monkeypatch, backpack=True, evaluation_interval_ms=20)
+    mono_ns = [1_000_000_000]
+    monkeypatch.setattr(runtime_mod.time, "monotonic_ns", lambda: mono_ns[0])
+    check_calls = []
+    real_check = observer.check_backpack
+
+    def spy_check():
+        check_calls.append(mono_ns[0])
+        return real_check()
+
+    monkeypatch.setattr(observer, "check_backpack", spy_check)
+
+    # First timer tick runs check_backpack immediately, then subsequent 20ms ticks skip until +100ms
+    for step_ms in (0, 20, 40, 60, 80):
+        mono_ns[0] = 1_000_000_000 + step_ms * 1_000_000
+        observer.on_time_event(None)
+    assert check_calls == [1_000_000_000]
+
+    # Crossing the 100ms threshold triggers the next throttled health check
+    mono_ns[0] = 1_100_000_000
+    observer.on_time_event(None)
+    assert check_calls == [1_000_000_000, 1_100_000_000]
+
+    # Direct check_backpack() calls remain unthrottled for explicit diagnostics/tests
+    observer.check_backpack()
+    assert len(check_calls) == 3

@@ -192,6 +192,7 @@ class RollingBasisTracker:
         self.max_gap_ns = max(60_000_000_000, self.warmup_ns)
         self.max_samples = (policy.window_secs // policy.sample_interval_secs) + 4
         self._windows: dict[tuple[str, str], _PairBasisWindow] = {}
+        self._symbol_earliest_next_ns: dict[str, int] = {}
 
     def observe_pair(self, id_a: str, book_a, id_b: str, book_b, settings, now_ns: int) -> bool:
         """Sample valid, low-skew mid basis into the canonical unordered pair window."""
@@ -222,18 +223,75 @@ class RollingBasisTracker:
         win.cached_median = None
         return True
 
-    def observe_symbol(self, symbol_pairs, books, settings, now_ns: int, *, affected=None) -> int:
+    def observe_symbol(
+        self,
+        symbol_pairs,
+        books,
+        settings,
+        now_ns: int,
+        *,
+        affected=None,
+        symbol: str | None = None,
+    ) -> int:
         """Observe all matching unordered cross-venue pairs for one symbol."""
+        if not symbol_pairs:
+            return 0
+        if symbol is not None:
+            next_ns = self._symbol_earliest_next_ns.get(symbol)
+            if next_ns is not None and now_ns < next_ns:
+                return 0
         recorded = 0
         for first, second in symbol_pairs:
             if affected is not None and first not in affected and second not in affected:
+                continue
+            key = (first, second) if first < second else (second, first)
+            win = self._windows.get(key)
+            if win is not None and (now_ns <= win.last_sample_ns or now_ns - win.last_sample_ns < self.sample_interval_ns):
                 continue
             book_a = books.get(first)
             book_b = books.get(second)
             if book_a is not None and book_b is not None:
                 if self.observe_pair(first, book_a, second, book_b, settings, now_ns):
                     recorded += 1
+        if symbol is not None:
+            earliest_next = None
+            for first, second in symbol_pairs:
+                key = (first, second) if first < second else (second, first)
+                win = self._windows.get(key)
+                if win is None:
+                    earliest_next = None
+                    break
+                candidate_next = win.last_sample_ns + self.sample_interval_ns
+                if earliest_next is None or candidate_next < earliest_next:
+                    earliest_next = candidate_next
+            if earliest_next is not None and earliest_next > now_ns:
+                self._symbol_earliest_next_ns[symbol] = earliest_next
+            else:
+                self._symbol_earliest_next_ns.pop(symbol, None)
         return recorded
+
+    def bbo_rule_out(
+        self,
+        buy_id: str,
+        sell_id: str,
+        buy_book,
+        sell_book,
+        now_ns: int,
+        *,
+        carry_offset_bps: float = 0.0,
+    ) -> str | None:
+        """Conservatively rule out entries using best-touch gross spread before full L2 sizing."""
+        if not buy_book.asks or not sell_book.bids:
+            return None
+        buy_ask = float(buy_book.asks[0][0])
+        sell_bid = float(sell_book.bids[0][0])
+        if not (math.isfinite(buy_ask) and math.isfinite(sell_bid) and buy_ask > 0.0):
+            return None
+        bbo_gross_bps = (sell_bid - buy_ask) / buy_ask * 10000.0 + 1e-6
+        reason, _ = self.evaluate_entry(
+            buy_id, sell_id, bbo_gross_bps, now_ns, carry_offset_bps=carry_offset_bps,
+        )
+        return reason
 
     def baseline(self, buy_id: str, sell_id: str, now_ns: int) -> tuple[float | None, int, float, bool]:
         """Return (baseline_bps, sample_count, span_secs, ready) for directed buy_id -> sell_id."""

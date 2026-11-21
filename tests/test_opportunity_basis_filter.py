@@ -500,3 +500,150 @@ def test_paper_trade_state_max_hold_triggers_route_cooldown_and_expiry():
     publish(paper, t_hold + 60 * SECOND, symbol="XPL", buy_bid="99.99", buy_ask="100.00", sell_bid="100.35", sell_ask="100.36")
     assert not paper.positions
     paper.on_evaluation_timer(t_hold + 3601 * SECOND)
+
+
+def test_bbo_prescreen_skips_l2_pricing_and_decay_pollution_while_persistent(monkeypatch):
+    import opportunity_paper as paper_mod
+    basis_policy = BasisFilterPolicy(
+        enabled=True, window_secs=600, warmup_secs=60, min_deviation_bps=D("20"),
+    )
+    trade_policy = TradePolicy(order_notional_usd=D("20"), entry_edge_bps=D("20"))
+    plan = make_plan(symbols=("XPL",), venues=("HL", "ASTER"))
+
+    l2_calls = []
+    real_eval = paper_mod.evaluate_opportunity
+
+    def spy_eval(*args, **kwargs):
+        l2_calls.append(args[0].symbol)
+        return real_eval(*args, **kwargs)
+
+    monkeypatch.setattr(paper_mod, "evaluate_opportunity", spy_eval)
+
+    # 1. LiveTradeState: persistent +35 bps spread never invokes L2 pricing or pollutes decay/exit_liq
+    live, _ = state(plan=plan, policy=trade_policy, basis_filter=basis_policy)
+    live_collector = analytics_mod.AnalyticsCollector()
+    monkeypatch.setattr("opportunity_live.current_analytics", lambda: live_collector)
+    monkeypatch.setattr(paper_mod, "current_analytics", lambda: live_collector)
+    for step in range(0, 80, 5):
+        t = NOW + step * SECOND
+        set_book(live, "HL", "99.99", "100.00", t, symbol="XPL")
+        set_book(live, "ASTER", "100.35", "100.36", t, symbol="XPL")
+        live.evaluate_symbol("XPL", t)
+    assert l2_calls == []
+    assert live_collector.funnel_totals.get("priced_qualified", 0) == 0
+    assert live_collector.funnel_totals.get("live_rejected:basis_warmup", 0) >= 1
+    assert live_collector.funnel_totals.get("live_rejected:basis_deviation_insufficient", 0) >= 1
+    assert not live_collector._active_decay and not live_collector.decay_completed
+    assert not live_collector.exit_liq_by_route
+
+    # Transient spike (+65 bps above ~35 bps baseline) invokes L2 pricing and enters
+    t_spike = NOW + 85 * SECOND
+    accounts(live, t_spike)
+    set_book(live, "HL", "99.99", "100.00", t_spike, symbol="XPL")
+    set_book(live, "ASTER", "100.65", "100.66", t_spike, symbol="XPL")
+    live.evaluate_symbol("XPL", t_spike)
+    assert len(l2_calls) >= 1
+    assert len(submissions(live)) == 2
+    assert live_collector.funnel_totals.get("priced_qualified", 0) == 1
+
+    # 2. PaperTradeState mirrors the exact same BBO pre-screen skip
+    l2_calls.clear()
+    paper = _paper_state(plan, trade_policy, basis_policy)
+    paper_collector = analytics_mod.AnalyticsCollector()
+    monkeypatch.setattr(paper_mod, "current_analytics", lambda: paper_collector)
+    for step in range(0, 80, 5):
+        t = NOW + step * SECOND
+        publish(paper, t, symbol="XPL", buy_bid="99.99", buy_ask="100.00", sell_bid="100.35", sell_ask="100.36")
+    assert l2_calls == []
+    assert paper_collector.funnel_totals.get("pricing_rejected:basis_warmup", 0) >= 1
+    assert paper_collector.funnel_totals.get("pricing_rejected:basis_deviation_insufficient", 0) >= 1
+    assert paper_collector.funnel_totals.get("priced_qualified", 0) == 0
+
+    publish(paper, t_spike, symbol="XPL", buy_bid="99.99", buy_ask="100.00", sell_bid="100.65", sell_ask="100.66")
+    assert len(l2_calls) >= 1
+    assert len(paper.positions) == 1
+    assert paper_collector.funnel_totals.get("priced_qualified", 0) == 1
+
+
+def test_bbo_prescreen_boundary_conservativeness():
+    policy = BasisFilterPolicy(enabled=True, window_secs=300, warmup_secs=60, min_deviation_bps=D("20"))
+    tracker = RollingBasisTracker(policy)
+    settings = ScanSettings(max_age_ms=2000, max_skew_ms=500, max_receive_age_ms=2000)
+
+    for step in range(0, 70, 5):
+        t = NOW + step * SECOND
+        tracker.observe_pair(
+            "ADA.HL", _book("HL", "ADA", "99.99", "100.01", t),
+            "ADA.ASTER", _book("ASTER", "ADA", "99.99", "100.01", t),
+            settings, t,
+        )
+    t_eval = NOW + 70 * SECOND
+    # Exact 20.0 bps BBO boundary above ~0 bps baseline must NOT be falsely dropped by pre-screen
+    assert tracker.bbo_rule_out(
+        "ADA.HL", "ADA.ASTER",
+        _book("HL", "ADA", "99.99", "100.00", t_eval),
+        _book("ASTER", "ADA", "100.20", "100.21", t_eval),
+        t_eval,
+    ) is None
+    # Clearly below threshold (+15 bps < +20 bps) IS ruled out conservatively at BBO
+    assert tracker.bbo_rule_out(
+        "ADA.HL", "ADA.ASTER",
+        _book("HL", "ADA", "99.99", "100.00", t_eval),
+        _book("ASTER", "ADA", "100.15", "100.16", t_eval),
+        t_eval,
+    ) == "basis_deviation_insufficient"
+
+
+def test_observe_symbol_fast_skip_and_partial_venue_safety(monkeypatch):
+    policy = BasisFilterPolicy(enabled=True, window_secs=300, warmup_secs=60, min_deviation_bps=D("20"))
+    tracker = RollingBasisTracker(policy)  # sample_interval_secs = 2
+    settings = ScanSettings(max_age_ms=5000, max_skew_ms=1000, max_receive_age_ms=5000)
+    pairs = (("XPL.ASTER", "XPL.BP"), ("XPL.ASTER", "XPL.HL"), ("XPL.BP", "XPL.HL"))
+
+    pair_calls = []
+    real_observe_pair = tracker.observe_pair
+
+    def spy_observe_pair(id_a, book_a, id_b, book_b, s, now_ns):
+        pair_calls.append((id_a, id_b, now_ns))
+        return real_observe_pair(id_a, book_a, id_b, book_b, s, now_ns)
+
+    monkeypatch.setattr(tracker, "observe_pair", spy_observe_pair)
+
+    # Initially only 2 of 3 venues have books -> fast-skip must NOT engage while third venue is missing
+    books = {
+        "XPL.ASTER": _book("ASTER", "XPL", "99.99", "100.01", NOW),
+        "XPL.HL": _book("HL", "XPL", "99.99", "100.01", NOW),
+    }
+    assert tracker.observe_symbol(pairs, books, settings, NOW, symbol="XPL") == 1
+    assert len(pair_calls) == 1
+
+    # Third venue arrives 1s later -> NOT fast-skipped; observes the 2 newly complete pairs
+    t1 = NOW + SECOND
+    books["XPL.BP"] = _book("BP", "XPL", "99.99", "100.01", t1)
+    assert tracker.observe_symbol(pairs, books, settings, t1, affected={"XPL.BP"}, symbol="XPL") == 2
+    assert len(pair_calls) == 3
+
+    # Now all 3 pairs are tracked (next due: t=2s for ASTER-HL, t=3s for BP pairs)
+    # Calls before t=2s must fast-skip in O(1) without calling observe_pair at all
+    pair_calls.clear()
+    t1_5 = NOW + int(1.5 * SECOND)
+    assert tracker.observe_symbol(pairs, books, settings, t1_5, symbol="XPL") == 0
+    assert pair_calls == []
+
+    # At t=2s (when only ASTER-HL is due), only ASTER-HL is observed; BP pairs remain skipped
+    t2 = NOW + 2 * SECOND
+    books["XPL.ASTER"] = _book("ASTER", "XPL", "99.99", "100.01", t2)
+    books["XPL.HL"] = _book("HL", "XPL", "99.99", "100.01", t2)
+    assert tracker.observe_symbol(pairs, books, settings, t2, symbol="XPL") == 1
+    assert pair_calls == [("XPL.ASTER", "XPL.HL", t2)]
+
+    # At t=2.5s (< t=3s for BP pairs), fast-skip engages again
+    pair_calls.clear()
+    assert tracker.observe_symbol(pairs, books, settings, NOW + int(2.5 * SECOND), symbol="XPL") == 0
+    assert pair_calls == []
+
+    # At t=3s, the 2 BP pairs become due and are observed
+    t3 = NOW + 3 * SECOND
+    books["XPL.BP"] = _book("BP", "XPL", "99.99", "100.01", t3)
+    assert tracker.observe_symbol(pairs, books, settings, t3, symbol="XPL") == 2
+    assert len(pair_calls) == 2
