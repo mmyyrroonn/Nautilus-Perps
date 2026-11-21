@@ -18,6 +18,7 @@ quantity_change_fraction = "0.1"
 
 [runtime]
 hyperliquid_fast_book = true
+hyperliquid_bbo_gate = true
 connection_timeout_secs = 300
 duration_secs = 3600
 depth_levels = 20

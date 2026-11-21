@@ -42,6 +42,7 @@ REASONS = {
     "receipt_timeout": "等待订单结果超时；不能据此判定订单失败",
     "stale_or_invalid_book": "发送前行情已过期或无效",
     "price_outside_limit": "发送前盘口已不满足原有限价",
+    "bbo_price_outside_limit": "发送前实时 BBO 已突破原有限价",
     "insufficient_depth": "发送前盘口深度不足",
     "net_edge_insufficient": "发送前预期净价差不足",
     "entry_imbalance": "开仓两腿成交不平衡",

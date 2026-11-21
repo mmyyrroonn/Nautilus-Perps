@@ -86,6 +86,7 @@ class ScanPlan:
     aster_subscription_interval_ms: int = 500
     hyperliquid_fast_book: bool = False
     pair_allowlist: tuple[tuple[str, str], ...] | None = None
+    hyperliquid_bbo_gate: bool = False
 
     def select_symbols(self, symbols: set[str]) -> ScanPlan:
         markets = tuple(m for m in self.markets if m.symbol in symbols)
@@ -148,10 +149,14 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
     runtime = document.get("runtime", {})
     allowed_keys(runtime, {"depth_levels", "max_levels_per_side", "refresh_ms", "top_n",
                           "duration_secs", "connection_timeout_secs", "evaluation_interval_ms",
-                          "aster_snapshot_depth", "aster_subscription_interval_ms", "hyperliquid_fast_book"}, "runtime")
+                          "aster_snapshot_depth", "aster_subscription_interval_ms",
+                          "hyperliquid_fast_book", "hyperliquid_bbo_gate"}, "runtime")
     fast_book = runtime.get("hyperliquid_fast_book", False)
     if type(fast_book) is not bool:
         raise ScanConfigError("runtime.hyperliquid_fast_book must be boolean")
+    bbo_gate = runtime.get("hyperliquid_bbo_gate", False)
+    if type(bbo_gate) is not bool:
+        raise ScanConfigError("runtime.hyperliquid_bbo_gate must be boolean")
     cap = integer_value(runtime.get("max_levels_per_side", 2000), "max_levels_per_side", 1, 20000)
     depth = integer_value(runtime.get("depth_levels", 20), "depth_levels", 1, cap)
     aster_depth = integer_value(runtime.get("aster_snapshot_depth", 1000), "aster_snapshot_depth", 5, 1000)
@@ -257,7 +262,7 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
         integer_value(runtime.get("evaluation_interval_ms", 0), "evaluation_interval_ms", 0, 60000),
         aster_depth,
         integer_value(runtime.get("aster_subscription_interval_ms", 500), "aster_subscription_interval_ms", 1, 60000),
-        fast_book, pairs)
+        fast_book, pairs, bbo_gate)
 
 
 def load_plan(path: Path) -> ScanPlan:
