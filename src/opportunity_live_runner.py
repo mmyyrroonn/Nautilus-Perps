@@ -20,6 +20,7 @@ import time
 import tomllib
 import uuid
 
+from opportunity_basis import BasisFilterPolicy
 from opportunity_scan import (ScanConfigError, allowed_keys, decimal_value,
                               integer_value, load_plan)
 from opportunity_trade import TradePolicy
@@ -81,6 +82,7 @@ class LiveRunPlan:
     aster_leverage_max_age_ms: int = 5000
     lighter_margin_max_age_ms: int | None = None
     entry_admission: EntryAdmissionPolicy = EntryAdmissionPolicy()
+    basis_filter: BasisFilterPolicy = BasisFilterPolicy()
     excluded_symbols: tuple[str, ...] = ()
     max_session_realized_loss_usd: Decimal | None = None
     max_consecutive_losses: int | None = None
@@ -150,6 +152,7 @@ class LiveRunPlan:
                     if m.venue == "ASTER" and m.symbol in self.trade_symbols
                     and m.instrument_id not in dict(self.aster_leverage_targets)]},
             "entry_admission": self.entry_admission.document(),
+            "basis_filter": self.basis_filter.document(),
             "startup": {"self_test_enabled": self.startup_self_test,
                 "balance_check_enabled": self.startup_balance_check,
                 "mandatory": self.startup_self_test, "symbol": "BTC",
@@ -176,7 +179,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         document = tomllib.load(handle, parse_float=Decimal)
     allowed_keys(document, {"schema_version", "mode", "environment", "scan_config", "state_path",
         "limits_path", "venues", "excluded_symbols", "trade", "risk", "startup", "runtime", "loss_monitor",
-        "aster_leverage", "entry_admission"}, "live root")
+        "aster_leverage", "entry_admission", "basis_filter"}, "live root")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise ScanConfigError("live schema_version must be 1")
     if document.get("mode") != "live" or document.get("environment") != "mainnet":
@@ -202,6 +205,9 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     admission = document.get("entry_admission", {})
     allowed_keys(admission, set(EntryAdmissionPolicy.__dataclass_fields__), "entry_admission")
     entry_admission = EntryAdmissionPolicy(**admission)
+    basis_raw = document.get("basis_filter", {})
+    allowed_keys(basis_raw, set(BasisFilterPolicy.__dataclass_fields__), "basis_filter")
+    basis_filter = BasisFilterPolicy(**basis_raw)
     monitor = document.get("loss_monitor", {})
     allowed_keys(monitor, set(LossMonitorPolicy.__dataclass_fields__), "loss_monitor")
     loss_monitor = LossMonitorPolicy(**monitor)
@@ -345,6 +351,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         aster_leverage_max_age_ms=leverage_age,
         lighter_margin_max_age_ms=lighter_margin_age,
         entry_admission=entry_admission,
+        basis_filter=basis_filter,
         excluded_symbols=excluded_symbols,
         max_session_realized_loss_usd=max_session_realized_loss,
         max_consecutive_losses=max_consecutive_losses,
@@ -1170,6 +1177,7 @@ def run_live(plan, *, self_test_only=False):
                 aster_leverage_max_age_ms=plan.aster_leverage_max_age_ms,
                 lighter_margin_max_age_ms=plan.lighter_margin_max_age_ms,
                 entry_admission=plan.entry_admission,
+                basis_filter=plan.basis_filter,
                 max_session_realized_loss_usd=plan.max_session_realized_loss_usd,
                 max_consecutive_losses=plan.max_consecutive_losses,
                 max_consecutive_single_legs=plan.max_consecutive_single_legs,

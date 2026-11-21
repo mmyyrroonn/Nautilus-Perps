@@ -14,6 +14,7 @@ import threading
 import time
 import tomllib
 
+from opportunity_basis import BasisFilterPolicy
 from opportunity_scan import (ScanConfigError, ScanPlan, allowed_keys, decimal_value,
                               integer_value, load_plan)
 from opportunity_timing import add_timing_arguments, run_timed, timed
@@ -77,6 +78,7 @@ class TradePlan:
     scan: ScanPlan
     policy: TradePolicy
     state_path: Path
+    basis_filter: BasisFilterPolicy = BasisFilterPolicy()
 
     def fingerprint(self):
         # Runtime duration/display/output settings can change on a restart.
@@ -89,6 +91,7 @@ class TradePlan:
         return {"schema_version": 1, "mode": "paper", "runtime_started": False,
                 "remote_writes_allowed": False, "registered_execution_clients": 0,
                 "simulated_fills": True, "policy": self.policy.document(),
+                "basis_filter": self.basis_filter.document(),
                 "pair_lock": "symbol + unordered venue pair (both directions)",
                 "pnl_bps_denominator": "filled opening buy-leg notional in USD",
                 "entry_notional_limit": "each leg; equal canonical base quantity",
@@ -103,7 +106,8 @@ def load_trade_plan(path: Path) -> TradePlan:
     path = Path(path).resolve()
     with path.open("rb") as handle:
         document = tomllib.load(handle, parse_float=Decimal)
-    allowed_keys(document, {"schema_version", "mode", "scan_config", "state_path", "trade"}, "trade root")
+    allowed_keys(document, {"schema_version", "mode", "scan_config", "state_path", "trade", "basis_filter"},
+                 "trade root")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise ScanConfigError("schema_version must be 1")
     if document.get("mode") != "paper":
@@ -114,13 +118,16 @@ def load_trade_plan(path: Path) -> TradePlan:
     values = document.get("trade", {})
     allowed_keys(values, set(TradePolicy.__dataclass_fields__), "trade policy")
     policy = TradePolicy(**values)
+    basis_values = document.get("basis_filter", {})
+    allowed_keys(basis_values, set(BasisFilterPolicy.__dataclass_fields__), "basis_filter")
+    basis_filter = BasisFilterPolicy(**basis_values)
     scan = load_plan(path.parent / document["scan_config"])
     if scan.pair_allowlist is not None:
         raise ScanConfigError("schema_version 2 pair allowlists are observation-only; trading consumers are unsupported")
     scan = replace(scan, output_path=None, settings=replace(scan.settings,
         target_notional=policy.order_notional_usd, min_entry_edge_bps=policy.entry_edge_bps),
         evaluation_interval_ms=100)
-    return TradePlan(scan, policy, (path.parent / document["state_path"]).resolve())
+    return TradePlan(scan, policy, (path.parent / document["state_path"]).resolve(), basis_filter=basis_filter)
 
 
 @timed("run.paper")
@@ -132,7 +139,7 @@ def run_paper(plan: TradePlan) -> int:
     store = TradeStore(plan.state_path, plan.fingerprint())
     timer = None
     try:
-        state = PaperTradeState(plan.scan, plan.policy, store=store)
+        state = PaperTradeState(plan.scan, plan.policy, store=store, basis_filter=plan.basis_filter)
         node, observer, _ = build_node(plan.scan, state_factory=lambda _: state)
         handle = node.handle()
         if observer.memory_diagnostics is not None:

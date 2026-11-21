@@ -107,6 +107,9 @@ def entry_dispatch_evidence(live, position, now_ns):
                       live.max_unhedged_notional * (1 - reserve_bps / 10000))
     evidence.update(unhedged_reserve_bps=_number(reserve_bps),
                     per_leg_risk_budget_usd=_number(risk_budget))
+    route_block = getattr(live, "route_max_hold_blocks", {}).get((position["buy_id"], position["sell_id"]))
+    if route_block is not None and now_ns < route_block["until_ns"]:
+        return ("route_max_hold_block" if route_block["blocked"] else "route_max_hold_cooldown"), evidence
     for leg in ("buy", "sell"):
         instrument = position[f"{leg}_id"]
         order = next(live.orders[cid] for cid in position["entry_ids"]
@@ -243,6 +246,7 @@ def entry_pair_snapshot(live, position):
         live.entry_pause_reason, live.halt_reason, len(live.order_reconciliations),
         any(p.get("unhedged_breach") for p in live.positions.values()),
         sum(o["status"] == "unknown" for o in live.execution_orders()),
+        id(getattr(live, "route_max_hold_blocks", {}).get((buy_id, sell_id))),
     )
 
 

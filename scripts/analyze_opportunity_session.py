@@ -654,7 +654,12 @@ def render_markdown(report: dict) -> str:
         if by_route:
             top_routes = sorted(
                 by_route.items(),
-                key=lambda kv: -(kv[1].get("bbo_qualified", 0) + kv[1].get("priced_qualified", 0)),
+                key=lambda kv: -(
+                    kv[1].get("bbo_qualified", 0)
+                    + kv[1].get("priced_qualified", 0)
+                    + kv[1].get("live_rejected:route_max_hold_block", 0)
+                    + kv[1].get("live_rejected:route_max_hold_cooldown", 0)
+                ),
             )[:15]
             lines.extend(["", "| Top 路由 (`symbol|buy->sell`) | BBO达标 | 深度定容达标 | 已生成订单 | 派发放行 | 主要拦截原因 |",
                           "| --- | ---: | ---: | ---: | ---: | --- |"])

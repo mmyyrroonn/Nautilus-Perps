@@ -121,6 +121,13 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert set(plan.venues) == {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
     assert len(plan.trade_symbols) > 2 and plan.ready
     assert "INIT" not in plan.trade_symbols
+    assert "XPL" in plan.trade_symbols and "ASTER" in plan.trade_symbols
+    assert plan.basis_filter.enabled is True
+    assert plan.basis_filter.window_secs == 600 and plan.basis_filter.warmup_secs == 120
+    assert plan.basis_filter.min_deviation_bps == D("20")
+    assert plan.basis_filter.max_hold_loss_cooldown_secs == 900
+    assert plan.basis_filter.max_hold_loss_block_strikes == 2
+    assert plan.basis_filter.max_hold_loss_block_secs == 3600
     assert plan.policy.order_notional_usd == 20 and plan.max_gross_notional_usd == 100
     assert plan.max_unhedged_notional_usd == 25
     assert plan.max_session_realized_loss_usd == 10
@@ -1072,3 +1079,40 @@ def test_tick_drains_pending_intents_before_evaluation_timer_and_reconcile(tmp_p
     state.tick(NOW + 1)
     assert order_of_work[:2] == [("dispatch", "pre-r"), ("timer", NOW + 1)]
     assert ("dispatch", "post-r") in order_of_work[2:]
+
+
+def test_basis_filter_config_parsing_validation_and_fingerprint_preservation(tmp_path):
+    baseline = load_live_plan(configs(tmp_path))
+    assert baseline.basis_filter.enabled is False
+
+    configured = load_live_plan(configs(tmp_path, extra="""
+[basis_filter]
+enabled = true
+window_secs = 600
+warmup_secs = 120
+min_deviation_bps = "20"
+max_hold_loss_cooldown_secs = 900
+max_hold_loss_block_strikes = 2
+max_hold_loss_block_secs = 3600
+"""))
+    assert configured.basis_filter.enabled is True
+    assert configured.basis_filter.min_deviation_bps == D("20")
+    assert configured.fingerprint() == baseline.fingerprint()
+    doc = configured.document()
+    assert doc["basis_filter"]["enabled"] is True
+    assert doc["basis_filter"]["window_secs"] == 600
+    assert doc["basis_filter"]["min_deviation_bps"] == "20"
+
+    with pytest.raises(ScanConfigError):
+        load_live_plan(configs(tmp_path, extra="""
+[basis_filter]
+enabled = true
+window_secs = 60
+warmup_secs = 120
+"""))
+    with pytest.raises(ScanConfigError):
+        load_live_plan(configs(tmp_path, extra="""
+[basis_filter]
+enabled = true
+unknown_field = 1
+"""))

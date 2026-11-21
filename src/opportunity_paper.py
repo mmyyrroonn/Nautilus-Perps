@@ -14,6 +14,10 @@ from itertools import combinations
 import sys
 import time
 
+from opportunity_basis import (
+    BasisFilterPolicy, RollingBasisTracker, RouteMaxHoldTracker,
+    route_block_reject, route_label, symbol_venue_pairs,
+)
 from opportunity_core import (_best_quotes_rule_out, _book_valid, _budget_quantity,
                               _execution_metadata_valid, _fee_metadata_valid, _metadata_valid,
                               _number, _walk, evaluate_opportunity, exact_decimal)
@@ -23,11 +27,17 @@ from opportunity_timing import current_analytics, sampled_timed, span
 
 
 class PaperTradeState(ScanState):
-    def __init__(self, plan, policy: TradePolicy, *, store=None, event_sink=None):
+    def __init__(self, plan, policy: TradePolicy, *, store=None, event_sink=None,
+                 basis_filter: BasisFilterPolicy = BasisFilterPolicy()):
         plan = replace(plan, output_path=None, settings=replace(plan.settings,
             target_notional=policy.order_notional_usd, min_entry_edge_bps=policy.entry_edge_bps))
         super().__init__(plan)
         self.policy = policy
+        self.basis_filter = basis_filter
+        self.basis_tracker = RollingBasisTracker(basis_filter) if basis_filter.deviation_enabled else None
+        self.route_max_hold_tracker = RouteMaxHoldTracker(basis_filter)
+        self.route_max_hold_blocks = self.route_max_hold_tracker.entries
+        self._symbol_venue_pairs = symbol_venue_pairs(self.groups, self.markets)
         self.store = store
         self.event_sink = event_sink
         self.positions: dict[tuple[str, str, str], dict] = {}
@@ -134,12 +144,16 @@ class PaperTradeState(ScanState):
     def entry(self, buy_id, sell_id, now_ns):
         if not all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
             return None
+        analytics = current_analytics()
+        if route_block_reject(
+                self.route_max_hold_tracker, self.markets, self.books, self.metadata,
+                self.plan.settings, buy_id, sell_id, now_ns, analytics, "pricing_rejected"):
+            return None
+        buy_market = self.markets[buy_id]
+        sell_market = self.markets[sell_id]
         if _best_quotes_rule_out(self.books[buy_id], self.metadata[buy_id],
                                  self.books[sell_id], self.metadata[sell_id], self.plan.settings):
             return None
-        analytics = current_analytics()
-        buy_market = self.markets[buy_id]
-        sell_market = self.markets[sell_id]
         if analytics is not None:
             analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue, "bbo_qualified")
         pair = self._pair(buy_id, sell_id, now_ns)
@@ -205,6 +219,16 @@ class PaperTradeState(ScanState):
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "pricing_rejected", detail="edge_after_slippage")
             return None
+        if self.basis_tracker is not None:
+            entry_gross_bps = (sell_cash - buy_cash) * 10000 / buy_cash
+            basis_reason, basis_est = self.basis_tracker.evaluate_entry(
+                buy_id, sell_id, entry_gross_bps, now_ns)
+            if basis_reason is not None:
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "pricing_rejected", detail=basis_reason)
+                return None
+            entry["basis"] = basis_est.document()
         entry["paper_fills"] = {"buy_notional_usd": _number(buy_cash),
             "sell_notional_usd": _number(sell_cash), "buy_fee_usd": _number(buy_fee),
             "sell_fee_usd": _number(sell_fee), "slippage_bps": str(self.policy.slippage_bps),
@@ -241,37 +265,43 @@ class PaperTradeState(ScanState):
         if analytics is not None and analytics.has_active_decay():
             analytics.sample_decay(self, now_ns, symbol=symbol)
         affected = {changed_id} if changed_id is not None else changed_ids
-        pairs = []
-        for first, second in combinations(sorted(self.groups[symbol]), 2):
-            if affected is not None and first not in affected and second not in affected:
-                continue
-            key = self.pair_key(first, second)
-            if key in self.positions:
-                self.observe(key, now_ns)
-                continue
-            if self._rearmed(key, first, second, now_ns):
-                pairs.append((key, first, second))
-        for key, first, second in pairs:
-            for buy_id, sell_id in ((first, second), (second, first)):
-                entry = self.entry(buy_id, sell_id, now_ns)
-                if entry is None:
+        try:
+            pairs = []
+            for first, second in combinations(sorted(self.groups[symbol]), 2):
+                if affected is not None and first not in affected and second not in affected:
                     continue
-                self.sequence += 1
-                position = {"position_id": self.sequence, "symbol": symbol, "pair": list(key),
-                    "buy_id": buy_id, "sell_id": sell_id, "opened_ns": now_ns, "status": "open",
-                    "exit_reason": None, "exit_requested_ns": None, "entry": entry,
-                    "remaining_buy_base": entry["sizing"]["base_quantity"],
-                    "remaining_sell_base": entry["sizing"]["base_quantity"],
-                    "closing_long_cash_usd": "0", "closing_short_cash_usd": "0",
-                    "closing_fees_usd": "0"}
-                # Occupy both directions before publishing the simulated fill.
-                self.positions[key] = position
-                quantity = F(entry["sizing"]["base_quantity"])
-                self._consume(buy_id, "asks", quantity)
-                self._consume(sell_id, "bids", quantity)
-                self.emit("opened", now_ns, position=position)
-                self.observe(key, now_ns)
-                break
+                key = self.pair_key(first, second)
+                if key in self.positions:
+                    self.observe(key, now_ns)
+                    continue
+                if self._rearmed(key, first, second, now_ns):
+                    pairs.append((key, first, second))
+            for key, first, second in pairs:
+                for buy_id, sell_id in ((first, second), (second, first)):
+                    entry = self.entry(buy_id, sell_id, now_ns)
+                    if entry is None:
+                        continue
+                    self.sequence += 1
+                    position = {"position_id": self.sequence, "symbol": symbol, "pair": list(key),
+                        "buy_id": buy_id, "sell_id": sell_id, "opened_ns": now_ns, "status": "open",
+                        "exit_reason": None, "exit_requested_ns": None, "entry": entry,
+                        "remaining_buy_base": entry["sizing"]["base_quantity"],
+                        "remaining_sell_base": entry["sizing"]["base_quantity"],
+                        "closing_long_cash_usd": "0", "closing_short_cash_usd": "0",
+                        "closing_fees_usd": "0"}
+                    # Occupy both directions before publishing the simulated fill.
+                    self.positions[key] = position
+                    quantity = F(entry["sizing"]["base_quantity"])
+                    self._consume(buy_id, "asks", quantity)
+                    self._consume(sell_id, "bids", quantity)
+                    self.emit("opened", now_ns, position=position)
+                    self.observe(key, now_ns)
+                    break
+        finally:
+            if self.basis_tracker is not None:
+                self.basis_tracker.observe_symbol(
+                    self._symbol_venue_pairs.get(symbol, ()),
+                    self.books, self.plan.settings, now_ns, affected=affected)
 
     def _exit_leg(self, position, opening_side, now_ns):
         instrument_id = position[f"{opening_side}_id"]
@@ -461,10 +491,32 @@ class PaperTradeState(ScanState):
                   opened_ns=position["opened_ns"], reason=position["exit_reason"],
                   exit_requested_ns=position["exit_requested_ns"], age_ms=age_ns // 1_000_000,
                   mark=mark, fills=fills)
+        if self.basis_filter.max_hold_guard_enabled:
+            buy_m = self.markets[position["buy_id"]]
+            sell_m = self.markets[position["sell_id"]]
+            event_name, payload = self.route_max_hold_tracker.record_close(
+                route=route_label(buy_m.symbol, buy_m.venue, sell_m.venue),
+                symbol=buy_m.symbol,
+                buy_id=position["buy_id"],
+                sell_id=position["sell_id"],
+                position_id=position["position_id"],
+                close_reason=position["exit_reason"],
+                bilateral=True,
+                effective_net=F(mark["net_usd"]),
+                economics={
+                    "actual_entry": position["entry"]["paper_fills"],
+                    "closing_long_cash_usd": position["closing_long_cash_usd"],
+                    "closing_short_cash_usd": position["closing_short_cash_usd"],
+                },
+                now_ns=now_ns,
+            )
+            if event_name is not None:
+                self.emit(event_name, now_ns, **payload)
 
     def on_evaluation_timer(self, now_ns):
         if self.halted or self.finished:
             return
+        self.route_max_hold_tracker.expire_and_emit(self.emit, now_ns)
         analytics = current_analytics()
         if analytics is not None and analytics.has_active_decay():
             analytics.sample_decay(self, now_ns)
@@ -494,6 +546,8 @@ class PaperTradeState(ScanState):
                 "exit_pending_pairs": sum(p["status"] == "exit_pending" for p in self.positions.values()),
                 "realized_net_usd": _number(self.realized_net), "realized_net_scope": "completed pairs",
                 "halted": self.halted,
+                "basis_filter": self.basis_filter.document(),
+                "route_max_hold_blocks": self.route_max_hold_tracker.document(),
                 "policy": self.policy.document(), "event_counts": dict(self.event_counts),
                 "positions": list(self.positions.values()), "exposure": self.instrument_exposure(),
                 "pnl_excludes": ["funding", "borrow_costs", "execution_latency"],
