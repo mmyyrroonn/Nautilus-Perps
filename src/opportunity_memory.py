@@ -243,7 +243,8 @@ class MemoryDiagnostics:
                 "state_containers": {
                     name: len(getattr(state, name))
                     for name in ("orders", "executions", "historical_positions",
-                                 "pending_economics", "entry_timings", "outbox", "last_closed")
+                                 "pending_economics", "entry_timings", "outbox", "last_closed",
+                                 "route_max_hold_blocks")
                     if hasattr(state, name)
                 },
             }

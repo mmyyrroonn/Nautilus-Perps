@@ -38,6 +38,18 @@ max_skew_ms = 250
 max_publication_wait_ms = 150
 max_dispatch_delay_ms = 100
 
+[basis_filter]
+enabled = true
+# Rolling mid-basis lookback window and startup warmup (seconds).
+window_secs = 600
+warmup_secs = 120
+# Minimum transient deviation above the route's rolling basis (bps), in addition to entry_edge_bps.
+min_deviation_bps = "20"
+# Extended route cooldown / block after consecutive non-converging max_hold losses.
+max_hold_loss_cooldown_secs = 900
+max_hold_loss_block_strikes = 2
+max_hold_loss_block_secs = 3600
+
 [risk]
 # Zero refuses all execution; values can only tighten the total USD 500 hard cap.
 max_pairs = 2

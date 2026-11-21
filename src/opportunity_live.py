@@ -29,6 +29,10 @@ import uuid
 from opportunity_core import (
     _book_valid, _execution_metadata_valid, _fee_metadata_valid, _number, exact_decimal,
 )
+from opportunity_basis import (
+    BasisFilterPolicy, RollingBasisTracker, RouteMaxHoldTracker,
+    route_block_reject, route_label, symbol_venue_pairs,
+)
 from opportunity_paper import PaperTradeState
 from opportunity_preflight import OrderIntent
 from opportunity_runtime import ScanState
@@ -53,6 +57,7 @@ _ADMISSION_REOPENING_EVENTS = frozenset({
     "order_reconciliation_recovered", "leverage_configuration_rejected",
     "instrument_entry_blocked", "hl_open_interest_cap_updated",
     "native_admission_recovered", "risk_circuit_breaker", "entry_rebalanced",
+    "route_max_hold_unblocked",
 })
 MAX_HOT_UNSENT_ORDERS = 64
 
@@ -79,7 +84,8 @@ class LiveTradeState(ScanState):
                  max_session_realized_loss_usd=None,
                  max_consecutive_losses=None,
                  max_consecutive_single_legs=None,
-                 entry_reject_block_secs=1800):
+                 entry_reject_block_secs=1800,
+                 basis_filter=BasisFilterPolicy()):
         if type(max_pairs) is not int or not 1 <= max_pairs <= HARD_MAX_PAIRS:
             raise ValueError("max_pairs is outside the live hard cap")
         gross = _positive(max_gross_notional_usd, "max_gross_notional_usd")
@@ -196,6 +202,11 @@ class LiveTradeState(ScanState):
         self.instrument_entry_blocks = {}
         self.hl_oi_capped_by_scope = {}
         self.pair_cooldowns = {}
+        self.basis_filter = basis_filter
+        self.basis_tracker = RollingBasisTracker(basis_filter) if basis_filter.deviation_enabled else None
+        self.route_max_hold_tracker = RouteMaxHoldTracker(basis_filter)
+        self.route_max_hold_blocks = self.route_max_hold_tracker.entries
+        self._symbol_venue_pairs = symbol_venue_pairs(self.groups, self.markets)
         # Current-process observations only; an old ledger cannot grant admission.
         self.native_admission = {}
         self.native_admission_max_age_ns = 1_000_000_000
@@ -1192,6 +1203,10 @@ class LiveTradeState(ScanState):
                         analytics.record_pre_gate("instrument_entry_blocked")
                     return False
                 self.instrument_entry_blocks.pop(inst_id, None)
+        if route_block_reject(
+                self.route_max_hold_tracker, self.markets, self.books, self.metadata,
+                self.plan.settings, buy_id, sell_id, now_ns, analytics, "live_rejected"):
+            return False
         key = self.pair_key(buy_id, sell_id)
         cooldown = self.pair_cooldowns.get(key)
         if cooldown is not None:
@@ -1317,6 +1332,16 @@ class LiveTradeState(ScanState):
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "live_rejected", detail="exit_reversal_too_wide")
                 return False
+        if self.basis_tracker is not None:
+            entry_gross_bps = (sell["cash"] - buy["cash"]) * 10000 / buy["cash"]
+            basis_reason, basis_est = self.basis_tracker.evaluate_entry(
+                buy_id, sell_id, entry_gross_bps, now_ns)
+            if basis_reason is not None:
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "live_rejected", detail=basis_reason)
+                return False
+            estimate["basis"] = basis_est.document()
         estimate["estimate_type"] = "live_limit_entry"
         for leg, bound in bounds.items():
             estimate["sizing"][f"{leg}_vwap"] = _number(bound["cash"] / quantity)
@@ -2096,7 +2121,12 @@ class LiveTradeState(ScanState):
 
     @timed("strategy.evaluate_symbol")
     def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):
+        raw_affected = {changed_id} if changed_id is not None else changed_ids
         if self.phase not in {"active", "draining", "recovery_blocked"}:
+            if self.basis_tracker is not None:
+                self.basis_tracker.observe_symbol(
+                    self._symbol_venue_pairs.get(symbol, ()),
+                    self.books, self.plan.settings, now_ns, affected=raw_affected)
             return
         analytics = current_analytics()
         started_ns = time.perf_counter_ns() if analytics is not None else None
@@ -2125,6 +2155,10 @@ class LiveTradeState(ScanState):
                     if self._entry(buy_id, sell_id, now_ns):
                         break
         finally:
+            if self.basis_tracker is not None:
+                self.basis_tracker.observe_symbol(
+                    self._symbol_venue_pairs.get(symbol, ()),
+                    self.books, self.plan.settings, now_ns, affected=raw_affected)
             if started_ns is not None:
                 analytics.record_eval_mode(holding_at_start, full_scan, time.perf_counter_ns() - started_ns)
 
@@ -2132,6 +2166,7 @@ class LiveTradeState(ScanState):
     def on_evaluation_timer(self, now_ns):
         if self.phase not in {"active", "draining", "recovery_blocked"}:
             return
+        self.route_max_hold_tracker.expire_and_emit(self.emit, now_ns)
         analytics = current_analytics()
         if analytics is not None and analytics.has_active_decay():
             analytics.sample_decay(self, now_ns)
@@ -2179,6 +2214,24 @@ class LiveTradeState(ScanState):
                 }
             else:
                 self.pair_cooldowns.pop(key, None)
+        if self.basis_filter.max_hold_guard_enabled and position.get("buy_id") and position.get("sell_id"):
+            bilateral = F(position["entry_buy_base"]) > 0 and F(position["entry_sell_base"]) > 0
+            buy_m = self.markets[position["buy_id"]]
+            sell_m = self.markets[position["sell_id"]]
+            event_name, payload = self.route_max_hold_tracker.record_close(
+                route=route_label(buy_m.symbol, buy_m.venue, sell_m.venue),
+                symbol=buy_m.symbol,
+                buy_id=position["buy_id"],
+                sell_id=position["sell_id"],
+                position_id=position.get("position_id"),
+                close_reason=close_reason,
+                bilateral=bilateral,
+                effective_net=effective_net,
+                economics=economics,
+                now_ns=now_ns,
+            )
+            if event_name is not None:
+                self.emit(event_name, now_ns, **payload)
         self.consecutive_single_legs = (self.consecutive_single_legs + 1) if single_leg else 0
         self.consecutive_losses = (self.consecutive_losses + 1) if is_loss else 0
         trigger = None
@@ -2213,6 +2266,9 @@ class LiveTradeState(ScanState):
                     inst for items in self.hl_oi_capped_by_scope.values() for inst in items
                 }),
                 "pair_cooldowns": {":".join(k): dict(v) for k, v in self.pair_cooldowns.items()},
+                "basis_filter": self.basis_filter.document(),
+                "basis_tracker": self.basis_tracker.summary() if self.basis_tracker is not None else None,
+                "route_max_hold_blocks": self.route_max_hold_tracker.document(),
                 "native_admission": deepcopy(self.native_admission),
                 "account_pauses": deepcopy(self.account_pauses),
                 "leverage_blocks": dict(self.leverage_blocks),
