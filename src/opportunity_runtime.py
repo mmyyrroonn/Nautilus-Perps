@@ -257,6 +257,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
         def __init__(self):
             super().__init__(DataActorConfig(log_events=False, log_commands=False))
             self.markets = {InstrumentId.from_str(m.instrument_id): m for m in plan.markets}
+            self.backpack_markets = tuple(
+                (instrument_id, market, market.instrument_id.removesuffix(".BACKPACK"))
+                for instrument_id, market in self.markets.items() if market.venue == "BACKPACK"
+            )
             self.local_books = {i: OrderBook(i, BookType.L2_MBP) for i in self.markets}
             self.level_prices = {i: {"BUY": set(), "SELL": set()} for i in self.markets}
             self.snapshot_seen = set()
@@ -281,7 +285,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.publication_timings = {}
             self.last_display_ns = 0
             self.last_evaluation_ns = 0
-            self.last_backpack_check_ns = 0
+            self.last_backpack_check_ns = None
             self.pending_symbols = set()
             self.pending_instruments = set()
             from opportunity_memory import current_diagnostics
@@ -468,16 +472,13 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
         @timed("market.backpack_health")
         def check_backpack(self):
             config = client_configs.get("BACKPACK")
-            if config is None:
+            if config is None or not self.backpack_markets:
                 return
             self.last_backpack_check_ns = time.monotonic_ns()
             health = json.loads(config.telemetry_snapshot_json())
             self.backpack_public_health = health
             epoch = health.get("connection_epoch")
-            for instrument_id, market in self.markets.items():
-                if market.venue != "BACKPACK":
-                    continue
-                raw = market.instrument_id.removesuffix(".BACKPACK")
+            for instrument_id, _, raw in self.backpack_markets:
                 healthy = (health.get("connected") is True and health.get("metadata_ready") is True
                            and health.get("books_continuous", {}).get(raw) is True
                            and health.get("books_fresh", {}).get(raw) is True)
@@ -496,6 +497,12 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.update_diagnostic_availability(instrument_id, None if healthy else reason)
                 self.epochs[instrument_id] = epoch
 
+        def maybe_check_backpack(self):
+            if not self.backpack_markets:
+                return
+            if self.last_backpack_check_ns is None or time.monotonic_ns() - self.last_backpack_check_ns >= 100_000_000:
+                self.check_backpack()
+
         @timed("market.book_deltas", labels=lambda self, batch: (self.markets[batch.instrument_id].venue, ""))
         def on_book_deltas(self, batch):
             callback_ns = time.perf_counter_ns() if state.quote_timings is not None else None
@@ -504,8 +511,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             sampled_delivery_age(batch.ts_init, venue=self.markets[batch.instrument_id].venue)
             try:
                 if not plan.evaluation_interval_ms:
-                    if time.monotonic_ns() - self.last_backpack_check_ns >= 100_000_000:
-                        self.check_backpack()
+                    self.maybe_check_backpack()
                 instrument_id = batch.instrument_id
                 market = self.markets[instrument_id]
                 deltas = batch.deltas
@@ -693,7 +699,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             try:
                 if self.memory_diagnostics is not None:
                     self.memory_diagnostics.record_timer(event)
-                self.check_backpack()
+                if plan.evaluation_interval_ms:
+                    self.maybe_check_backpack()
+                else:
+                    self.check_backpack()
                 now_ns = time.time_ns()
                 self.advance_subscriptions(now_ns)
                 interval_ns = plan.evaluation_interval_ms * 1_000_000

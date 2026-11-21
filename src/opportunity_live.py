@@ -21,7 +21,6 @@ from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction as F
-from itertools import combinations
 import sys
 import time
 import uuid
@@ -205,6 +204,7 @@ class LiveTradeState(ScanState):
         self.pair_cooldowns = {}
         self.basis_filter = basis_filter
         self.basis_tracker = RollingBasisTracker(basis_filter) if basis_filter.deviation_enabled else None
+        self.pricer.basis_tracker = self.basis_tracker
         self.route_max_hold_tracker = RouteMaxHoldTracker(basis_filter)
         self.route_max_hold_blocks = self.route_max_hold_tracker.entries
         self._symbol_venue_pairs = symbol_venue_pairs(self.groups, self.markets)
@@ -1250,7 +1250,8 @@ class LiveTradeState(ScanState):
             return False
         entry_clock = (now_ns, time.perf_counter_ns())
         pricing_marker = start_latency()
-        estimate = self.pricer.entry(buy_id, sell_id, now_ns)
+        estimate = self.pricer.entry(
+            buy_id, sell_id, now_ns, analytics=analytics, basis_reject_stage="live_rejected")
         if estimate is None:
             return False
         buy_market, sell_market = self.markets[buy_id], self.markets[sell_id]
@@ -2144,7 +2145,7 @@ class LiveTradeState(ScanState):
             if self.basis_tracker is not None:
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
-                    self.books, self.plan.settings, now_ns, affected=raw_affected)
+                    self.books, self.plan.settings, now_ns, affected=raw_affected, symbol=symbol)
             return
         analytics = current_analytics()
         started_ns = time.perf_counter_ns() if analytics is not None else None
@@ -2164,10 +2165,8 @@ class LiveTradeState(ScanState):
                 affected = None
             full_scan = affected is None
             self.full_evaluation_symbols.discard(symbol)
-            for first, second in combinations(sorted(self.groups[symbol]), 2):
+            for first, second in self._symbol_venue_pairs.get(symbol, ()):
                 if affected is not None and first not in affected and second not in affected:
-                    continue
-                if self.markets[first].venue == self.markets[second].venue:
                     continue
                 for buy_id, sell_id in ((first, second), (second, first)):
                     if self._entry(buy_id, sell_id, now_ns):
@@ -2176,7 +2175,7 @@ class LiveTradeState(ScanState):
             if self.basis_tracker is not None:
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
-                    self.books, self.plan.settings, now_ns, affected=raw_affected)
+                    self.books, self.plan.settings, now_ns, affected=raw_affected, symbol=symbol)
             if started_ns is not None:
                 analytics.record_eval_mode(holding_at_start, full_scan, time.perf_counter_ns() - started_ns)
 

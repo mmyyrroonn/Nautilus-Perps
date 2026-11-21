@@ -140,7 +140,7 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.entry_slippage_bps("LIGHTER") == D("2")
     assert plan.policy.entry_slippage_bps("ASTER") == D("0")
     assert plan.max_entry_slippage_bps == D("10")
-    assert plan.scan.evaluation_interval_ms == 20
+    assert plan.scan.evaluation_interval_ms == 50
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
     assert plan.startup_self_test is False
     assert plan.document()["startup"]["account_gate_required"] is True

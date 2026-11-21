@@ -10,7 +10,6 @@ from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 from fractions import Fraction as F
-from itertools import combinations
 import sys
 import time
 
@@ -141,10 +140,11 @@ class PaperTradeState(ScanState):
         raise RuntimeError("paper fill exceeded available snapshot liquidity")
 
     @sampled_timed("pricing.entry")
-    def entry(self, buy_id, sell_id, now_ns):
+    def entry(self, buy_id, sell_id, now_ns, *, analytics=None, basis_reject_stage="pricing_rejected"):
         if not all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
             return None
-        analytics = current_analytics()
+        if analytics is None:
+            analytics = current_analytics()
         if route_block_reject(
                 self.route_max_hold_tracker, self.markets, self.books, self.metadata,
                 self.plan.settings, buy_id, sell_id, now_ns, analytics, "pricing_rejected"):
@@ -166,6 +166,14 @@ class PaperTradeState(ScanState):
                                         "pair_invalid", detail=reason)
             return None
         books, metadata = pair
+        if self.basis_tracker is not None:
+            bbo_basis_reason = self.basis_tracker.bbo_rule_out(
+                buy_id, sell_id, books[0], books[1], now_ns)
+            if bbo_basis_reason is not None:
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            basis_reject_stage, detail=bbo_basis_reason)
+                return None
         settings = self.plan.settings
         with span("scan.evaluate_pair"):
             entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1], settings, now_ns)
@@ -229,7 +237,7 @@ class PaperTradeState(ScanState):
             if basis_reason is not None:
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
-                                            "pricing_rejected", detail=basis_reason)
+                                            basis_reject_stage, detail=basis_reason)
                 return None
             entry["basis"] = basis_est.document()
         entry["paper_fills"] = {"buy_notional_usd": _number(buy_cash),
@@ -271,7 +279,7 @@ class PaperTradeState(ScanState):
         affected = {changed_id} if changed_id is not None else changed_ids
         try:
             pairs = []
-            for first, second in combinations(sorted(self.groups[symbol]), 2):
+            for first, second in self._symbol_venue_pairs.get(symbol, ()):
                 if affected is not None and first not in affected and second not in affected:
                     continue
                 key = self.pair_key(first, second)
@@ -305,7 +313,7 @@ class PaperTradeState(ScanState):
             if self.basis_tracker is not None:
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
-                    self.books, self.plan.settings, now_ns, affected=affected)
+                    self.books, self.plan.settings, now_ns, affected=affected, symbol=symbol)
 
     def _exit_leg(self, position, opening_side, now_ns):
         instrument_id = position[f"{opening_side}_id"]
