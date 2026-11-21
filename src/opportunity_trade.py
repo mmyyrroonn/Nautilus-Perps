@@ -20,6 +20,10 @@ from opportunity_scan import (ScanConfigError, ScanPlan, allowed_keys, decimal_v
 from opportunity_timing import add_timing_arguments, run_timed, timed
 
 
+ENTRY_SLIPPAGE_VENUES = frozenset({"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"})
+ENTRY_SLIPPAGE_VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in ENTRY_SLIPPAGE_VENUES}}
+
+
 @dataclass(frozen=True)
 class TradePolicy:
     order_notional_usd: Decimal = Decimal("100")
@@ -30,6 +34,7 @@ class TradePolicy:
     breakeven_after_secs: int = 180
     force_close_after_secs: int = 300
     slippage_bps: Decimal = Decimal("0")
+    entry_slippage_bps_by_venue: tuple[tuple[str, Decimal], ...] = ()
     hard_exit_slippage_bps: Decimal = Decimal("10")
     loss_cooldown_secs: int = 0
     max_exit_reversal_bps: Decimal | None = None
@@ -46,6 +51,29 @@ class TradePolicy:
             if slip >= 10000:
                 raise ScanConfigError(f"{name} must be below 10000")
             object.__setattr__(self, name, slip)
+        raw_by_venue = self.entry_slippage_bps_by_venue
+        if isinstance(raw_by_venue, dict):
+            entries = list(raw_by_venue.items())
+        elif isinstance(raw_by_venue, (tuple, list)):
+            entries = []
+            for item in raw_by_venue:
+                if not isinstance(item, (tuple, list)) or len(item) != 2:
+                    raise ScanConfigError("entry_slippage_bps_by_venue must be a venue-to-bps mapping")
+                entries.append((item[0], item[1]))
+        else:
+            raise ScanConfigError("entry_slippage_bps_by_venue must be a venue-to-bps mapping")
+        normalized = {}
+        for venue, value in entries:
+            if not isinstance(venue, str) or venue not in ENTRY_SLIPPAGE_VENUE_ALIASES:
+                raise ScanConfigError(f"unsupported venue in entry_slippage_bps_by_venue: {venue}")
+            canonical = ENTRY_SLIPPAGE_VENUE_ALIASES[venue]
+            if canonical in normalized:
+                raise ScanConfigError(f"duplicate venue in entry_slippage_bps_by_venue: {canonical}")
+            slip = decimal_value(value, f"entry_slippage_bps_by_venue.{canonical}", nonnegative=True)
+            if slip >= 10000:
+                raise ScanConfigError(f"entry_slippage_bps_by_venue.{canonical} must be below 10000")
+            normalized[canonical] = slip
+        object.__setattr__(self, "entry_slippage_bps_by_venue", tuple(sorted(normalized.items())))
         soft = integer_value(self.breakeven_after_secs, "breakeven_after_secs", 1, 86400)
         hard = integer_value(self.force_close_after_secs, "force_close_after_secs", 1, 86400)
         if soft >= hard:
@@ -62,10 +90,22 @@ class TradePolicy:
                 raise ScanConfigError("max_exit_reversal_edge_ratio must be at most 10")
             object.__setattr__(self, "max_exit_reversal_edge_ratio", ratio)
 
+    def entry_slippage_bps(self, venue: str) -> Decimal:
+        canonical = ENTRY_SLIPPAGE_VENUE_ALIASES.get(venue, venue)
+        for key, value in self.entry_slippage_bps_by_venue:
+            if key == canonical:
+                return value
+        return self.slippage_bps
+
     def document(self):
         result = {}
         for key, value in asdict(self).items():
             if key == "loss_cooldown_secs" and value == 0:
+                continue
+            if key == "entry_slippage_bps_by_venue":
+                if not value:
+                    continue
+                result[key] = {venue: str(bps) for venue, bps in value}
                 continue
             if key in {"max_exit_reversal_bps", "max_exit_reversal_edge_ratio"} and value is None:
                 continue

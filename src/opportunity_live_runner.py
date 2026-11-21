@@ -34,6 +34,7 @@ HARD_GROSS_NOTIONAL_USD = Decimal("500")
 HARD_STARTUP_NOTIONAL_USD = Decimal("50")
 HARD_MAX_UNHEDGED_NOTIONAL_USD = Decimal("100")
 HARD_MAX_UNHEDGED_SECS = 10
+HARD_MAX_ENTRY_SLIPPAGE_BPS = Decimal("20")
 SUPPORTED_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
 VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in SUPPORTED_VENUES}}
 CANCEL_REPLACE_VENUES = {"ASTER", "ONDO", "BACKPACK"}
@@ -88,6 +89,7 @@ class LiveRunPlan:
     max_consecutive_losses: int | None = None
     max_consecutive_single_legs: int | None = None
     entry_reject_block_secs: int = 1800
+    max_entry_slippage_bps: Decimal = HARD_MAX_ENTRY_SLIPPAGE_BPS
 
     @property
     def ready(self):
@@ -128,6 +130,8 @@ class LiveRunPlan:
             "max_unhedged_notional_usd": self.max_unhedged_notional_usd,
             "max_unhedged_secs": self.max_unhedged_secs,
             "entry_unhedged_reserve_bps": self.entry_unhedged_reserve_bps}
+        if self.max_entry_slippage_bps != HARD_MAX_ENTRY_SLIPPAGE_BPS:
+            risk_doc["max_entry_slippage_bps"] = self.max_entry_slippage_bps
         if self.max_session_realized_loss_usd is not None:
             risk_doc["max_session_realized_loss_usd"] = self.max_session_realized_loss_usd
         if self.max_consecutive_losses is not None:
@@ -280,7 +284,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         if "opportunity_trade" in limits_document:
             limits = limits_document["opportunity_trade"]
             allowed_keys(limits, {"order_notional_usd", "max_pairs", "max_gross_notional_usd",
-                                  "startup_max_notional_usd"} | unhedged_keys, "opportunity_trade limits")
+                                  "startup_max_notional_usd", "max_entry_slippage_bps"} | unhedged_keys,
+                         "opportunity_trade limits")
             if not {"order_notional_usd", "max_pairs", "max_gross_notional_usd", "startup_max_notional_usd"} <= limits.keys():
                 raise ScanConfigError("opportunity_trade limits require all four limits")
             limits_present = True
@@ -293,10 +298,27 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     reserve_floor = decimal_value(limits.get("entry_unhedged_reserve_bps", "10"), "limit.entry_unhedged_reserve_bps", positive=True)
     if not Decimal("10") <= reserve_floor < 10000:
         raise ScanConfigError("limit.entry_unhedged_reserve_bps must be at least 10 and below 10000")
+    entry_slip_cap = decimal_value(
+        limits.get("max_entry_slippage_bps", str(HARD_MAX_ENTRY_SLIPPAGE_BPS)),
+        "limit.max_entry_slippage_bps",
+        nonnegative=True,
+    )
+    if entry_slip_cap >= 10000:
+        raise ScanConfigError("limit.max_entry_slippage_bps must be below 10000")
+    effective_entry_slip_cap = min(entry_slip_cap, HARD_MAX_ENTRY_SLIPPAGE_BPS)
     reserve = max(reserve, reserve_floor)
     unhedged = min(unhedged, unhedged_cap, HARD_MAX_UNHEDGED_NOTIONAL_USD)
     unhedged_secs = min(unhedged_secs, unhedged_secs_cap, HARD_MAX_UNHEDGED_SECS)
-    policy = replace(policy, order_notional_usd=min(policy.order_notional_usd, order_cap, HARD_ORDER_NOTIONAL_USD))
+    clamped_by_venue = tuple(
+        (venue, min(bps, effective_entry_slip_cap))
+        for venue, bps in policy.entry_slippage_bps_by_venue
+    )
+    policy = replace(
+        policy,
+        order_notional_usd=min(policy.order_notional_usd, order_cap, HARD_ORDER_NOTIONAL_USD),
+        slippage_bps=min(policy.slippage_bps, effective_entry_slip_cap),
+        entry_slippage_bps_by_venue=clamped_by_venue,
+    )
     pairs, gross = min(pairs, pairs_cap, HARD_MAX_PAIRS), min(gross, gross_cap, HARD_GROSS_NOTIONAL_USD)
     startup_cap = min(startup_cap, startup_limit, HARD_STARTUP_NOTIONAL_USD)
     scan = load_plan(paths["scan_config"])
@@ -356,7 +378,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         max_session_realized_loss_usd=max_session_realized_loss,
         max_consecutive_losses=max_consecutive_losses,
         max_consecutive_single_legs=max_consecutive_single_legs,
-        entry_reject_block_secs=entry_reject_block_secs)
+        entry_reject_block_secs=entry_reject_block_secs,
+        max_entry_slippage_bps=effective_entry_slip_cap)
 
 
 class NativeBuildError(RuntimeError):
@@ -534,6 +557,7 @@ class LiveCoordinator:
         self.stop_requested_ns = None
         self.finished = False
         self.startup_persistence_failed = False
+        self._wakeup_only = False
         if proxy.saved:
             if not proxy.restart_pending:
                 raise ValueError("live restart must stage a fresh state before account reconciliation")
@@ -748,6 +772,8 @@ class LiveCoordinator:
                 self._startup_intents(self.preflight.on_timer(now_ns), now_ns)
 
     def _tick(self, now_ns):
+        wakeup_only = self._wakeup_only
+        self._wakeup_only = False
         from opportunity_price_timing import pending_stage
         pending_stage(self.live, "tick_started")
         if self.finished:
@@ -762,6 +788,19 @@ class LiveCoordinator:
         if self.phase == "active" and self.loss_monitor.due(now_ns):
             # Fence quote callbacks before processing any pending receipts.
             self.live.set_entry_pause("session_loss_check", now_ns)
+        if (
+            wakeup_only
+            and self.phase == "active"
+            and self.stop_requested_ns is None
+            and not self.live.entry_pause_reason
+            and not self.live.halt_reason
+            and not (
+                self.plan.duration_secs
+                and now_ns - self.started_ns >= self.plan.duration_secs * 1_000_000_000
+            )
+        ):
+            self._live_intents(now_ns)
+            return
         try:
             self.gateway.poll(now_ns)
         except Exception as exc:
@@ -1090,17 +1129,21 @@ def build_live_node(plan, live, coordinator, *, environ=None):
             if coordinator.gateway is None:
                 return
             wakeup = getattr(self, "intent_wakeup", None)
+            is_wakeup = wakeup is not None and getattr(event, "name", None) == wakeup.name
             from opportunity_price_timing import pending_stage
-            pending_stage(live, "wakeup_consumed" if wakeup is not None
-                          and getattr(event, "name", None) == wakeup.name else "timer_callback")
-            if wakeup is not None and getattr(event, "name", None) == wakeup.name:
+            pending_stage(live, "wakeup_consumed" if is_wakeup else "timer_callback")
+            if is_wakeup:
                 if not wakeup.consume() or not live.outbox:
                     return
+                coordinator._wakeup_only = True
             try:
                 coordinator.tick(time.time_ns())
             except Exception as exc:
                 coordinator.failure = "execution callback failed: "+type(exc).__name__
                 coordinator.request_stop(time.time_ns(), "execution_callback_failed")
+            finally:
+                if is_wakeup:
+                    coordinator._wakeup_only = False
 
         def on_stop(self):
             live.intent_notifier = None

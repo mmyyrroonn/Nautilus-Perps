@@ -174,12 +174,15 @@ class PaperTradeState(ScanState):
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "pricing_rejected", detail="depth_or_edge")
             return None
-        slip = F(self.policy.slippage_bps) / 10000
+        buy_slip_bps = self.policy.entry_slippage_bps(buy_market.venue)
+        sell_slip_bps = self.policy.entry_slippage_bps(sell_market.venue)
+        buy_slip = F(buy_slip_bps) / 10000
+        sell_slip = F(sell_slip_bps) / 10000
         quantity = F(entry["sizing"]["base_quantity"])
         step = F(entry["sizing"]["common_base_step"])
         cap = F(self.policy.order_notional_usd)
-        for side, levels, meta, factor in (("buy", books[0].asks, metadata[0], 1 + slip),
-                                           ("sell", books[1].bids, metadata[1], 1 - slip)):
+        for side, levels, meta, factor in (("buy", books[0].asks, metadata[0], 1 + buy_slip),
+                                           ("sell", books[1].bids, metadata[1], 1 - sell_slip)):
             if F(entry["sizing"][f"{side}_notional"]) * factor > cap:
                 upper = _budget_quantity(levels, F(meta.multiplier), cap / factor)
                 if upper is None:
@@ -203,8 +206,8 @@ class PaperTradeState(ScanState):
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "pricing_rejected", detail="rescaled_depth_or_edge")
                 return None
-        buy_cash = F(entry["sizing"]["buy_notional"]) * (1 + slip)
-        sell_cash = F(entry["sizing"]["sell_notional"]) * (1 - slip)
+        buy_cash = F(entry["sizing"]["buy_notional"]) * (1 + buy_slip)
+        sell_cash = F(entry["sizing"]["sell_notional"]) * (1 - sell_slip)
         if max(buy_cash, sell_cash) > cap:
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
@@ -232,6 +235,7 @@ class PaperTradeState(ScanState):
         entry["paper_fills"] = {"buy_notional_usd": _number(buy_cash),
             "sell_notional_usd": _number(sell_cash), "buy_fee_usd": _number(buy_fee),
             "sell_fee_usd": _number(sell_fee), "slippage_bps": str(self.policy.slippage_bps),
+            "buy_slippage_bps": str(buy_slip_bps), "sell_slippage_bps": str(sell_slip_bps),
             "entry_after_fees_slippage_and_reserve_bps": _number(net * 10000 / buy_cash)}
         if analytics is not None:
             edge_bps = net * 10000 / buy_cash
