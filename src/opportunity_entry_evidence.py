@@ -161,7 +161,9 @@ def entry_dispatch_evidence(live, position, now_ns):
                 break
         row["executable_vwap"] = _number(cash / quantity)
         base = quantity * F(meta.multiplier)
-        bound = live._limit(instrument, order["side"], base, now_ns)
+        # Persisted entry orders already include their slippage cushion; verify
+        # the current executable walk fits inside that persisted worst-case limit.
+        bound = live._limit(instrument, order["side"], base, now_ns, slippage_bps=0)
         if bound is None:
             return "invalid_execution_rules_or_fees", evidence
         row["current_bound_price"] = str(bound["price"])

@@ -136,6 +136,11 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.max_exit_reversal_edge_ratio == 1
     assert plan.lighter_margin_max_age_ms == 60000 and plan.aster_leverage_max_age_ms == 15000
     assert plan.policy.slippage_bps == 0 and plan.policy.hard_exit_slippage_bps == 10
+    assert plan.policy.entry_slippage_bps("HL") == D("4")
+    assert plan.policy.entry_slippage_bps("LIGHTER") == D("2")
+    assert plan.policy.entry_slippage_bps("ASTER") == D("0")
+    assert plan.max_entry_slippage_bps == D("10")
+    assert plan.scan.evaluation_interval_ms == 20
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
     assert plan.startup_self_test is False
     assert plan.document()["startup"]["account_gate_required"] is True
@@ -1116,3 +1121,128 @@ warmup_secs = 120
 enabled = true
 unknown_field = 1
 """))
+
+
+def test_entry_slippage_limits_tighten_policy_and_preserve_legacy_fingerprint(tmp_path):
+    from opportunity_trade import TradePolicy
+
+    baseline = load_live_plan(configs(tmp_path))
+    assert baseline.policy.entry_slippage_bps_by_venue == ()
+    assert "entry_slippage_bps_by_venue" not in baseline.policy.document()
+    assert "max_entry_slippage_bps" not in baseline.document()["risk"]
+
+    # Alias normalization and validation in TradePolicy.
+    aliased = TradePolicy(entry_slippage_bps_by_venue={"HYPERLIQUID": "4", "LIGHTER": "2"})
+    assert aliased.entry_slippage_bps("HL") == D("4")
+    assert aliased.entry_slippage_bps("HYPERLIQUID") == D("4")
+    assert aliased.entry_slippage_bps("LIGHTER") == D("2")
+    assert aliased.entry_slippage_bps("ASTER") == D("0")
+    assert aliased.document()["entry_slippage_bps_by_venue"] == {"HL": "4", "LIGHTER": "2"}
+
+    for bad in (
+        {"HL": "1", "HYPERLIQUID": "2"},
+        {"UNKNOWN": "1"},
+        {"HL": "-1"},
+        {"HL": "10000"},
+        "invalid",
+        [("HL",)],
+    ):
+        with pytest.raises(ScanConfigError):
+            TradePolicy(entry_slippage_bps_by_venue=bad)
+
+    # Empty map preserves legacy fingerprint.
+    explicit_empty = TradePolicy(entry_slippage_bps_by_venue={})
+    assert explicit_empty.document() == baseline.policy.document()
+
+    # limits.toml max_entry_slippage_bps clamps both global slippage_bps and per-venue cushions.
+    path = configs(tmp_path, extra='''
+[trade.entry_slippage_bps_by_venue]
+HYPERLIQUID = "12"
+LIGHTER = "3"
+''')
+    limits = tmp_path / "limits.toml"
+    limits.write_text(limits.read_text() + 'max_entry_slippage_bps = "5"\n', encoding="utf-8")
+    tightened = load_live_plan(path)
+    assert tightened.max_entry_slippage_bps == D("5")
+    assert tightened.policy.entry_slippage_bps("HL") == D("5")
+    assert tightened.policy.entry_slippage_bps("LIGHTER") == D("3")
+    assert tightened.document()["risk"]["max_entry_slippage_bps"] == "5"
+
+    # Hard cap 20 clamps wider limits.toml configuration.
+    limits.write_text('''[opportunity_trade]
+order_notional_usd = "100"
+max_pairs = 16
+max_gross_notional_usd = "500"
+startup_max_notional_usd = "50"
+max_entry_slippage_bps = "50"
+''', encoding="utf-8")
+    path2 = configs(tmp_path, extra='''
+[trade.entry_slippage_bps_by_venue]
+HL = "30"
+''')
+    capped = load_live_plan(path2)
+    assert capped.max_entry_slippage_bps == D("20")
+    assert capped.policy.entry_slippage_bps("HL") == D("20")
+
+
+def test_wakeup_fast_path_dispatches_without_poll_and_falls_back_on_guards(tmp_path):
+    import threading
+
+    state, live, gateway, _, _ = readonly_coordinator(tmp_path)
+    state.phase = "active"
+    live.activate(NOW)
+    live.drain_intents()
+    polls = []
+    timers = []
+    gateway.poll = lambda now: polls.append(now)
+    original_timer = live.on_evaluation_timer
+    live.on_evaluation_timer = lambda now: (timers.append(now), original_timer(now))
+
+    # Active wakeup fast-path drains & dispatches intents without gateway.poll or evaluation timer.
+    live.outbox.append(OrderIntent("reconcile", "HL", "BTC.HL", "wake-1", "", account_check=True))
+    state._wakeup_only = True
+    state.tick(NOW + 1)
+    assert [i.request_id for i in gateway.sent] == ["wake-1"]
+    assert not polls and not timers and not state._wakeup_only
+
+    # Guarded states fall back to full tick even if _wakeup_only is set.
+    live.entry_pause_reason = "paused"
+    state._wakeup_only = True
+    state.tick(NOW + 2)
+    assert len(polls) == 1 and len(timers) == 1
+
+    live.entry_pause_reason = None
+    state.stop_signal = threading.Event()
+    state.stop_signal.set()
+    state._wakeup_only = True
+    state.tick(NOW + 3)
+    assert len(polls) == 2 and len(timers) == 2
+
+    # Draining phase (when residuals remain or before finish) also falls back to full tick.
+    state.stop_signal = None
+    state.stop_requested_ns = None
+    state.finished = False
+    state.phase = "draining"
+    state._wakeup_only = True
+    state.tick(NOW + 4)
+    assert len(polls) == 3 and len(timers) == 3
+
+    # Active phase with halt_reason falls back to full tick.
+    state.finished = False
+    state.stop_requested_ns = None
+    state.phase = "active"
+    live.halt_reason = "halted"
+    state._wakeup_only = True
+    state.tick(NOW + 5)
+    assert len(polls) == 4 and len(timers) == 4
+
+    # If loss_monitor is due, wakeup falls back to full tick after setting session_loss_check pause.
+    live.halt_reason = None
+    state.finished = False
+    state.stop_requested_ns = None
+    state.phase = "active"
+    state.loss_monitor.due = lambda now: True
+    state._wakeup_only = True
+    state.tick(NOW + 6)
+    assert live.entry_pause_reason == "session_loss_check"
+    assert len(polls) == 5 and len(timers) == 5

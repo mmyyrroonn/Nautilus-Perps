@@ -1255,8 +1255,13 @@ class LiveTradeState(ScanState):
         buy_market, sell_market = self.markets[buy_id], self.markets[sell_id]
         record_latency(pricing_marker, "entry.qualified_pricing")
         candidate_marker = start_latency()
+        entry_slips = {
+            "buy": self.policy.entry_slippage_bps(buy_market.venue),
+            "sell": self.policy.entry_slippage_bps(sell_market.venue),
+        }
         with span("entry.executable_bounds"):
-            bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns, partial=True)
+            bounds = {leg: self._limit(i, side, F(estimate["sizing"]["base_quantity"]), now_ns,
+                                       partial=True, slippage_bps=entry_slips[leg])
                       for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
             if analytics is not None:
@@ -1280,7 +1285,7 @@ class LiveTradeState(ScanState):
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="unhedged_budget_zero_qty")
             return False
-        bounds = {leg: self._limit(i, side, quantity, now_ns)
+        bounds = {leg: self._limit(i, side, quantity, now_ns, slippage_bps=entry_slips[leg])
                   for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
             if analytics is not None:
@@ -1348,6 +1353,8 @@ class LiveTradeState(ScanState):
         estimate["economics"] = {"entry_gross": _number(sell["cash"] - buy["cash"]),
             "entry_gross_bps": _number((sell["cash"] - buy["cash"]) * 10000 / buy["cash"]),
             "buy_taker_fee": _number(buy["fee"]), "sell_taker_fee": _number(sell["fee"]),
+            "buy_entry_slippage_bps": str(entry_slips["buy"]),
+            "sell_entry_slippage_bps": str(entry_slips["sell"]),
             "reserve": _number(buy["cash"] * F(self.plan.settings.reserve_bps) / 10000),
             "entry_after_fees_and_reserve": _number(net),
             "entry_after_fees_and_reserve_bps": _number(net * 10000 / buy["cash"])}

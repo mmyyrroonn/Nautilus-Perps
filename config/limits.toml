@@ -221,3 +221,5 @@ max_unhedged_notional_usd = "100"
 max_unhedged_secs = 10
 # Minimum entry reserve; configuration can increase it, never reduce below 10 bps.
 entry_unhedged_reserve_bps = "10"
+# Maximum entry slippage cushion per venue (bps); hard code cap is 20 bps, config may only tighten.
+max_entry_slippage_bps = "10"

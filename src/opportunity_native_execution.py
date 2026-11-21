@@ -26,6 +26,8 @@ from opportunity_preflight import ExecutionReceipt
 SUPPORTED_VENUES = frozenset({"HL", "HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"})
 CANCEL_REPLACE_VENUES = frozenset({"ASTER", "ONDO", "BACKPACK"})
 MAX_PENDING_SUBMIT_TIMINGS = 1024
+BACKPACK_IDLE_RECONCILE_INTERVAL_NS = 1_000_000_000
+BACKPACK_IDLE_ADMISSION_INTERVAL_NS = 500_000_000
 
 LOCAL_REJECTION_CODES = {
     "intent market/venue is not configured": "market_not_configured",
@@ -309,6 +311,8 @@ class NativeOrderGateway:
         self.backpack_market_health = {}
         self.next_authority_renewal_ms = 0
         self.next_backpack_persist_ns = 0
+        self.last_backpack_reconcile_ns = None
+        self.last_backpack_admission_ns = None
         self._backpack_dirty = True
         self.workers = {}
         self._workers_lock = threading.Lock()
@@ -326,42 +330,68 @@ class NativeOrderGateway:
         self.last_error = None
         self.closed = False
 
-    def refresh_native_admission(self, now_ns):
+    def _has_active_backpack_orders(self):
+        for cid, owned in self.orders.items():
+            if owned["intent"].venue != "BACKPACK":
+                continue
+            req_id = owned["intent"].request_id
+            terminal_emitted = any(
+                (req_id, k, "") in self.emitted
+                for k in ("terminal", "rejected", "canceled")
+            )
+            if not terminal_emitted or owned.get("needs_final_query"):
+                return True
+        return False
+
+    def refresh_native_admission(self, now_ns, *, throttle_backpack=False):
         """Read global account/session trust and independent native market gates."""
         has_backpack = any(m.venue == "BACKPACK" for m in self.markets.values())
         ondo_ids = sorted(m.instrument_id for m in self.markets.values() if m.venue == "ONDO")
         if not has_backpack and not ondo_ids:
             return {}
         if has_backpack:
-            self.backpack_market_health = {}
-            status = {"ready": False, "reason": "native_admission_unavailable", "checked_ns": now_ns}
-            control = self.native_controls.get("BACKPACK")
-            if self.closed:
-                status["reason"] = "native_gateway_closed"
-            elif control is not None and self.backpack_checkpoint_ready:
-                try:
-                    with span("gateway.backpack.admission_status"):
-                        value = json.loads(control.admission_status_json())
-                    status.update(self._backpack_admission(value))
-                    scoped = status.get("global_ready") is True
-                    reason = self._backpack_quote_problem(status["markets"] if scoped else None)
-                    if scoped:
-                        if reason is not None:
-                            status.update(global_ready=False, markets={})
-                        else:
-                            reason = next((row["reason"] for row in status["markets"].values()
-                                           if not row["ready"]), None)
-                        status.update(ready=reason is None, reason=reason)
-                    elif status["ready"] and reason is not None:
-                        status.update(ready=False, reason=reason)
-                except (ValueError, TypeError):
-                    status = {"ready": False, "reason": "native_admission_invalid_json", "checked_ns": now_ns}
-                except Exception:
-                    # Exceptions can contain transport details; retain a fixed diagnostic.
-                    status = {"ready": False, "reason": "native_admission_api_error", "checked_ns": now_ns}
-            elif control is not None:
-                status["reason"] = "native_checkpoint_not_ready"
-            self.native_admission["BACKPACK"] = status
+            prev = self.native_admission.get("BACKPACK")
+            can_reuse = (
+                throttle_backpack
+                and not self.closed
+                and self.backpack_checkpoint_ready
+                and prev is not None
+                and (prev.get("ready") is True or prev.get("global_ready") is True)
+                and self.last_backpack_admission_ns is not None
+                and 0 < now_ns - self.last_backpack_admission_ns < BACKPACK_IDLE_ADMISSION_INTERVAL_NS
+                and 0 < now_ns - prev.get("checked_ns", -1) < BACKPACK_IDLE_ADMISSION_INTERVAL_NS
+            )
+            if not can_reuse:
+                self.backpack_market_health = {}
+                status = {"ready": False, "reason": "native_admission_unavailable", "checked_ns": now_ns}
+                control = self.native_controls.get("BACKPACK")
+                if self.closed:
+                    status["reason"] = "native_gateway_closed"
+                elif control is not None and self.backpack_checkpoint_ready:
+                    try:
+                        with span("gateway.backpack.admission_status"):
+                            value = json.loads(control.admission_status_json())
+                        status.update(self._backpack_admission(value))
+                        scoped = status.get("global_ready") is True
+                        reason = self._backpack_quote_problem(status["markets"] if scoped else None)
+                        if scoped:
+                            if reason is not None:
+                                status.update(global_ready=False, markets={})
+                            else:
+                                reason = next((row["reason"] for row in status["markets"].values()
+                                               if not row["ready"]), None)
+                            status.update(ready=reason is None, reason=reason)
+                        elif status["ready"] and reason is not None:
+                            status.update(ready=False, reason=reason)
+                    except (ValueError, TypeError):
+                        status = {"ready": False, "reason": "native_admission_invalid_json", "checked_ns": now_ns}
+                    except Exception:
+                        # Exceptions can contain transport details; retain a fixed diagnostic.
+                        status = {"ready": False, "reason": "native_admission_api_error", "checked_ns": now_ns}
+                elif control is not None:
+                    status["reason"] = "native_checkpoint_not_ready"
+                self.native_admission["BACKPACK"] = status
+                self.last_backpack_admission_ns = now_ns
         if ondo_ids:
             self.native_admission["ONDO"] = self._ondo_admission(ondo_ids, now_ns)
         return {venue: dict(row) for venue, row in self.native_admission.items()}
@@ -1011,6 +1041,8 @@ class NativeOrderGateway:
         # Expire before consuming a newly available result: completion after
         # the deadline cannot revive a failed request or satisfy a newer one.
         self._expire_account_reads(now_ns)
+        dirty = self._backpack_dirty
+        active_backpack = self._has_active_backpack_orders()
         control = self.native_controls.get("BACKPACK")
         if control is not None:
             # Preserve actual economics independently of inactive order capacity.
@@ -1020,19 +1052,30 @@ class NativeOrderGateway:
                 if wall_ms >= self.next_authority_renewal_ms:
                     control.renew_authority(wall_ms + 300_000)
                     self.next_authority_renewal_ms = wall_ms + 30_000
-                if (self._backpack_dirty or not self.backpack_checkpoint_ready
+                if (dirty or not self.backpack_checkpoint_ready
                         or now_ns >= self.next_backpack_persist_ns):
                     with span("gateway.backpack.persist_economics"):
                         control.persist_economics()
                     self._backpack_dirty = False
                     self.next_backpack_persist_ns = now_ns + 1_000_000_000
-                with span("gateway.backpack.reconcile_terminals"):
-                    control.reconcile_terminal_evidence()
+                reconcile_due = (
+                    dirty
+                    or not self.backpack_checkpoint_ready
+                    or active_backpack
+                    or self.last_backpack_reconcile_ns is None
+                    or not (0 < now_ns - self.last_backpack_reconcile_ns < BACKPACK_IDLE_RECONCILE_INTERVAL_NS)
+                )
+                if reconcile_due:
+                    with span("gateway.backpack.reconcile_terminals"):
+                        control.reconcile_terminal_evidence()
+                    self.last_backpack_reconcile_ns = now_ns
                 self.backpack_checkpoint_ready = True
             except Exception:
                 self.backpack_checkpoint_ready = False
+                self.last_backpack_reconcile_ns = None
+                self.last_backpack_admission_ns = None
                 self.last_error = "native economic checkpoint is not ready; admission remains fenced"
-        self.refresh_native_admission(now_ns)
+        self.refresh_native_admission(now_ns, throttle_backpack=not (dirty or active_backpack))
         for intent in tuple(self.native_reads.values()):
             self._start_native_read(intent, now_ns)
         for request_id, future in tuple(self.reads.items()):

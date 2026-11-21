@@ -28,6 +28,10 @@ loss_cooldown_secs = 60
 max_exit_reversal_bps = "30"
 max_exit_reversal_edge_ratio = "1"
 
+[trade.entry_slippage_bps_by_venue]
+HL = "4"
+LIGHTER = "2"
+
 [entry_admission]
 # Local entry handoff budgets, validated offline; no guarantee of venue execution.
 # Effective source/receive/skew limits also respect stricter scan settings.
@@ -92,7 +96,7 @@ drain_timeout_secs = 30
 timer_interval_ms = 100
 # Market publication/evaluation: 100 baseline, 20 small batches, 0 per complete event.
 # Change after comparing CPU, queue tails and admission decisions for this deployment.
-evaluation_interval_ms = 100
+evaluation_interval_ms = 20
 # Complete native account reads may take several seconds; BBO freshness is separate.
 account_max_age_ms = 60000
 lighter_margin_max_age_ms = 60000
