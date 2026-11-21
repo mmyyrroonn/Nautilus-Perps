@@ -889,6 +889,7 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
         observer_options.update(kwargs)
         return observer
     monkeypatch.setattr(opportunity_runtime, "create_observer", create_observer)
+    state.loss_monitor.balance_epoch_ns = 1_795_200_000_123_456_789
     result, observed, strategy = build_live_node(plan, live, state)
     assert result is node and observed is observer
     assert observer_options == {"drive_evaluation_timer": False}
@@ -901,6 +902,9 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
     assert state.proxy.native_session["state_directory"] == str(exec_arguments["state_directory"])
     if five_venues:
         assert exec_arguments["backpack_public_config"] == "data-config"
+        assert exec_arguments["backpack_recovery_start_ms"] == 1_795_200_000_123
+    else:
+        assert exec_arguments["backpack_recovery_start_ms"] is None
     engine = node.options["with_exec_engine_config"][0][0].values
     assert engine["reconciliation"] is False and engine["generate_missing_orders"] is False
     assert engine["inflight_check_interval_ms"] == 0
@@ -939,6 +943,12 @@ def test_native_node_registers_real_strategy_and_execution_clients_using_mock_tr
     live.intent_notifier()
     strategy.on_time_event(event)
     assert len(ticks) == 1  # A receipt may already have drained these intents.
+    if five_venues:
+        # Reopening an existing Backpack identity directory must not inject a new anchor.
+        (exec_arguments["state_directory"] / "backpack" / "identity").mkdir(parents=True, exist_ok=True)
+        exec_arguments.clear()
+        build_live_node(plan, live, state)
+        assert exec_arguments["backpack_recovery_start_ms"] is None
 
 
 def native_build_credentials():

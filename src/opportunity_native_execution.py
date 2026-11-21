@@ -92,6 +92,7 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                       state_directory=None, run_id=None, order_notional_usd="100",
                       max_gross_notional_usd="500", duration_secs=0,
                       backpack_public_config=None, backpack_quota=None,
+                      backpack_recovery_start_ms=None,
                       native_controls=None, read_only=False):
     """Construct configs only; credentials are resolved when explicitly called.
 
@@ -212,6 +213,10 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                     raise ValueError
             except Exception:
                 raise ValueError("Backpack seed and public key did not pass the credential check") from None
+            if backpack_recovery_start_ms is not None and (
+                type(backpack_recovery_start_ms) is not int or backpack_recovery_start_ms <= 0
+            ):
+                raise ValueError("Backpack recovery_start_ms must be a positive integer millisecond timestamp")
             credential = bp.BackpackCredential(env["BACKPACK_MAINNET_API_SECRET"])
             symbols = [m.instrument_id.removesuffix(".BACKPACK") for m in markets]
             account = bp.BackpackExecutionClientConfig(symbols, credential, str(account_id),
@@ -221,7 +226,8 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                 # below the venue's observed throttling while the native public
                 # metadata task independently maintains the strict market deadline.
                 connect_timeout_ms=60000, recovery_interval_ms=5000,
-                recovery_lookback_ms=86400000)
+                recovery_lookback_ms=86400000,
+                recovery_start_ms=backpack_recovery_start_ms)
             if read_only:
                 result.append((client, bp.BackpackExecutionClientFactory(), account))
                 continue
@@ -369,7 +375,7 @@ class NativeOrderGateway:
                 native_id = self.model.InstrumentId.from_str(instrument_id)
                 if self.strategy.cache.instrument(native_id) is None:
                     markets[instrument_id] = {"ready": False, "reason": "native_instrument_unavailable"}
-                elif self.strategy.cache.quote_tick(native_id) is None:
+                elif self.strategy.cache.quote(native_id) is None:
                     markets[instrument_id] = {"ready": False, "reason": "native_quote_unavailable"}
                 else:
                     markets[instrument_id] = {"ready": True, "reason": None}
@@ -525,7 +531,7 @@ class NativeOrderGateway:
         if self.quote_provider is not None:
             bid, ask, stamp = self.quote_provider(instrument_id, now_ns)
         else:
-            quote = self.strategy.cache.quote_tick(self.model.InstrumentId.from_str(instrument_id))
+            quote = self.strategy.cache.quote(self.model.InstrumentId.from_str(instrument_id))
             if quote is None:
                 raise ValueError("current native quote is unavailable")
             bid, ask, stamp = quote.bid_price, quote.ask_price, quote.ts_event

@@ -985,6 +985,14 @@ def build_live_node(plan, live, coordinator, *, environ=None):
     # use the same fresh run identity, without reopening older bound journals.
     native_directory = plan.state_path.parent / (plan.state_path.stem + ".native") / "sessions" / live.session_id
     coordinator.proxy.checkpoint_native_session(live.session_id, native_directory)
+    # Pin Backpack fill-history recovery to this fresh session's epoch so prior
+    # sessions' fills within the 24h lookback never remain unconsumed at stop.
+    backpack_recovery_start_ms = None
+    if "BACKPACK" in plan.venues and not (native_directory / "backpack" / "identity").exists():
+        epoch_ns = getattr(getattr(coordinator, "loss_monitor", None), "balance_epoch_ns", None)
+        backpack_recovery_start_ms = (
+            epoch_ns if type(epoch_ns) is int and epoch_ns > 0 else time.time_ns()
+        ) // 1_000_000
     for client_id, factory, config in execution_clients(plan.scan, plan.environment,
             environ=environ,
             state_directory=native_directory,
@@ -993,6 +1001,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
             max_gross_notional_usd=plan.max_gross_notional_usd,
             duration_secs=plan.duration_secs,
             backpack_public_config=configs.get("BACKPACK"), backpack_quota=backpack_quota,
+            backpack_recovery_start_ms=backpack_recovery_start_ms,
             native_controls=native_controls):
         builder = builder.add_exec_client(client_id, factory, config)
     with span("startup.native_builder"):

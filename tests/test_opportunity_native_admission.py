@@ -361,7 +361,7 @@ def test_ondo_native_admission_blocks_missing_quote_per_market_and_recovers():
     strategy.cache = NS(
         order=strategy.cached.get,
         instrument=lambda iid: instruments.get(str(iid)),
-        quote_tick=lambda iid: quotes.get(str(iid)),
+        quote=lambda iid: quotes.get(str(iid)),
     )
     gateway = NativeOrderGateway(
         strategy,
@@ -399,3 +399,32 @@ def test_ondo_native_admission_blocks_missing_quote_per_market_and_recovers():
     missing_inst = gateway.refresh_native_admission(NOW + 2)
     assert missing_inst["ONDO"]["markets"]["LIT-USD-PERP.ONDO"] == {
         "ready": False, "reason": "native_instrument_unavailable"}
+
+
+def test_ondo_native_admission_matches_real_nautilus_cache_api():
+    from nautilus_trader.common import Cache
+    from nautilus_trader import model as native_model
+
+    assert hasattr(Cache, "quote") and not hasattr(Cache, "quote_tick")
+    real_cache = Cache()
+    strategy = FakeStrategy()
+    # Proxy instrument() to simulate a loaded instrument while delegating quote()
+    # to the real Nautilus Cache so any wrong Cache method name fails immediately.
+    strategy.cache = NS(
+        order=real_cache.order,
+        instrument=lambda iid: NS(),
+        quote=real_cache.quote,
+    )
+    gateway = NativeOrderGateway(
+        strategy,
+        [NS(venue="ONDO", instrument_id="BTC-USD-PERP.ONDO")],
+        lambda *a: None, lambda *a: None, lambda *a: None, model=native_model,
+    )
+    result = gateway.refresh_native_admission(NOW)
+    assert result["ONDO"]["global_ready"] is True
+    assert result["ONDO"]["ready"] is False
+    assert result["ONDO"]["reason"] == "native_quote_unavailable"
+    assert result["ONDO"]["markets"]["BTC-USD-PERP.ONDO"] == {
+        "ready": False, "reason": "native_quote_unavailable"}
+    with pytest.raises(ValueError, match="current native quote is unavailable"):
+        gateway._quote("BTC-USD-PERP.ONDO", NOW)
