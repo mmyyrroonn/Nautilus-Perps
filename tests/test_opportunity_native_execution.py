@@ -27,7 +27,7 @@ class FakeStrategy:
         self.cached = {}
         self.calls = []
         self.cache = NS(order=lambda cid: self.cached.get(cid),
-            quote_tick=lambda iid: NS(ts_event=1_000_000_000, bid_price=D(100), ask_price=D(101)))
+            quote=lambda iid: NS(ts_event=1_000_000_000, bid_price=D(100), ask_price=D(101)))
         self.order_factory = NS(limit=self.limit)
 
     def limit(self, **kwargs):
@@ -431,8 +431,14 @@ def test_actual_five_venue_builder_preserves_native_config_and_caps_offline(tmp_
         builder = LiveNode.builder("OFFLINE-CREDENTIAL-TEST", TraderId.from_str("TEST-001"), Environment.LIVE)
         builder = builder.with_logging(LoggerConfig(stdout_level=LogLevel.OFF, fileout_level=LogLevel.OFF,
                                                     print_config=False))
+        for invalid in (0, -1, True, "1795200000000"):
+            with pytest.raises(ValueError, match="recovery_start_ms"):
+                execution_clients(scan, environ=fake, state_directory=tmp_path, run_id="fixture-continuous",
+                    backpack_public_config=public, backpack_quota=quota,
+                    backpack_recovery_start_ms=invalid)
         configs = execution_clients(scan, environ=fake, state_directory=tmp_path, run_id="fixture-continuous",
-            backpack_public_config=public, backpack_quota=quota, native_controls=controls)
+            backpack_public_config=public, backpack_quota=quota,
+            backpack_recovery_start_ms=1_795_200_000_000, native_controls=controls)
         assert next(c for name, _, c in configs if name == "ASTER").has_explicit_credentials()
         ondo = next(c for name, _, c in configs if name == "ONDO")
         assert ondo.continuous_execution.max_notional_per_order_usd == D(100)
@@ -440,6 +446,7 @@ def test_actual_five_venue_builder_preserves_native_config_and_caps_offline(tmp_
         assert len(ondo.continuous_execution.instrument_ids) == 2
         backpack = next(c for name, _, c in configs if name == "BACKPACK")
         assert backpack.account_config.recovery_interval_ms == 5000
+        assert backpack.account_config.recovery_start_ms == 1_795_200_000_000
         assert backpack.authority.max_order_notional == "100" and backpack.authority.max_reserved_notional == "500"
         assert set(controls) == {"ONDO", "BACKPACK", "LIGHTER"}
         assert controls["LIGHTER"].terminal_fill_evidence_json("unsubmitted-order") is None
