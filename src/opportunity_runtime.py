@@ -243,7 +243,8 @@ def data_clients(plan, *, backpack_quota=None):
             factory = (BackpackDataClientFactory(quota=backpack_quota)
                        if backpack_quota is not None else BackpackDataClientFactory())
         else:
-            factory, config = factories[client_id]([m.instrument_id for m in markets])
+            kwargs = {"bbo_cache_only": True} if client_id == "HYPERLIQUID" and plan.hyperliquid_bbo_gate else {}
+            factory, config = factories[client_id]([m.instrument_id for m in markets], **kwargs)
         result.append((client_id, factory, config))
     return result
 
@@ -285,6 +286,29 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.pending_instruments = set()
             from opportunity_memory import current_diagnostics
             self.memory_diagnostics = current_diagnostics()
+            if plan.hyperliquid_bbo_gate and hasattr(state, "bbo_provider"):
+                hl_config = client_configs.get("HYPERLIQUID") if client_configs else None
+                if hl_config is not None and hasattr(hl_config, "latest_bbo"):
+                    hl_native_ids = {
+                        m.instrument_id: InstrumentId.from_str(m.instrument_id)
+                        for m in plan.markets if m.client_id == "HYPERLIQUID"
+                    }
+
+                    def _hl_bbo(instrument_id):
+                        native_id = hl_native_ids.get(instrument_id)
+                        if native_id is None:
+                            return None
+                        quote = hl_config.latest_bbo(native_id)
+                        if quote is None:
+                            return None
+                        return (
+                            Fraction(str(quote.bid_price)),
+                            Fraction(str(quote.ask_price)),
+                            int(quote.ts_event),
+                            int(quote.ts_init),
+                        )
+
+                    state.bbo_provider = _hl_bbo
 
         def fail(self, message):
             self.failure = message
@@ -346,7 +370,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.subscribe_book_deltas(instrument_id, BookType.L2_MBP,
                                        client_id=client, managed=False, **kwargs)
             self.subscription_ids["book_deltas"].add(instrument_id)
-            if market.venue in {"BACKPACK", "ONDO"}:
+            if market.venue in {"BACKPACK", "ONDO"} or (
+                    market.venue == "HL" and plan.hyperliquid_bbo_gate):
                 self.subscribe_quotes(instrument_id, client_id=client)
                 self.subscription_ids["quotes"].add(instrument_id)
             if market.venue == "ONDO":

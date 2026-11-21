@@ -87,6 +87,22 @@ def _book_observation(book, market, intent, now_ns):
             "touch_outside_limit_bps": _number((touch - limit if buy else limit - touch) / limit * 10000)}
 
 
+def fresh_bbo_quote(live, instrument_id, book):
+    """Return `(bid, ask, ts_event_ns, ts_init_ns)` if a newer BBO quote exists for `instrument_id`."""
+    provider = getattr(live, "bbo_provider", None)
+    if provider is None:
+        return None
+    quote = provider(instrument_id)
+    if quote is None:
+        return None
+    bbo_bid, bbo_ask, bbo_ts_event, bbo_ts_init = quote
+    ts_event = int(bbo_ts_event)
+    ts_init = int(bbo_ts_init)
+    if not (ts_event > book.ts_event_ns or (ts_event == book.ts_event_ns and ts_init > book.ts_received_ns)):
+        return None
+    return F(bbo_bid), F(bbo_ask), ts_event, ts_init
+
+
 def entry_dispatch_evidence(live, position, now_ns):
     """Validate both original IOC legs against current immutable book evidence.
 
@@ -170,6 +186,15 @@ def entry_dispatch_evidence(live, position, now_ns):
         if ((leg == "buy" and F(bound["price"]) > limit)
                 or (leg == "sell" and F(bound["price"]) < limit)):
             return "price_outside_limit", evidence
+        bbo = fresh_bbo_quote(live, instrument, book)
+        if bbo is not None:
+            bbo_bid, bbo_ask, bbo_ts_event, bbo_ts_init = bbo
+            row["bbo_bid_price"] = _number(bbo_bid)
+            row["bbo_ask_price"] = _number(bbo_ask)
+            row["bbo_ts_event_ns"] = bbo_ts_event
+            row["bbo_ts_init_ns"] = bbo_ts_init
+            if (leg == "buy" and bbo_ask > limit) or (leg == "sell" and bbo_bid < limit):
+                return "bbo_price_outside_limit", evidence
         # Retain worst-case persisted limit economics, including fresh fees.
         limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
         bounds[leg] = (limit_cash, limit_cash * F(meta.taker_fee_bps) / 10000)
@@ -234,6 +259,7 @@ def _block_entry_pair(live, position, reason, decision, now_ns, *, dispatched=()
 def entry_pair_snapshot(live, position):
     """Cheap immutable token covering every state input read by entry admission."""
     buy_id, sell_id = position["buy_id"], position["sell_id"]
+    bbo_provider = getattr(live, "bbo_provider", None)
     return (
         id(live.books.get(buy_id)), id(live.books.get(sell_id)),
         id(live.metadata.get(buy_id)), id(live.metadata.get(sell_id)),
@@ -249,6 +275,7 @@ def entry_pair_snapshot(live, position):
         any(p.get("unhedged_breach") for p in live.positions.values()),
         sum(o["status"] == "unknown" for o in live.execution_orders()),
         id(getattr(live, "route_max_hold_blocks", {}).get((buy_id, sell_id))),
+        (bbo_provider(buy_id), bbo_provider(sell_id)) if bbo_provider is not None else None,
     )
 
 
