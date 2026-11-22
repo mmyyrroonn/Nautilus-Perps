@@ -25,6 +25,7 @@ def flat_state(symbols=("BTC",)):
 def test_one_changed_book_checks_eight_directions_instead_of_twenty(monkeypatch):
     live = flat_state()
     checks = []
+    monkeypatch.setattr(live, "_bbo_ruled_out", lambda b, s: False)
     monkeypatch.setattr(live, "_entry", lambda b, s, n: checks.append((b, s)))
     live.evaluate_symbol("BTC", NOW + 1, changed_ids={"BTC.HL"})
     assert len(checks) == 8
@@ -49,6 +50,7 @@ def test_non_market_changes_recheck_unchanged_pairs_and_symbols(monkeypatch, tra
         live.emit("order_terminal", NOW + 1)
     assert live.pending_evaluation_symbols() == {"BTC", "ETH"}
     checks = []
+    monkeypatch.setattr(live, "_bbo_ruled_out", lambda b, s: False)
     monkeypatch.setattr(live, "_entry", lambda b, s, n: checks.append((b, s)))
     for symbol in sorted(live.pending_evaluation_symbols()):
         live.evaluate_symbol(symbol, NOW + 3, changed_ids={"BTC.HL"})
@@ -66,6 +68,7 @@ def test_owned_inventory_forces_shared_risk_recheck(monkeypatch):
     assert live.pending_evaluation_symbols() == {"BTC", "ETH"}
     checks = []
     monkeypatch.setattr(live, "observe", lambda *a: None)
+    monkeypatch.setattr(live, "_bbo_ruled_out", lambda b, s: False)
     monkeypatch.setattr(live, "_entry", lambda b, s, n: checks.append((b, s)))
     live.evaluate_symbol("BTC", NOW + 3, changed_id="BTC.HL")
     assert len(checks) == 20

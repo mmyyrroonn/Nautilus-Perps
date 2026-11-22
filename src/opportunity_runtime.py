@@ -8,6 +8,7 @@ from copy import deepcopy
 from collections import deque
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
+from functools import lru_cache
 import json
 import sys
 import threading
@@ -73,12 +74,22 @@ def market_metadata(market, instrument) -> MarketMetadata:
                           maker_fee_bps=maker_fee)
 
 
+@lru_cache(maxsize=1024)
+def _normalization_factor(quote_to_usd, canonical_multiplier):
+    return Fraction(quote_to_usd) / Fraction(canonical_multiplier)
+
+
+@lru_cache(maxsize=65536)
+def _normalized_price(price, factor):
+    return exact_decimal(Fraction(price) * factor)
+
+
 def normalized_levels(market, levels):
     """Map native base prices without cancelling the native contract exposure."""
     if market.quote_to_usd == market.canonical_multiplier:
         return tuple(levels)
-    factor = Fraction(market.quote_to_usd) / Fraction(market.canonical_multiplier)
-    return tuple((exact_decimal(Fraction(price) * factor), size) for price, size in levels)
+    factor = _normalization_factor(market.quote_to_usd, market.canonical_multiplier)
+    return tuple((_normalized_price(price, factor), size) for price, size in levels)
 
 
 class ScanState:

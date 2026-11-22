@@ -193,6 +193,7 @@ def test_hotpath_non_owned_update_does_not_force_full_scan_while_holding(monkeyp
     assert not live.full_evaluation_symbols
     checks = []
     monkeypatch.setattr(live, "observe", lambda *a: None)
+    monkeypatch.setattr(live, "_bbo_ruled_out", lambda b, s: False)
     monkeypatch.setattr(live, "_entry", lambda b, s, n: checks.append((b, s)))
     live.evaluate_symbol("ETH", NOW + 2, changed_id="ETH.HL")
     # 3 venues: only pairs involving ETH.HL (4 directed pairs, not all 6)

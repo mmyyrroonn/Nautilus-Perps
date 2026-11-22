@@ -26,7 +26,8 @@ import time
 import uuid
 
 from opportunity_core import (
-    _book_valid, _execution_metadata_valid, _fee_metadata_valid, _metadata_valid, _number, exact_decimal,
+    _best_quotes_rule_out, _book_valid, _execution_metadata_valid, _fee_metadata_valid,
+    _metadata_valid, _number, exact_decimal,
 )
 from opportunity_basis import (
     BasisFilterPolicy, RollingBasisTracker, RouteMaxHoldTracker,
@@ -1202,6 +1203,23 @@ class LiveTradeState(ScanState):
     def _clear_slow_persistence(self, buy_id, sell_id):
         if self._slow_pair_since:
             self._slow_pair_since.pop((buy_id, sell_id), None)
+
+    def _bbo_ruled_out(self, buy_id, sell_id):
+        pricer = self.pricer
+        books, metadata = pricer.books, pricer.metadata
+        if buy_id not in books or sell_id not in books or buy_id not in metadata or sell_id not in metadata:
+            return False
+        markets = pricer.markets
+        return _best_quotes_rule_out(
+            books[buy_id],
+            metadata[buy_id],
+            books[sell_id],
+            metadata[sell_id],
+            pricer.plan.settings,
+            min_entry_edge_bps=pricer.policy.effective_entry_edge_bps(
+                markets[buy_id].venue, markets[sell_id].venue
+            ),
+        )
 
     def _is_hl_oi_capped(self, instrument_id):
         market = self.markets.get(instrument_id)
@@ -2615,6 +2633,9 @@ class LiveTradeState(ScanState):
                 if affected is not None and first not in affected and second not in affected:
                     continue
                 for buy_id, sell_id in ((first, second), (second, first)):
+                    if self._bbo_ruled_out(buy_id, sell_id):
+                        self._clear_slow_persistence(buy_id, sell_id)
+                        continue
                     if self._entry(buy_id, sell_id, now_ns):
                         self._eval_snapshot = None
                         break
