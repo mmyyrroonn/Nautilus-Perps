@@ -89,7 +89,7 @@ def test_explicit_zero_terminal_evidence(harness):
 def test_original_id_queries_continue_when_account_admission_poll_raises(harness):
     proof = [None]
     gateway, strategy, receipts, _, order = lighter(harness, proof)
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise RuntimeError("synthetic account diagnostic failure")
     gateway.refresh_native_admission = fail
     for attempt in (1, 2):
