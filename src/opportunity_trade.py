@@ -253,16 +253,38 @@ def load_trade_plan(path: Path) -> TradePlan:
 
 
 @timed("run.paper")
-def run_paper(plan: TradePlan) -> int:
+def run_paper(plan: TradePlan, *, tape_dir: Path | None = None) -> int:
     from opportunity_paper import PaperTradeState
     from opportunity_runtime import build_node
     from opportunity_trade_store import TradeStore
 
     store = TradeStore(plan.state_path, plan.fingerprint())
+    tape_recorder = None
     timer = None
     try:
+        if tape_dir is not None:
+            from opportunity_tape import OpportunityTapeRecorder
+            legs = [
+                {
+                    "symbol": market.symbol,
+                    "venue": market.venue,
+                    "instrument_id": market.instrument_id,
+                    "quote_to_usd": str(market.quote_to_usd),
+                    "canonical_multiplier": str(market.canonical_multiplier),
+                }
+                for market in plan.scan.markets
+            ]
+            tape_recorder = OpportunityTapeRecorder(
+                tape_dir,
+                legs=legs,
+                evaluation_interval_ms=plan.scan.evaluation_interval_ms,
+            )
+            tape_recorder.open()
         state = PaperTradeState(plan.scan, plan.policy, store=store, basis_filter=plan.basis_filter)
-        node, observer, _ = build_node(plan.scan, state_factory=lambda _: state)
+        build_kwargs = {"state_factory": lambda _: state}
+        if tape_recorder is not None:
+            build_kwargs["tape_recorder"] = tape_recorder
+        node, observer, _ = build_node(plan.scan, **build_kwargs)
         handle = node.handle()
         if observer.memory_diagnostics is not None:
             observer.memory_diagnostics.attach_handle(handle)
@@ -276,11 +298,18 @@ def run_paper(plan: TradePlan) -> int:
             handle.stop()
         finally:
             state.finish(time.time_ns())
-        print(json.dumps(state.document(), indent=2))
+            if tape_recorder is not None:
+                tape_recorder.close()
+        doc = state.document()
+        if tape_recorder is not None:
+            doc["tape"] = tape_recorder.document()
+        print(json.dumps(doc, indent=2))
         return 1 if observer.failure or not observer.started or state.positions else 0
     finally:
         if timer:
             timer.cancel()
+        if tape_recorder is not None:
+            tape_recorder.close()
         store.close()
 
 
@@ -302,6 +331,8 @@ def main(argv=None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--duration-secs", type=int)
+    parser.add_argument("--evaluation-interval-ms", type=int)
+    parser.add_argument("--tape-dir", type=Path)
     parser.add_argument("--symbols")
     add_timing_arguments(parser)
     from opportunity_memory import add_memory_arguments, run_with_memory
@@ -319,6 +350,10 @@ def _run(args):
         if args.duration_secs is not None:
             plan = replace(plan, scan=replace(plan.scan,
                 duration_secs=integer_value(args.duration_secs, "duration_secs", 0, 2678400)))
+        if args.evaluation_interval_ms is not None:
+            plan = replace(plan, scan=replace(plan.scan,
+                evaluation_interval_ms=integer_value(
+                    args.evaluation_interval_ms, "evaluation_interval_ms", 0, 1000)))
         if args.symbols:
             requested = set(args.symbols.split(","))
             if not requested <= {m.symbol for m in plan.scan.markets} or "" in requested:
@@ -326,9 +361,12 @@ def _run(args):
             plan = replace(plan, scan=replace(plan.scan,
                 markets=tuple(m for m in plan.scan.markets if m.symbol in requested)))
         if args.dry_run:
-            print(json.dumps(plan.document(), indent=2))
+            doc = plan.document()
+            if args.tape_dir is not None:
+                doc["tape_dir"] = str(args.tape_dir)
+            print(json.dumps(doc, indent=2))
             return 0
-        return run_paper(plan)
+        return run_paper(plan, tape_dir=args.tape_dir)
     except (OSError, ValueError, ImportError, RuntimeError, sqlite3.Error) as exc:
         print(f"[paper-trade] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
