@@ -112,8 +112,8 @@ def test_pricing_sampling_keeps_live_net_boundary_and_emits_only_fixed_names(mon
     assert len(submissions(live)) == 2
     if timing_enabled:
         sampled = [row for row in recorder.document()['operations'] if row['category'] == 'sampled_span']
-        # The rejected edge never reaches pair preparation after the early bound.
-        assert {row['name'] for row in sampled} == {'pricing.entry'}
+        # Edge-insufficient quotes are rejected in the live BBO pre-screen before pair preparation.
+        assert {row['name'] for row in sampled} <= {'pricing.entry'}
         assert all(row['sample_every'] == 127 and row['venue'] == row['outcome'] == '' for row in sampled)
 
 

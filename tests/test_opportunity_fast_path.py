@@ -413,3 +413,72 @@ def test_evaluate_symbol_refreshes_flat_cache_after_opening_first_pair_and_respe
     live2.evaluate_symbol("BTC", NOW + 100 * MS)
     after_max_pairs = recorder.document()["analysis"]["funnel"]["pre_gates"].get("max_pairs", 0)
     assert after_max_pairs == before_max_pairs + 1
+
+
+def test_bbo_prescreen_skips_entry_when_both_directions_ruled_out_and_allows_crossed(monkeypatch):
+    live, _ = state(_fast_slow_plan(("ASTER", "BACKPACK")),
+                    policy=TradePolicy(order_notional_usd=D("20"), entry_edge_bps=D("20")))
+    live.update_native_admission({"BACKPACK": {"ready": True, "reason": None, "checked_ns": NOW}}, NOW)
+
+    entry_calls = []
+    orig_entry = live._entry
+
+    def counted_entry(buy_id, sell_id, now_ns):
+        entry_calls.append((buy_id, sell_id))
+        return orig_entry(buy_id, sell_id, now_ns)
+
+    monkeypatch.setattr(live, "_entry", counted_entry)
+
+    set_book(live, "ASTER", "99.99", "100.00", NOW)
+    set_book(live, "BACKPACK", "99.99", "100.00", NOW)
+    live.evaluate_symbol("BTC", NOW)
+    assert entry_calls == []
+    assert not live.outbox
+
+    # Crossed pair passes BBO pre-screen and prepares normally.
+    set_book(live, "BACKPACK", "100.40", "100.41", NOW + 10 * MS)
+    live.evaluate_symbol("BTC", NOW + 10 * MS)
+    assert entry_calls == [("BTC.ASTER", "BTC.BACKPACK")]
+    assert len(live.outbox) == 2
+
+
+def test_bbo_prescreen_clears_slow_pair_persistence_when_spread_disappears():
+    policy = TradePolicy(
+        entry_edge_bps=D("20"),
+        slow_venues=("HL",),
+        slow_pair_entry_edge_bps=D("25"),
+        slow_pair_min_persistence_ms=150,
+    )
+    live, _ = state(_fast_slow_plan(("HL", "ASTER")), policy=policy)
+    set_book(live, "HL", "99.99", "100.00", NOW)
+    set_book(live, "ASTER", "100.26", "100.27", NOW)
+    live.evaluate_symbol("BTC", NOW)
+    assert ("BTC.HL", "BTC.ASTER") in live._slow_pair_since
+
+    # Spread drops below 25 bps threshold -> BBO pre-screen rules it out and clears persistence.
+    set_book(live, "ASTER", "100.10", "100.11", NOW + 50 * MS)
+    live.evaluate_symbol("BTC", NOW + 50 * MS)
+    assert ("BTC.HL", "BTC.ASTER") not in live._slow_pair_since
+
+
+def test_normalized_levels_matches_exact_formula_for_float_and_decimal():
+    from fractions import Fraction
+    from opportunity_core import exact_decimal
+    from opportunity_runtime import normalized_levels
+
+    m_eq = MarketPlan("BTC", "ASTER", "BTCUSDT-PERP.ASTER", D("1"), "synthetic", canonical_multiplier=D("1"))
+    m_ne = MarketPlan("PEPE", "ASTER", "1000PEPEUSDT-PERP.ASTER", D("1.0001"), "synthetic", canonical_multiplier=D("1000"))
+
+    dec_levels = [(D("100.25"), D("2.5")), (D("100.30"), D("4.0"))]
+    flt_levels = [(100.25, 2.5), (100.3, 4.0)]
+
+    for lvls in (dec_levels, flt_levels):
+        assert normalized_levels(m_eq, lvls) == tuple(lvls)
+        expected = tuple(
+            (exact_decimal(Fraction(p) * Fraction(m_ne.quote_to_usd) / Fraction(m_ne.canonical_multiplier)), s)
+            for p, s in lvls
+        )
+        # Call twice to exercise lru_cache hit path as well.
+        assert normalized_levels(m_ne, lvls) == expected
+        assert normalized_levels(m_ne, lvls) == expected
+
