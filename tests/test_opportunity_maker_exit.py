@@ -254,7 +254,8 @@ def test_maker_partial_fill_cancels_remainder_and_hedges_immediately():
     pos = next(iter(live.positions.values()))
     t1 = NOW + SECOND
     accounts(live, t1)
-    set_book(live, "HL", "100.12", "100.16", t1)
+    # Taker-taker = 100.02 - 100.31 + 0.30 = +1 bps (< 5 bps); Maker(HL @ 100.10) + Taker(ASTER @ 100.31) = +9 bps (>= 5 bps)
+    set_book(live, "HL", "100.02", "100.10", t1)
     set_book(live, "ASTER", "100.30", "100.31", t1)
     live.evaluate_symbol("BTC", t1)
 
@@ -311,63 +312,66 @@ def test_maker_adverse_move_reprice_timeout_and_ioc_fallback():
     pos = next(iter(live.positions.values()))
     t1 = NOW + SECOND
     accounts(live, t1)
-    # 1. Start passive Maker @ 100.20 (HL), ASTER @ 100.30/100.31
-    set_book(live, "HL", "100.16", "100.20", t1)
+    # 1. Start passive Maker @ 100.10 (HL) while taker-taker is only +1 bps (< 5 bps TP)
+    set_book(live, "HL", "100.02", "100.10", t1)
     set_book(live, "ASTER", "100.30", "100.31", t1)
     live.evaluate_symbol("BTC", t1)
     m1, = submissions(live)
-    assert m1.price == D("100.20") and pos["maker_exit_attempts"] == 1
+    assert m1.price == D("100.10") and pos["maker_exit_attempts"] == 1
     live.on_receipt(receipt(m1, "accepted"), t1 + 5 * MS)
 
-    # 2. HL ask steps closer to 100.18 (still > 100.16 bid and still >= 5 bps profit) -> reprice after 1s
+    # 2. HL ask steps closer to 100.08 (taker-taker +3 bps < 5 bps; maker@100.08 + taker@100.29 = +9 bps >= 5 bps) -> reprice after 1s
     t_reprice = t1 + 1100 * MS
     accounts(live, t_reprice)
-    set_book(live, "HL", "100.14", "100.18", t_reprice)
-    set_book(live, "ASTER", "100.22", "100.23", t_reprice)
+    set_book(live, "HL", "100.02", "100.08", t_reprice)
+    set_book(live, "ASTER", "100.28", "100.29", t_reprice)
     live.evaluate_symbol("BTC", t_reprice)
     c1, = [i for i in live.drain_intents() if i.action == "cancel"]
     assert c1.client_order_id == m1.client_order_id
     assert [e for e in events if e["event"] == "maker_exit_cancel_requested"][-1]["reason"] == "maker_exit_reprice"
 
-    # Cancel completes -> post-cancel account snapshot arrives -> Attempt #2 placed at improved passive touch 100.18
+    # Cancel completes -> post-cancel account snapshot arrives -> Attempt #2 placed at improved passive touch 100.08
     live.on_receipt(ExecutionReceipt(c1.request_id, m1.client_order_id, "canceled"), t_reprice + 5 * MS)
     live.on_receipt(receipt(m1, "terminal"), t_reprice + 5 * MS)
     accounts(live, t_reprice + 10 * MS)
     live.on_evaluation_timer(t_reprice + 10 * MS)
     m2, = submissions(live)
-    assert m2.price == D("100.18") and m2.post_only is True and pos["maker_exit_attempts"] == 2
+    assert m2.price == D("100.08") and m2.post_only is True and pos["maker_exit_attempts"] == 2
     live.on_receipt(receipt(m2, "accepted"), t_reprice + 15 * MS)
 
     # 3. Attempt #2 times out at +2000ms -> canceled with reason="maker_exit_timeout"
     t_timeout = t_reprice + 2050 * MS
     accounts(live, t_timeout)
-    set_book(live, "HL", "100.16", "100.18", t_timeout)
-    set_book(live, "ASTER", "100.22", "100.23", t_timeout)
+    set_book(live, "HL", "100.02", "100.08", t_timeout)
+    set_book(live, "ASTER", "100.28", "100.29", t_timeout)
     live.on_evaluation_timer(t_timeout)
     c2, = [i for i in live.drain_intents() if i.action == "cancel"]
     assert [e for e in events if e["event"] == "maker_exit_cancel_requested"][-1]["reason"] == "maker_exit_timeout"
 
-    # Cancel completes -> post-cancel account arrives -> attempts == max_attempts (2), taker-taker IS profitable -> falls back to paired IOC!
+    # Cancel completes -> taker-taker IS now profitable and attempts == max_attempts (2) -> falls back to paired IOC!
     live.on_receipt(ExecutionReceipt(c2.request_id, m2.client_order_id, "canceled"), t_timeout + 5 * MS)
     live.on_receipt(receipt(m2, "terminal"), t_timeout + 5 * MS)
+    set_book(live, "HL", "100.16", "100.18", t_timeout + 10 * MS)
+    set_book(live, "ASTER", "100.22", "100.23", t_timeout + 10 * MS)
     accounts(live, t_timeout + 10 * MS)
     live.on_evaluation_timer(t_timeout + 10 * MS)
     ioc_exits = submissions(live)
     assert len(ioc_exits) == 2 and all(o.time_in_force == "IOC" and not o.post_only for o in ioc_exits)
 
-    # Test adverse edge loss + reset of maker_exit_attempts when opportunity completely disappears
+    # Test adverse edge loss: maker_exit_attempts stays incremented (never resets to 0) so max_attempts strictly caps churn
     live2, events2 = state(policy=pol)
     open_pair(live2)
     pos2 = next(iter(live2.positions.values()))
     accounts(live2, t1)
-    set_book(live2, "HL", "100.16", "100.20", t1)
+    set_book(live2, "HL", "100.02", "100.10", t1)
     set_book(live2, "ASTER", "100.30", "100.31", t1)
     live2.evaluate_symbol("BTC", t1)
     m3, = submissions(live2)
     live2.on_receipt(receipt(m3, "accepted"), t1 + 5 * MS)
     t_bad = t1 + 200 * MS
     accounts(live2, t_bad)
-    set_book(live2, "ASTER", "100.60", "100.61", t_bad)
+    # Maker(HL@100.10) + Taker(ASTER@100.36) = +4 bps (< 5 bps TP) -> maker_exit_edge_lost; Taker-Taker = -4 bps (> -20 bps max_loss)
+    set_book(live2, "ASTER", "100.35", "100.36", t_bad)
     live2.evaluate_symbol("BTC", t_bad)
     c3, = [i for i in live2.drain_intents() if i.action == "cancel"]
     assert [e for e in events2 if e["event"] == "maker_exit_cancel_requested"][-1]["reason"] == "maker_exit_edge_lost"
@@ -376,7 +380,7 @@ def test_maker_adverse_move_reprice_timeout_and_ioc_fallback():
     accounts(live2, t_bad + 10 * MS)
     live2.on_evaluation_timer(t_bad + 10 * MS)
     assert not submissions(live2)
-    assert pos2["maker_exit_attempts"] == 0 and pos2["status"] == "open"
+    assert pos2["maker_exit_attempts"] == 1 and pos2["status"] == "open"
 
 
 def test_hard_exit_and_stop_entries_cancel_resting_maker_and_escalate():
@@ -392,7 +396,7 @@ def test_hard_exit_and_stop_entries_cancel_resting_maker_and_escalate():
     pos = next(iter(live.positions.values()))
     t1 = NOW + SECOND
     accounts(live, t1)
-    set_book(live, "HL", "100.16", "100.20", t1)
+    set_book(live, "HL", "100.02", "100.10", t1)
     set_book(live, "ASTER", "100.30", "100.31", t1)
     live.evaluate_symbol("BTC", t1)
     maker_order, = submissions(live)
@@ -418,7 +422,7 @@ def test_hard_exit_and_stop_entries_cancel_resting_maker_and_escalate():
     live2, events2 = state(policy=pol)
     open_pair(live2)
     accounts(live2, t1)
-    set_book(live2, "HL", "100.16", "100.20", t1)
+    set_book(live2, "HL", "100.02", "100.10", t1)
     set_book(live2, "ASTER", "100.30", "100.31", t1)
     live2.evaluate_symbol("BTC", t1)
     # Still in outbox ("prepared") -> stop_entries drops it locally without cancel request
@@ -439,7 +443,7 @@ def test_maker_cancel_failure_retries_after_cooldown():
     open_pair(live)
     t1 = NOW + SECOND
     accounts(live, t1)
-    set_book(live, "HL", "100.16", "100.20", t1)
+    set_book(live, "HL", "100.02", "100.10", t1)
     set_book(live, "ASTER", "100.30", "100.31", t1)
     live.evaluate_symbol("BTC", t1)
     m, = submissions(live)
@@ -448,7 +452,7 @@ def test_maker_cancel_failure_retries_after_cooldown():
     # Trigger timeout cancel
     t_to = t1 + 1050 * MS
     accounts(live, t_to)
-    set_book(live, "HL", "100.16", "100.20", t_to)
+    set_book(live, "HL", "100.02", "100.10", t_to)
     set_book(live, "ASTER", "100.30", "100.31", t_to)
     live.on_evaluation_timer(t_to)
     c1, = [i for i in live.drain_intents() if i.action == "cancel"]
@@ -459,7 +463,7 @@ def test_maker_cancel_failure_retries_after_cooldown():
     # Before retry_ns -> throttled
     t_early = t_to + 200 * MS
     accounts(live, t_early)
-    set_book(live, "HL", "100.16", "100.20", t_early)
+    set_book(live, "HL", "100.02", "100.10", t_early)
     set_book(live, "ASTER", "100.30", "100.31", t_early)
     live.on_evaluation_timer(t_early)
     assert not [i for i in live.drain_intents() if i.action == "cancel"]
@@ -467,7 +471,7 @@ def test_maker_cancel_failure_retries_after_cooldown():
     # After retry_ns -> retries cancel
     t_retry = t_to + 1020 * MS
     accounts(live, t_retry)
-    set_book(live, "HL", "100.16", "100.20", t_retry)
+    set_book(live, "HL", "100.02", "100.10", t_retry)
     set_book(live, "ASTER", "100.30", "100.31", t_retry)
     live.on_evaluation_timer(t_retry)
     c2, = [i for i in live.drain_intents() if i.action == "cancel"]
@@ -486,7 +490,7 @@ def test_soft_exit_dispatch_evidence_checks_maker_crossing_and_hedge_edge():
     open_pair(live)
     t1 = NOW + SECOND
     accounts(live, t1)
-    set_book(live, "HL", "100.16", "100.20", t1)
+    set_book(live, "HL", "100.02", "100.10", t1)
     set_book(live, "ASTER", "100.30", "100.31", t1)
     live.evaluate_symbol("BTC", t1)
     m, = _drain_orders(live)
@@ -494,8 +498,8 @@ def test_soft_exit_dispatch_evidence_checks_maker_crossing_and_hedge_edge():
     # Valid at send time
     assert discard_invalid_soft_exit(live, m, t1 + 1 * MS) is False
 
-    # Case 1: BBO provider quotes bid >= our passive SELL limit (100.20) -> blocks as maker_would_cross
-    live.bbo_provider = lambda iid: (D("100.20"), D("100.21"), t1 + 2 * MS, t1 + 2 * MS) if iid == "BTC.HL" else None
+    # Case 1: BBO provider quotes bid >= our passive SELL limit (100.10) -> blocks as maker_would_cross
+    live.bbo_provider = lambda iid: (D("100.10"), D("100.11"), t1 + 2 * MS, t1 + 2 * MS) if iid == "BTC.HL" else None
     assert discard_invalid_soft_exit(live, m, t1 + 3 * MS) is True
     assert live.orders[m.client_order_id]["exit_dispatch"]["reason"] == "maker_would_cross"
 
@@ -503,7 +507,7 @@ def test_soft_exit_dispatch_evidence_checks_maker_crossing_and_hedge_edge():
     live2, _ = state(policy=pol)
     open_pair(live2)
     accounts(live2, t1)
-    set_book(live2, "HL", "100.16", "100.20", t1)
+    set_book(live2, "HL", "100.02", "100.10", t1)
     set_book(live2, "ASTER", "100.30", "100.31", t1)
     live2.evaluate_symbol("BTC", t1)
     m2, = _drain_orders(live2)
@@ -535,3 +539,98 @@ def test_native_gateway_stops_polling_cancel_once_submit_is_terminal():
         assert not [r for r in receipts if r.request_id == "cancel-1" and r.kind == "unknown"]
     finally:
         gateway.close()
+
+
+def test_taker_soft_exit_takes_priority_over_maker_when_already_profitable():
+    pol = TradePolicy(
+        slow_venues=("HL",),
+        maker_exit_venues=("HL", "ASTER"),
+        maker_exit_timeout_ms=4000,
+        maker_exit_max_attempts=2,
+        take_profit_bps=D("5"),
+        maker_fee_bps_by_venue={"HL": "0"},
+    )
+    live, _ = state(policy=pol)
+    open_pair(live)
+    pos = next(iter(live.positions.values()))
+    t1 = NOW + SECOND
+    accounts(live, t1)
+    # Taker-taker = 100.16 - 100.31 + 0.30 = +15 bps (>= 5 bps) -> must skip Maker and send 2 IOC orders immediately.
+    set_book(live, "HL", "100.16", "100.20", t1)
+    set_book(live, "ASTER", "100.30", "100.31", t1)
+    live.evaluate_symbol("BTC", t1)
+    exits = submissions(live)
+    assert len(exits) == 2
+    assert all(o.time_in_force == "IOC" and not o.post_only for o in exits)
+    assert all(not live.orders[o.client_order_id].get("maker_exit") for o in exits)
+    assert pos.get("maker_exit_attempts", 0) == 0
+
+
+def test_resting_maker_cancels_for_taker_exit_ready_and_caps_edge_lost_attempts():
+    pol = TradePolicy(
+        slow_venues=("HL",),
+        maker_exit_venues=("HL", "ASTER"),
+        maker_exit_timeout_ms=4000,
+        maker_exit_max_attempts=2,
+        take_profit_bps=D("5"),
+        maker_fee_bps_by_venue={"HL": "0"},
+    )
+    # (a) Resting maker in Pre-TP zone cancels immediately for taker_exit_ready once taker-taker satisfies take_profit_bps.
+    live, events = state(policy=pol)
+    open_pair(live)
+    t1 = NOW + SECOND
+    accounts(live, t1)
+    set_book(live, "HL", "100.02", "100.10", t1)
+    set_book(live, "ASTER", "100.30", "100.31", t1)
+    live.evaluate_symbol("BTC", t1)
+    maker_order, = submissions(live)
+    live.on_receipt(receipt(maker_order, "accepted"), t1 + 5 * MS)
+
+    t2 = t1 + 50 * MS
+    accounts(live, t2)
+    set_book(live, "HL", "100.16", "100.20", t2)
+    set_book(live, "ASTER", "100.30", "100.31", t2)
+    live.evaluate_symbol("BTC", t2)
+    cancels = [i for i in live.drain_intents() if i.action == "cancel"]
+    assert len(cancels) == 1 and cancels[0].client_order_id == maker_order.client_order_id
+    assert [e for e in events if e["event"] == "maker_exit_cancel_requested"][-1]["reason"] == "taker_exit_ready"
+
+    live.on_receipt(ExecutionReceipt(cancels[0].request_id, maker_order.client_order_id, "canceled"), t2 + 5 * MS)
+    live.on_receipt(receipt(maker_order, "terminal"), t2 + 5 * MS)
+    t_ioc = t1 + SECOND + 50 * MS
+    set_book(live, "HL", "100.16", "100.20", t_ioc)
+    set_book(live, "ASTER", "100.30", "100.31", t_ioc)
+    accounts(live, t_ioc)
+    live.on_evaluation_timer(t_ioc)
+    ioc_exits = submissions(live)
+    assert len(ioc_exits) == 2 and all(o.time_in_force == "IOC" and not o.post_only for o in ioc_exits)
+
+    # (b) Two maker_exit_edge_lost cycles exhaust maker_exit_max_attempts=2; 3rd Pre-TP window stays open without churning.
+    live2, _ = state(policy=pol)
+    open_pair(live2)
+    pos2 = next(iter(live2.positions.values()))
+    cur = t1
+    for attempt in (1, 2):
+        accounts(live2, cur)
+        set_book(live2, "HL", "100.02", "100.10", cur)
+        set_book(live2, "ASTER", "100.30", "100.31", cur)
+        live2.evaluate_symbol("BTC", cur)
+        m_ord, = submissions(live2)
+        assert pos2["maker_exit_attempts"] == attempt
+        live2.on_receipt(receipt(m_ord, "accepted"), cur + 5 * MS)
+
+        cur += 50 * MS
+        accounts(live2, cur)
+        set_book(live2, "ASTER", "100.35", "100.36", cur)
+        live2.evaluate_symbol("BTC", cur)
+        c_ord, = [i for i in live2.drain_intents() if i.action == "cancel"]
+        live2.on_receipt(ExecutionReceipt(c_ord.request_id, m_ord.client_order_id, "canceled"), cur + 5 * MS)
+        live2.on_receipt(receipt(m_ord, "terminal"), cur + 5 * MS)
+        cur += SECOND + 50 * MS
+
+    accounts(live2, cur)
+    set_book(live2, "HL", "100.02", "100.10", cur)
+    set_book(live2, "ASTER", "100.30", "100.31", cur)
+    live2.evaluate_symbol("BTC", cur)
+    assert not submissions(live2)
+    assert pos2["maker_exit_attempts"] == 2 and pos2["status"] == "open"
