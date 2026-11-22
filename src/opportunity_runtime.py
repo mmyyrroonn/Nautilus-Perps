@@ -269,7 +269,7 @@ def data_clients(plan, *, backpack_quota=None):
     return result
 
 
-def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer=True):
+def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer=True, tape_recorder=None):
     from nautilus_trader.common import DataActor, DataActorConfig
     from nautilus_trader.model import BookType, ClientId, InstrumentId, OrderBook, RecordFlag
 
@@ -362,7 +362,15 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     instrument = self.cache.instrument(instrument_id)
                     if instrument is None:
                         raise ScanConfigError(f"instrument unavailable: {market.instrument_id}")
-                    state.update_metadata(market.instrument_id, market_metadata(market, instrument), time.time_ns())
+                    now_ns = time.time_ns()
+                    metadata = market_metadata(market, instrument)
+                    state.update_metadata(market.instrument_id, metadata, now_ns)
+                    if tape_recorder is not None:
+                        tape_recorder.record_instrument(
+                            market, metadata, now_ns,
+                            price_increment=instrument_decimal(getattr(instrument, "price_increment", None)),
+                            source="instrument_metadata",
+                        )
                     if market.venue == "ASTER":
                         self.pending_aster.append(instrument_id)
                     else:
@@ -454,7 +462,12 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.dirty.pop(instrument_id, None)
             self.clear_book_timing(instrument_id)
             if notify:
-                state.invalidate(str(instrument_id), time.time_ns(), metadata=metadata, reason=reason)
+                now_ns = time.time_ns()
+                state.invalidate(str(instrument_id), now_ns, metadata=metadata, reason=reason)
+                if tape_recorder is not None:
+                    tape_recorder.record_invalidation(
+                        self.markets[instrument_id], now_ns, reason=reason, metadata_invalid=metadata,
+                    )
             else:
                 # Stop must not evaluate partially cleared multi-venue books and
                 # accidentally prepare a new pair while subscriptions are closing.
@@ -548,7 +561,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.pending_snapshot.add(instrument_id)
                     self.dirty.pop(instrument_id, None)
                     self.clear_book_timing(instrument_id)
-                    state.invalidate(market.instrument_id, time.time_ns(), reason="snapshot_rebuilding")
+                    now_ns = time.time_ns()
+                    state.invalidate(market.instrument_id, now_ns, reason="snapshot_rebuilding")
+                    if tape_recorder is not None:
+                        tape_recorder.record_invalidation(market, now_ns, reason="snapshot_rebuilding")
                 if instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
                     return
                 book = self.local_books[instrument_id]
@@ -574,8 +590,12 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 if not RecordFlag.F_LAST.matches(batch.flags):
                     self.dirty.pop(instrument_id, None)
                     self.clear_book_timing(instrument_id)
-                    state.invalidate(market.instrument_id, time.time_ns(), reason=(
-                        "snapshot_rebuilding" if instrument_id in self.pending_snapshot else "partial_update"))
+                    now_ns = time.time_ns()
+                    inv_reason = ("snapshot_rebuilding" if instrument_id in self.pending_snapshot
+                                  else "partial_update")
+                    state.invalidate(market.instrument_id, now_ns, reason=inv_reason)
+                    if tape_recorder is not None:
+                        tape_recorder.record_invalidation(market, now_ns, reason=inv_reason)
                     return
                 if instrument_id in self.pending_snapshot:
                     self.pending_snapshot.discard(instrument_id)
@@ -637,7 +657,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                        "ts_event_ns": ts_event, "ts_received_ns": ts_received,
                        "coverage_limit": depth, "complete_book_claimed": False,
                        "sequence": sequence}
-            state.update_book(market.instrument_id, snapshot, time.time_ns(), raw_book=raw, evaluate=False)
+            published_ns = time.time_ns()
+            state.update_book(market.instrument_id, snapshot, published_ns, raw_book=raw, evaluate=False)
+            if tape_recorder is not None:
+                tape_recorder.record_book(market, snapshot, published_ns, sequence=sequence)
             if state.quote_timings is not None:
                 quote_timing = self.pending_quote_timings.pop(instrument_id, None)
                 if quote_timing is not None and (
@@ -670,8 +693,15 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 old = state.metadata.get(market.instrument_id)
                 if old and (old.multiplier, old.size_increment) != (metadata.multiplier, metadata.size_increment):
                     self.invalidate(instrument.id, reason="metadata_invalid")
-                state.update_metadata(market.instrument_id, metadata, time.time_ns(),
+                now_ns = time.time_ns()
+                state.update_metadata(market.instrument_id, metadata, now_ns,
                                       evaluate=not plan.evaluation_interval_ms)
+                if tape_recorder is not None:
+                    tape_recorder.record_instrument(
+                        market, metadata, now_ns,
+                        price_increment=instrument_decimal(getattr(instrument, "price_increment", None)),
+                        source="instrument_update",
+                    )
                 if plan.evaluation_interval_ms:
                     self.pending_symbols.add(market.symbol)
                     self.pending_instruments.add(market.instrument_id)
@@ -700,7 +730,12 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     if getattr(status, "is_trading", None) is False or action in {
                             "HALT", "PAUSE", "CLOSE", "SUSPEND", "NOT_AVAILABLE_FOR_TRADING"}:
                         self.halted.add(instrument_id)
-                        state.invalidate(str(instrument_id), time.time_ns(), reason="halted")
+                        now_ns = time.time_ns()
+                        state.invalidate(str(instrument_id), now_ns, reason="halted")
+                        if tape_recorder is not None:
+                            tape_recorder.record_invalidation(
+                                self.markets[instrument_id], now_ns, reason="halted",
+                            )
                     elif getattr(status, "is_trading", None) is True or action == "TRADING":
                         self.halted.discard(instrument_id)
                 self.update_diagnostic_availability(instrument_id)
@@ -763,7 +798,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
     return Observer()
 
 
-def build_node(plan, *, state_factory=ScanState):
+def build_node(plan, *, state_factory=ScanState, tape_recorder=None):
     from nautilus_trader.common import CacheConfig, Environment, LoggerConfig, LogLevel
     from nautilus_trader.live import LiveDataEngineConfig, LiveNode
     from nautilus_trader.model import TraderId
@@ -784,7 +819,7 @@ def build_node(plan, *, state_factory=ScanState):
         builder = builder.add_data_client(client_id, factory, config)
         configs[client_id] = config
     node = builder.build()
-    observer = create_observer(plan, state, node.handle().stop, configs)
+    observer = create_observer(plan, state, node.handle().stop, configs, tape_recorder=tape_recorder)
     node.add_actor(observer)
     return node, observer, state
 
