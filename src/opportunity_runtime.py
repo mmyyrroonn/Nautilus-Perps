@@ -51,6 +51,14 @@ def market_metadata(market, instrument) -> MarketMetadata:
         if market.venue == "BACKPACK":
             fee = exact_decimal(Fraction(Decimal(market.backpack_economics["taker_fee"])) * 10000)
             source = "configured_backpack_economics: " + market.backpack_economics["source_reference"]
+    maker_fee = None
+    if market.venue == "BACKPACK" and "maker_fee" in getattr(market, "backpack_economics", {}):
+        maker_fee = exact_decimal(Fraction(Decimal(market.backpack_economics["maker_fee"])) * 10000)
+    else:
+        raw_maker = instrument_decimal(getattr(instrument, "maker_fee", None))
+        if raw_maker is not None and (
+                raw_maker != 0 or market.venue in {"LIGHTER", "LIGHTER_RH", "BACKPACK", "ONDO"}):
+            maker_fee = exact_decimal(Fraction(raw_maker) * 10000)
     minima = {}
     for name in ("min_quantity", "min_notional"):
         raw = getattr(instrument, name, None)
@@ -61,7 +69,8 @@ def market_metadata(market, instrument) -> MarketMetadata:
     minimum = minima["min_notional"]
     return MarketMetadata(market.instrument_id, step, multiplier, fee, source or "missing",
                           minima["min_quantity"], None if minimum is None else
-                          exact_decimal(Fraction(minimum) * Fraction(market.quote_to_usd)))
+                          exact_decimal(Fraction(minimum) * Fraction(market.quote_to_usd)),
+                          maker_fee_bps=maker_fee)
 
 
 def normalized_levels(market, levels):

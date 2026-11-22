@@ -27,6 +27,7 @@ class MarketMetadata:
     fee_source: str = "unknown"
     min_quantity: Decimal | None = None
     min_notional: Decimal | None = None
+    maker_fee_bps: Decimal | None = None
 
     @cached_property
     def _execution_valid(self) -> bool:
@@ -372,8 +373,12 @@ def evaluate_opportunity(
         },
         "buy_book": _json_safe(asdict(buy_book)),
         "sell_book": _json_safe(asdict(sell_book)),
-        "buy_metadata": _json_safe(asdict(buy_metadata)),
-        "sell_metadata": _json_safe(asdict(sell_metadata)),
+        "buy_metadata": _json_safe(
+            {k: v for k, v in asdict(buy_metadata).items() if k != "maker_fee_bps" or v is not None},
+        ),
+        "sell_metadata": _json_safe(
+            {k: v for k, v in asdict(sell_metadata).items() if k != "maker_fee_bps" or v is not None},
+        ),
     }
 
 

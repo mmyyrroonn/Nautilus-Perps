@@ -30,12 +30,22 @@ max_exit_reversal_edge_ratio = "1"
 slow_venues = ["HL", "LIGHTER", "ONDO"]
 slow_pair_entry_edge_bps = "25"
 slow_pair_min_persistence_ms = 150
+maker_exit_venues = ["HL", "LIGHTER", "BACKPACK", "ASTER"]
+maker_exit_timeout_ms = 4000
+maker_exit_max_attempts = 2
 
 [trade.entry_slippage_bps_by_venue]
 ASTER = "2"
 BACKPACK = "2"
 HL = "4"
 LIGHTER = "2"
+
+[trade.maker_fee_bps_by_venue]
+ASTER = "1"
+BACKPACK = "0"
+HL = "1.5"
+LIGHTER = "0"
+ONDO = "2"
 
 [entry_admission]
 # Local entry handoff budgets, validated offline; no guarantee of venue execution.

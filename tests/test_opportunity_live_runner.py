@@ -144,6 +144,14 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.slow_venues == ("HL", "LIGHTER", "ONDO")
     assert plan.policy.slow_pair_entry_edge_bps == D("25")
     assert plan.policy.slow_pair_min_persistence_ms == 150
+    assert plan.policy.maker_exit_venues == ("ASTER", "BACKPACK", "HL", "LIGHTER")
+    assert plan.policy.maker_exit_timeout_ms == 4000
+    assert plan.policy.maker_exit_max_attempts == 2
+    assert plan.policy.maker_fee_bps("HL") == D("1.5")
+    assert plan.policy.maker_fee_bps("LIGHTER") == D("0")
+    assert plan.policy.maker_fee_bps("BACKPACK") == D("0")
+    assert plan.policy.maker_fee_bps("ASTER") == D("1")
+    assert plan.policy.maker_fee_bps("ONDO") == D("2")
     assert plan.max_entry_slippage_bps == D("10")
     assert plan.scan.evaluation_interval_ms == 20
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
