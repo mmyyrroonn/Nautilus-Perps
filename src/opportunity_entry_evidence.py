@@ -501,6 +501,7 @@ def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
     if len(by_leg) != 2 or set(by_leg) != {"buy", "sell"}:
         return "exit_pair_incomplete", evidence
     bounds = {}
+    buffered = live.policy.soft_exit_execution_buffer_bps > 0
     for leg in ("buy", "sell"):
         instrument = position[f"{leg}_id"]
         order = by_leg[leg]
@@ -533,8 +534,12 @@ def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
         limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
         limit_fee = limit_cash * F(meta.taker_fee_bps) / 10000
         scale = remains[leg] / base
-        bounds[leg] = ((limit_cash if leg == "buy" else -limit_cash) - limit_fee) * scale
         row.update(limit_cash_usd=_number(limit_cash), fee_usd=_number(limit_fee))
+        if buffered:
+            bounds[leg] = ((bound["cash"] if leg == "buy" else -bound["cash"]) - bound["fee"]) * scale
+            row.update(bound_cash_usd=_number(bound["cash"]), bound_fee_usd=_number(bound["fee"]))
+        else:
+            bounds[leg] = ((limit_cash if leg == "buy" else -limit_cash) - limit_fee) * scale
     if abs(live.books[position["buy_id"]].ts_event_ns - live.books[position["sell_id"]].ts_event_ns) > live.plan.settings.max_skew_ms * 1_000_000:
         return "book_skew", evidence
     pnl = live._pnl(position) + bounds["buy"] + bounds["sell"]

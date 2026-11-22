@@ -449,6 +449,7 @@ def test_restart_rechecks_soft_exit_profit_before_filling(tmp_path, reason, trig
     ("max_loss_bps", -1), ("max_loss_bps", True), ("take_profit_bps", 0.5),
     ("slippage_bps", -1), ("slippage_bps", 10000),
     ("hard_exit_slippage_bps", -1), ("hard_exit_slippage_bps", 10000), ("hard_exit_slippage_bps", "NaN"),
+    ("soft_exit_execution_buffer_bps", -1), ("soft_exit_execution_buffer_bps", 10000), ("soft_exit_execution_buffer_bps", "NaN"),
     ("breakeven_after_secs", True),
     ("force_close_after_secs", 1.5), ("force_close_after_secs", 180),
     ("breakeven_after_secs", 300), ("force_close_after_secs", 86401),
@@ -457,6 +458,11 @@ def test_restart_rechecks_soft_exit_profit_before_filling(tmp_path, reason, trig
 def test_invalid_policy_fails_before_state_creation(field, value):
     with pytest.raises(ScanConfigError):
         TradePolicy(**{field: value})
+
+
+def test_soft_exit_execution_buffer_document_omits_zero_default_and_serializes_nonzero():
+    assert "soft_exit_execution_buffer_bps" not in TradePolicy().document()
+    assert TradePolicy(soft_exit_execution_buffer_bps=D("4")).document()["soft_exit_execution_buffer_bps"] == "4"
 
 
 @pytest.mark.parametrize("loss_bps", [-20, -50])

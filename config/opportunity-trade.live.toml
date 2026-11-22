@@ -10,7 +10,7 @@ scan_config = "opportunity-scan.universe.toml"
 state_path = "../reports/opportunity-trading/live.sqlite3"
 limits_path = "limits.toml"
 # All order mutations use the matching native Nautilus execution factory.
-venues = ["HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"]
+venues = ["HYPERLIQUID", "LIGHTER", "ASTER", "BACKPACK"]
 # Exclude persistent non-converging basis traps identified in live diagnostics.
 excluded_symbols = ["INIT"]
 
@@ -24,10 +24,11 @@ breakeven_after_secs = 180
 force_close_after_secs = 300
 slippage_bps = "0"
 hard_exit_slippage_bps = "10"
+soft_exit_execution_buffer_bps = "4"
 loss_cooldown_secs = 60
 max_exit_reversal_bps = "30"
 max_exit_reversal_edge_ratio = "1"
-slow_venues = ["HL", "LIGHTER", "ONDO"]
+slow_venues = ["HL", "LIGHTER"]
 slow_pair_entry_edge_bps = "25"
 slow_pair_min_persistence_ms = 150
 maker_exit_venues = ["HL", "LIGHTER", "BACKPACK", "ASTER"]
@@ -45,14 +46,13 @@ ASTER = "1"
 BACKPACK = "0"
 HL = "1.5"
 LIGHTER = "0"
-ONDO = "2"
 
 [entry_admission]
 # Local entry handoff budgets, validated offline; no guarantee of venue execution.
 # Effective source/receive/skew limits also respect stricter scan settings.
-max_source_age_ms = 500
-max_receive_age_ms = 250
-max_skew_ms = 250
+max_source_age_ms = 1000
+max_receive_age_ms = 1000
+max_skew_ms = 500
 # Native receive -> strategy publication includes delivery queues and coalescing.
 max_publication_wait_ms = 150
 max_dispatch_delay_ms = 100
