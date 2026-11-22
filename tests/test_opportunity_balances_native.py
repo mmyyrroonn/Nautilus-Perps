@@ -110,11 +110,11 @@ def test_readonly_factory_configs_do_not_create_production_writers(tmp_path):
     from nautilus_trader.adapters import backpack as bp, ondo
     from test_backpack_account_native import SEED, PUBLIC
     from opportunity_native_execution import execution_clients
-    from opportunity_live_runner import load_live_plan
+    from opportunity_scan import load_plan
     from dataclasses import replace
-    plan = load_live_plan(Path(__file__).resolve().parents[1] / "config/opportunity-trade.live.toml")
-    scan = replace(plan.scan, markets=tuple(m for m in plan.scan.markets
-                                           if m.venue in {"ONDO", "BACKPACK"} and m.symbol == "BTC"))
+    base = load_plan(Path(__file__).resolve().parents[1] / "config/opportunity-scan.universe.toml")
+    scan = replace(base, markets=tuple(m for m in base.markets
+                                       if m.venue in {"ONDO", "BACKPACK"} and m.symbol == "BTC"))
     env = {"ONDO_MAINNET_API_KEY": "readonly-fixture", "ONDO_MAINNET_API_SECRET": "fixture-secret",
            "ONDO_MAINNET_ACCOUNT_ID": "fixture-account", "BACKPACK_MAINNET_API_SECRET": SEED,
            "BACKPACK_MAINNET_API_KEY": PUBLIC}

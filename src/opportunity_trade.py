@@ -75,6 +75,7 @@ class TradePolicy:
     slippage_bps: Decimal = Decimal("0")
     entry_slippage_bps_by_venue: tuple[tuple[str, Decimal], ...] = ()
     hard_exit_slippage_bps: Decimal = Decimal("10")
+    soft_exit_execution_buffer_bps: Decimal = Decimal("0")
     loss_cooldown_secs: int = 0
     max_exit_reversal_bps: Decimal | None = None
     max_exit_reversal_edge_ratio: Decimal | None = None
@@ -92,7 +93,7 @@ class TradePolicy:
         for name in ("order_notional_usd", "entry_edge_bps", "take_profit_bps", "max_loss_bps"):
             value = decimal_value(getattr(self, name), name, positive=True)
             object.__setattr__(self, name, value)
-        for name in ("slippage_bps", "hard_exit_slippage_bps"):
+        for name in ("slippage_bps", "hard_exit_slippage_bps", "soft_exit_execution_buffer_bps"):
             slip = decimal_value(getattr(self, name), name, nonnegative=True)
             if slip >= 10000:
                 raise ScanConfigError(f"{name} must be below 10000")
@@ -177,7 +178,8 @@ class TradePolicy:
         result = {}
         for key, value in asdict(self).items():
             if key in {"loss_cooldown_secs", "slow_pair_min_persistence_ms",
-                       "maker_exit_timeout_ms", "maker_exit_max_attempts"} and value == 0:
+                       "maker_exit_timeout_ms", "maker_exit_max_attempts",
+                       "soft_exit_execution_buffer_bps"} and value == 0:
                 continue
             if key in {"entry_slippage_bps_by_venue", "maker_fee_bps_by_venue"}:
                 if not value:

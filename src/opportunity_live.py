@@ -2548,12 +2548,24 @@ class LiveTradeState(ScanState):
             # A rising price can make an owned leg larger than the order cap.
             # Work off equal base-sized batches, retaining the original ledger.
             step = F(position["entry"]["sizing"]["common_base_step"])
-            paired_quantity = (min(b["base_quantity"] for b in bounds.values()) // step) * step
+            buffer_bps = self.policy.soft_exit_execution_buffer_bps
+            soft_exit_slip = self.policy.slippage_bps + buffer_bps if buffer_bps > 0 else None
+            qty_candidates = [b["base_quantity"] for b in bounds.values()]
+            if soft_exit_slip is not None:
+                exec_bounds = {
+                    leg: self._limit(position[f"{leg}_id"], "SELL" if leg == "buy" else "BUY",
+                        old["base_quantity"], now_ns, partial=True, reduce_only=old["reduce_only"],
+                        slippage_bps=soft_exit_slip)
+                    for leg, old in bounds.items()}
+                if any(bound is None for bound in exec_bounds.values()):
+                    return
+                qty_candidates.extend(b["base_quantity"] for b in exec_bounds.values())
+            paired_quantity = (min(qty_candidates) // step) * step
             if paired_quantity <= 0:
                 return
             for leg, old in tuple(bounds.items()):
                 bounds[leg] = self._limit(position[f"{leg}_id"], "SELL" if leg == "buy" else "BUY",
-                    paired_quantity, now_ns, reduce_only=old["reduce_only"])
+                    paired_quantity, now_ns, reduce_only=old["reduce_only"], slippage_bps=soft_exit_slip)
             if any(bound is None for bound in bounds.values()):
                 return
         intents = [self._make_order(position, leg, "exit", bound, now_ns,

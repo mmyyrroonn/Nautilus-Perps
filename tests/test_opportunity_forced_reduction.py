@@ -379,3 +379,68 @@ def test_restart_preserves_native_rule_fence_for_owned_inventory():
     resumed.on_evaluation_timer(now)
     assert not submissions(resumed)
     assert len(resumed.positions) == 1 and resumed.completed == 0
+
+
+def test_soft_exit_execution_buffer_decouples_limit_from_admission_and_entry():
+    live, _ = state(policy=TradePolicy(
+        take_profit_bps=D(5), slippage_bps=D(0),
+        soft_exit_execution_buffer_bps=D(4), hard_exit_slippage_bps=D(10),
+    ))
+    publish(live)
+    buy_entry, sell_entry = submissions(live)
+    assert buy_entry.price == D("100") and sell_entry.price == D("100.3")
+    for intent in (buy_entry, sell_entry):
+        fill(live, intent, NOW + SECOND // 10)
+    accounts(live, NOW + SECOND // 10 + 2)
+    live.on_evaluation_timer(NOW + SECOND // 10 + 2)
+    live.drain_intents()
+
+    # Unbuffered mark below 5 bps must not trigger even with a 4 bps execution buffer.
+    _, too_early = mark(live, 4)
+    assert not too_early
+
+    # Unbuffered mark at +6 bps triggers soft exit and pads dispatched IOC limits by 4 bps.
+    _, soft_exits = mark(live, 6, 2)
+    sell_exit = next(i for i in soft_exits if i.side == "SELL")
+    buy_exit = next(i for i in soft_exits if i.side == "BUY")
+    assert sell_exit.price == D("99.95") and buy_exit.price == D("100.28")
+
+    # Hard exit still uses hard_exit_slippage_bps (10 bps), never soft_exit_execution_buffer_bps.
+    for intent in soft_exits:
+        live.on_receipt(receipt(intent, "rejected"), NOW + 3 * SECOND)
+    _, hard_exits = mark(live, 6, 300)
+    assert next(i for i in hard_exits if i.side == "SELL").price == D("99.89")
+    assert next(i for i in hard_exits if i.side == "BUY").price == D("100.34")
+
+
+def test_soft_exit_execution_buffer_dispatch_recheck_allows_profitable_and_blocks_degraded():
+    from opportunity_entry_evidence import discard_invalid_soft_exit
+
+    def _stage_6bp():
+        live, events = state(policy=TradePolicy(
+            take_profit_bps=D(5), slippage_bps=D(0),
+            soft_exit_execution_buffer_bps=D(4), hard_exit_slippage_bps=D(10),
+        ))
+        open_pair(live)
+        now, soft_exits = mark(live, 6, 2)
+        for intent in soft_exits:
+            live.orders[intent.client_order_id]["status"] = "dispatch_released"
+        return live, events, now, soft_exits[0]
+
+    # Case 1: unbuffered book is +6 bps (>= 5 bps) while buffered limits (99.95 / 100.28) are < 0 bps.
+    # Send-time gate must still allow dispatch because the unbuffered book clears take_profit_bps.
+    live1, _, now1, intent1 = _stage_6bp()
+    assert discard_invalid_soft_exit(live1, intent1, now1) is False
+
+    # Case 2: unbuffered ask rises inside the +4 bps buffer (100.26 -> +3 bps < 5 bps TP).
+    live2, events2, now2, intent2 = _stage_6bp()
+    set_book(live2, "ASTER", "100.25", "100.26", now2)
+    assert discard_invalid_soft_exit(live2, intent2, now2) is True
+    assert events2[-1]["event"] == "exit_dispatch_blocked" and events2[-1]["reason"] == "net_edge_insufficient"
+    assert next(iter(live2.positions.values()))["status"] == "open"
+
+    # Case 3: unbuffered ask crosses above buffered BUY limit (100.29 > 100.28).
+    live3, events3, now3, intent3 = _stage_6bp()
+    set_book(live3, "ASTER", "100.28", "100.29", now3)
+    assert discard_invalid_soft_exit(live3, intent3, now3) is True
+    assert events3[-1]["event"] == "exit_dispatch_blocked" and events3[-1]["reason"] == "price_outside_limit"

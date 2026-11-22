@@ -117,8 +117,10 @@ def test_five_venues_keep_btc_checks_when_trading_only_eth(tmp_path):
 
 
 def test_shipped_live_plan_selects_all_five_native_venues():
+    from opportunity_entry_admission import EntryAdmissionPolicy
     plan = load_live_plan(ROOT / "config/opportunity-trade.live.toml")
-    assert set(plan.venues) == {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
+    assert set(plan.venues) == {"HL", "LIGHTER", "ASTER", "BACKPACK"}
+    assert "ONDO" not in plan.venues
     assert len(plan.trade_symbols) > 2 and plan.ready
     assert "INIT" not in plan.trade_symbols
     assert "XPL" in plan.trade_symbols and "ASTER" in plan.trade_symbols
@@ -136,12 +138,13 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.max_exit_reversal_edge_ratio == 1
     assert plan.lighter_margin_max_age_ms == 60000 and plan.aster_leverage_max_age_ms == 15000
     assert plan.policy.slippage_bps == 0 and plan.policy.hard_exit_slippage_bps == 10
+    assert plan.policy.soft_exit_execution_buffer_bps == D("4")
     assert plan.policy.entry_slippage_bps("HL") == D("4")
     assert plan.policy.entry_slippage_bps("LIGHTER") == D("2")
     assert plan.policy.entry_slippage_bps("ASTER") == D("2")
     assert plan.policy.entry_slippage_bps("BACKPACK") == D("2")
     assert plan.policy.entry_slippage_bps("ONDO") == D("0")
-    assert plan.policy.slow_venues == ("HL", "LIGHTER", "ONDO")
+    assert plan.policy.slow_venues == ("HL", "LIGHTER")
     assert plan.policy.slow_pair_entry_edge_bps == D("25")
     assert plan.policy.slow_pair_min_persistence_ms == 150
     assert plan.policy.maker_exit_venues == ("ASTER", "BACKPACK", "HL", "LIGHTER")
@@ -151,12 +154,24 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.maker_fee_bps("LIGHTER") == D("0")
     assert plan.policy.maker_fee_bps("BACKPACK") == D("0")
     assert plan.policy.maker_fee_bps("ASTER") == D("1")
-    assert plan.policy.maker_fee_bps("ONDO") == D("2")
+    assert plan.policy.maker_fee_bps("ONDO") is None
+    assert plan.entry_admission == EntryAdmissionPolicy(
+        max_source_age_ms=1000, max_receive_age_ms=1000, max_skew_ms=500,
+        max_publication_wait_ms=150, max_dispatch_delay_ms=100,
+    )
     assert plan.max_entry_slippage_bps == D("10")
     assert plan.scan.evaluation_interval_ms == 20
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
     assert plan.startup_self_test is False
     assert plan.document()["startup"]["account_gate_required"] is True
+
+
+def test_load_live_plan_clamps_soft_exit_execution_buffer_to_hard_cap(tmp_path):
+    from opportunity_live_runner import HARD_MAX_SOFT_EXIT_BUFFER_BPS
+    path = configs(tmp_path)
+    path.write_text(path.read_text().replace('order_notional_usd = "100"', 'order_notional_usd = "100"\nsoft_exit_execution_buffer_bps = "50"'), encoding="utf-8")
+    plan = load_live_plan(path)
+    assert plan.policy.soft_exit_execution_buffer_bps == HARD_MAX_SOFT_EXIT_BUFFER_BPS
 
 
 
@@ -994,12 +1009,37 @@ def native_build_credentials():
         "BACKPACK_MAINNET_API_KEY": base64.b64encode(public).decode()}
 
 
+def _five_venue_live_config(tmp_path: Path) -> Path:
+    text = (ROOT / "config/opportunity-trade.live.toml").read_text(encoding="utf-8")
+    text = (
+        text.replace(
+            'venues = ["HYPERLIQUID", "LIGHTER", "ASTER", "BACKPACK"]',
+            'venues = ["HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"]',
+        )
+        .replace(
+            'scan_config = "opportunity-scan.universe.toml"',
+            f'scan_config = "{(ROOT / "config/opportunity-scan.universe.toml").resolve().as_posix()}"',
+        )
+        .replace(
+            'limits_path = "limits.toml"',
+            f'limits_path = "{(ROOT / "config/limits.toml").resolve().as_posix()}"',
+        )
+        .replace(
+            'state_path = "../reports/opportunity-trading/live.sqlite3"',
+            'state_path = "live.sqlite3"',
+        )
+    )
+    path = tmp_path / "live-five-venue.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def test_complete_live_node_builds_with_installed_five_venue_factories_without_connecting(tmp_path):
     import os
     from unittest.mock import patch
     from opportunity_live import LiveTradeState
     fake = native_build_credentials()
-    plan = replace(load_live_plan(ROOT / "config/opportunity-trade.live.toml", symbols="BTC,ETH"),
+    plan = replace(load_live_plan(_five_venue_live_config(tmp_path), symbols="BTC,ETH"),
         state_path=tmp_path / "live.sqlite3")
     proxy = SessionStoreProxy(MemoryStore())
     live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
@@ -1023,7 +1063,7 @@ def test_native_restart_with_existing_bound_journals_uses_fresh_session_director
     from unittest.mock import patch
     import opportunity_native_execution
     from opportunity_live import LiveTradeState
-    plan = replace(load_live_plan(ROOT / "config/opportunity-trade.live.toml", symbols="BTC,ETH"),
+    plan = replace(load_live_plan(_five_venue_live_config(tmp_path), symbols="BTC,ETH"),
                    state_path=tmp_path / "live.sqlite3")
     store = MemoryStore()
     original_clients = opportunity_native_execution.execution_clients
