@@ -26,7 +26,7 @@ import time
 import uuid
 
 from opportunity_core import (
-    _book_valid, _execution_metadata_valid, _fee_metadata_valid, _number, exact_decimal,
+    _book_valid, _execution_metadata_valid, _fee_metadata_valid, _metadata_valid, _number, exact_decimal,
 )
 from opportunity_basis import (
     BasisFilterPolicy, RollingBasisTracker, RouteMaxHoldTracker,
@@ -1118,21 +1118,29 @@ class LiveTradeState(ScanState):
                 "fee": cash * F(meta.taker_fee_bps) / 10000 if fees_ready else None,
                 "reduce_only": reduce_only}
 
-    def _make_order(self, position, leg, purpose, bound, now_ns, *, attempt_kind=None):
+    def _make_order(self, position, leg, purpose, bound, now_ns, *, attempt_kind=None, maker_exit=False):
         instrument_id = position[f"{leg}_id"]
         side = ("BUY" if leg == "buy" else "SELL") if purpose == "entry" else ("SELL" if leg == "buy" else "BUY")
         request_id = self._request_id("S")
         # Short ASCII IDs fit Aster/Lighter and are hashed to a cloid by HL.
         cid = request_id
+        tif = bound.get("time_in_force", "IOC")
+        post_only = bool(bound.get("post_only", False))
         intent = OrderIntent("submit", self.markets[instrument_id].venue, instrument_id,
-            request_id, cid, side, bound["quantity"], bound["price"], "IOC", False, bound["reduce_only"])
-        self.orders[cid] = {"client_order_id": cid, "request_id": request_id,
+            request_id, cid, side, bound["quantity"], bound["price"], tif, post_only, bound["reduce_only"])
+        record = {"client_order_id": cid, "request_id": request_id,
             "position_id": position["position_id"], "leg": leg, "purpose": purpose,
             "instrument_id": instrument_id, "side": side, "quantity": str(intent.quantity),
             "price": str(intent.price), "reduce_only": intent.reduce_only, "sent_ns": now_ns,
             "preparation_account_fence_ns": self.fences.get(instrument_id, 0),
             "accepted_ns": None, "first_fill_ns": None, "terminal_ns": None,
             "status": "prepared", "filled_quantity": "0"}
+        if maker_exit:
+            record.update(maker_exit=True, time_in_force=tif, post_only=post_only,
+                          cancel_requested_ns=None, cancel_request_id=None)
+        elif attempt_kind == "maker_hedge":
+            record["maker_hedge"] = True
+        self.orders[cid] = record
         self._execution_orders[cid] = self.orders[cid]
         self.fences[instrument_id] = now_ns
         self.last_attempt[instrument_id] = now_ns
@@ -1553,7 +1561,10 @@ class LiveTradeState(ScanState):
             fee = F(0)
             meta = self.metadata.get(instrument_id)
             if meta is not None and meta.instrument_id == instrument_id and _fee_metadata_valid(meta):
-                estimated_fee = cash * F(meta.taker_fee_bps) / 10000
+                est_rate = self._maker_fee_bps(instrument_id) if order.get("maker_exit") else F(meta.taker_fee_bps)
+                if est_rate is None:
+                    est_rate = F(meta.taker_fee_bps)
+                estimated_fee = cash * est_rate / 10000
             position["unknown_commission"] = True
             position["pending_commissions"][identity] = {
                 "client_order_id": cid, "instrument_id": instrument_id, "purpose": order["purpose"],
@@ -1605,7 +1616,7 @@ class LiveTradeState(ScanState):
         self._update_unhedged(position, now_ns)
         if order["purpose"] != "entry":
             self._exit_stage(position, "reduction_fill_" + leg, now_ns, client_order_id=cid)
-            if order["purpose"] == "exit":
+            if order["purpose"] == "exit" and not order.get("maker_exit") and not order.get("maker_hedge"):
                 hard_attempts = self._attempt_timestamps.setdefault("hard_exit", {})
                 hard_attempts[instrument_id] = max(hard_attempts.get(instrument_id, 0), order["sent_ns"])
         if not F(position["remaining_buy_base"]) and not F(position["remaining_sell_base"]):
@@ -1639,6 +1650,14 @@ class LiveTradeState(ScanState):
                     self._pause_account(instrument_id, now_ns, "read_failed", new_evidence=True)
                     return
         order = self.orders.get(receipt.client_order_id)
+        if order is not None and receipt.request_id == order.get("cancel_request_id"):
+            if receipt.kind in {"rejected", "unknown"} and order["terminal_ns"] is None:
+                order["cancel_requested_ns"] = None
+                order["cancel_retry_after_ns"] = now_ns + self.retry_ns
+                self.emit("maker_exit_cancel_failed", now_ns,
+                          client_order_id=receipt.client_order_id, request_id=receipt.request_id,
+                          receipt_kind=receipt.kind, reason_code=getattr(receipt, "reason_code", ""))
+            return
         if order is None or receipt.request_id != order["request_id"] or receipt.kind == "fill":
             return
         if receipt.kind == "execution_closed":
@@ -1899,18 +1918,15 @@ class LiveTradeState(ScanState):
         authorized = max(_ZERO, (quantity - unmatched) / multiplier + pending_entry)
         return max(quantity, min(max(_ZERO, target), authorized) * multiplier)
 
-    def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True,
-                         allow_pending_entry=False, allow_unknown_reduction=False,
-                         hard_slippage=False, attempt_kind=None):
+    def _validate_reduction_leg(self, position, leg, now_ns, *, allow_pending_entry=False,
+                                allow_unknown_reduction=False, attempt_kind=None, emit_stage=True):
         instrument_id = position[f"{leg}_id"]
-        if not qty:
-            return None
         attempt_kind = attempt_kind or ("hard_exit" if allow_unknown_reduction else "soft_exit")
         last_attempt = self._attempt_timestamp(attempt_kind, instrument_id)
         if now_ns - last_attempt < self.retry_ns:
             self._exit_wait(position, leg, now_ns, "order_retry_throttled",
                             retry_at_ns=last_attempt + self.retry_ns)
-            return None
+            return False
         if allow_unknown_reduction:
             # Await only this leg's recent reduction response, not an account audit.
             # Unknown outcomes are retried under the venue's reduce-only cap.
@@ -1918,7 +1934,7 @@ class LiveTradeState(ScanState):
                     and o["status"] != "unknown" and now_ns - o["sent_ns"] < self.order_timeout_ns
                     for o in self._pending(instrument_id)):
                 self._exit_wait(position, leg, now_ns, "reduction_in_flight")
-                return None
+                return False
         elif not self._account_ready(instrument_id, now_ns,
                 pending_entry_owner=position["position_id"] if allow_pending_entry else None):
             account = self.accounts.get(instrument_id)
@@ -1933,25 +1949,39 @@ class LiveTradeState(ScanState):
                             read_retry_at_ns=max(self.account_retry_after_ns.get(scope, 0),
                                 max((self.account_last_reads.get(i, 0) + self.retry_ns
                                      for i in self.account_scopes[scope]), default=0)))
-            return None
-        self._exit_stage(position, "account_accepted_" + leg, now_ns)
+            return False
+        if emit_stage:
+            self._exit_stage(position, "account_accepted_" + leg, now_ns)
         current = self.metadata.get(instrument_id)
         original = position["entry"][f"{leg}_metadata"]
         if current is None or current.instrument_id != instrument_id or not _execution_metadata_valid(current):
             self._exit_wait(position, leg, now_ns, "execution_metadata_unavailable")
-            return None
+            return False
         for name in ("multiplier", "size_increment", "min_quantity", "min_notional"):
             old_value = original.get(name)
             if getattr(current, name) != (Decimal(old_value) if old_value is not None else None):
                 self._exit_wait(position, leg, now_ns, "execution_metadata_changed")
-                return None
+                return False
         original_native = position.get("native_rules", {}).get(leg)
         native = self.instruments.get(instrument_id, {})
         if original_native is not None and any(
                 native.get(name) != (value if name == "quote_currency" else Decimal(value))
                 for name, value in original_native.items()):
             self._exit_wait(position, leg, now_ns, "native_rules_changed")
+            return False
+        return True
+
+    def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True,
+                         allow_pending_entry=False, allow_unknown_reduction=False,
+                         hard_slippage=False, attempt_kind=None):
+        instrument_id = position[f"{leg}_id"]
+        if not qty:
             return None
+        if not self._validate_reduction_leg(
+                position, leg, now_ns, allow_pending_entry=allow_pending_entry,
+                allow_unknown_reduction=allow_unknown_reduction, attempt_kind=attempt_kind):
+            return None
+        original = position["entry"][f"{leg}_metadata"]
         native_remaining = qty / F(original["multiplier"])
         delta = -native_remaining if leg == "buy" else native_remaining
         net = self.expected_native(instrument_id)
@@ -1977,6 +2007,272 @@ class LiveTradeState(ScanState):
         else:
             self._exit_wait(position, leg, now_ns, "account_accepted")
         return bound
+
+    def _maker_fee_bps(self, instrument_id):
+        configured = self.policy.maker_fee_bps(self.markets[instrument_id].venue)
+        if configured is not None:
+            return F(configured)
+        meta = self.metadata.get(instrument_id)
+        if meta is not None and isinstance(meta.maker_fee_bps, Decimal) and meta.maker_fee_bps.is_finite():
+            return F(meta.maker_fee_bps)
+        if meta is not None and _fee_metadata_valid(meta):
+            return F(meta.taker_fee_bps)
+        return None
+
+    def _maker_limit(self, instrument_id, side, base_quantity, now_ns, *, partial=False, reduce_only=False):
+        book, meta = self.books.get(instrument_id), self.metadata.get(instrument_id)
+        native = self.instruments.get(instrument_id)
+        if (book is None or meta is None or native is None or meta.instrument_id != instrument_id
+                or not _execution_metadata_valid(meta) or not _fee_metadata_valid(meta)
+                or not _book_valid(book, self.plan.settings, now_ns)):
+            return None
+        maker_fee = self._maker_fee_bps(instrument_id)
+        if maker_fee is None:
+            return None
+        market = self.markets[instrument_id]
+        if book.venue != market.venue or book.symbol != market.symbol:
+            return None
+        if F(meta.multiplier) != F(native["native_multiplier"]) * F(market.canonical_multiplier):
+            return None
+        conv = F(market.canonical_multiplier) / F(market.quote_to_usd)
+        tick = F(native["price_increment"])
+        bid_canon, ask_canon = F(book.bids[0][0]), F(book.asks[0][0])
+        bid_native = (bid_canon * conv // tick) * tick
+        ask_native = -(-(ask_canon * conv) // tick) * tick
+        if side == "SELL":
+            px = max(ask_native, bid_native + tick)
+        else:
+            px = min(bid_native, ask_native - tick)
+        if self.bbo_provider is not None:
+            bbo = fresh_bbo_quote(self, instrument_id, book)
+            if bbo is not None:
+                bbo_bid_n, bbo_ask_n = F(bbo[0]) * conv, F(bbo[1]) * conv
+                if side == "SELL" and px <= bbo_bid_n:
+                    px = max(px, -(-bbo_ask_n // tick) * tick, (bbo_bid_n // tick) * tick + tick)
+                elif side == "BUY" and px >= bbo_ask_n:
+                    px = min(px, (bbo_bid_n // tick) * tick, -(-bbo_ask_n // tick) * tick - tick)
+        if px <= 0 or (side == "SELL" and px <= bid_canon * conv) or (side == "BUY" and px >= ask_canon * conv):
+            return None
+        step, multiplier = F(meta.size_increment), F(meta.multiplier)
+        quantity = (F(base_quantity) / multiplier // step) * step
+        unit_cash = px * F(native["native_multiplier"]) * F(market.quote_to_usd)
+        cap_quantity = (F(self.policy.order_notional_usd) / unit_cash // step) * step
+        if quantity > cap_quantity:
+            if not partial or cap_quantity <= 0:
+                return None
+            quantity = cap_quantity
+        if quantity <= 0 or quantity % step:
+            return None
+        cash = quantity * unit_cash
+        if not reduce_only and ((meta.min_quantity is not None and quantity < F(meta.min_quantity))
+                or (meta.min_notional is not None and cash < F(meta.min_notional))):
+            return None
+        return {
+            "quantity": exact_decimal(quantity),
+            "price": exact_decimal(px),
+            "base_quantity": quantity * multiplier,
+            "cash": cash,
+            "fee": cash * maker_fee / 10000,
+            "reduce_only": reduce_only,
+            "time_in_force": "GTC",
+            "post_only": True,
+        }
+
+    def _select_maker_exit_leg(self, position):
+        if not self.policy.maker_exit_enabled:
+            return None
+        buy_venue = self.markets[position["buy_id"]].venue
+        sell_venue = self.markets[position["sell_id"]].venue
+        buy_slow = self.policy.is_slow_pair(buy_venue, buy_venue)
+        sell_slow = self.policy.is_slow_pair(sell_venue, sell_venue)
+        if buy_slow != sell_slow:
+            candidates = ("buy",) if buy_slow else ("sell",)
+        else:
+            candidates = ("buy", "sell")
+        eligible = [leg for leg in candidates
+                    if self.policy.is_maker_exit_venue(self.markets[position[f"{leg}_id"]].venue)]
+        if not eligible:
+            return None
+        if len(eligible) == 1:
+            return eligible[0]
+
+        def score(leg):
+            inst_id = position[f"{leg}_id"]
+            meta = self.metadata.get(inst_id)
+            maker_fee = self._maker_fee_bps(inst_id)
+            fee_saving = (F(meta.taker_fee_bps) - maker_fee) if (
+                meta is not None and _fee_metadata_valid(meta) and maker_fee is not None) else _ZERO
+            book = self.books.get(inst_id)
+            spread_bps = ((F(book.asks[0][0]) - F(book.bids[0][0])) / F(book.bids[0][0]) * 10000) if (
+                book is not None and book.bids and book.asks and F(book.bids[0][0]) > 0) else _ZERO
+            return (fee_saving, spread_bps, 1 if leg == "buy" else 0)
+
+        return max(eligible, key=score)
+
+    def _maker_exit_reason_and_bounds(self, position, maker_leg, now_ns, *, resting_order=None):
+        if position["opened_ns"] is None or position["unknown_commission"]:
+            return None, None, None, None
+        capital = F(position["actual_entry"]["buy_notional_usd"])
+        if capital <= 0:
+            return None, None, None, None
+        remains = {leg: F(position[f"remaining_{leg}_base"]) for leg in ("buy", "sell")}
+        if remains["buy"] <= 0 or remains["buy"] != remains["sell"]:
+            return None, None, None, None
+        buy_book, sell_book = self.books.get(position["buy_id"]), self.books.get(position["sell_id"])
+        if (buy_book is None or sell_book is None
+                or not _book_valid(buy_book, self.plan.settings, now_ns)
+                or not _book_valid(sell_book, self.plan.settings, now_ns)):
+            return None, None, None, None
+        if abs(buy_book.ts_event_ns - sell_book.ts_event_ns) > self.plan.settings.max_skew_ms * 1_000_000:
+            return None, None, None, None
+        hedge_leg = "sell" if maker_leg == "buy" else "buy"
+        maker_id, hedge_id = position[f"{maker_leg}_id"], position[f"{hedge_leg}_id"]
+        maker_side = "SELL" if maker_leg == "buy" else "BUY"
+        hedge_side = "SELL" if hedge_leg == "buy" else "BUY"
+        hedge_slip = self.policy.entry_slippage_bps(self.markets[hedge_id].venue)
+
+        def is_reducing(leg, base_qty):
+            inst = position[f"{leg}_id"]
+            native_rem = base_qty / F(position["entry"][f"{leg}_metadata"]["multiplier"])
+            delta = -native_rem if leg == "buy" else native_rem
+            net = self.expected_native(inst)
+            return net * delta < 0 and abs(delta) <= abs(net)
+
+        if resting_order is None:
+            qty = remains[maker_leg]
+            maker_red = is_reducing(maker_leg, qty)
+            hedge_red = is_reducing(hedge_leg, qty)
+            maker_bound = self._maker_limit(maker_id, maker_side, qty, now_ns, partial=True, reduce_only=maker_red)
+            hedge_bound = self._limit(hedge_id, hedge_side, qty, now_ns, partial=True, reduce_only=hedge_red,
+                                      slippage_bps=hedge_slip)
+            if maker_bound is None or hedge_bound is None:
+                return None, None, None, None
+            step = F(position["entry"]["sizing"]["common_base_step"])
+            paired_qty = (min(maker_bound["base_quantity"], hedge_bound["base_quantity"]) // step) * step
+            if paired_qty <= 0:
+                return None, None, None, None
+            if maker_bound["base_quantity"] != paired_qty:
+                maker_bound = self._maker_limit(maker_id, maker_side, paired_qty, now_ns,
+                                                reduce_only=is_reducing(maker_leg, paired_qty))
+            if hedge_bound["base_quantity"] != paired_qty:
+                hedge_bound = self._limit(hedge_id, hedge_side, paired_qty, now_ns,
+                                          reduce_only=is_reducing(hedge_leg, paired_qty), slippage_bps=hedge_slip)
+            if maker_bound is None or hedge_bound is None:
+                return None, None, None, None
+        else:
+            maker_meta, maker_market, maker_native = (
+                self.metadata.get(maker_id), self.markets[maker_id], self.instruments.get(maker_id)
+            )
+            maker_fee_bps = self._maker_fee_bps(maker_id)
+            if (maker_meta is None or maker_native is None or maker_fee_bps is None
+                    or not _metadata_valid(maker_meta)):
+                return None, None, None, None
+            resting_qty = F(resting_order["quantity"])
+            resting_px = F(resting_order["price"])
+            resting_base = resting_qty * F(maker_meta.multiplier)
+            maker_cash = resting_qty * resting_px * F(maker_native["native_multiplier"]) * F(maker_market.quote_to_usd)
+            maker_fee = maker_cash * maker_fee_bps / 10000
+            maker_bound = {
+                "quantity": Decimal(resting_order["quantity"]),
+                "price": Decimal(resting_order["price"]),
+                "base_quantity": resting_base,
+                "cash": maker_cash,
+                "fee": maker_fee,
+                "reduce_only": bool(resting_order["reduce_only"]),
+                "time_in_force": "GTC",
+                "post_only": True,
+            }
+            hedge_bound = self._limit(hedge_id, hedge_side, resting_base, now_ns,
+                                      reduce_only=bool(resting_order["reduce_only"]), slippage_bps=hedge_slip)
+            if hedge_bound is None:
+                return None, None, None, None
+
+        maker_scale = remains[maker_leg] / maker_bound["base_quantity"]
+        hedge_scale = remains[hedge_leg] / hedge_bound["base_quantity"]
+        maker_net = ((maker_bound["cash"] if maker_leg == "buy" else -maker_bound["cash"]) - maker_bound["fee"]) * maker_scale
+        hedge_net = ((hedge_bound["cash"] if hedge_leg == "buy" else -hedge_bound["cash"]) - hedge_bound["fee"]) * hedge_scale
+        pnl = self._pnl(position) + maker_net + hedge_net
+        age = now_ns - position["opened_ns"]
+        if pnl * 10000 >= F(self.policy.take_profit_bps) * capital:
+            reason = "take_profit"
+        elif age >= self.policy.breakeven_after_secs * 1_000_000_000 and pnl > 0:
+            reason = "positive_after_wait"
+        else:
+            reason = None
+        return reason, maker_bound, hedge_bound, pnl
+
+    def _plan_maker_exit(self, position, now_ns):
+        maker_leg = self._select_maker_exit_leg(position)
+        if maker_leg is None:
+            return None, False
+        reason, maker_bound, _, _ = self._maker_exit_reason_and_bounds(position, maker_leg, now_ns)
+        if reason is None or maker_bound is None:
+            return None, False
+        if self.policy.maker_exit_max_attempts > 0 and position.get("maker_exit_attempts", 0) >= self.policy.maker_exit_max_attempts:
+            return None, True
+        hedge_leg = "sell" if maker_leg == "buy" else "buy"
+        for leg in (maker_leg, hedge_leg):
+            if not self._validate_reduction_leg(position, leg, now_ns, attempt_kind="soft_exit"):
+                return None, True
+        return {"reason": reason, "maker_leg": maker_leg, "bound": maker_bound}, True
+
+    def _cancel_maker_order(self, position, order, now_ns, *, reason):
+        if order["terminal_ns"] is not None:
+            return False
+        cid = order["client_order_id"]
+        if order["status"] == "prepared":
+            order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
+            self.outbox = [i for i in self.outbox if not (i.action == "submit" and i.client_order_id == cid)]
+            self.fences[order["instrument_id"]] = max(self.fences.get(order["instrument_id"], 0), now_ns)
+            self.emit("maker_exit_canceled_locally", now_ns, position_id=position["position_id"],
+                      client_order_id=cid, reason=reason)
+            return True
+        if order.get("cancel_requested_ns") is not None and now_ns - order["cancel_requested_ns"] < self.order_timeout_ns:
+            return False
+        if now_ns < order.get("cancel_retry_after_ns", 0):
+            return False
+        cancel_req_id = self._request_id("C")
+        intent = OrderIntent("cancel", self.markets[order["instrument_id"]].venue,
+                             order["instrument_id"], cancel_req_id, cid)
+        order["cancel_requested_ns"] = now_ns
+        order["cancel_request_id"] = cancel_req_id
+        order.pop("cancel_retry_after_ns", None)
+        self.emit("maker_exit_cancel_requested", now_ns, position_id=position["position_id"],
+                  client_order_id=cid, request_id=cancel_req_id, reason=reason)
+        self.outbox.append(intent)
+        if self.direct_dispatcher is not None:
+            self.direct_dispatcher(now_ns)
+        if intent in self.outbox and self.intent_notifier is not None:
+            self.intent_notifier()
+        return True
+
+    def _resting_maker_cancel_reason(self, position, maker_order, now_ns):
+        if (maker_order.get("cancel_requested_ns") is not None
+                and now_ns - maker_order["cancel_requested_ns"] >= self.order_timeout_ns):
+            return "maker_exit_cancel_timeout"
+        if now_ns - maker_order["sent_ns"] >= self.policy.maker_exit_timeout_ms * 1_000_000:
+            return "maker_exit_timeout"
+        maker_leg = maker_order["leg"]
+        eval_reason, _, _, _ = self._maker_exit_reason_and_bounds(
+            position, maker_leg, now_ns, resting_order=maker_order)
+        if eval_reason is None:
+            return "maker_exit_edge_lost"
+        reprice_after_ns = min(1_000_000_000, self.policy.maker_exit_timeout_ms * 500_000)
+        if now_ns - maker_order["sent_ns"] >= reprice_after_ns:
+            new_reason, new_bound, _, _ = self._maker_exit_reason_and_bounds(position, maker_leg, now_ns)
+            if new_reason is not None and new_bound is not None:
+                old_px = F(maker_order["price"])
+                new_px = F(new_bound["price"])
+                if (maker_order["side"] == "SELL" and new_px < old_px) or (
+                        maker_order["side"] == "BUY" and new_px > old_px):
+                    return "maker_exit_reprice"
+        return None
+
+    def _order_timed_out(self, order, now_ns):
+        if order.get("maker_exit") and order["accepted_ns"] is not None:
+            cancel_ns = order.get("cancel_requested_ns")
+            return cancel_ns is not None and now_ns - cancel_ns >= self.order_timeout_ns
+        return now_ns - order["sent_ns"] >= self.order_timeout_ns
 
     def _rebalance_entry(self, position, now_ns):
         """Trim only the excess leg; never increase either confirmed entry leg."""
@@ -2100,9 +2396,12 @@ class LiveTradeState(ScanState):
                 self.emit("entry_imbalance", now_ns, position_id=position["position_id"],
                           buy_base=_number(remains[0]), sell_base=_number(remains[1]))
         exit_orders = [self.orders[cid] for cid in position["exit_ids"]]
+        active_maker_orders = [o for o in exit_orders if o.get("maker_exit") and o["terminal_ns"] is None]
+        has_maker_fill = any(o.get("maker_exit") and F(o["filled_quantity"]) > 0 for o in exit_orders)
         in_flight_exit = any(o["terminal_ns"] is None for o in exit_orders)
         exit_committed = any(F(o["filled_quantity"]) > 0 for o in exit_orders)
-        if exit_orders and remains[0] != remains[1] and position["exit_reason"] not in HARD_EXITS:
+        if (exit_orders and remains[0] != remains[1]
+                and position["exit_reason"] not in HARD_EXITS and not has_maker_fill):
             position["exit_reason"] = "exit_imbalance"
             position["status"] = "exit_pending"
         reason = (self._hard_exit_reason(position, now_ns)
@@ -2112,6 +2411,58 @@ class LiveTradeState(ScanState):
                 and reason not in HARD_EXITS):
             self._rebalance_entry(position, now_ns)
             return
+        if active_maker_orders:
+            maker_order = active_maker_orders[-1]
+            urgent_hard = self._hard_exit_reason(position, now_ns)
+            if urgent_hard is None:
+                mark_reason = self._exit_reason(position, now_ns)
+                if mark_reason in HARD_EXITS:
+                    urgent_hard = mark_reason
+            filled = F(maker_order["filled_quantity"])
+            total = F(maker_order["quantity"])
+            if filled > 0:
+                if urgent_hard and position["exit_reason"] not in HARD_EXITS:
+                    position.update(status="exit_pending", exit_reason=urgent_hard, exit_requested_ns=now_ns)
+                    self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=urgent_hard)
+                if filled < total:
+                    self._cancel_maker_order(position, maker_order, now_ns, reason="maker_partial_fill")
+                hedge_leg = "sell" if maker_order["leg"] == "buy" else "buy"
+                hedge_mult = F(position["entry"][f"{hedge_leg}_metadata"]["multiplier"])
+                pending_hedge = sum(
+                    (F(o["quantity"]) - F(o["filled_quantity"])) * hedge_mult
+                    for o in exit_orders
+                    if o["leg"] == hedge_leg and o["terminal_ns"] is None
+                )
+                hedge_qty = (
+                    F(position[f"remaining_{hedge_leg}_base"])
+                    - F(position[f"remaining_{maker_order['leg']}_base"])
+                    - pending_hedge
+                )
+                if hedge_qty > 0:
+                    bound = self._reduction_bound(
+                        position, hedge_leg, hedge_qty, now_ns,
+                        require_fees=False,
+                        allow_pending_entry=bool(position.get("unhedged_breach")),
+                        allow_unknown_reduction=True,
+                        hard_slippage=True,
+                        attempt_kind="maker_hedge",
+                    )
+                    if bound is not None:
+                        intent = self._make_order(
+                            position, hedge_leg, "exit", bound, now_ns, attempt_kind="maker_hedge")
+                        self._publish_orders([intent], now_ns, position)
+                return
+            if urgent_hard or position["exit_reason"] in HARD_EXITS:
+                escalate = urgent_hard or position["exit_reason"]
+                if position["exit_reason"] != escalate:
+                    position.update(status="exit_pending", exit_reason=escalate, exit_requested_ns=now_ns)
+                    self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=escalate)
+                self._cancel_maker_order(position, maker_order, now_ns, reason=escalate)
+                return
+            cancel_reason = self._resting_maker_cancel_reason(position, maker_order, now_ns)
+            if cancel_reason is not None:
+                self._cancel_maker_order(position, maker_order, now_ns, reason=cancel_reason)
+            return
         if position["exit_reason"] not in HARD_EXITS and not exit_committed:
             if in_flight_exit:
                 if reason in HARD_EXITS:
@@ -2119,14 +2470,39 @@ class LiveTradeState(ScanState):
                     self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=reason)
                 else:
                     return
-            elif reason is None:
-                position.update(status="open", exit_reason=None, exit_requested_ns=None)
-                return
-            elif position["exit_reason"] != reason:
-                position.update(status="exit_pending", exit_reason=reason, exit_requested_ns=now_ns)
-                self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=reason)
+            else:
+                if reason not in HARD_EXITS and self.policy.maker_exit_enabled:
+                    maker_plan, maker_viable = self._plan_maker_exit(position, now_ns)
+                    if maker_plan is not None:
+                        if position["exit_reason"] != maker_plan["reason"]:
+                            position.update(status="exit_pending", exit_reason=maker_plan["reason"],
+                                            exit_requested_ns=now_ns)
+                            self.emit("exit_requested", now_ns, position_id=position["position_id"],
+                                      reason=maker_plan["reason"])
+                        else:
+                            position["status"] = "exit_pending"
+                        position["maker_exit_attempts"] = position.get("maker_exit_attempts", 0) + 1
+                        intent = self._make_order(
+                            position, maker_plan["maker_leg"], "exit", maker_plan["bound"],
+                            now_ns, attempt_kind="soft_exit", maker_exit=True,
+                        )
+                        self._publish_orders([intent], now_ns, position)
+                        return
+                    if reason is None and not maker_viable:
+                        position["maker_exit_attempts"] = 0
+                if reason is None:
+                    position.update(status="open", exit_reason=None, exit_requested_ns=None)
+                    return
+                if position["exit_reason"] != reason:
+                    position.update(status="exit_pending", exit_reason=reason, exit_requested_ns=now_ns)
+                    self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=reason)
         # Once any hard exit or real exit fill has been committed, remaining legs reduce independently.
         # A partial profitable exit must not wait for the pair's profit or account gates again.
+        if (has_maker_fill and position["exit_reason"] not in HARD_EXITS
+                and any(o["terminal_ns"] is None and not o.get("maker_exit")
+                        and o["status"] != "unknown" and now_ns - o["sent_ns"] < self.order_timeout_ns
+                        for o in exit_orders)):
+            return
         hard = position["exit_reason"] in HARD_EXITS or exit_committed
         bounds = {}
         for leg, qty in zip(("buy", "sell"), remains):
@@ -2219,7 +2595,7 @@ class LiveTradeState(ScanState):
                     self.observe(key, now_ns)
             if (self.stopping or self.entry_pause_reason or self.halt_reason or self.order_reconciliations or symbol not in self.trade_symbols
                     or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
-                    o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns
+                    o["status"] == "unknown" or self._order_timed_out(o, now_ns)
                     for o in self.execution_orders())):
                 return
             if len(self.positions) >= self.max_pairs:
@@ -2285,7 +2661,8 @@ class LiveTradeState(ScanState):
         retained, canceled = [], []
         for intent in self.outbox:
             order = self.orders.get(intent.client_order_id)
-            if intent.action == "submit" and order is not None and order["purpose"] == "entry" and order["status"] == "prepared":
+            if (intent.action == "submit" and order is not None and order["status"] == "prepared"
+                    and (order["purpose"] == "entry" or order.get("maker_exit"))):
                 order["terminal_ns"], order["status"] = now_ns, "local_not_dispatched"
                 self.fences[order["instrument_id"]] = now_ns
                 canceled.append(intent.client_order_id)
@@ -2298,6 +2675,11 @@ class LiveTradeState(ScanState):
         for position in self.positions.values():
             position.update(exit_reason="operator_stop", exit_requested_ns=now_ns)
         self.emit("drain_requested", now_ns, reason=reason, local_not_dispatched=canceled)
+        for position in self.positions.values():
+            for cid in position.get("exit_ids", ()):
+                order = self.orders.get(cid)
+                if order is not None and order.get("maker_exit") and order["terminal_ns"] is None:
+                    self._cancel_maker_order(position, order, now_ns, reason=reason)
 
     def _update_post_close_guards(self, key, position, economics, close_reason, now_ns):
         filled = F(position["entry_buy_base"]) > 0 or F(position["entry_sell_base"]) > 0

@@ -1170,6 +1170,11 @@ class NativeOrderGateway:
             already_terminal = any(
                 (intent.request_id, k, "") in self.emitted for k in ("canceled", "terminal", "rejected")
             )
+            owned_terminal = bool(owned and any(
+                (owned["intent"].request_id, k, "") in self.emitted for k in ("canceled", "terminal", "rejected")
+            ))
+            if intent.action in {"cancel", "modify"} and owned_terminal:
+                continue
             passive_accepted = (intent.action == "submit" and intent.time_in_force == "GTC"
                                 and (intent.request_id, "accepted", "") in self.emitted)
             if not needs_final and (

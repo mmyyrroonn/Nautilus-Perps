@@ -383,6 +383,105 @@ def discard_invalid_entry(live, intent, now_ns, *, dispatched=(), cached_evidenc
     return True
 
 
+def _validate_exit_leg_environment(live, position, leg, now_ns, evidence):
+    instrument = position[f"{leg}_id"]
+    book, meta = live.books.get(instrument), live.metadata.get(instrument)
+    row = evidence.setdefault(leg, {})
+    if book is None:
+        return "missing_book"
+    row.update(source_wall_ns=book.ts_event_ns, received_wall_ns=book.ts_received_ns,
+               source_age_ms=_number(F(now_ns - book.ts_event_ns, 1_000_000)),
+               receive_age_ms=_number(F(now_ns - book.ts_received_ns, 1_000_000)))
+    if not _book_valid(book, live.plan.settings, now_ns):
+        return "stale_or_invalid_book"
+    if meta is None or meta.instrument_id != instrument or not _metadata_valid(meta):
+        return "metadata_unavailable"
+    native_rules = position.get("native_rules", {}).get(leg)
+    if (native_rules is not None
+            and native_rules != {k: str(v) for k, v in live.instruments.get(instrument, {}).items()}):
+        return "metadata_changed"
+    if any(str(getattr(meta, k)) != str(position["entry"][f"{leg}_metadata"].get(k))
+           for k in ("multiplier", "size_increment")):
+        return "metadata_changed"
+    return None
+
+
+def _maker_soft_exit_dispatch_evidence(live, position, maker_order, remains, capital, now_ns, evidence):
+    maker_leg = maker_order["leg"]
+    hedge_leg = "sell" if maker_leg == "buy" else "buy"
+    evidence[maker_leg] = {"limit_price": maker_order["price"], "quantity": maker_order["quantity"]}
+    evidence.setdefault(hedge_leg, {})
+    for leg in ("buy", "sell"):
+        err = _validate_exit_leg_environment(live, position, leg, now_ns, evidence)
+        if err is not None:
+            return err, evidence
+    if abs(live.books[position["buy_id"]].ts_event_ns - live.books[position["sell_id"]].ts_event_ns) > live.plan.settings.max_skew_ms * 1_000_000:
+        return "book_skew", evidence
+
+    maker_id = position[f"{maker_leg}_id"]
+    maker_book, maker_meta = live.books[maker_id], live.metadata[maker_id]
+    maker_market = live.markets[maker_id]
+    maker_conv = F(maker_market.canonical_multiplier) / F(maker_market.quote_to_usd)
+    limit = F(maker_order["price"])
+    quantity = F(maker_order["quantity"])
+    best_bid_native = F(maker_book.bids[0][0]) * maker_conv
+    best_ask_native = F(maker_book.asks[0][0]) * maker_conv
+    if (maker_order["side"] == "SELL" and limit <= best_bid_native) or (
+            maker_order["side"] == "BUY" and limit >= best_ask_native):
+        return "maker_would_cross", evidence
+    if getattr(live, "bbo_provider", None) is not None:
+        bbo = fresh_bbo_quote(live, maker_id, maker_book)
+        if bbo is not None:
+            bbo_bid_native = F(bbo[0]) * maker_conv
+            bbo_ask_native = F(bbo[1]) * maker_conv
+            if (maker_order["side"] == "SELL" and limit <= bbo_bid_native) or (
+                    maker_order["side"] == "BUY" and limit >= bbo_ask_native):
+                return "maker_would_cross", evidence
+    maker_fee_bps = live._maker_fee_bps(maker_id)
+    if maker_fee_bps is None:
+        return "invalid_execution_rules_or_fees", evidence
+    maker_base = quantity * F(maker_meta.multiplier)
+    maker_cash = quantity * limit * F(live.instruments[maker_id]["native_multiplier"]) * F(maker_market.quote_to_usd)
+    maker_fee = maker_cash * maker_fee_bps / 10000
+    maker_scale = remains[maker_leg] / maker_base
+    maker_net = ((maker_cash if maker_leg == "buy" else -maker_cash) - maker_fee) * maker_scale
+    evidence[maker_leg].update(limit_cash_usd=_number(maker_cash), fee_usd=_number(maker_fee), maker=True)
+
+    hedge_id = position[f"{hedge_leg}_id"]
+    hedge_market = live.markets[hedge_id]
+    hedge_book, hedge_meta = live.books[hedge_id], live.metadata[hedge_id]
+    hedge_levels = hedge_book.bids if hedge_leg == "buy" else hedge_book.asks
+    hedge_available = sum((F(q) * F(hedge_meta.multiplier) for _, q in hedge_levels), F(0))
+    evidence[hedge_leg]["available_quantity"] = _number(hedge_available / F(hedge_meta.multiplier))
+    if hedge_available < maker_base:
+        return "insufficient_depth", evidence
+    hedge_side = "SELL" if hedge_leg == "buy" else "BUY"
+    hedge_slip = live.policy.entry_slippage_bps(hedge_market.venue)
+    hedge_bound = live._limit(
+        hedge_id, hedge_side, maker_base, now_ns,
+        reduce_only=bool(maker_order["reduce_only"]), slippage_bps=hedge_slip,
+    )
+    if hedge_bound is None:
+        return "invalid_execution_rules_or_fees", evidence
+    hedge_scale = remains[hedge_leg] / hedge_bound["base_quantity"]
+    hedge_net = ((hedge_bound["cash"] if hedge_leg == "buy" else -hedge_bound["cash"]) - hedge_bound["fee"]) * hedge_scale
+    evidence[hedge_leg].update(
+        limit_price=str(hedge_bound["price"]),
+        quantity=str(hedge_bound["quantity"]),
+        limit_cash_usd=_number(hedge_bound["cash"]),
+        fee_usd=_number(hedge_bound["fee"]),
+    )
+
+    pnl = live._pnl(position) + maker_net + hedge_net
+    required = F(live.policy.take_profit_bps) * capital if position["exit_reason"] == "take_profit" else F(0)
+    evidence.update(net_usd=_number(pnl), capital_usd=_number(capital))
+    if position["exit_reason"] == "take_profit" and pnl * 10000 < required:
+        return "net_edge_insufficient", evidence
+    if position["exit_reason"] == "positive_after_wait" and pnl <= 0:
+        return "net_edge_insufficient", evidence
+    return "valid", evidence
+
+
 def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
     evidence = {"checked_wall_ns": now_ns, "exit_reason": position["exit_reason"]}
     if live.phase != "active" or live.stopping or live.halt_reason:
@@ -392,6 +491,12 @@ def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
     remains = {leg: F(position[f"remaining_{leg}_base"]) for leg in ("buy", "sell")}
     if remains["buy"] <= 0 or remains["buy"] != remains["sell"]:
         return "exit_imbalance", evidence
+    capital = F(position["actual_entry"]["buy_notional_usd"])
+    if capital <= 0:
+        return "entry_imbalance", evidence
+    if len(batch_orders) == 1 and batch_orders[0].get("maker_exit"):
+        return _maker_soft_exit_dispatch_evidence(
+            live, position, batch_orders[0], remains, capital, now_ns, evidence)
     by_leg = {o["leg"]: o for o in batch_orders}
     if len(by_leg) != 2 or set(by_leg) != {"buy", "sell"}:
         return "exit_pair_incomplete", evidence
@@ -400,23 +505,11 @@ def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
         instrument = position[f"{leg}_id"]
         order = by_leg[leg]
         book, meta = live.books.get(instrument), live.metadata.get(instrument)
-        row = evidence[leg] = {"limit_price": order["price"], "quantity": order["quantity"]}
-        if book is None:
-            return "missing_book", evidence
-        row.update(source_wall_ns=book.ts_event_ns, received_wall_ns=book.ts_received_ns,
-                   source_age_ms=_number(F(now_ns - book.ts_event_ns, 1_000_000)),
-                   receive_age_ms=_number(F(now_ns - book.ts_received_ns, 1_000_000)))
-        if not _book_valid(book, live.plan.settings, now_ns):
-            return "stale_or_invalid_book", evidence
-        if meta is None or meta.instrument_id != instrument or not _metadata_valid(meta):
-            return "metadata_unavailable", evidence
-        native_rules = position.get("native_rules", {}).get(leg)
-        if (native_rules is not None
-                and native_rules != {k: str(v) for k, v in live.instruments.get(instrument, {}).items()}):
-            return "metadata_changed", evidence
-        if any(str(getattr(meta, k)) != str(position["entry"][f"{leg}_metadata"].get(k))
-               for k in ("multiplier", "size_increment")):
-            return "metadata_changed", evidence
+        evidence[leg] = {"limit_price": order["price"], "quantity": order["quantity"]}
+        err = _validate_exit_leg_environment(live, position, leg, now_ns, evidence)
+        if err is not None:
+            return err, evidence
+        row = evidence[leg]
         levels = book.bids if leg == "buy" else book.asks
         quantity, limit = F(order["quantity"]), F(order["price"])
         market = live.markets[instrument]
@@ -445,11 +538,8 @@ def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
     if abs(live.books[position["buy_id"]].ts_event_ns - live.books[position["sell_id"]].ts_event_ns) > live.plan.settings.max_skew_ms * 1_000_000:
         return "book_skew", evidence
     pnl = live._pnl(position) + bounds["buy"] + bounds["sell"]
-    capital = F(position["actual_entry"]["buy_notional_usd"])
     required = F(live.policy.take_profit_bps) * capital if position["exit_reason"] == "take_profit" else F(0)
     evidence.update(net_usd=_number(pnl), capital_usd=_number(capital))
-    if capital <= 0:
-        return "entry_imbalance", evidence
     if position["exit_reason"] == "take_profit" and pnl * 10000 < required:
         return "net_edge_insufficient", evidence
     if position["exit_reason"] == "positive_after_wait" and pnl <= 0:

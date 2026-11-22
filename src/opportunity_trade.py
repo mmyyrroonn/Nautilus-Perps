@@ -24,6 +24,45 @@ ENTRY_SLIPPAGE_VENUES = frozenset({"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
 ENTRY_SLIPPAGE_VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in ENTRY_SLIPPAGE_VENUES}}
 
 
+def _normalize_venue_tuple(raw, field_name: str) -> tuple[str, ...]:
+    if not isinstance(raw, (tuple, list)):
+        raise ScanConfigError(f"{field_name} must be a sequence of venue names")
+    seen: dict[str, str] = {}
+    for venue in raw:
+        if not isinstance(venue, str) or venue not in ENTRY_SLIPPAGE_VENUE_ALIASES:
+            raise ScanConfigError(f"unsupported venue in {field_name}: {venue}")
+        canonical = ENTRY_SLIPPAGE_VENUE_ALIASES[venue]
+        if canonical in seen and seen[canonical] != venue:
+            raise ScanConfigError(f"duplicate venue in {field_name}: {canonical}")
+        seen[canonical] = venue
+    return tuple(sorted(seen))
+
+
+def _normalize_venue_bps_map(raw, field_name: str, *, min_bps: Decimal) -> tuple[tuple[str, Decimal], ...]:
+    if isinstance(raw, dict):
+        entries = list(raw.items())
+    elif isinstance(raw, (tuple, list)):
+        entries = []
+        for item in raw:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise ScanConfigError(f"{field_name} must be a venue-to-bps mapping")
+            entries.append((item[0], item[1]))
+    else:
+        raise ScanConfigError(f"{field_name} must be a venue-to-bps mapping")
+    normalized: dict[str, Decimal] = {}
+    for venue, value in entries:
+        if not isinstance(venue, str) or venue not in ENTRY_SLIPPAGE_VENUE_ALIASES:
+            raise ScanConfigError(f"unsupported venue in {field_name}: {venue}")
+        canonical = ENTRY_SLIPPAGE_VENUE_ALIASES[venue]
+        if canonical in normalized:
+            raise ScanConfigError(f"duplicate venue in {field_name}: {canonical}")
+        bps = decimal_value(value, f"{field_name}.{canonical}", nonnegative=min_bps == 0)
+        if bps < min_bps or bps >= 10000:
+            raise ScanConfigError(f"{field_name}.{canonical} must be in [{min_bps}, 10000)")
+        normalized[canonical] = bps
+    return tuple(sorted(normalized.items()))
+
+
 @dataclass(frozen=True)
 class TradePolicy:
     order_notional_usd: Decimal = Decimal("100")
@@ -42,6 +81,10 @@ class TradePolicy:
     slow_venues: tuple[str, ...] = ()
     slow_pair_entry_edge_bps: Decimal | None = None
     slow_pair_min_persistence_ms: int = 0
+    maker_exit_venues: tuple[str, ...] = ()
+    maker_exit_timeout_ms: int = 0
+    maker_exit_max_attempts: int = 0
+    maker_fee_bps_by_venue: tuple[tuple[str, Decimal], ...] = ()
 
     def __post_init__(self):
         if type(self.loss_stop_enabled) is not bool:
@@ -54,29 +97,11 @@ class TradePolicy:
             if slip >= 10000:
                 raise ScanConfigError(f"{name} must be below 10000")
             object.__setattr__(self, name, slip)
-        raw_by_venue = self.entry_slippage_bps_by_venue
-        if isinstance(raw_by_venue, dict):
-            entries = list(raw_by_venue.items())
-        elif isinstance(raw_by_venue, (tuple, list)):
-            entries = []
-            for item in raw_by_venue:
-                if not isinstance(item, (tuple, list)) or len(item) != 2:
-                    raise ScanConfigError("entry_slippage_bps_by_venue must be a venue-to-bps mapping")
-                entries.append((item[0], item[1]))
-        else:
-            raise ScanConfigError("entry_slippage_bps_by_venue must be a venue-to-bps mapping")
-        normalized = {}
-        for venue, value in entries:
-            if not isinstance(venue, str) or venue not in ENTRY_SLIPPAGE_VENUE_ALIASES:
-                raise ScanConfigError(f"unsupported venue in entry_slippage_bps_by_venue: {venue}")
-            canonical = ENTRY_SLIPPAGE_VENUE_ALIASES[venue]
-            if canonical in normalized:
-                raise ScanConfigError(f"duplicate venue in entry_slippage_bps_by_venue: {canonical}")
-            slip = decimal_value(value, f"entry_slippage_bps_by_venue.{canonical}", nonnegative=True)
-            if slip >= 10000:
-                raise ScanConfigError(f"entry_slippage_bps_by_venue.{canonical} must be below 10000")
-            normalized[canonical] = slip
-        object.__setattr__(self, "entry_slippage_bps_by_venue", tuple(sorted(normalized.items())))
+        object.__setattr__(
+            self,
+            "entry_slippage_bps_by_venue",
+            _normalize_venue_bps_map(self.entry_slippage_bps_by_venue, "entry_slippage_bps_by_venue", min_bps=Decimal("0")),
+        )
         soft = integer_value(self.breakeven_after_secs, "breakeven_after_secs", 1, 86400)
         hard = integer_value(self.force_close_after_secs, "force_close_after_secs", 1, 86400)
         if soft >= hard:
@@ -92,23 +117,28 @@ class TradePolicy:
             if ratio > 10:
                 raise ScanConfigError("max_exit_reversal_edge_ratio must be at most 10")
             object.__setattr__(self, "max_exit_reversal_edge_ratio", ratio)
-        if not isinstance(self.slow_venues, (tuple, list)):
-            raise ScanConfigError("slow_venues must be a sequence of venue names")
-        seen_slow: dict[str, str] = {}
-        for venue in self.slow_venues:
-            if not isinstance(venue, str) or venue not in ENTRY_SLIPPAGE_VENUE_ALIASES:
-                raise ScanConfigError(f"unsupported venue in slow_venues: {venue}")
-            canonical = ENTRY_SLIPPAGE_VENUE_ALIASES[venue]
-            if canonical in seen_slow and seen_slow[canonical] != venue:
-                raise ScanConfigError(f"duplicate venue in slow_venues: {canonical}")
-            seen_slow[canonical] = venue
-        object.__setattr__(self, "slow_venues", tuple(sorted(seen_slow)))
+        object.__setattr__(self, "slow_venues", _normalize_venue_tuple(self.slow_venues, "slow_venues"))
         if self.slow_pair_entry_edge_bps is not None:
             slow_edge = decimal_value(self.slow_pair_entry_edge_bps, "slow_pair_entry_edge_bps", positive=True)
             if slow_edge >= 10000:
                 raise ScanConfigError("slow_pair_entry_edge_bps must be below 10000")
             object.__setattr__(self, "slow_pair_entry_edge_bps", slow_edge)
         integer_value(self.slow_pair_min_persistence_ms, "slow_pair_min_persistence_ms", 0, 60000)
+        maker_venues = _normalize_venue_tuple(self.maker_exit_venues, "maker_exit_venues")
+        object.__setattr__(self, "maker_exit_venues", maker_venues)
+        timeout_ms = integer_value(self.maker_exit_timeout_ms, "maker_exit_timeout_ms", 0, 60000)
+        max_attempts = integer_value(self.maker_exit_max_attempts, "maker_exit_max_attempts", 0, 20)
+        if maker_venues and timeout_ms == 0:
+            raise ScanConfigError("maker_exit_venues requires positive maker_exit_timeout_ms")
+        if timeout_ms > 0 and not maker_venues:
+            raise ScanConfigError("maker_exit_timeout_ms requires maker_exit_venues")
+        if max_attempts > 0 and not maker_venues:
+            raise ScanConfigError("maker_exit_max_attempts requires maker_exit_venues")
+        object.__setattr__(
+            self,
+            "maker_fee_bps_by_venue",
+            _normalize_venue_bps_map(self.maker_fee_bps_by_venue, "maker_fee_bps_by_venue", min_bps=Decimal("-100")),
+        )
 
     def entry_slippage_bps(self, venue: str) -> Decimal:
         canonical = ENTRY_SLIPPAGE_VENUE_ALIASES.get(venue, venue)
@@ -116,6 +146,20 @@ class TradePolicy:
             if key == canonical:
                 return value
         return self.slippage_bps
+
+    @property
+    def maker_exit_enabled(self) -> bool:
+        return bool(self.maker_exit_venues and self.maker_exit_timeout_ms > 0)
+
+    def is_maker_exit_venue(self, venue: str) -> bool:
+        return ENTRY_SLIPPAGE_VENUE_ALIASES.get(venue, venue) in self.maker_exit_venues
+
+    def maker_fee_bps(self, venue: str) -> Decimal | None:
+        canonical = ENTRY_SLIPPAGE_VENUE_ALIASES.get(venue, venue)
+        for key, value in self.maker_fee_bps_by_venue:
+            if key == canonical:
+                return value
+        return None
 
     def is_slow_pair(self, buy_venue: str, sell_venue: str) -> bool:
         if not self.slow_venues:
@@ -132,19 +176,18 @@ class TradePolicy:
     def document(self):
         result = {}
         for key, value in asdict(self).items():
-            if key == "loss_cooldown_secs" and value == 0:
+            if key in {"loss_cooldown_secs", "slow_pair_min_persistence_ms",
+                       "maker_exit_timeout_ms", "maker_exit_max_attempts"} and value == 0:
                 continue
-            if key == "entry_slippage_bps_by_venue":
+            if key in {"entry_slippage_bps_by_venue", "maker_fee_bps_by_venue"}:
                 if not value:
                     continue
                 result[key] = {venue: str(bps) for venue, bps in value}
                 continue
-            if key == "slow_venues":
+            if key in {"slow_venues", "maker_exit_venues"}:
                 if not value:
                     continue
                 result[key] = list(value)
-                continue
-            if key == "slow_pair_min_persistence_ms" and value == 0:
                 continue
             if key in {"max_exit_reversal_bps", "max_exit_reversal_edge_ratio", "slow_pair_entry_edge_bps"} and value is None:
                 continue
