@@ -2222,17 +2222,17 @@ class LiveTradeState(ScanState):
     def _plan_maker_exit(self, position, now_ns):
         maker_leg = self._select_maker_exit_leg(position)
         if maker_leg is None:
-            return None, False
+            return None
         reason, maker_bound, _, _ = self._maker_exit_reason_and_bounds(position, maker_leg, now_ns)
         if reason is None or maker_bound is None:
-            return None, False
+            return None
         if self.policy.maker_exit_max_attempts > 0 and position.get("maker_exit_attempts", 0) >= self.policy.maker_exit_max_attempts:
-            return None, True
+            return None
         hedge_leg = "sell" if maker_leg == "buy" else "buy"
         for leg in (maker_leg, hedge_leg):
             if not self._validate_reduction_leg(position, leg, now_ns, attempt_kind="soft_exit"):
-                return None, True
-        return {"reason": reason, "maker_leg": maker_leg, "bound": maker_bound}, True
+                return None
+        return {"reason": reason, "maker_leg": maker_leg, "bound": maker_bound}
 
     def _cancel_maker_order(self, position, order, now_ns, *, reason):
         if order["terminal_ns"] is not None:
@@ -2432,6 +2432,7 @@ class LiveTradeState(ScanState):
         if active_maker_orders:
             maker_order = active_maker_orders[-1]
             urgent_hard = self._hard_exit_reason(position, now_ns)
+            mark_reason = None
             if urgent_hard is None:
                 mark_reason = self._exit_reason(position, now_ns)
                 if mark_reason in HARD_EXITS:
@@ -2477,6 +2478,9 @@ class LiveTradeState(ScanState):
                     self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=escalate)
                 self._cancel_maker_order(position, maker_order, now_ns, reason=escalate)
                 return
+            if mark_reason in {"take_profit", "positive_after_wait"}:
+                self._cancel_maker_order(position, maker_order, now_ns, reason="taker_exit_ready")
+                return
             cancel_reason = self._resting_maker_cancel_reason(position, maker_order, now_ns)
             if cancel_reason is not None:
                 self._cancel_maker_order(position, maker_order, now_ns, reason=cancel_reason)
@@ -2489,8 +2493,8 @@ class LiveTradeState(ScanState):
                 else:
                     return
             else:
-                if reason not in HARD_EXITS and self.policy.maker_exit_enabled:
-                    maker_plan, maker_viable = self._plan_maker_exit(position, now_ns)
+                if reason is None and self.policy.maker_exit_enabled:
+                    maker_plan = self._plan_maker_exit(position, now_ns)
                     if maker_plan is not None:
                         if position["exit_reason"] != maker_plan["reason"]:
                             position.update(status="exit_pending", exit_reason=maker_plan["reason"],
@@ -2506,8 +2510,6 @@ class LiveTradeState(ScanState):
                         )
                         self._publish_orders([intent], now_ns, position)
                         return
-                    if reason is None and not maker_viable:
-                        position["maker_exit_attempts"] = 0
                 if reason is None:
                     position.update(status="open", exit_reason=None, exit_requested_ns=None)
                     return
