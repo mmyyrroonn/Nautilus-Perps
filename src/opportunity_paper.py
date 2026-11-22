@@ -140,19 +140,22 @@ class PaperTradeState(ScanState):
         raise RuntimeError("paper fill exceeded available snapshot liquidity")
 
     @sampled_timed("pricing.entry")
-    def entry(self, buy_id, sell_id, now_ns, *, analytics=None, basis_reject_stage="pricing_rejected"):
+    def entry(self, buy_id, sell_id, now_ns, *, analytics=None, basis_reject_stage="pricing_rejected",
+              check_route_block=True):
         if not all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
             return None
         if analytics is None:
             analytics = current_analytics()
-        if route_block_reject(
+        if check_route_block and route_block_reject(
                 self.route_max_hold_tracker, self.markets, self.books, self.metadata,
                 self.plan.settings, buy_id, sell_id, now_ns, analytics, "pricing_rejected"):
             return None
         buy_market = self.markets[buy_id]
         sell_market = self.markets[sell_id]
+        effective_edge = self.policy.effective_entry_edge_bps(buy_market.venue, sell_market.venue)
         if _best_quotes_rule_out(self.books[buy_id], self.metadata[buy_id],
-                                 self.books[sell_id], self.metadata[sell_id], self.plan.settings):
+                                 self.books[sell_id], self.metadata[sell_id], self.plan.settings,
+                                 min_entry_edge_bps=effective_edge):
             return None
         if analytics is not None:
             analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue, "bbo_qualified")
@@ -175,8 +178,10 @@ class PaperTradeState(ScanState):
                                             basis_reject_stage, detail=bbo_basis_reason)
                 return None
         settings = self.plan.settings
+        eval_settings = (replace(settings, min_entry_edge_bps=effective_edge)
+                         if effective_edge > settings.min_entry_edge_bps else settings)
         with span("scan.evaluate_pair"):
-            entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1], settings, now_ns)
+            entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1], eval_settings, now_ns)
         if entry is None:
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
@@ -208,7 +213,7 @@ class PaperTradeState(ScanState):
             budget = _walk(books[0].asks, F(metadata[0].multiplier), quantity)
             with span("scan.evaluate_pair"):
                 entry = evaluate_opportunity(books[0], metadata[0], books[1], metadata[1],
-                    replace(settings, target_notional=exact_decimal(budget)), now_ns)
+                    replace(eval_settings, target_notional=exact_decimal(budget)), now_ns)
             if entry is None:
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
@@ -225,7 +230,7 @@ class PaperTradeState(ScanState):
         sell_fee = sell_cash * F(metadata[1].taker_fee_bps) / 10000
         reserve = buy_cash * F(settings.reserve_bps) / 10000
         net = sell_cash - buy_cash - buy_fee - sell_fee - reserve
-        if net * 10000 < F(self.policy.entry_edge_bps) * buy_cash:
+        if net * 10000 < F(effective_edge) * buy_cash:
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "pricing_rejected", detail="edge_after_slippage")
@@ -254,7 +259,7 @@ class PaperTradeState(ScanState):
                 edge_bps, now_ns, stage="priced_qualified")
             analytics.track_candidate_decay(
                 buy_market.symbol, buy_id, sell_id, buy_market.venue, sell_market.venue,
-                edge_bps, self.policy.entry_edge_bps, now_ns)
+                edge_bps, effective_edge, now_ns)
         return entry
 
     def _stamps(self, buy_id, sell_id):

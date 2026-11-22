@@ -168,6 +168,8 @@ class LiveTradeState(ScanState):
         self._attempt_timestamps = {}
         self.outbox = []
         self.intent_notifier = None
+        self.direct_dispatcher = None
+        self._eval_snapshot = None
         self.entry_timings = {}  # Process-local only; never persisted or restored.
         self.session_id = uuid.uuid4().hex[:16]
         self.sequence = self.request_sequence = self.completed = 0
@@ -208,6 +210,13 @@ class LiveTradeState(ScanState):
         self.route_max_hold_tracker = RouteMaxHoldTracker(basis_filter)
         self.route_max_hold_blocks = self.route_max_hold_tracker.entries
         self._symbol_venue_pairs = symbol_venue_pairs(self.groups, self.markets)
+        self._pair_key_cache = {}
+        for pairs in self._symbol_venue_pairs.values():
+            for first, second in pairs:
+                key = self.pair_key(first, second)
+                self._pair_key_cache[(first, second)] = key
+                self._pair_key_cache[(second, first)] = key
+        self._slow_pair_since: dict[tuple[str, str], tuple[int, int]] = {}
         # Current-process observations only; an old ledger cannot grant admission.
         self.native_admission = {}
         self.native_admission_max_age_ns = 1_000_000_000
@@ -1134,7 +1143,7 @@ class LiveTradeState(ScanState):
                              client_order_id=cid, reduce_only=intent.reduce_only)
         return intent
 
-    def _publish_orders(self, intents, now_ns, position):
+    def _publish_orders(self, intents, now_ns, position, *, candidate_marker=None):
         # Reuse the durable intent transaction; no new writes or market subscriptions.
         diagnostics = []
         for intent in intents:
@@ -1165,13 +1174,26 @@ class LiveTradeState(ScanState):
                     order = self.orders[intent.client_order_id]
                     order.update(terminal_ns=now_ns, status="local_not_dispatched")
             intents = retained
-        self.outbox.extend(intents)
-        if intents and self.intent_notifier is not None:
+        elif candidate_marker is not None:
+            record_latency(candidate_marker, "entry.candidate_to_persisted_intents")
             for intent in intents:
+                if len(self.entry_timings) >= MAX_PENDING_ENTRY_TIMINGS:
+                    self.entry_timings.pop(next(iter(self.entry_timings)))
+                self.entry_timings[intent.request_id] = candidate_marker
+        self.outbox.extend(intents)
+        if intents and self.direct_dispatcher is not None:
+            self.direct_dispatcher(now_ns)
+        if self.outbox and self.intent_notifier is not None:
+            pending_wakeup = [i for i in intents if i in self.outbox] if self.direct_dispatcher is not None else intents
+            for intent in pending_wakeup:
                 record_entry_stage(intent.request_id, "wakeup_requested")
             self.intent_notifier()
-            for intent in intents:
+            for intent in pending_wakeup:
                 record_entry_stage(intent.request_id, "wakeup_request_returned")
+
+    def _clear_slow_persistence(self, buy_id, sell_id):
+        if self._slow_pair_since:
+            self._slow_pair_since.pop((buy_id, sell_id), None)
 
     def _is_hl_oi_capped(self, instrument_id):
         market = self.markets.get(instrument_id)
@@ -1181,6 +1203,11 @@ class LiveTradeState(ScanState):
 
     @timed("strategy.entry")
     def _entry(self, buy_id, sell_id, now_ns):
+        eval_snapshot = self._eval_snapshot
+        if eval_snapshot is not None:
+            is_flat, reserved_gross, pending_instruments = eval_snapshot
+        else:
+            is_flat, reserved_gross, pending_instruments = None, None, None
         analytics = current_analytics()
         if self.entry_pause_reason or self.halt_reason or self.persistence_failed:
             if analytics is not None:
@@ -1208,7 +1235,9 @@ class LiveTradeState(ScanState):
                 self.route_max_hold_tracker, self.markets, self.books, self.metadata,
                 self.plan.settings, buy_id, sell_id, now_ns, analytics, "live_rejected"):
             return False
-        key = self.pair_key(buy_id, sell_id)
+        key = self._pair_key_cache.get((buy_id, sell_id))
+        if key is None:
+            key = self.pair_key(buy_id, sell_id)
         cooldown = self.pair_cooldowns.get(key)
         if cooldown is not None:
             if now_ns < cooldown["until_ns"]:
@@ -1220,26 +1249,32 @@ class LiveTradeState(ScanState):
             if analytics is not None:
                 analytics.record_pre_gate("pair_open" if key in self.positions else "max_pairs")
             return False
-        if any(buy_id == pos["sell_id"] or sell_id == pos["buy_id"]
-               for pos in self.positions.values()):
-            if analytics is not None:
-                analytics.record_pre_gate("cross_venue_conflict")
-            return False
-        for position in self.positions.values():
-            for leg in ("buy", "sell"):
-                if F(position[f"remaining_{leg}_base"]) > 0:
-                    book = self.books.get(position[f"{leg}_id"])
-                    if book is None or not _book_valid(book, self.plan.settings, now_ns):
-                        if analytics is not None:
-                            analytics.record_pre_gate("open_book_invalid")
-                        return False
+        if not is_flat and self.positions:
+            if any(buy_id == pos["sell_id"] or sell_id == pos["buy_id"]
+                   for pos in self.positions.values()):
+                if analytics is not None:
+                    analytics.record_pre_gate("cross_venue_conflict")
+                return False
+            for position in self.positions.values():
+                for leg in ("buy", "sell"):
+                    if F(position[f"remaining_{leg}_base"]) > 0:
+                        book = self.books.get(position[f"{leg}_id"])
+                        if book is None or not _book_valid(book, self.plan.settings, now_ns):
+                            if analytics is not None:
+                                analytics.record_pre_gate("open_book_invalid")
+                            return False
         # Reserve both complete entry budgets until a pair has reconciled flat.
-        reserved = self.gross_exposure(reserve=True)
+        reserved = (_ZERO if is_flat else self.gross_exposure(reserve=True)) if reserved_gross is None else reserved_gross
         if reserved + 2 * F(self.policy.order_notional_usd) > self.max_gross:
             if analytics is not None:
                 analytics.record_pre_gate("gross_limit")
             return False
-        if any(self._pending(i) for i in (buy_id, sell_id)):
+        has_pending = (
+            any(self._pending(i) for i in (buy_id, sell_id))
+            if pending_instruments is None
+            else (buy_id in pending_instruments or sell_id in pending_instruments)
+        )
+        if has_pending:
             if analytics is not None:
                 analytics.record_pre_gate("pending_order")
             return False
@@ -1251,8 +1286,10 @@ class LiveTradeState(ScanState):
         entry_clock = (now_ns, time.perf_counter_ns())
         pricing_marker = start_latency()
         estimate = self.pricer.entry(
-            buy_id, sell_id, now_ns, analytics=analytics, basis_reject_stage="live_rejected")
+            buy_id, sell_id, now_ns, analytics=analytics, basis_reject_stage="live_rejected",
+            check_route_block=False)
         if estimate is None:
+            self._clear_slow_persistence(buy_id, sell_id)
             return False
         buy_market, sell_market = self.markets[buy_id], self.markets[sell_id]
         record_latency(pricing_marker, "entry.qualified_pricing")
@@ -1266,6 +1303,7 @@ class LiveTradeState(ScanState):
                                        partial=True, slippage_bps=entry_slips[leg])
                       for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
+            self._clear_slow_persistence(buy_id, sell_id)
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="limit_bounds_failed")
@@ -1283,6 +1321,7 @@ class LiveTradeState(ScanState):
         quantity = (min(*(b["base_quantity"] for b in bounds.values()),
                         *(cap / p for p in risk_prices.values())) // step) * step
         if quantity <= 0:
+            self._clear_slow_persistence(buy_id, sell_id)
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="unhedged_budget_zero_qty")
@@ -1290,6 +1329,7 @@ class LiveTradeState(ScanState):
         bounds = {leg: self._limit(i, side, quantity, now_ns, slippage_bps=entry_slips[leg])
                   for leg, i, side in (("buy", buy_id, "BUY"), ("sell", sell_id, "SELL"))}
         if any(b is None for b in bounds.values()):
+            self._clear_slow_persistence(buy_id, sell_id)
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="rounded_limit_bounds_failed")
@@ -1304,12 +1344,15 @@ class LiveTradeState(ScanState):
         estimate["sizing"]["base_quantity"] = _number(quantity)
         buy, sell = bounds["buy"], bounds["sell"]
         if max(buy["cash"], sell["cash"]) > F(self.policy.order_notional_usd):
+            self._clear_slow_persistence(buy_id, sell_id)
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="rounded_limit_notional_cap")
             return False
         net = sell["cash"] - buy["cash"] - buy["fee"] - sell["fee"] - buy["cash"] * F(self.plan.settings.reserve_bps) / 10000
-        if net * 10000 < F(self.policy.entry_edge_bps) * buy["cash"]:
+        effective_edge = self.policy.effective_entry_edge_bps(buy_market.venue, sell_market.venue)
+        if net * 10000 < F(effective_edge) * buy["cash"]:
+            self._clear_slow_persistence(buy_id, sell_id)
             if analytics is not None:
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="rounded_limit_edge_insufficient")
@@ -1320,6 +1363,7 @@ class LiveTradeState(ScanState):
                 continue
             bbo_bid, bbo_ask, _, _ = bbo
             if (leg == "buy" and bbo_ask > limit_px) or (leg == "sell" and bbo_bid < limit_px):
+                self._clear_slow_persistence(buy_id, sell_id)
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "live_rejected", detail="hl_bbo_outside_limit")
@@ -1332,6 +1376,7 @@ class LiveTradeState(ScanState):
                 quantity, buy["cash"] / quantity, sell["cash"] / quantity,
             )
             if exit_liq is None or not exit_liq["both_exit_full"]:
+                self._clear_slow_persistence(buy_id, sell_id)
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "live_rejected", detail="exit_liquidity_insufficient")
@@ -1345,6 +1390,7 @@ class LiveTradeState(ScanState):
                 dynamic_bps = edge_bps_val * F(self.policy.max_exit_reversal_edge_ratio)
                 limit_bps = dynamic_bps if limit_bps is None else min(limit_bps, dynamic_bps)
             if rev_bps is None or F(Decimal(str(rev_bps))) > limit_bps:
+                self._clear_slow_persistence(buy_id, sell_id)
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "live_rejected", detail="exit_reversal_too_wide")
@@ -1354,11 +1400,29 @@ class LiveTradeState(ScanState):
             basis_reason, basis_est = self.basis_tracker.evaluate_entry(
                 buy_id, sell_id, entry_gross_bps, now_ns)
             if basis_reason is not None:
+                self._clear_slow_persistence(buy_id, sell_id)
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "live_rejected", detail=basis_reason)
                 return False
             estimate["basis"] = basis_est.document()
+        if self.policy.slow_pair_min_persistence_ms > 0 and self.policy.is_slow_pair(buy_market.venue, sell_market.venue):
+            min_ns = self.policy.slow_pair_min_persistence_ms * 1_000_000
+            max_gap_ns = max(500_000_000, min_ns * 3)
+            route_key = (buy_id, sell_id)
+            prev = self._slow_pair_since.get(route_key)
+            if prev is None or now_ns < prev[1] or now_ns - prev[1] > max_gap_ns:
+                self._slow_pair_since[route_key] = (now_ns, now_ns)
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "live_rejected", detail="slow_pair_persistence_wait")
+                return False
+            if now_ns - prev[0] < min_ns:
+                self._slow_pair_since[route_key] = (prev[0], now_ns)
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "live_rejected", detail="slow_pair_persistence_wait")
+                return False
         estimate["estimate_type"] = "live_limit_entry"
         for leg, bound in bounds.items():
             estimate["sizing"][f"{leg}_vwap"] = _number(bound["cash"] / quantity)
@@ -1387,6 +1451,7 @@ class LiveTradeState(ScanState):
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail=first_reason)
             return False
+        self._clear_slow_persistence(buy_id, sell_id)
         if analytics is not None:
             analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue, "prepared")
         estimate["leverage"] = {leg: evidence for leg, (_, evidence) in leverage.items() if evidence}
@@ -1418,13 +1483,7 @@ class LiveTradeState(ScanState):
             for intent in intents:
                 begin_entry_trace(intent.request_id, intent.venue, candidate_marker, now_ns,
                     client_order_id=intent.client_order_id, pricing_marker=pricing_marker, quotes=quotes)
-        self._publish_orders(intents, now_ns, position)
-        if candidate_marker is not None:
-            record_latency(candidate_marker, "entry.candidate_to_persisted_intents")
-            for intent in intents:
-                if len(self.entry_timings) >= MAX_PENDING_ENTRY_TIMINGS:
-                    self.entry_timings.pop(next(iter(self.entry_timings)))
-                self.entry_timings[intent.request_id] = candidate_marker
+        self._publish_orders(intents, now_ns, position, candidate_marker=candidate_marker)
         return True
 
     def _position(self, position_id):
@@ -2134,6 +2193,9 @@ class LiveTradeState(ScanState):
 
     def invalidate(self, instrument_id, now_ns, *, metadata=False, reason="invalidated"):
         self.book_publications.pop(instrument_id, None)
+        if self._slow_pair_since:
+            for pair_key in [k for k in self._slow_pair_since if instrument_id in k]:
+                self._slow_pair_since.pop(pair_key, None)
         if self.positions and self._is_owned_instrument(instrument_id):
             self.full_evaluation_symbols.update(self.trade_symbols)
         super().invalidate(instrument_id, now_ns, metadata=metadata, reason=reason)
@@ -2160,18 +2222,30 @@ class LiveTradeState(ScanState):
                     o["status"] == "unknown" or now_ns - o["sent_ns"] >= self.order_timeout_ns
                     for o in self.execution_orders())):
                 return
+            if len(self.positions) >= self.max_pairs:
+                if analytics is not None:
+                    analytics.record_pre_gate("max_pairs")
+                return
             affected = {changed_id} if changed_id is not None else changed_ids
             if symbol in self.full_evaluation_symbols:
                 affected = None
             full_scan = affected is None
             self.full_evaluation_symbols.discard(symbol)
+            is_flat = not self.positions and not self._execution_orders
+            reserved = _ZERO if is_flat else self.gross_exposure(reserve=True)
+            pending_ids = frozenset() if is_flat else frozenset(o["instrument_id"] for o in self.execution_orders())
+            self._eval_snapshot = (is_flat, reserved, pending_ids)
             for first, second in self._symbol_venue_pairs.get(symbol, ()):
                 if affected is not None and first not in affected and second not in affected:
                     continue
                 for buy_id, sell_id in ((first, second), (second, first)):
                     if self._entry(buy_id, sell_id, now_ns):
+                        self._eval_snapshot = None
                         break
+                if len(self.positions) >= self.max_pairs:
+                    break
         finally:
+            self._eval_snapshot = None
             if self.basis_tracker is not None:
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
@@ -2190,6 +2264,20 @@ class LiveTradeState(ScanState):
         archive_flat_positions(self, now_ns)
         for key in tuple(self.positions):
             self.observe(key, now_ns)
+        if (
+            self.phase == "active"
+            and self._slow_pair_since
+            and not self.entry_pause_reason
+            and not self.halt_reason
+            and not self.stopping
+        ):
+            pending_by_symbol: dict[str, set[str]] = {}
+            for buy_id, sell_id in tuple(self._slow_pair_since):
+                market = self.markets.get(buy_id)
+                if market is not None:
+                    pending_by_symbol.setdefault(market.symbol, set()).update((buy_id, sell_id))
+            for symbol, ids in sorted(pending_by_symbol.items()):
+                self.evaluate_symbol(symbol, now_ns, changed_ids=ids)
         self.reconcile_accounts(now_ns)
 
     def stop_entries(self, now_ns, reason="operator_stop"):

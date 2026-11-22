@@ -124,7 +124,7 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert "XPL" in plan.trade_symbols and "ASTER" in plan.trade_symbols
     assert plan.basis_filter.enabled is True
     assert plan.basis_filter.window_secs == 600 and plan.basis_filter.warmup_secs == 120
-    assert plan.basis_filter.min_deviation_bps == D("20")
+    assert plan.basis_filter.min_deviation_bps == D("15")
     assert plan.basis_filter.max_hold_loss_cooldown_secs == 900
     assert plan.basis_filter.max_hold_loss_block_strikes == 2
     assert plan.basis_filter.max_hold_loss_block_secs == 3600
@@ -138,9 +138,14 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.slippage_bps == 0 and plan.policy.hard_exit_slippage_bps == 10
     assert plan.policy.entry_slippage_bps("HL") == D("4")
     assert plan.policy.entry_slippage_bps("LIGHTER") == D("2")
-    assert plan.policy.entry_slippage_bps("ASTER") == D("0")
+    assert plan.policy.entry_slippage_bps("ASTER") == D("2")
+    assert plan.policy.entry_slippage_bps("BACKPACK") == D("2")
+    assert plan.policy.entry_slippage_bps("ONDO") == D("0")
+    assert plan.policy.slow_venues == ("HL", "LIGHTER", "ONDO")
+    assert plan.policy.slow_pair_entry_edge_bps == D("25")
+    assert plan.policy.slow_pair_min_persistence_ms == 150
     assert plan.max_entry_slippage_bps == D("10")
-    assert plan.scan.evaluation_interval_ms == 50
+    assert plan.scan.evaluation_interval_ms == 20
     assert plan.startup_timeout_secs == 20 and plan.order_timeout_secs == 10
     assert plan.startup_self_test is False
     assert plan.document()["startup"]["account_gate_required"] is True

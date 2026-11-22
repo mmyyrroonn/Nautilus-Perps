@@ -210,7 +210,11 @@ def entry_dispatch_evidence(live, position, now_ns):
     buy, sell = bounds["buy"], bounds["sell"]
     reserve = buy[0] * F(live.plan.settings.reserve_bps) / 10000
     net = sell[0] - buy[0] - buy[1] - sell[1] - reserve
-    required = buy[0] * F(live.policy.entry_edge_bps) / 10000
+    effective_edge_bps = live.policy.effective_entry_edge_bps(
+        live.markets[position["buy_id"]].venue,
+        live.markets[position["sell_id"]].venue,
+    )
+    required = buy[0] * F(effective_edge_bps) / 10000
     evidence.update(net_usd=_number(net), minimum_net_usd=_number(required),
                     net_margin_usd=_number(net - required), reserve_usd=_number(reserve))
     if net < required:

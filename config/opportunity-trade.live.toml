@@ -27,8 +27,13 @@ hard_exit_slippage_bps = "10"
 loss_cooldown_secs = 60
 max_exit_reversal_bps = "30"
 max_exit_reversal_edge_ratio = "1"
+slow_venues = ["HL", "LIGHTER", "ONDO"]
+slow_pair_entry_edge_bps = "25"
+slow_pair_min_persistence_ms = 150
 
 [trade.entry_slippage_bps_by_venue]
+ASTER = "2"
+BACKPACK = "2"
 HL = "4"
 LIGHTER = "2"
 
@@ -48,7 +53,7 @@ enabled = true
 window_secs = 600
 warmup_secs = 120
 # Minimum transient deviation above the route's rolling basis (bps), in addition to entry_edge_bps.
-min_deviation_bps = "20"
+min_deviation_bps = "15"
 # Extended route cooldown / block after consecutive non-converging max_hold losses.
 max_hold_loss_cooldown_secs = 900
 max_hold_loss_block_strikes = 2
@@ -96,7 +101,7 @@ drain_timeout_secs = 30
 timer_interval_ms = 100
 # Market publication/evaluation: 100 baseline, 50 balanced, 20 small batches, 0 per complete event.
 # Change after comparing CPU, queue tails and admission decisions for this deployment.
-evaluation_interval_ms = 50
+evaluation_interval_ms = 20
 # Complete native account reads may take several seconds; BBO freshness is separate.
 account_max_age_ms = 60000
 lighter_margin_max_age_ms = 60000

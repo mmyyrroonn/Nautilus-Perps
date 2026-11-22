@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from decimal import MAX_EMAX, MIN_EMIN, Context, Decimal
 from fractions import Fraction
 from functools import cached_property
-from math import lcm
+from math import isfinite, lcm
 from pathlib import Path
 from typing import Any
 
@@ -198,13 +198,16 @@ def _validate_book_structure(book: BookSnapshot) -> bool:
     return book.bids[0][0] < book.asks[0][0]
 
 
-def _best_quotes_rule_out(buy_book, buy_metadata, sell_book, sell_metadata, settings):
+def _best_quotes_rule_out(
+    buy_book, buy_metadata, sell_book, sell_metadata, settings, *, min_entry_edge_bps=None,
+):
     """Conservative rejection only; never establishes executable liquidity.
 
     Original best quotes also bound any remaining paper liquidity. Negative
     entry thresholds retain the full pricing path and its existing semantics.
     """
-    if (not _finite(settings.min_entry_edge_bps) or settings.min_entry_edge_bps < 0
+    edge_bps = settings.min_entry_edge_bps if min_entry_edge_bps is None else min_entry_edge_bps
+    if (not _finite(edge_bps) or edge_bps < 0
             or not _nonnegative(settings.reserve_bps)
             or not _metadata_valid(buy_metadata) or not _metadata_valid(sell_metadata)
             or not buy_book.asks or not sell_book.bids
@@ -213,12 +216,20 @@ def _best_quotes_rule_out(buy_book, buy_metadata, sell_book, sell_metadata, sett
         return False
     if sell_book.bids[0][0] <= buy_book.asks[0][0]:
         return True
+    sell_bid_f = float(sell_book.bids[0][0])
+    buy_ask_f = float(buy_book.asks[0][0])
+    lhs = sell_bid_f * (10000.0 - float(sell_metadata.taker_fee_bps))
+    rhs = buy_ask_f * (
+        10000.0 + float(buy_metadata.taker_fee_bps) + float(settings.reserve_bps) + float(edge_bps)
+    )
+    if isfinite(lhs) and isfinite(rhs) and lhs < rhs * (1.0 - 1e-9):
+        return True
     best_net_sell = Fraction(sell_book.bids[0][0]) * (10000 - Fraction(sell_metadata.taker_fee_bps))
     best_required_buy = Fraction(buy_book.asks[0][0]) * (
         10000 + Fraction(buy_metadata.taker_fee_bps) + Fraction(settings.reserve_bps)
-        + Fraction(settings.min_entry_edge_bps))
+        + Fraction(edge_bps))
     return best_net_sell < best_required_buy or (
-        settings.min_entry_edge_bps == 0 and best_net_sell == best_required_buy)
+        edge_bps == 0 and best_net_sell == best_required_buy)
 
 
 def _common_step(first: Fraction, second: Fraction) -> Fraction:
