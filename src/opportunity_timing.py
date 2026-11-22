@@ -375,7 +375,7 @@ def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason
             "wakeup_requested", "wakeup_request_returned", "wakeup_consumed", "timer_callback",
             "tick_started", "gateway_poll_completed", "loss_check_completed",
             "evaluation_completed", "python_submit_returned", "dispatch_release_started",
-            "dispatch_release_completed"}:
+            "dispatch_release_completed", "direct_dispatch"}:
         return
     if request_id not in recorder.entry_orders:
         return

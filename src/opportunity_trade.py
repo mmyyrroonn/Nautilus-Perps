@@ -39,6 +39,9 @@ class TradePolicy:
     loss_cooldown_secs: int = 0
     max_exit_reversal_bps: Decimal | None = None
     max_exit_reversal_edge_ratio: Decimal | None = None
+    slow_venues: tuple[str, ...] = ()
+    slow_pair_entry_edge_bps: Decimal | None = None
+    slow_pair_min_persistence_ms: int = 0
 
     def __post_init__(self):
         if type(self.loss_stop_enabled) is not bool:
@@ -89,6 +92,23 @@ class TradePolicy:
             if ratio > 10:
                 raise ScanConfigError("max_exit_reversal_edge_ratio must be at most 10")
             object.__setattr__(self, "max_exit_reversal_edge_ratio", ratio)
+        if not isinstance(self.slow_venues, (tuple, list)):
+            raise ScanConfigError("slow_venues must be a sequence of venue names")
+        seen_slow: dict[str, str] = {}
+        for venue in self.slow_venues:
+            if not isinstance(venue, str) or venue not in ENTRY_SLIPPAGE_VENUE_ALIASES:
+                raise ScanConfigError(f"unsupported venue in slow_venues: {venue}")
+            canonical = ENTRY_SLIPPAGE_VENUE_ALIASES[venue]
+            if canonical in seen_slow and seen_slow[canonical] != venue:
+                raise ScanConfigError(f"duplicate venue in slow_venues: {canonical}")
+            seen_slow[canonical] = venue
+        object.__setattr__(self, "slow_venues", tuple(sorted(seen_slow)))
+        if self.slow_pair_entry_edge_bps is not None:
+            slow_edge = decimal_value(self.slow_pair_entry_edge_bps, "slow_pair_entry_edge_bps", positive=True)
+            if slow_edge >= 10000:
+                raise ScanConfigError("slow_pair_entry_edge_bps must be below 10000")
+            object.__setattr__(self, "slow_pair_entry_edge_bps", slow_edge)
+        integer_value(self.slow_pair_min_persistence_ms, "slow_pair_min_persistence_ms", 0, 60000)
 
     def entry_slippage_bps(self, venue: str) -> Decimal:
         canonical = ENTRY_SLIPPAGE_VENUE_ALIASES.get(venue, venue)
@@ -96,6 +116,18 @@ class TradePolicy:
             if key == canonical:
                 return value
         return self.slippage_bps
+
+    def is_slow_pair(self, buy_venue: str, sell_venue: str) -> bool:
+        if not self.slow_venues:
+            return False
+        buy_canonical = ENTRY_SLIPPAGE_VENUE_ALIASES.get(buy_venue, buy_venue)
+        sell_canonical = ENTRY_SLIPPAGE_VENUE_ALIASES.get(sell_venue, sell_venue)
+        return buy_canonical in self.slow_venues or sell_canonical in self.slow_venues
+
+    def effective_entry_edge_bps(self, buy_venue: str, sell_venue: str) -> Decimal:
+        if self.slow_pair_entry_edge_bps is not None and self.is_slow_pair(buy_venue, sell_venue):
+            return max(self.entry_edge_bps, self.slow_pair_entry_edge_bps)
+        return self.entry_edge_bps
 
     def document(self):
         result = {}
@@ -107,7 +139,14 @@ class TradePolicy:
                     continue
                 result[key] = {venue: str(bps) for venue, bps in value}
                 continue
-            if key in {"max_exit_reversal_bps", "max_exit_reversal_edge_ratio"} and value is None:
+            if key == "slow_venues":
+                if not value:
+                    continue
+                result[key] = list(value)
+                continue
+            if key == "slow_pair_min_persistence_ms" and value == 0:
+                continue
+            if key in {"max_exit_reversal_bps", "max_exit_reversal_edge_ratio", "slow_pair_entry_edge_bps"} and value is None:
                 continue
             result[key] = str(value) if isinstance(value, Decimal) else value
         return result

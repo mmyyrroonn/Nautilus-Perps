@@ -558,6 +558,7 @@ class LiveCoordinator:
         self.finished = False
         self.startup_persistence_failed = False
         self._wakeup_only = False
+        self._dispatching = False
         if proxy.saved:
             if not proxy.restart_pending:
                 raise ValueError("live restart must stage a fresh state before account reconciliation")
@@ -672,6 +673,44 @@ class LiveCoordinator:
                 self.gateway.dispatch(intent, check_ns)
             else:
                 self.gateway.dispatch(intent, check_ns, candidate_marker=marker)
+
+    def dispatch_orders_now(self, now_ns=None):
+        """Synchronously dispatch newly persisted intents when the coordinator is active and idle."""
+        if self._dispatching or self.finished or self.gateway is None or not self.live.outbox:
+            return False
+        signal_flag = getattr(self, "stop_signal", None)
+        if signal_flag is not None and signal_flag.is_set():
+            return False
+        check_ns = time.time_ns() if now_ns is None else now_ns
+        if (
+            self.phase != "active"
+            or self.stop_requested_ns is not None
+            or self.proxy.restart_pending
+            or self.live.entry_pause_reason
+            or self.live.halt_reason
+        ):
+            return False
+        if self.loss_monitor.due(check_ns):
+            self.live.set_entry_pause("session_loss_check", check_ns)
+            return False
+        if (
+            self.plan.duration_secs
+            and self.started_ns is not None
+            and check_ns - self.started_ns >= self.plan.duration_secs * 1_000_000_000
+        ):
+            return False
+        self._dispatching = True
+        try:
+            from opportunity_price_timing import pending_stage
+            pending_stage(self.live, "direct_dispatch")
+            self._live_intents(check_ns)
+            return True
+        except Exception as exc:
+            self.failure = "execution callback failed: " + type(exc).__name__
+            self.request_stop(check_ns, "execution_callback_failed")
+            return False
+        finally:
+            self._dispatching = False
 
     @timed("coordinator.receipt")
     def on_receipt(self, receipt, now_ns=None):
@@ -1120,6 +1159,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                 from opportunity_wakeup import IntentWakeup
                 self.intent_wakeup = IntentWakeup(self.clock, self.on_time_event)
                 live.intent_notifier = self.intent_wakeup.request
+                live.direct_dispatcher = coordinator.dispatch_orders_now
             except Exception as exc:
                 coordinator.failure = "native strategy startup failed: "+type(exc).__name__
                 coordinator.finished = True
@@ -1146,6 +1186,7 @@ def build_live_node(plan, live, coordinator, *, environ=None):
                     coordinator._wakeup_only = False
 
         def on_stop(self):
+            live.direct_dispatcher = None
             live.intent_notifier = None
             wakeup = getattr(self, "intent_wakeup", None)
             if wakeup is not None:
