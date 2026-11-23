@@ -1499,8 +1499,30 @@ class LiveTradeState(ScanState):
                              for leg, i in (("buy", buy_id), ("sell", sell_id))},
             "unknown_commission": False, "reserved_gross_usd": str(2 * self.policy.order_notional_usd)}
         self.positions[key] = position
+        sequential = self.policy.entry_execution_mode == "slow_first"
         with span("entry.prepare_orders"):
-            intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
+            if sequential:
+                leg1 = self.policy.select_slow_leg(
+                    buy_market.venue,
+                    sell_market.venue,
+                    self.metadata[buy_id].taker_fee_bps,
+                    self.metadata[sell_id].taker_fee_bps,
+                )
+                leg2 = "sell" if leg1 == "buy" else "buy"
+                intent1 = self._make_order(position, leg1, "entry", bounds[leg1], now_ns)
+                self.orders[intent1.client_order_id]["sequential_role"] = "entry_leg1"
+                position["sequential_entry"] = {
+                    "leg1": leg1,
+                    "leg2": leg2,
+                    "stage": "leg1_in_flight",
+                    "target_base": _number(quantity),
+                    "leg1_cid": intent1.client_order_id,
+                    "leg2_cid": None,
+                    "leg2_prepared_ns": None,
+                }
+                intents = [intent1]
+            else:
+                intents = [self._make_order(position, leg, "entry", bounds[leg], now_ns) for leg in ("buy", "sell")]
         for intent in intents:
             self.entry_clocks[intent.client_order_id] = entry_clock
         if candidate_marker is not None:
@@ -1991,7 +2013,7 @@ class LiveTradeState(ScanState):
 
     def _reduction_bound(self, position, leg, qty, now_ns, *, require_fees=True,
                          allow_pending_entry=False, allow_unknown_reduction=False,
-                         hard_slippage=False, attempt_kind=None):
+                         hard_slippage=False, slippage_bps=None, attempt_kind=None):
         instrument_id = position[f"{leg}_id"]
         if not qty:
             return None
@@ -2016,7 +2038,7 @@ class LiveTradeState(ScanState):
                 if not qty:
                     self._exit_wait(position, leg, now_ns, "target_position_flat_or_opposite")
                     return None
-        slip = self.policy.hard_exit_slippage_bps if (allow_unknown_reduction or hard_slippage) else None
+        slip = (self.policy.hard_exit_slippage_bps if (allow_unknown_reduction or hard_slippage) else None) if slippage_bps is None else slippage_bps
         bound = self._limit(instrument_id, "SELL" if leg == "buy" else "BUY", qty,
                             now_ns, partial=True, reduce_only=reducing,
                             require_fees=require_fees, slippage_bps=slip)
@@ -2342,10 +2364,147 @@ class LiveTradeState(ScanState):
         intent = self._make_order(position, leg, "rebalance", bound, now_ns)
         self._publish_orders([intent], now_ns, position)
 
+    def _advance_sequential_entry(self, position, now_ns):
+        seq = position.get("sequential_entry")
+        if not isinstance(seq, dict) or seq.get("stage") in {"leg2_in_flight", "leg1_unfilled", "aborted"}:
+            return False
+        leg1, leg2 = seq["leg1"], seq["leg2"]
+        leg1_order = self.orders[seq["leg1_cid"]]
+        if leg1_order["terminal_ns"] is not None and F(leg1_order["filled_quantity"]) == 0:
+            seq["stage"] = "leg1_unfilled"
+            return False
+        leg1_ready = F(leg1_order["filled_quantity"]) > 0 and (
+            leg1_order["terminal_ns"] is not None
+            or F(leg1_order["filled_quantity"]) == F(leg1_order["quantity"])
+        )
+        if not leg1_ready:
+            return False
+        if self._hard_exit_reason(position, now_ns) or position["exit_reason"] in HARD_EXITS:
+            seq["stage"] = "aborted"
+            return False
+        leg2_qty = F(position[f"entry_{leg1}_base"])
+        leg2_id = position[f"{leg2}_id"]
+        leg2_side = "BUY" if leg2 == "buy" else "SELL"
+        bound2 = (
+            self._limit(
+                leg2_id,
+                leg2_side,
+                leg2_qty,
+                now_ns,
+                partial=True,
+                require_fees=False,
+                slippage_bps=self.policy.sequential_leg2_slippage_bps,
+            )
+            if not self._pending(leg2_id)
+            else None
+        )
+        lev_reason, _ = (
+            self.leverage_problem(leg2_id, bound2["price"], bound2["quantity"], now_ns)
+            if bound2 is not None
+            else (None, None)
+        )
+        if bound2 is not None and not lev_reason:
+            seq["stage"] = "leg2_in_flight"
+            seq["leg2_prepared_ns"] = now_ns
+            intent2 = self._make_order(position, leg2, "entry", bound2, now_ns)
+            self.orders[intent2.client_order_id]["sequential_role"] = "entry_leg2"
+            seq["leg2_cid"] = intent2.client_order_id
+            self.emit(
+                "sequential_entry_leg2_triggered",
+                now_ns,
+                position_id=position["position_id"],
+                leg1=leg1,
+                leg2=leg2,
+                leg1_base=_number(leg2_qty),
+                leg2_base=_number(bound2["base_quantity"]),
+                leg2_price=str(bound2["price"]),
+            )
+            self._publish_orders([intent2], now_ns, position)
+            return True
+        if not seq.get("leg2_waiting_emitted"):
+            seq["leg2_waiting_emitted"] = True
+            self.emit(
+                "sequential_entry_leg2_waiting",
+                now_ns,
+                position_id=position["position_id"],
+                leg2=leg2,
+                reason=lev_reason or "no_executable_bound",
+            )
+        return True
+
+    def _advance_sequential_soft_exit(self, position, remains, now_ns):
+        seq_exit = position.get("sequential_soft_exit")
+        if not isinstance(seq_exit, dict):
+            return False
+        leg1, leg2 = seq_exit["leg1"], seq_exit["leg2"]
+        leg1_order = self.orders[seq_exit["leg1_cid"]]
+        if seq_exit["leg2_cid"] is None:
+            if leg1_order["terminal_ns"] is not None and F(leg1_order["filled_quantity"]) == 0:
+                position.pop("sequential_soft_exit", None)
+                return False
+            urgent_hard = self._hard_exit_reason(position, now_ns)
+            leg1_ready = F(leg1_order["filled_quantity"]) > 0 and (
+                leg1_order["terminal_ns"] is not None
+                or F(leg1_order["filled_quantity"]) == F(leg1_order["quantity"])
+            )
+            if leg1_ready:
+                if urgent_hard and position["exit_reason"] not in HARD_EXITS:
+                    position.update(status="exit_pending", exit_reason=urgent_hard, exit_requested_ns=now_ns)
+                    self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=urgent_hard)
+                hedge_qty = F(position[f"remaining_{leg2}_base"]) - F(position[f"remaining_{leg1}_base"])
+                if hedge_qty > 0:
+                    bound2 = self._reduction_bound(
+                        position,
+                        leg2,
+                        hedge_qty,
+                        now_ns,
+                        require_fees=False,
+                        allow_pending_entry=bool(position.get("unhedged_breach")),
+                        allow_unknown_reduction=True,
+                        hard_slippage=False,
+                        slippage_bps=self.policy.sequential_leg2_slippage_bps,
+                        attempt_kind="soft_exit_hedge",
+                    )
+                    if bound2 is not None:
+                        intent2 = self._make_order(
+                            position, leg2, "exit", bound2, now_ns, attempt_kind="soft_exit_hedge"
+                        )
+                        self.orders[intent2.client_order_id]["sequential_role"] = "soft_exit_leg2"
+                        seq_exit["leg2_cid"] = intent2.client_order_id
+                        self.emit(
+                            "sequential_exit_leg2_triggered",
+                            now_ns,
+                            position_id=position["position_id"],
+                            leg1=leg1,
+                            leg2=leg2,
+                            hedge_base=_number(bound2["base_quantity"]),
+                            leg2_price=str(bound2["price"]),
+                            reason=position["exit_reason"],
+                        )
+                        self._publish_orders([intent2], now_ns, position)
+                return True
+            if urgent_hard and position["exit_reason"] not in HARD_EXITS:
+                position.update(status="exit_pending", exit_reason=urgent_hard, exit_requested_ns=now_ns)
+                self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=urgent_hard)
+                position.pop("sequential_soft_exit", None)
+                return False
+            return True
+        leg2_order = self.orders[seq_exit["leg2_cid"]]
+        if leg2_order["terminal_ns"] is None:
+            urgent_hard = self._hard_exit_reason(position, now_ns)
+            if urgent_hard and position["exit_reason"] not in HARD_EXITS:
+                position.update(status="exit_pending", exit_reason=urgent_hard, exit_requested_ns=now_ns)
+                self.emit("exit_requested", now_ns, position_id=position["position_id"], reason=urgent_hard)
+            return True
+        position.pop("sequential_soft_exit", None)
+        return False
+
     @timed("strategy.position_risk_and_exit")
     def observe(self, key, now_ns):
         position = self.positions[key]
         self._update_unhedged(position, now_ns)
+        if self._advance_sequential_entry(position, now_ns):
+            return
         ids = (position["buy_id"], position["sell_id"])
         entry_done = all(self.orders[cid]["terminal_ns"] is not None for cid in position["entry_ids"])
         if entry_done and position.get("exit_timing"):
@@ -2413,6 +2572,8 @@ class LiveTradeState(ScanState):
                 position["exit_requested_ns"] = now_ns
                 self.emit("entry_imbalance", now_ns, position_id=position["position_id"],
                           buy_base=_number(remains[0]), sell_base=_number(remains[1]))
+        if self._advance_sequential_soft_exit(position, remains, now_ns):
+            return
         exit_orders = [self.orders[cid] for cid in position["exit_ids"]]
         active_maker_orders = [o for o in exit_orders if o.get("maker_exit") and o["terminal_ns"] is None]
         has_maker_fill = any(o.get("maker_exit") and F(o["filled_quantity"]) > 0 for o in exit_orders)
@@ -2568,6 +2729,36 @@ class LiveTradeState(ScanState):
                     paired_quantity, now_ns, reduce_only=old["reduce_only"], slippage_bps=soft_exit_slip)
             if any(bound is None for bound in bounds.values()):
                 return
+        if not hard and self.policy.soft_exit_execution_mode == "slow_first" and len(bounds) == 2:
+            buy_meta = self.metadata[position["buy_id"]]
+            sell_meta = self.metadata[position["sell_id"]]
+            leg1 = self.policy.select_slow_leg(
+                self.markets[position["buy_id"]].venue,
+                self.markets[position["sell_id"]].venue,
+                buy_meta.taker_fee_bps,
+                sell_meta.taker_fee_bps,
+            )
+            leg2 = "sell" if leg1 == "buy" else "buy"
+            intent1 = self._make_order(position, leg1, "exit", bounds[leg1], now_ns, attempt_kind="soft_exit")
+            self.orders[intent1.client_order_id]["sequential_role"] = "soft_exit_leg1"
+            position["sequential_soft_exit"] = {
+                "leg1": leg1,
+                "leg2": leg2,
+                "leg1_cid": intent1.client_order_id,
+                "leg2_cid": None,
+                "reason": position["exit_reason"],
+            }
+            self.emit(
+                "sequential_exit_leg1_prepared",
+                now_ns,
+                position_id=position["position_id"],
+                leg1=leg1,
+                leg2=leg2,
+                client_order_id=intent1.client_order_id,
+                reason=position["exit_reason"],
+            )
+            self._publish_orders([intent1], now_ns, position)
+            return
         intents = [self._make_order(position, leg, "exit", bound, now_ns,
                                     attempt_kind="hard_exit" if hard else "soft_exit")
                    for leg, bound in bounds.items()]

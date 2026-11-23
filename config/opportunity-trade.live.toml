@@ -17,23 +17,24 @@ excluded_symbols = ["INIT"]
 [trade]
 order_notional_usd = "20"
 entry_edge_bps = "20"
-take_profit_bps = "5"
+take_profit_bps = "18"
 max_loss_bps = "150"
 loss_stop_enabled = true
-breakeven_after_secs = 180
-force_close_after_secs = 300
+breakeven_after_secs = 600
+force_close_after_secs = 1800
 slippage_bps = "0"
 hard_exit_slippage_bps = "10"
-soft_exit_execution_buffer_bps = "4"
+soft_exit_execution_buffer_bps = "2"
+min_l1_depth_multiple = "3"
+entry_execution_mode = "slow_first"
+soft_exit_execution_mode = "slow_first"
+sequential_leg2_slippage_bps = "15"
 loss_cooldown_secs = 60
 max_exit_reversal_bps = "30"
 max_exit_reversal_edge_ratio = "1"
 slow_venues = ["HL", "LIGHTER"]
-slow_pair_entry_edge_bps = "25"
-slow_pair_min_persistence_ms = 150
-maker_exit_venues = ["HL", "LIGHTER", "BACKPACK", "ASTER"]
-maker_exit_timeout_ms = 4000
-maker_exit_max_attempts = 2
+slow_pair_entry_edge_bps = "24"
+slow_pair_min_persistence_ms = 0
 
 [trade.entry_slippage_bps_by_venue]
 ASTER = "2"
@@ -63,7 +64,7 @@ enabled = true
 window_secs = 600
 warmup_secs = 120
 # Minimum transient deviation above the route's rolling basis (bps), in addition to entry_edge_bps.
-min_deviation_bps = "15"
+min_deviation_bps = "10"
 # Extended route cooldown / block after consecutive non-converging max_hold losses.
 max_hold_loss_cooldown_secs = 900
 max_hold_loss_block_strikes = 2

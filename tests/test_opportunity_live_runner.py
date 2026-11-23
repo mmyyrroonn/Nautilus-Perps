@@ -126,11 +126,13 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert "XPL" in plan.trade_symbols and "ASTER" in plan.trade_symbols
     assert plan.basis_filter.enabled is True
     assert plan.basis_filter.window_secs == 600 and plan.basis_filter.warmup_secs == 120
-    assert plan.basis_filter.min_deviation_bps == D("15")
+    assert plan.basis_filter.min_deviation_bps == D("10")
     assert plan.basis_filter.max_hold_loss_cooldown_secs == 900
     assert plan.basis_filter.max_hold_loss_block_strikes == 2
     assert plan.basis_filter.max_hold_loss_block_secs == 3600
     assert plan.policy.order_notional_usd == 20 and plan.max_gross_notional_usd == 100
+    assert plan.policy.entry_edge_bps == D("20") and plan.policy.take_profit_bps == D("18")
+    assert plan.policy.breakeven_after_secs == 600 and plan.policy.force_close_after_secs == 1800
     assert plan.max_unhedged_notional_usd == 25
     assert plan.max_session_realized_loss_usd == 10
     assert plan.max_consecutive_losses == 20 and plan.max_consecutive_single_legs == 20
@@ -138,18 +140,22 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.max_exit_reversal_edge_ratio == 1
     assert plan.lighter_margin_max_age_ms == 60000 and plan.aster_leverage_max_age_ms == 15000
     assert plan.policy.slippage_bps == 0 and plan.policy.hard_exit_slippage_bps == 10
-    assert plan.policy.soft_exit_execution_buffer_bps == D("4")
+    assert plan.policy.soft_exit_execution_buffer_bps == D("2")
+    assert plan.policy.min_l1_depth_multiple == D("3")
+    assert plan.policy.entry_execution_mode == "slow_first"
+    assert plan.policy.soft_exit_execution_mode == "slow_first"
+    assert plan.policy.sequential_leg2_slippage_bps == D("15")
     assert plan.policy.entry_slippage_bps("HL") == D("4")
     assert plan.policy.entry_slippage_bps("LIGHTER") == D("2")
     assert plan.policy.entry_slippage_bps("ASTER") == D("2")
     assert plan.policy.entry_slippage_bps("BACKPACK") == D("2")
     assert plan.policy.entry_slippage_bps("ONDO") == D("0")
     assert plan.policy.slow_venues == ("HL", "LIGHTER")
-    assert plan.policy.slow_pair_entry_edge_bps == D("25")
-    assert plan.policy.slow_pair_min_persistence_ms == 150
-    assert plan.policy.maker_exit_venues == ("ASTER", "BACKPACK", "HL", "LIGHTER")
-    assert plan.policy.maker_exit_timeout_ms == 4000
-    assert plan.policy.maker_exit_max_attempts == 2
+    assert plan.policy.slow_pair_entry_edge_bps == D("24")
+    assert plan.policy.slow_pair_min_persistence_ms == 0
+    assert plan.policy.maker_exit_venues == ()
+    assert plan.policy.maker_exit_timeout_ms == 0
+    assert plan.policy.maker_exit_max_attempts == 0
     assert plan.policy.maker_fee_bps("HL") == D("1.5")
     assert plan.policy.maker_fee_bps("LIGHTER") == D("0")
     assert plan.policy.maker_fee_bps("BACKPACK") == D("0")

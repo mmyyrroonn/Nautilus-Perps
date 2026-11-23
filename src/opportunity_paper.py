@@ -169,6 +169,15 @@ class PaperTradeState(ScanState):
                                         "pair_invalid", detail=reason)
             return None
         books, metadata = pair
+        if self.policy.min_l1_depth_multiple > 0:
+            req_l1 = F(self.policy.min_l1_depth_multiple) * F(self.policy.order_notional_usd)
+            buy_l1 = F(books[0].asks[0][0]) * F(books[0].asks[0][1]) * F(metadata[0].multiplier)
+            sell_l1 = F(books[1].bids[0][0]) * F(books[1].bids[0][1]) * F(metadata[1].multiplier)
+            if buy_l1 < req_l1 or sell_l1 < req_l1:
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "pricing_rejected", detail="l1_depth_insufficient")
+                return None
         if self.basis_tracker is not None:
             bbo_basis_reason = self.basis_tracker.bbo_rule_out(
                 buy_id, sell_id, books[0], books[1], now_ns)
