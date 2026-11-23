@@ -80,6 +80,10 @@ class TradePolicy:
     hard_exit_slippage_bps: Decimal = Decimal("10")
     soft_exit_execution_buffer_bps: Decimal = Decimal("0")
     min_l1_depth_multiple: Decimal = Decimal("0")
+    max_leg_spread_bps: Decimal | None = None
+    max_rolling_leg_spread_bps: Decimal | None = None
+    rolling_leg_spread_window_secs: int = 300
+    rolling_leg_spread_min_samples: int = 10
     entry_execution_mode: str = "simultaneous"
     soft_exit_execution_mode: str = "simultaneous"
     sequential_leg2_slippage_bps: Decimal = Decimal("15")
@@ -114,6 +118,23 @@ class TradePolicy:
         if l1_mult > 100:
             raise ScanConfigError("min_l1_depth_multiple must be at most 100")
         object.__setattr__(self, "min_l1_depth_multiple", l1_mult)
+        for name in ("max_leg_spread_bps", "max_rolling_leg_spread_bps"):
+            val = getattr(self, name)
+            if val is not None:
+                spread_cap = decimal_value(val, name, positive=True)
+                if spread_cap >= 10000:
+                    raise ScanConfigError(f"{name} must be below 10000")
+                object.__setattr__(self, name, spread_cap)
+        rl_window = integer_value(
+            self.rolling_leg_spread_window_secs, "rolling_leg_spread_window_secs", 10, 86400
+        )
+        rl_min = integer_value(
+            self.rolling_leg_spread_min_samples, "rolling_leg_spread_min_samples", 1, 3600
+        )
+        if rl_min > rl_window:
+            raise ScanConfigError(
+                "rolling_leg_spread_min_samples must not exceed rolling_leg_spread_window_secs"
+            )
         for name in ("entry_execution_mode", "soft_exit_execution_mode"):
             mode = getattr(self, name)
             if not isinstance(mode, str) or mode not in EXECUTION_MODES:
@@ -231,7 +252,10 @@ class TradePolicy:
                     continue
                 result[key] = list(value)
                 continue
-            if key in {"max_exit_reversal_bps", "max_exit_reversal_edge_ratio", "slow_pair_entry_edge_bps"} and value is None:
+            if key in {"max_exit_reversal_bps", "max_exit_reversal_edge_ratio", "slow_pair_entry_edge_bps",
+                       "max_leg_spread_bps", "max_rolling_leg_spread_bps"} and value is None:
+                continue
+            if key in {"rolling_leg_spread_window_secs", "rolling_leg_spread_min_samples"} and self.max_rolling_leg_spread_bps is None:
                 continue
             result[key] = str(value) if isinstance(value, Decimal) else value
         return result

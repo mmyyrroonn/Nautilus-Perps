@@ -30,8 +30,8 @@ from opportunity_core import (
     _metadata_valid, _number, exact_decimal,
 )
 from opportunity_basis import (
-    BasisFilterPolicy, RollingBasisTracker, RouteMaxHoldTracker,
-    route_block_reject, route_label, symbol_venue_pairs,
+    BasisFilterPolicy, RollingBasisTracker, RollingLegSpreadTracker,
+    RouteMaxHoldTracker, route_block_reject, route_label, symbol_venue_pairs,
 )
 from opportunity_paper import PaperTradeState
 from opportunity_preflight import OrderIntent
@@ -208,6 +208,12 @@ class LiveTradeState(ScanState):
         self.basis_filter = basis_filter
         self.basis_tracker = RollingBasisTracker(basis_filter) if basis_filter.deviation_enabled else None
         self.pricer.basis_tracker = self.basis_tracker
+        self.spread_tracker = (
+            RollingLegSpreadTracker(policy.rolling_leg_spread_window_secs, policy.rolling_leg_spread_min_samples)
+            if policy.max_rolling_leg_spread_bps is not None
+            else None
+        )
+        self.pricer.spread_tracker = self.spread_tracker
         self.route_max_hold_tracker = RouteMaxHoldTracker(basis_filter)
         self.route_max_hold_blocks = self.route_max_hold_tracker.entries
         self._symbol_venue_pairs = symbol_venue_pairs(self.groups, self.markets)
@@ -2807,6 +2813,9 @@ class LiveTradeState(ScanState):
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
                     self.books, self.plan.settings, now_ns, affected=raw_affected, symbol=symbol)
+            if self.spread_tracker is not None:
+                self.spread_tracker.observe_instruments(
+                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns)
             return
         analytics = current_analytics()
         started_ns = time.perf_counter_ns() if analytics is not None else None
@@ -2852,6 +2861,9 @@ class LiveTradeState(ScanState):
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
                     self.books, self.plan.settings, now_ns, affected=raw_affected, symbol=symbol)
+            if self.spread_tracker is not None:
+                self.spread_tracker.observe_instruments(
+                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns)
             if started_ns is not None:
                 analytics.record_eval_mode(holding_at_start, full_scan, time.perf_counter_ns() - started_ns)
 
@@ -2981,6 +2993,7 @@ class LiveTradeState(ScanState):
                 "pair_cooldowns": {":".join(k): dict(v) for k, v in self.pair_cooldowns.items()},
                 "basis_filter": self.basis_filter.document(),
                 "basis_tracker": self.basis_tracker.summary() if self.basis_tracker is not None else None,
+                "spread_tracker": self.spread_tracker.summary() if self.spread_tracker is not None else None,
                 "route_max_hold_blocks": self.route_max_hold_tracker.document(),
                 "native_admission": deepcopy(self.native_admission),
                 "account_pauses": deepcopy(self.account_pauses),

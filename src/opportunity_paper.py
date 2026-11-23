@@ -14,8 +14,8 @@ import sys
 import time
 
 from opportunity_basis import (
-    BasisFilterPolicy, RollingBasisTracker, RouteMaxHoldTracker,
-    route_block_reject, route_label, symbol_venue_pairs,
+    BasisFilterPolicy, RollingBasisTracker, RollingLegSpreadTracker,
+    RouteMaxHoldTracker, route_block_reject, route_label, symbol_venue_pairs,
 )
 from opportunity_core import (_best_quotes_rule_out, _book_valid, _budget_quantity,
                               _execution_metadata_valid, _fee_metadata_valid, _metadata_valid,
@@ -34,6 +34,11 @@ class PaperTradeState(ScanState):
         self.policy = policy
         self.basis_filter = basis_filter
         self.basis_tracker = RollingBasisTracker(basis_filter) if basis_filter.deviation_enabled else None
+        self.spread_tracker = (
+            RollingLegSpreadTracker(policy.rolling_leg_spread_window_secs, policy.rolling_leg_spread_min_samples)
+            if policy.max_rolling_leg_spread_bps is not None
+            else None
+        )
         self.route_max_hold_tracker = RouteMaxHoldTracker(basis_filter)
         self.route_max_hold_blocks = self.route_max_hold_tracker.entries
         self._symbol_venue_pairs = symbol_venue_pairs(self.groups, self.markets)
@@ -177,6 +182,26 @@ class PaperTradeState(ScanState):
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "pricing_rejected", detail="l1_depth_insufficient")
+                return None
+        if self.policy.max_leg_spread_bps is not None:
+            max_leg_spread = F(self.policy.max_leg_spread_bps)
+            for book in books:
+                bid0, ask0 = F(book.bids[0][0]), F(book.asks[0][0])
+                if bid0 <= 0 or (ask0 - bid0) * 10000 > max_leg_spread * bid0:
+                    if analytics is not None:
+                        analytics.record_funnel(
+                            buy_market.symbol, buy_market.venue, sell_market.venue,
+                            "pricing_rejected", detail="leg_spread_wide")
+                    return None
+        spread_tracker = getattr(self, "spread_tracker", None)
+        if self.policy.max_rolling_leg_spread_bps is not None and spread_tracker is not None:
+            spread_reason = spread_tracker.evaluate_pair(
+                buy_id, sell_id, float(self.policy.max_rolling_leg_spread_bps), now_ns)
+            if spread_reason is not None:
+                if analytics is not None:
+                    analytics.record_funnel(
+                        buy_market.symbol, buy_market.venue, sell_market.venue,
+                        "pricing_rejected", detail=spread_reason)
                 return None
         if self.basis_tracker is not None:
             bbo_basis_reason = self.basis_tracker.bbo_rule_out(
@@ -328,6 +353,9 @@ class PaperTradeState(ScanState):
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
                     self.books, self.plan.settings, now_ns, affected=affected, symbol=symbol)
+            if self.spread_tracker is not None:
+                self.spread_tracker.observe_instruments(
+                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns)
 
     def _exit_leg(self, position, opening_side, now_ns):
         instrument_id = position[f"{opening_side}_id"]
