@@ -142,6 +142,10 @@ def test_shipped_live_plan_selects_all_five_native_venues():
     assert plan.policy.slippage_bps == 0 and plan.policy.hard_exit_slippage_bps == 10
     assert plan.policy.soft_exit_execution_buffer_bps == D("2")
     assert plan.policy.min_l1_depth_multiple == D("3")
+    assert plan.policy.max_leg_spread_bps == D("25")
+    assert plan.policy.max_rolling_leg_spread_bps == D("20")
+    assert plan.policy.rolling_leg_spread_window_secs == 300
+    assert plan.policy.rolling_leg_spread_min_samples == 10
     assert plan.policy.entry_execution_mode == "slow_first"
     assert plan.policy.soft_exit_execution_mode == "slow_first"
     assert plan.policy.sequential_leg2_slippage_bps == D("15")

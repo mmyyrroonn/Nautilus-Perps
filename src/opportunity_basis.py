@@ -354,6 +354,101 @@ class RollingBasisTracker:
         return doc
 
 
+class _InstSpreadWindow:
+    __slots__ = ("samples", "last_sample_ns", "cached_median")
+
+    def __init__(self, maxlen: int) -> None:
+        self.samples: deque[tuple[int, float]] = deque(maxlen=maxlen)
+        self.last_sample_ns: int = -1
+        self.cached_median: float | None = None
+
+
+class RollingLegSpreadTracker:
+    """Bounded per-instrument sliding median bid-ask spread tracker (1 Hz sampled)."""
+
+    def __init__(
+        self,
+        window_secs: int = 300,
+        min_samples: int = 10,
+        sample_interval_secs: int = 1,
+    ) -> None:
+        self.window_secs = window_secs
+        self.min_samples = min_samples
+        self.sample_interval_secs = sample_interval_secs
+        self.window_ns = window_secs * 1_000_000_000
+        self.sample_interval_ns = sample_interval_secs * 1_000_000_000
+        self.max_samples = (window_secs // sample_interval_secs) + 4
+        self._samples: dict[str, _InstSpreadWindow] = {}
+
+    def observe_instruments(self, instrument_ids, books, settings, now_ns: int) -> int:
+        """Sample valid books at most once per sample_interval_secs per instrument."""
+        recorded = 0
+        cutoff = now_ns - self.window_ns
+        for instrument_id in instrument_ids:
+            win = self._samples.get(instrument_id)
+            if win is not None and (
+                now_ns <= win.last_sample_ns
+                or now_ns - win.last_sample_ns < self.sample_interval_ns
+            ):
+                continue
+            book = books.get(instrument_id)
+            if book is None or not _book_valid(book, settings, now_ns):
+                continue
+            if not book.bids or not book.asks:
+                continue
+            bid0 = float(book.bids[0][0])
+            ask0 = float(book.asks[0][0])
+            if not (math.isfinite(bid0) and math.isfinite(ask0) and bid0 > 0.0 and ask0 >= bid0):
+                continue
+            spread_bps = (ask0 - bid0) / bid0 * 10000.0
+            if not math.isfinite(spread_bps):
+                continue
+            if win is None:
+                win = _InstSpreadWindow(self.max_samples)
+                self._samples[instrument_id] = win
+            while win.samples and win.samples[0][0] < cutoff:
+                win.samples.popleft()
+            win.samples.append((now_ns, spread_bps))
+            win.last_sample_ns = now_ns
+            win.cached_median = None
+            recorded += 1
+        return recorded
+
+    def median_bps(self, instrument_id: str, now_ns: int) -> float | None:
+        """Return rolling median bid-ask spread in bps, or None during warmup."""
+        win = self._samples.get(instrument_id)
+        if win is None:
+            return None
+        cutoff = now_ns - self.window_ns
+        while win.samples and win.samples[0][0] < cutoff:
+            win.samples.popleft()
+            win.cached_median = None
+        if len(win.samples) < self.min_samples:
+            return None
+        if win.cached_median is None:
+            win.cached_median = float(statistics.median(val for _, val in win.samples))
+        return win.cached_median
+
+    def evaluate_pair(self, buy_id: str, sell_id: str, max_bps: float, now_ns: int) -> str | None:
+        """Fail closed if either leg lacks warmup samples or its rolling median exceeds max_bps."""
+        buy_med = self.median_bps(buy_id, now_ns)
+        sell_med = self.median_bps(sell_id, now_ns)
+        if buy_med is None or sell_med is None:
+            return "rolling_leg_spread_warmup"
+        if buy_med > max_bps or sell_med > max_bps:
+            return "rolling_leg_spread_wide"
+        return None
+
+    def summary(self) -> dict:
+        ready = sum(1 for win in self._samples.values() if len(win.samples) >= self.min_samples)
+        return {
+            "window_secs": self.window_secs,
+            "min_samples": self.min_samples,
+            "tracked_instruments": len(self._samples),
+            "ready_instruments": ready,
+        }
+
+
 def _spread_convergence(economics: dict | None) -> tuple[float | None, float | None, float | None]:
     if not isinstance(economics, dict):
         return None, None, None
