@@ -506,6 +506,8 @@ class SessionStoreProxy:
 
 def native_quote(state, instrument_id, now_ns):
     from opportunity_core import _book_valid, exact_decimal
+    if instrument_id not in state.books and hasattr(state, "ensure_book"):
+        state.ensure_book(instrument_id)
     book, market = state.books.get(instrument_id), state.markets.get(instrument_id)
     if book is None or market is None or not _book_valid(book, state.plan.settings, now_ns):
         raise ValueError("fresh source book is unavailable")
@@ -792,11 +794,16 @@ class LiveCoordinator:
             self._live_intents(now_ns)
 
     def _has_residual(self):
-        document = self.live.document()
+        if hasattr(self.live, "has_residual"):
+            live_residual = self.live.has_residual()
+        else:
+            document = self.live.document()
+            live_residual = bool(document.get("active_pairs", len(document.get("positions", []))) or
+                                 document.get("pending_orders", document.get("unresolved_orders", 0)))
+        if live_residual:
+            return True
         startup = self.preflight.document() if self.preflight else self.proxy.startup or {}
-        return bool(document.get("active_pairs", len(document.get("positions", []))) or
-                    document.get("pending_orders", document.get("unresolved_orders", 0)) or
-                    Decimal(startup.get("owned_quantity", "0")) or
+        return bool(Decimal(startup.get("owned_quantity", "0")) or
                     startup.get("unresolved_client_order_ids", []) or
                     any(Decimal(value) for value in startup.get("late_residuals_by_venue", {}).values()))
 
@@ -901,15 +908,17 @@ class LiveCoordinator:
         if (self.loss_monitor.policy.enabled and self.stop_requested_ns is None
                 and (self.phase == "active" or self.loss_monitor.baseline_usd is None)):
             monitor = self.loss_monitor
-            monitor.tick(self.gateway, self.live, now_ns, has_residual=self._has_residual(),
-                account_after_ns=max(self.started_ns, self.account_recovery_after_ns or 0)
-                if monitor.baseline_usd is None else None)
-            pending_stage(self.live, "loss_check_completed")
-            self._live_intents(now_ns)
-            document = monitor.document()
-            if document != self.proxy.loss_monitor:
-                self.proxy.checkpoint_loss_monitor(document, now_ns)
-                self.loss_reporter(document)
+            if monitor.due(now_ns):
+                monitor.tick(self.gateway, self.live, now_ns, has_residual=self._has_residual(),
+                    account_after_ns=max(self.started_ns, self.account_recovery_after_ns or 0)
+                    if monitor.baseline_usd is None else None)
+                self._live_intents(now_ns)
+                document = monitor.document()
+                if document != self.proxy.loss_monitor:
+                    self.proxy.checkpoint_loss_monitor(document, now_ns)
+                    self.loss_reporter(document)
+            if self.live.entry_timings:
+                pending_stage(self.live, "loss_check_completed")
             if monitor.status == "breached":
                 # tick only breaches with all accounts flat and original IDs terminal.
                 self.request_stop(now_ns, "session_loss_limit")

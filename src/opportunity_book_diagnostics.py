@@ -46,6 +46,17 @@ class BookEvidence:
             self.invalidation_reason = self.invalidated_ns = None
             self.reason, self.reason_ns = "published", now_ns
 
+    def publish_fast(self, valid, now_ns):
+        self.pending = None
+        self.current_published_ns = now_ns
+        if not valid:
+            if self.reason in {"uninitialized", "published", "snapshot_rebuilding", "partial_update"}:
+                self.invalidate("invalid_book", now_ns)
+        else:
+            self.published_ns = now_ns
+            self.invalidation_reason = self.invalidated_ns = None
+            self.reason, self.reason_ns = "published", now_ns
+
 
 def book_problem(book, settings, now_ns):
     """Explain the existing validity predicate without relaxing it."""

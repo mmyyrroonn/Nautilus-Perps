@@ -10,12 +10,14 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from functools import lru_cache
 import json
+import math
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import timedelta
 
-from opportunity_core import (BookSnapshot, EventRecorder, MarketMetadata, evaluate_opportunity,
+from opportunity_core import (BookSnapshot, EventRecorder, FastBbo, MarketMetadata, evaluate_opportunity,
                               exact_decimal, _book_valid, _metadata_valid)
 from opportunity_scan import ScanConfigError, ScanPlan
 from opportunity_book_diagnostics import BookEvidence
@@ -95,6 +97,8 @@ def normalized_levels(market, levels):
 class ScanState:
     """One current snapshot per market; one small current display row per direction."""
 
+    supports_lazy_books = False
+
     def __init__(self, plan: ScanPlan):
         self.plan = plan
         self.markets = {m.instrument_id: m for m in plan.markets}
@@ -105,6 +109,8 @@ class ScanState:
             self.groups.setdefault(market.symbol, []).append(market.instrument_id)
         self.metadata: dict[str, MarketMetadata] = {}
         self.books: dict[str, BookSnapshot] = {}
+        self.fast_books: dict[str, FastBbo] = {}
+        self._book_materializer = None
         self.book_evidence = ({i: BookEvidence() for i in self.markets}
                               if diagnostics_enabled() else None)
         self.quote_timings = {} if diagnostics_enabled() else None
@@ -113,6 +119,21 @@ class ScanState:
         self.recorder = EventRecorder(plan.output_path, plan.cooldown_ms, plan.edge_change_bps,
                                      plan.quantity_change_fraction, plan.max_interval_ms)
         self.saved = 0
+
+    def attach_book_materializer(self, materializer):
+        self._book_materializer = materializer
+
+    def needs_full_book(self, instrument_id: str) -> bool:
+        return True
+
+    def ensure_book(self, instrument_id: str) -> BookSnapshot | None:
+        book = self.books.get(instrument_id)
+        if book is not None:
+            return book
+        fb = self.fast_books.get(instrument_id)
+        if fb is None or fb.source is not None or self._book_materializer is None:
+            return None
+        return self._book_materializer(instrument_id, fb)
 
     def update_metadata(self, instrument_id: str, metadata: MarketMetadata, now_ns: int, *, evaluate=True):
         if instrument_id not in self.markets:
@@ -127,16 +148,48 @@ class ScanState:
         if self.book_evidence is not None:
             self.book_evidence[instrument_id].invalidate("metadata_invalid" if metadata else reason, now_ns)
         self.books.pop(instrument_id, None)
+        self.fast_books.pop(instrument_id, None)
         self.raw_books.pop(instrument_id, None)
         if metadata:
             self.metadata.pop(instrument_id, None)
         self.evaluate_symbol(self.markets[instrument_id].symbol, now_ns, changed_id=instrument_id)
+
+    def update_fast_bbo(self, instrument_id: str, fast_bbo: FastBbo, *, evaluate=True):
+        market = self.markets.get(instrument_id)
+        if market is None or fast_bbo.symbol != market.symbol or fast_bbo.venue != market.venue:
+            raise ValueError("book does not match configured market")
+        self.fast_books[instrument_id] = fast_bbo
+        self.books.pop(instrument_id, None)
+        self.raw_books.pop(instrument_id, None)
+        if self.quote_timings is not None:
+            self.quote_timings.pop(instrument_id, None)
+        if self.book_evidence is not None:
+            self.book_evidence[instrument_id].publish_fast(fast_bbo.valid, fast_bbo.published_ns)
+        if evaluate:
+            self.evaluate_symbol(market.symbol, fast_bbo.published_ns, changed_id=instrument_id)
 
     def update_book(self, instrument_id: str, book: BookSnapshot, now_ns: int, *, raw_book=None, evaluate=True):
         market = self.markets.get(instrument_id)
         if market is None or book.symbol != market.symbol or book.venue != market.venue:
             raise ValueError("book does not match configured market")
         self.books[instrument_id] = book
+        if self.supports_lazy_books:
+            try:
+                if book.bids and book.asks and len(book.bids[0]) == 2 and len(book.asks[0]) == 2:
+                    bid_f = float(book.bids[0][0])
+                    ask_f = float(book.asks[0][0])
+                    if math.isfinite(bid_f) and math.isfinite(ask_f) and 0.0 < bid_f < ask_f:
+                        self.fast_books[instrument_id] = FastBbo(
+                            book.venue, book.symbol, bid_f, ask_f,
+                            book.ts_event_ns, book.ts_received_ns, book.valid,
+                            now_ns, 0, -1, source=book,
+                        )
+                    else:
+                        self.fast_books.pop(instrument_id, None)
+                else:
+                    self.fast_books.pop(instrument_id, None)
+            except (TypeError, ValueError, IndexError):
+                self.fast_books.pop(instrument_id, None)
         if self.quote_timings is not None:
             self.quote_timings.pop(instrument_id, None)
         if self.book_evidence is not None:
@@ -271,7 +324,9 @@ def data_clients(plan, *, backpack_quota=None):
 
 def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer=True, tape_recorder=None):
     from nautilus_trader.common import DataActor, DataActorConfig
-    from nautilus_trader.model import BookType, ClientId, InstrumentId, OrderBook, RecordFlag
+    from nautilus_trader.model import (
+        BookAction, BookType, ClientId, InstrumentId, OrderBook, OrderSide, RecordFlag,
+    )
 
     class Observer(DataActor):
         def __init__(self):
@@ -310,6 +365,30 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.pending_instruments = set()
             from opportunity_memory import current_diagnostics
             self.memory_diagnostics = current_diagnostics()
+            self._f_snapshot = RecordFlag.F_SNAPSHOT.value
+            self._f_last = RecordFlag.F_LAST.value
+            self._act_clear = BookAction.CLEAR
+            self._act_delete = BookAction.DELETE
+            self._side_buy = OrderSide.BUY
+            self._side_sell = OrderSide.SELL
+            self._max_levels = plan.max_levels_per_side
+            self._str_ids = {i: m.instrument_id for i, m in self.markets.items()}
+            self._native_ids = {m.instrument_id: i for i, m in self.markets.items()}
+            self._norm_factors = {
+                i: (
+                    1.0
+                    if m.quote_to_usd == m.canonical_multiplier
+                    else float(_normalization_factor(m.quote_to_usd, m.canonical_multiplier))
+                )
+                for i, m in self.markets.items()
+            }
+            self._lazy_books = (
+                bool(getattr(state, "supports_lazy_books", False))
+                and tape_recorder is None
+                and plan.output_path is None
+            )
+            if self._lazy_books:
+                state.attach_book_materializer(self._materialize_book)
             if plan.hyperliquid_bbo_gate and hasattr(state, "bbo_provider"):
                 hl_config = client_configs.get("HYPERLIQUID") if client_configs else None
                 if hl_config is not None and hasattr(hl_config, "latest_bbo"):
@@ -471,10 +550,54 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             else:
                 # Stop must not evaluate partially cleared multi-venue books and
                 # accidentally prepare a new pair while subscriptions are closing.
-                state.books.pop(str(instrument_id), None)
-                state.raw_books.pop(str(instrument_id), None)
+                inst_str = self._str_ids[instrument_id]
+                state.books.pop(inst_str, None)
+                if hasattr(state, "fast_books"):
+                    state.fast_books.pop(inst_str, None)
+                state.raw_books.pop(inst_str, None)
                 if state.book_evidence is not None:
-                    state.book_evidence[str(instrument_id)].invalidate(reason, time.time_ns())
+                    state.book_evidence[inst_str].invalidate(reason, time.time_ns())
+
+        def _materialize_book(self, inst_str, fast_bbo):
+            native_id = self._native_ids.get(inst_str)
+            if (native_id is None or native_id not in self.snapshot_seen
+                    or native_id in self.dirty or native_id in self.pending_snapshot):
+                return None
+            book = self.local_books[native_id]
+            if getattr(book, "update_count", None) != fast_bbo.update_count:
+                return None
+            market = self.markets[native_id]
+            depth = plan.depth_levels
+            if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
+                depth = min(depth, 5)
+            raw_bids = tuple(book.bids_to_dict(depth).items())
+            raw_asks = tuple(book.asks_to_dict(depth).items())
+            snapshot = BookSnapshot(
+                market.venue, market.symbol,
+                normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
+                fast_bbo.ts_event_ns, fast_bbo.ts_received_ns,
+                valid=fast_bbo.valid, coverage_limit=depth,
+            )
+            state.books[inst_str] = snapshot
+            state.fast_books[inst_str] = replace(fast_bbo, source=snapshot)
+            if hasattr(state, "book_publications"):
+                state.book_publications[inst_str] = (snapshot, fast_bbo.published_ns)
+            if state.book_evidence is not None:
+                state.book_evidence[inst_str].publish(snapshot, fast_bbo.published_ns)
+            return snapshot
+
+        def _begin_snapshot_rebuild(self, instrument_id, market):
+            self.local_books[instrument_id].reset()
+            for prices in self.level_prices[instrument_id].values():
+                prices.clear()
+            self.snapshot_seen.discard(instrument_id)
+            self.pending_snapshot.add(instrument_id)
+            self.dirty.pop(instrument_id, None)
+            self.clear_book_timing(instrument_id)
+            now_ns = time.time_ns()
+            state.invalidate(market.instrument_id, now_ns, reason="snapshot_rebuilding")
+            if tape_recorder is not None:
+                tape_recorder.record_invalidation(market, now_ns, reason="snapshot_rebuilding")
 
         def clear_book_timing(self, instrument_id):
             self.pending_quote_timings.pop(instrument_id, None)
@@ -550,44 +673,95 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 deltas = batch.deltas
                 if self.memory_diagnostics is not None:
                     self.memory_diagnostics.record_batch(market.venue, len(deltas), batch.ts_init)
-                clear = any(d.action.name == "CLEAR" for d in deltas)
-                snapshot_part = any(
-                    RecordFlag.F_SNAPSHOT.matches(d.flags) for d in deltas)
-                if clear or (snapshot_part and instrument_id not in self.pending_snapshot):
-                    self.local_books[instrument_id].reset()
-                    for prices in self.level_prices[instrument_id].values():
-                        prices.clear()
-                    self.snapshot_seen.discard(instrument_id)
-                    self.pending_snapshot.add(instrument_id)
-                    self.dirty.pop(instrument_id, None)
-                    self.clear_book_timing(instrument_id)
-                    now_ns = time.time_ns()
-                    state.invalidate(market.instrument_id, now_ns, reason="snapshot_rebuilding")
-                    if tape_recorder is not None:
-                        tape_recorder.record_invalidation(market, now_ns, reason="snapshot_rebuilding")
-                if instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
-                    return
-                book = self.local_books[instrument_id]
-                # L2_MBP has one order per price. Track only current price keys
-                # to enforce the bound without cloning full ladders every tick.
                 sides = self.level_prices[instrument_id]
-                for delta in deltas:
-                    action = delta.action.name
-                    if action == "CLEAR":
-                        for prices in sides.values():
-                            prices.clear()
-                        continue
-                    order = delta.order
-                    prices = sides[order.side.name]
-                    if action == "DELETE" or order.size.is_zero():
-                        prices.discard(order.price.raw)
-                    else:
-                        prices.add(order.price.raw)
-                    if len(prices) > plan.max_levels_per_side:
-                        self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
+                act_clear = self._act_clear
+                act_delete = self._act_delete
+                side_buy = self._side_buy
+                side_sell = self._side_sell
+                f_snapshot = self._f_snapshot
+                max_levels = self._max_levels
+                if len(deltas) == 1:
+                    delta = deltas[0]
+                    act = delta.action
+                    is_clear = act == act_clear
+                    if is_clear or ((delta.flags & f_snapshot) and instrument_id not in self.pending_snapshot):
+                        self._begin_snapshot_rebuild(instrument_id, market)
+                    elif instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
                         return
+                    if not is_clear:
+                        order = delta.order
+                        side = order.side
+                        if side == side_buy:
+                            prices = sides["BUY"]
+                        elif side == side_sell:
+                            prices = sides["SELL"]
+                        else:
+                            raise KeyError(side.name)
+                        if act == act_delete or order.size.raw == 0:
+                            prices.discard(order.price.raw)
+                        else:
+                            prices.add(order.price.raw)
+                            if len(prices) > max_levels:
+                                self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
+                                return
+                else:
+                    in_pending = instrument_id in self.pending_snapshot
+                    in_seen = instrument_id in self.snapshot_seen
+                    rebuilt = False
+                    if not in_seen and not in_pending:
+                        if any(d.action == act_clear or (d.flags & f_snapshot) for d in deltas):
+                            self._begin_snapshot_rebuild(instrument_id, market)
+                            rebuilt = True
+                        else:
+                            return
+                    elif deltas and (
+                        deltas[0].action == act_clear
+                        or (not in_pending and (deltas[0].flags & f_snapshot))
+                    ):
+                        self._begin_snapshot_rebuild(instrument_id, market)
+                        rebuilt = True
+                    buys, sells = sides["BUY"], sides["SELL"]
+                    idx = 0
+                    total = len(deltas)
+                    while idx < total:
+                        delta = deltas[idx]
+                        act = delta.action
+                        if not rebuilt and (act == act_clear or (not in_pending and (delta.flags & f_snapshot))):
+                            self._begin_snapshot_rebuild(instrument_id, market)
+                            rebuilt = True
+                            idx = 0
+                            continue
+                        idx += 1
+                        if act == act_clear:
+                            buys.clear()
+                            sells.clear()
+                            continue
+                        order = delta.order
+                        side = order.side
+                        if side == side_buy:
+                            prices = buys
+                        elif side == side_sell:
+                            prices = sells
+                        else:
+                            raise KeyError(side.name)
+                        if act == act_delete or order.size.raw == 0:
+                            prices.discard(order.price.raw)
+                        else:
+                            prices.add(order.price.raw)
+                            if len(prices) > max_levels:
+                                if not rebuilt and any(
+                                    d.action == act_clear or (not in_pending and (d.flags & f_snapshot))
+                                    for d in deltas[idx:]
+                                ):
+                                    self._begin_snapshot_rebuild(instrument_id, market)
+                                    rebuilt = True
+                                    idx = 0
+                                    continue
+                                self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
+                                return
+                book = self.local_books[instrument_id]
                 book.apply_deltas(batch)
-                if not RecordFlag.F_LAST.matches(batch.flags):
+                if not (batch.flags & self._f_last):
                     self.dirty.pop(instrument_id, None)
                     self.clear_book_timing(instrument_id)
                     now_ns = time.time_ns()
@@ -627,48 +801,75 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
         def publish_book(self, instrument_id, stamp, *, evaluate=True):
             market = self.markets[instrument_id]
             markers = self.book_timings.pop(instrument_id, None)
-            if market.instrument_id not in state.metadata:
+            inst_str = self._str_ids[instrument_id]
+            if inst_str not in state.metadata:
                 return
             book = self.local_books[instrument_id]
             depth = plan.depth_levels
             if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
-                if any(len(prices) > 5 for prices in self.level_prices[instrument_id].values()):
+                sides = self.level_prices[instrument_id]
+                if len(sides["BUY"]) > 5 or len(sides["SELL"]) > 5:
                     raise ScanConfigError("Hyperliquid fast subscription delivered more than five levels")
                 depth = min(depth, 5)
-            raw_bids = tuple(book.bids_to_dict(depth).items())
-            raw_asks = tuple(book.asks_to_dict(depth).items())
             ts_event, ts_received, sequence = stamp
-            valid = instrument_id not in (self.halted | self.metadata_stale | self.disconnected | self.backpack_unhealthy)
-            snapshot = BookSnapshot(market.venue, market.symbol,
-                normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
-                ts_event, ts_received, valid=valid, coverage_limit=depth)
-            raw = None
-            if plan.output_path is not None:
-                def rows(levels):
-                    result = []
-                    for price, size in levels:
-                        quantity = format(size, "f")
-                        if "." in quantity:
-                            quantity = quantity.rstrip("0").rstrip(".")
-                        result.append([str(price), quantity])
-                    return result
-                raw = {"instrument_id": market.instrument_id,
-                       "bids": rows(raw_bids), "asks": rows(raw_asks),
-                       "ts_event_ns": ts_event, "ts_received_ns": ts_received,
-                       "coverage_limit": depth, "complete_book_claimed": False,
-                       "sequence": sequence}
-            published_ns = time.time_ns()
-            state.update_book(market.instrument_id, snapshot, published_ns, raw_book=raw, evaluate=False)
-            if tape_recorder is not None:
-                tape_recorder.record_book(market, snapshot, published_ns, sequence=sequence)
+            valid = (
+                instrument_id not in self.halted
+                and instrument_id not in self.metadata_stale
+                and instrument_id not in self.disconnected
+                and instrument_id not in self.backpack_unhealthy
+            )
+            lazy_published = False
+            if self._lazy_books and not state.needs_full_book(inst_str):
+                best_bid_fn = getattr(book, "best_bid_price", None)
+                if best_bid_fn is not None:
+                    bp = best_bid_fn()
+                    ap = book.best_ask_price()
+                    if bp is not None and ap is not None:
+                        factor = self._norm_factors[instrument_id]
+                        bid_f = bp.as_double() if factor == 1.0 else bp.as_double() * factor
+                        ask_f = ap.as_double() if factor == 1.0 else ap.as_double() * factor
+                        if 0.0 < bid_f < ask_f and math.isfinite(ask_f):
+                            published_ns = time.time_ns()
+                            fast_bbo = FastBbo(
+                                market.venue, market.symbol, bid_f, ask_f,
+                                ts_event, ts_received, valid, published_ns,
+                                sequence, book.update_count,
+                            )
+                            state.update_fast_bbo(inst_str, fast_bbo, evaluate=False)
+                            lazy_published = True
+            if not lazy_published:
+                raw_bids = tuple(book.bids_to_dict(depth).items())
+                raw_asks = tuple(book.asks_to_dict(depth).items())
+                snapshot = BookSnapshot(market.venue, market.symbol,
+                    normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
+                    ts_event, ts_received, valid=valid, coverage_limit=depth)
+                raw = None
+                if plan.output_path is not None:
+                    def rows(levels):
+                        result = []
+                        for price, size in levels:
+                            quantity = format(size, "f")
+                            if "." in quantity:
+                                quantity = quantity.rstrip("0").rstrip(".")
+                            result.append([str(price), quantity])
+                        return result
+                    raw = {"instrument_id": inst_str,
+                           "bids": rows(raw_bids), "asks": rows(raw_asks),
+                           "ts_event_ns": ts_event, "ts_received_ns": ts_received,
+                           "coverage_limit": depth, "complete_book_claimed": False,
+                           "sequence": sequence}
+                published_ns = time.time_ns()
+                state.update_book(inst_str, snapshot, published_ns, raw_book=raw, evaluate=False)
+                if tape_recorder is not None:
+                    tape_recorder.record_book(market, snapshot, published_ns, sequence=sequence)
             if state.quote_timings is not None:
                 quote_timing = self.pending_quote_timings.pop(instrument_id, None)
                 if quote_timing is not None and (
                         quote_timing.source_wall_ns, quote_timing.native_init_wall_ns,
                         quote_timing.sequence) == stamp:
-                    state.quote_timings[market.instrument_id] = quote_timing.publish()
+                    state.quote_timings[inst_str] = quote_timing.publish()
                 else:
-                    state.quote_timings.pop(market.instrument_id, None)
+                    state.quote_timings.pop(inst_str, None)
             if markers is not None:
                 published = start_latency()
                 for label, marker in zip(("first", "latest"), markers):
@@ -678,7 +879,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 self.publication_timings.setdefault(market.symbol, {})[instrument_id] = (
                     market.venue, published)
             if evaluate:
-                self.evaluate_published(market.symbol, changed_id=market.instrument_id)
+                self.evaluate_published(market.symbol, changed_id=inst_str)
 
         @timed("market.instrument")
         def on_instrument(self, instrument):
@@ -771,15 +972,18 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     affected = self.pending_instruments.copy()
                     self.pending_symbols.clear()
                     self.pending_instruments.clear()
-                    for instrument_id, stamp in tuple(self.dirty.items()):
-                        self.dirty.pop(instrument_id, None)
-                        self.publish_book(instrument_id, stamp, evaluate=False)
-                        changed.add(self.markets[instrument_id].symbol)
-                        affected.add(str(instrument_id))
+                    if self.dirty:
+                        dirty_items = tuple(self.dirty.items())
+                        self.dirty.clear()
+                        for instrument_id, stamp in dirty_items:
+                            self.publish_book(instrument_id, stamp, evaluate=False)
+                            changed.add(self.markets[instrument_id].symbol)
+                            affected.add(self._str_ids[instrument_id])
                     # Every changed leg is current before evaluating any pair.
                     changed.update(state.pending_evaluation_symbols())
-                    for symbol in sorted(changed):
-                        self.evaluate_published(symbol, changed_ids=affected)
+                    if changed:
+                        for symbol in sorted(changed):
+                            self.evaluate_published(symbol, changed_ids=affected)
                     if drive_evaluation_timer:
                         state.on_evaluation_timer(time.time_ns())
                 if time.time_ns() - self.last_display_ns >= plan.refresh_ms * 1_000_000:

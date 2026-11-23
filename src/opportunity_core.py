@@ -61,6 +61,21 @@ class BookSnapshot:
         return _validate_book_structure(self)
 
 
+@dataclass(frozen=True, slots=True)
+class FastBbo:
+    venue: str
+    symbol: str
+    bid_price: float
+    ask_price: float
+    ts_event_ns: int
+    ts_received_ns: int
+    valid: bool = True
+    published_ns: int = 0
+    sequence: int = 0
+    update_count: int = -1
+    source: BookSnapshot | None = None
+
+
 @dataclass(frozen=True)
 class ScanSettings:
     target_notional: Decimal = Decimal("500")
@@ -169,6 +184,25 @@ def _book_valid(book: BookSnapshot, settings: ScanSettings, now_ns: int) -> bool
     if now_ns - book.ts_received_ns > settings.max_receive_age_ms * 1_000_000:
         return False
     if book.ts_received_ns - book.ts_event_ns > settings.max_age_ms * 1_000_000:
+        return False
+    return True
+
+
+def _fast_bbo_valid(book: FastBbo, settings: ScanSettings, now_ns: int) -> bool:
+    if not book.valid:
+        return False
+    if not (isfinite(book.bid_price) and isfinite(book.ask_price) and 0.0 < book.bid_price < book.ask_price):
+        return False
+    if not _integer(book.ts_event_ns) or not _integer(book.ts_received_ns):
+        return False
+    if not 0 < book.ts_event_ns <= book.ts_received_ns <= now_ns:
+        return False
+    max_age_ns = settings.max_age_ms * 1_000_000
+    if now_ns - book.ts_event_ns > max_age_ns:
+        return False
+    if now_ns - book.ts_received_ns > settings.max_receive_age_ms * 1_000_000:
+        return False
+    if book.ts_received_ns - book.ts_event_ns > max_age_ns:
         return False
     return True
 

@@ -10,6 +10,7 @@ from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 from fractions import Fraction as F
+import math
 import sys
 import time
 
@@ -26,12 +27,15 @@ from opportunity_timing import current_analytics, sampled_timed, span
 
 
 class PaperTradeState(ScanState):
+    supports_lazy_books = True
+
     def __init__(self, plan, policy: TradePolicy, *, store=None, event_sink=None,
                  basis_filter: BasisFilterPolicy = BasisFilterPolicy()):
         plan = replace(plan, output_path=None, settings=replace(plan.settings,
             target_notional=policy.order_notional_usd, min_entry_edge_bps=policy.entry_edge_bps))
         super().__init__(plan)
         self.policy = policy
+        self._bbo_ratio_cache = {}
         self.basis_filter = basis_filter
         self.basis_tracker = RollingBasisTracker(basis_filter) if basis_filter.deviation_enabled else None
         self.spread_tracker = (
@@ -144,9 +148,90 @@ class PaperTradeState(ScanState):
                 return
         raise RuntimeError("paper fill exceeded available snapshot liquidity")
 
+    def needs_full_book(self, instrument_id: str) -> bool:
+        if self.positions and any(instrument_id in (p["buy_id"], p["sell_id"]) for p in self.positions.values()):
+            return True
+        analytics = current_analytics()
+        return analytics is not None and analytics.needs_book(instrument_id)
+
+    def _pair_bbo_ratio(self, buy_id, sell_id, buy_meta, sell_meta):
+        key = (buy_id, sell_id)
+        cache_key = (id(buy_meta), id(sell_meta), id(self.plan.settings), id(self.policy))
+        cached = self._bbo_ratio_cache.get(key)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        buy_market = self.markets[buy_id]
+        sell_market = self.markets[sell_id]
+        edge_bps = self.policy.effective_entry_edge_bps(buy_market.venue, sell_market.venue)
+        settings = self.plan.settings
+        if (not edge_bps.is_finite() or edge_bps < 0
+                or not settings.reserve_bps.is_finite() or settings.reserve_bps < 0
+                or not _metadata_valid(buy_meta) or not _metadata_valid(sell_meta)):
+            ratio = None
+        else:
+            sell_keep = 10000.0 - float(sell_meta.taker_fee_bps)
+            buy_req = 10000.0 + float(buy_meta.taker_fee_bps) + float(settings.reserve_bps) + float(edge_bps)
+            if not (math.isfinite(sell_keep) and math.isfinite(buy_req) and sell_keep > 0.0 and buy_req > 0.0):
+                ratio = None
+            else:
+                ratio = (buy_req / sell_keep) * (1.0 - 1e-8)
+                if not (math.isfinite(ratio) and ratio > 0.0):
+                    ratio = None
+        self._bbo_ratio_cache[key] = (cache_key, ratio)
+        return ratio
+
+    def _bbo_ruled_out(self, buy_id, sell_id):
+        books, metadata = self.books, self.metadata
+        buy_meta = metadata.get(buy_id)
+        sell_meta = metadata.get(sell_id)
+        if buy_meta is None or sell_meta is None:
+            return True
+        fast_books = self.fast_books
+        buy_book = books.get(buy_id)
+        sell_book = books.get(sell_id)
+        buy_fb = fast_books.get(buy_id)
+        sell_fb = fast_books.get(sell_id)
+        buy_has_fast = (
+            buy_fb is not None
+            and (buy_fb.source is None if buy_book is None else buy_fb.source is buy_book)
+        )
+        sell_has_fast = (
+            sell_fb is not None
+            and (sell_fb.source is None if sell_book is None else sell_fb.source is sell_book)
+        )
+        if (buy_book is None and not buy_has_fast) or (sell_book is None and not sell_has_fast):
+            return True
+        if buy_has_fast and sell_has_fast:
+            ratio = self._pair_bbo_ratio(buy_id, sell_id, buy_meta, sell_meta)
+            if ratio is not None and (
+                sell_fb.bid_price <= buy_fb.ask_price
+                or sell_fb.bid_price < buy_fb.ask_price * ratio
+            ):
+                return True
+        if buy_book is None:
+            buy_book = self.ensure_book(buy_id)
+        if sell_book is None:
+            sell_book = self.ensure_book(sell_id)
+        if buy_book is None or sell_book is None:
+            return True
+        return _best_quotes_rule_out(
+            buy_book,
+            buy_meta,
+            sell_book,
+            sell_meta,
+            self.plan.settings,
+            min_entry_edge_bps=self.policy.effective_entry_edge_bps(
+                self.markets[buy_id].venue, self.markets[sell_id].venue
+            ),
+        )
+
     @sampled_timed("pricing.entry")
     def entry(self, buy_id, sell_id, now_ns, *, analytics=None, basis_reject_stage="pricing_rejected",
               check_route_block=True):
+        if buy_id not in self.books:
+            self.ensure_book(buy_id)
+        if sell_id not in self.books:
+            self.ensure_book(sell_id)
         if not all(i in self.books and i in self.metadata for i in (buy_id, sell_id)):
             return None
         if analytics is None:
@@ -304,10 +389,20 @@ class PaperTradeState(ScanState):
         previous = self.last_closed.get(key)
         if previous is None:
             return True
+        closed_ns = previous["closed_ns"]
+        if now_ns <= closed_ns:
+            return False
         # Do not consume the same observation again on a timer or reverse callback.
-        return now_ns > previous["closed_ns"] and all(
-            i in self.books and self.books[i].ts_event_ns > previous["closed_ns"]
-            for i in (buy_id, sell_id))
+        for i in (buy_id, sell_id):
+            book = self.books.get(i)
+            if book is None:
+                fb = self.fast_books.get(i)
+                if fb is None or fb.source is not None:
+                    return False
+                book = fb
+            if book.ts_event_ns <= closed_ns:
+                return False
+        return True
 
     def evaluate_symbol(self, symbol, now_ns, *, changed_id=None, changed_ids=None):
         if self.halted or self.finished:
@@ -329,6 +424,8 @@ class PaperTradeState(ScanState):
                     pairs.append((key, first, second))
             for key, first, second in pairs:
                 for buy_id, sell_id in ((first, second), (second, first)):
+                    if self._bbo_ruled_out(buy_id, sell_id):
+                        continue
                     entry = self.entry(buy_id, sell_id, now_ns)
                     if entry is None:
                         continue
@@ -352,10 +449,12 @@ class PaperTradeState(ScanState):
             if self.basis_tracker is not None:
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
-                    self.books, self.plan.settings, now_ns, affected=affected, symbol=symbol)
+                    self.books, self.plan.settings, now_ns, affected=affected,
+                    symbol=symbol, fast_books=self.fast_books)
             if self.spread_tracker is not None:
                 self.spread_tracker.observe_instruments(
-                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns)
+                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns,
+                    fast_books=self.fast_books, symbol=symbol)
 
     def _exit_leg(self, position, opening_side, now_ns):
         instrument_id = position[f"{opening_side}_id"]
@@ -608,9 +707,10 @@ class PaperTradeState(ScanState):
                 "fill_model": "full paired entry/soft exit; independent partial hard exits from available L2"}
 
     def display(self, stream=sys.stdout):
+        book_count = len(self.books.keys() | self.fast_books.keys()) if self.fast_books else len(self.books)
         stream.write(f"[paper-trade] active={len(self.positions)} opened={self.sequence} "
                      f"closed={self.completed} realized_net=${float(self.realized_net):.6f} "
-                     f"books={len(self.books)}/{len(self.markets)} real_orders=0\n")
+                     f"books={book_count}/{len(self.markets)} real_orders=0\n")
         for position in sorted(self.positions.values(), key=lambda p: p["position_id"])[:self.plan.top_n]:
             stream.write(f"  #{position['position_id']} {position['symbol']} {position['status']} "
                          f"long {position['buy_id']} remaining={position['remaining_buy_base']} "
