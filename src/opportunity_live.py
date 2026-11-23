@@ -26,7 +26,7 @@ import time
 import uuid
 
 from opportunity_core import (
-    _best_quotes_rule_out, _book_valid, _execution_metadata_valid, _fee_metadata_valid,
+    _book_valid, _execution_metadata_valid, _fee_metadata_valid,
     _metadata_valid, _number, exact_decimal,
 )
 from opportunity_basis import (
@@ -46,6 +46,7 @@ HARD_MAX_UNHEDGED_SECS = 10
 MIN_ENTRY_UNHEDGED_RESERVE_BPS = Decimal("10")
 MAX_PENDING_ENTRY_TIMINGS = 1024
 _ZERO = F(0)
+_EMPTY_FROZENSET = frozenset()
 TERMINALS = {"terminal", "canceled", "rejected", "denied", "expired"}
 HARD_EXITS = {"max_hold", "max_loss", "entry_imbalance", "exit_imbalance", "operator_stop", "execution_halt", "exposure_limit",
               "unhedged_notional", "unhedged_timeout"}
@@ -72,6 +73,8 @@ def _positive(value, name):
 
 
 class LiveTradeState(ScanState):
+    supports_lazy_books = True
+
     def __init__(self, plan, policy, *, max_pairs, max_gross_notional_usd,
                  store=None, event_sink=None, account_max_age_ms=5000,
                  order_timeout_secs=10, retry_interval_ms=1000, trade_symbols=None,
@@ -144,6 +147,10 @@ class LiveTradeState(ScanState):
         # Use only pricing methods; never call the paper lifecycle or its fills.
         self.pricer = PaperTradeState(plan, policy)
         self.pricer.books, self.pricer.metadata = self.books, self.metadata
+        self.pricer.fast_books = self.fast_books
+        self._native_admission_venues = tuple(
+            v for v in ("BACKPACK", "ONDO") if any(m.venue == v for m in self.markets.values())
+        )
         self.store, self.event_sink = store, event_sink
         self.positions, self.orders, self.executions, self.last_closed = {}, {}, {}, {}
         self._execution_orders = {}
@@ -478,12 +485,36 @@ class LiveTradeState(ScanState):
         self.emit("entry_dispatch_blocked", now_ns, client_order_id=intent.client_order_id, domains=paused)
         return True
 
+    def attach_book_materializer(self, materializer):
+        self._book_materializer = materializer
+        self.pricer._book_materializer = materializer
+
+    def needs_full_book(self, instrument_id: str) -> bool:
+        if self.phase not in {"active", "draining", "recovery_blocked"}:
+            return True
+        if self.positions and self._is_owned_instrument(instrument_id):
+            return True
+        if self._execution_orders and any(
+                o["instrument_id"] == instrument_id and order_has_execution_risk(o)
+                for o in self._execution_orders.values()):
+            return True
+        if self._slow_pair_since and any(instrument_id in pair for pair in self._slow_pair_since):
+            return True
+        analytics = current_analytics()
+        return analytics is not None and analytics.needs_book(instrument_id)
+
+    def update_fast_bbo(self, instrument_id, fast_bbo, *, evaluate=True):
+        self.book_publications.pop(instrument_id, None)
+        super().update_fast_bbo(instrument_id, fast_bbo, evaluate=evaluate)
+
+    def has_residual(self) -> bool:
+        return bool(self.positions) or any(order_has_execution_risk(o) for o in self.orders.values())
+
     def update_native_admission(self, statuses, now_ns):
         statuses = dict(statuses)
-        for venue in ("BACKPACK", "ONDO"):
-            if any(m.venue == venue for m in self.markets.values()):
-                statuses.setdefault(venue, {"ready": False,
-                    "reason": "native_admission_unavailable", "checked_ns": now_ns})
+        for venue in self._native_admission_venues:
+            statuses.setdefault(venue, {"ready": False,
+                "reason": "native_admission_unavailable", "checked_ns": now_ns})
         for venue, status in statuses.items():
             status = dict(status)
             if not 0 <= now_ns - status["checked_ns"] <= self.native_admission_max_age_ns:
@@ -759,22 +790,54 @@ class LiveTradeState(ScanState):
     def _check_account_proof(self, instrument_id, account, expected, *, preparation_owner=None):
         """Validate complete evidence once within an immutable validation pass."""
         coverage = self._account_coverage(account)
-        if any(account.observed_ns < self._entry_account_fence(i, preparation_owner) for i in coverage):
+        if preparation_owner is None:
+            if self.fences and any(account.observed_ns < self.fences.get(i, 0) for i in coverage):
+                return {}, "predates_activity"
+        elif any(account.observed_ns < self._entry_account_fence(i, preparation_owner) for i in coverage):
             return {}, "predates_activity"
         if account.account_positions is None:
             positions = {instrument_id: F(account.position_quantity)}
+            for instrument in set(coverage) | positions.keys():
+                if instrument not in expected:
+                    expected[instrument] = self.expected_native(instrument)
+                if positions.get(instrument, _ZERO) != expected[instrument]:
+                    return positions, "position_mismatch"
         else:
             scope = self._account_scope(instrument_id)
             cached = self.account_position_values.get(scope)
             if cached is None or cached[0] is not account.account_positions:
-                cached = (account.account_positions, {i: F(q) for i, q in account.account_positions})
+                positions = {i: F(q) for i, q in account.account_positions}
+                nonzero = {i: v for i, v in positions.items() if v}
+                union_keys = frozenset(coverage) | positions.keys()
+                unconfigured_count = sum(1 for i in positions if i not in self.markets)
+                cached = (account.account_positions, positions, nonzero, union_keys, unconfigured_count)
                 self.account_position_values[scope] = cached
-            positions = cached[1]
-        for instrument in set(coverage) | positions.keys():
-            if instrument not in expected:
-                expected[instrument] = self.expected_native(instrument)
-            if positions.get(instrument, 0) != expected[instrument]:
-                return positions, "position_mismatch"
+            else:
+                _, positions, nonzero, union_keys, _ = cached
+            if "expected_native" in self.__dict__:
+                for instrument in union_keys:
+                    if instrument not in expected:
+                        expected[instrument] = self.expected_native(instrument)
+                    if positions.get(instrument, _ZERO) != expected[instrument]:
+                        return positions, "position_mismatch"
+            elif not self.positions:
+                if nonzero:
+                    return positions, "position_mismatch"
+            else:
+                relevant = set()
+                for pos in self.positions.values():
+                    for leg in ("buy", "sell"):
+                        inst = pos[f"{leg}_id"]
+                        if inst in union_keys:
+                            relevant.add(inst)
+                for instrument in relevant:
+                    if instrument not in expected:
+                        expected[instrument] = self.expected_native(instrument)
+                    if positions.get(instrument, _ZERO) != expected[instrument]:
+                        return positions, "position_mismatch"
+                for instrument in nonzero:
+                    if instrument not in relevant:
+                        return positions, "position_mismatch"
         orders = account.account_open_orders if account.account_open_orders is not None else tuple(
             (instrument_id, cid) for cid in account.open_order_ids)
         for instrument, cid in orders:
@@ -812,7 +875,8 @@ class LiveTradeState(ScanState):
         positions, reason = proofs[key]
         if reason == "predates_activity":
             return "predates_activity"
-        if positions.get(instrument_id, 0) != F(account.position_quantity):
+        observed_qty = _ZERO if not account.position_quantity else F(account.position_quantity)
+        if positions.get(instrument_id, _ZERO) != observed_qty:
             return "inconsistent_coverage"
         return reason
 
@@ -851,11 +915,17 @@ class LiveTradeState(ScanState):
         proofs, expected = {}, {}
         problems = [(i, self._account_problem(i, now_ns, proofs=proofs, expected=expected,
                                             preparation_owner=preparation_owner)) for i in instruments]
+        unconfigured = 0
+        for key, (positions, _) in proofs.items():
+            cached = self.account_position_values.get((domain, key[1])) if len(key) == 5 else None
+            if cached is not None and cached[1] is positions:
+                unconfigured += cached[4]
+            else:
+                unconfigured += sum(1 for i in positions if i not in self.markets)
         self.account_check_metrics[domain] = {"checked_at_unix_ns": now_ns, "markets_checked": len(instruments),
             "proofs_checked": len(proofs), "expected_quantities_computed": len(expected),
             "position_rows_checked": sum(len(positions) for positions, _ in proofs.values()),
-            "unconfigured_position_rows": sum(i not in self.markets
-                for positions, _ in proofs.values() for i in positions)}
+            "unconfigured_position_rows": unconfigured}
         for instrument_id, reason in problems:
             if reason and reason != "predates_activity":
                 self._pause_account(instrument_id, now_ns, reason)
@@ -1211,21 +1281,7 @@ class LiveTradeState(ScanState):
             self._slow_pair_since.pop((buy_id, sell_id), None)
 
     def _bbo_ruled_out(self, buy_id, sell_id):
-        pricer = self.pricer
-        books, metadata = pricer.books, pricer.metadata
-        if buy_id not in books or sell_id not in books or buy_id not in metadata or sell_id not in metadata:
-            return False
-        markets = pricer.markets
-        return _best_quotes_rule_out(
-            books[buy_id],
-            metadata[buy_id],
-            books[sell_id],
-            metadata[sell_id],
-            pricer.plan.settings,
-            min_entry_edge_bps=pricer.policy.effective_entry_edge_bps(
-                markets[buy_id].venue, markets[sell_id].venue
-            ),
-        )
+        return self.pricer._bbo_ruled_out(buy_id, sell_id)
 
     def _is_hl_oi_capped(self, instrument_id):
         market = self.markets.get(instrument_id)
@@ -2812,23 +2868,27 @@ class LiveTradeState(ScanState):
             if self.basis_tracker is not None:
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
-                    self.books, self.plan.settings, now_ns, affected=raw_affected, symbol=symbol)
+                    self.books, self.plan.settings, now_ns, affected=raw_affected,
+                    symbol=symbol, fast_books=self.fast_books)
             if self.spread_tracker is not None:
                 self.spread_tracker.observe_instruments(
-                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns)
+                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns,
+                    fast_books=self.fast_books, symbol=symbol)
             return
         analytics = current_analytics()
         started_ns = time.perf_counter_ns() if analytics is not None else None
         holding_at_start = bool(self.positions)
         full_scan = False
         try:
-            for key in tuple(self.positions):
-                if key[0] == symbol:
-                    self.observe(key, now_ns)
+            if self.positions:
+                for key in tuple(self.positions):
+                    if key[0] == symbol:
+                        self.observe(key, now_ns)
             if (self.stopping or self.entry_pause_reason or self.halt_reason or self.order_reconciliations or symbol not in self.trade_symbols
-                    or any(p.get("unhedged_breach") for p in self.positions.values()) or any(
-                    o["status"] == "unknown" or self._order_timed_out(o, now_ns)
-                    for o in self.execution_orders())):
+                    or (self.positions and any(p.get("unhedged_breach") for p in self.positions.values()))
+                    or (self._execution_orders and any(
+                        o["status"] == "unknown" or self._order_timed_out(o, now_ns)
+                        for o in self.execution_orders()))):
                 return
             if len(self.positions) >= self.max_pairs:
                 if analytics is not None:
@@ -2841,15 +2901,20 @@ class LiveTradeState(ScanState):
             self.full_evaluation_symbols.discard(symbol)
             is_flat = not self.positions and not self._execution_orders
             reserved = _ZERO if is_flat else self.gross_exposure(reserve=True)
-            pending_ids = frozenset() if is_flat else frozenset(o["instrument_id"] for o in self.execution_orders())
+            pending_ids = _EMPTY_FROZENSET if is_flat else frozenset(o["instrument_id"] for o in self.execution_orders())
             self._eval_snapshot = (is_flat, reserved, pending_ids)
             for first, second in self._symbol_venue_pairs.get(symbol, ()):
                 if affected is not None and first not in affected and second not in affected:
                     continue
                 for buy_id, sell_id in ((first, second), (second, first)):
                     if self._bbo_ruled_out(buy_id, sell_id):
-                        self._clear_slow_persistence(buy_id, sell_id)
+                        if self._slow_pair_since:
+                            self._slow_pair_since.pop((buy_id, sell_id), None)
                         continue
+                    if buy_id not in self.books:
+                        self.ensure_book(buy_id)
+                    if sell_id not in self.books:
+                        self.ensure_book(sell_id)
                     if self._entry(buy_id, sell_id, now_ns):
                         self._eval_snapshot = None
                         break
@@ -2860,10 +2925,12 @@ class LiveTradeState(ScanState):
             if self.basis_tracker is not None:
                 self.basis_tracker.observe_symbol(
                     self._symbol_venue_pairs.get(symbol, ()),
-                    self.books, self.plan.settings, now_ns, affected=raw_affected, symbol=symbol)
+                    self.books, self.plan.settings, now_ns, affected=raw_affected,
+                    symbol=symbol, fast_books=self.fast_books)
             if self.spread_tracker is not None:
                 self.spread_tracker.observe_instruments(
-                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns)
+                    self.groups.get(symbol, ()), self.books, self.plan.settings, now_ns,
+                    fast_books=self.fast_books, symbol=symbol)
             if started_ns is not None:
                 analytics.record_eval_mode(holding_at_start, full_scan, time.perf_counter_ns() - started_ns)
 

@@ -15,8 +15,20 @@ from itertools import combinations
 import math
 import statistics
 
-from opportunity_core import _best_quotes_rule_out, _book_valid
+from opportunity_core import FastBbo, _best_quotes_rule_out, _book_valid, _fast_bbo_valid
 from opportunity_scan import ScanConfigError, decimal_value, integer_value
+
+
+def _resolve_book(instrument_id: str, books: dict, fast_books: dict | None):
+    book = books.get(instrument_id)
+    if book is not None:
+        return book
+    if fast_books is None:
+        return None
+    fb = fast_books.get(instrument_id)
+    if fb is not None and fb.source is None:
+        return fb
+    return None
 
 
 def route_block_reject(
@@ -157,10 +169,18 @@ class BasisEstimate:
 
 def mid_basis_bps(buy_book, sell_book) -> float | None:
     """Compute antisymmetric mid-to-mid basis in bps: (sell_mid - buy_mid) / avg_mid * 10000."""
-    if not buy_book.bids or not buy_book.asks or not sell_book.bids or not sell_book.asks:
-        return None
-    buy_mid = (float(buy_book.bids[0][0]) + float(buy_book.asks[0][0])) * 0.5
-    sell_mid = (float(sell_book.bids[0][0]) + float(sell_book.asks[0][0])) * 0.5
+    if isinstance(buy_book, FastBbo):
+        buy_mid = (buy_book.bid_price + buy_book.ask_price) * 0.5
+    else:
+        if not buy_book.bids or not buy_book.asks:
+            return None
+        buy_mid = (float(buy_book.bids[0][0]) + float(buy_book.asks[0][0])) * 0.5
+    if isinstance(sell_book, FastBbo):
+        sell_mid = (sell_book.bid_price + sell_book.ask_price) * 0.5
+    else:
+        if not sell_book.bids or not sell_book.asks:
+            return None
+        sell_mid = (float(sell_book.bids[0][0]) + float(sell_book.asks[0][0])) * 0.5
     avg_mid = (buy_mid + sell_mid) * 0.5
     if not (math.isfinite(avg_mid) and avg_mid > 0.0):
         return None
@@ -205,7 +225,9 @@ class RollingBasisTracker:
         win = self._windows.get(key)
         if win is not None and (now_ns <= win.last_sample_ns or now_ns - win.last_sample_ns < self.sample_interval_ns):
             return False
-        if not _book_valid(book_a, settings, now_ns) or not _book_valid(book_b, settings, now_ns):
+        valid_a = _fast_bbo_valid(book_a, settings, now_ns) if isinstance(book_a, FastBbo) else _book_valid(book_a, settings, now_ns)
+        valid_b = _fast_bbo_valid(book_b, settings, now_ns) if isinstance(book_b, FastBbo) else _book_valid(book_b, settings, now_ns)
+        if not valid_a or not valid_b:
             return False
         if abs(book_a.ts_event_ns - book_b.ts_event_ns) > settings.max_skew_ms * 1_000_000:
             return False
@@ -232,6 +254,7 @@ class RollingBasisTracker:
         *,
         affected=None,
         symbol: str | None = None,
+        fast_books=None,
     ) -> int:
         """Observe all matching unordered cross-venue pairs for one symbol."""
         if not symbol_pairs:
@@ -248,8 +271,8 @@ class RollingBasisTracker:
             win = self._windows.get(key)
             if win is not None and (now_ns <= win.last_sample_ns or now_ns - win.last_sample_ns < self.sample_interval_ns):
                 continue
-            book_a = books.get(first)
-            book_b = books.get(second)
+            book_a = _resolve_book(first, books, fast_books)
+            book_b = _resolve_book(second, books, fast_books)
             if book_a is not None and book_b is not None:
                 if self.observe_pair(first, book_a, second, book_b, settings, now_ns):
                     recorded += 1
@@ -379,9 +402,23 @@ class RollingLegSpreadTracker:
         self.sample_interval_ns = sample_interval_secs * 1_000_000_000
         self.max_samples = (window_secs // sample_interval_secs) + 4
         self._samples: dict[str, _InstSpreadWindow] = {}
+        self._symbol_earliest_next_ns: dict[str, int] = {}
 
-    def observe_instruments(self, instrument_ids, books, settings, now_ns: int) -> int:
+    def observe_instruments(
+        self,
+        instrument_ids,
+        books,
+        settings,
+        now_ns: int,
+        *,
+        fast_books=None,
+        symbol: str | None = None,
+    ) -> int:
         """Sample valid books at most once per sample_interval_secs per instrument."""
+        if symbol is not None:
+            next_ns = self._symbol_earliest_next_ns.get(symbol)
+            if next_ns is not None and now_ns < next_ns:
+                return 0
         recorded = 0
         cutoff = now_ns - self.window_ns
         for instrument_id in instrument_ids:
@@ -391,13 +428,19 @@ class RollingLegSpreadTracker:
                 or now_ns - win.last_sample_ns < self.sample_interval_ns
             ):
                 continue
-            book = books.get(instrument_id)
-            if book is None or not _book_valid(book, settings, now_ns):
+            book = _resolve_book(instrument_id, books, fast_books)
+            if book is None:
                 continue
-            if not book.bids or not book.asks:
-                continue
-            bid0 = float(book.bids[0][0])
-            ask0 = float(book.asks[0][0])
+            if isinstance(book, FastBbo):
+                if not _fast_bbo_valid(book, settings, now_ns):
+                    continue
+                bid0 = book.bid_price
+                ask0 = book.ask_price
+            else:
+                if not _book_valid(book, settings, now_ns) or not book.bids or not book.asks:
+                    continue
+                bid0 = float(book.bids[0][0])
+                ask0 = float(book.asks[0][0])
             if not (math.isfinite(bid0) and math.isfinite(ask0) and bid0 > 0.0 and ask0 >= bid0):
                 continue
             spread_bps = (ask0 - bid0) / bid0 * 10000.0
@@ -412,6 +455,20 @@ class RollingLegSpreadTracker:
             win.last_sample_ns = now_ns
             win.cached_median = None
             recorded += 1
+        if symbol is not None:
+            earliest_next = None
+            for instrument_id in instrument_ids:
+                win = self._samples.get(instrument_id)
+                if win is None:
+                    earliest_next = None
+                    break
+                candidate_next = win.last_sample_ns + self.sample_interval_ns
+                if earliest_next is None or candidate_next < earliest_next:
+                    earliest_next = candidate_next
+            if earliest_next is not None and earliest_next > now_ns:
+                self._symbol_earliest_next_ns[symbol] = earliest_next
+            else:
+                self._symbol_earliest_next_ns.pop(symbol, None)
         return recorded
 
     def median_bps(self, instrument_id: str, now_ns: int) -> float | None:

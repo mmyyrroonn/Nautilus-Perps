@@ -146,11 +146,16 @@ def summarize_books(observer, state, now_ns):
         largest.append({"instrument_id": str(instrument_id), "venue": market.venue,
                         "bid_levels": bids, "ask_levels": asks})
     largest.sort(key=lambda row: row["bid_levels"] + row["ask_levels"], reverse=True)
+    current_snapshots = (
+        len(state.books)
+        if not getattr(state, "fast_books", None)
+        else len(state.books.keys() | state.fast_books.keys())
+    )
     return {"sampled_at_unix_ns": now_ns, "venues": venues, "largest_books": largest[:20],
         "total_levels": sum(row["bid_levels"] + row["ask_levels"] for row in venues.values()),
         "dirty_books": len(observer.dirty), "pending_snapshots": len(observer.pending_snapshot),
         "pending_aster_subscriptions": len(observer.pending_aster),
-        "current_snapshots": len(state.books), "current_opportunities": len(state.current)}
+        "current_snapshots": current_snapshots, "current_opportunities": len(state.current)}
 
 
 class MemoryDiagnostics:

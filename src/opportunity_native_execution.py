@@ -289,6 +289,8 @@ class NativeOrderGateway:
         self.strategy = strategy
         rows = markets.values() if isinstance(markets, dict) else markets
         self.markets = {m.instrument_id: m for m in rows}
+        self._has_backpack = any(m.venue == "BACKPACK" for m in self.markets.values())
+        self._ondo_ids = tuple(sorted(m.instrument_id for m in self.markets.values() if m.venue == "ONDO"))
         self.on_receipt, self.on_account, self.on_fill = on_receipt, on_account, on_fill
         self.reader = reader or ReadOnlyAccountReader(environment=environment, environ=environ,
             max_native_snapshot_age_ms=account_max_age_ms)
@@ -345,11 +347,9 @@ class NativeOrderGateway:
 
     def refresh_native_admission(self, now_ns, *, throttle_backpack=False):
         """Read global account/session trust and independent native market gates."""
-        has_backpack = any(m.venue == "BACKPACK" for m in self.markets.values())
-        ondo_ids = sorted(m.instrument_id for m in self.markets.values() if m.venue == "ONDO")
-        if not has_backpack and not ondo_ids:
+        if not self._has_backpack and not self._ondo_ids:
             return {}
-        if has_backpack:
+        if self._has_backpack:
             prev = self.native_admission.get("BACKPACK")
             can_reuse = (
                 throttle_backpack
@@ -392,8 +392,8 @@ class NativeOrderGateway:
                     status["reason"] = "native_checkpoint_not_ready"
                 self.native_admission["BACKPACK"] = status
                 self.last_backpack_admission_ns = now_ns
-        if ondo_ids:
-            self.native_admission["ONDO"] = self._ondo_admission(ondo_ids, now_ns)
+        if self._ondo_ids:
+            self.native_admission["ONDO"] = self._ondo_admission(self._ondo_ids, now_ns)
         return {venue: dict(row) for venue, row in self.native_admission.items()}
 
     def _ondo_admission(self, ondo_ids, now_ns):
@@ -1124,8 +1124,15 @@ class NativeOrderGateway:
                 self._record_outcome(intent, "account")
                 self.on_account(snapshot)
         for cid, owned in tuple(self.orders.items()):
+            if cid in self.terminals:
+                continue
+            req_id = owned["intent"].request_id
+            if ((req_id, "terminal", "") in self.emitted
+                    or (req_id, "rejected", "") in self.emitted
+                    or (req_id, "canceled", "") in self.emitted):
+                continue
             cached = self._cached(cid)
-            if cid not in self.terminals and cached is not None and cached.is_closed:
+            if cached is not None and cached.is_closed:
                 status = str(cached.status).split(".")[-1].upper()
                 owned.setdefault("terminal_diagnostic", {"native_status": status.lower()
                     if status in {"REJECTED", "DENIED", "CANCELED", "EXPIRED", "FILLED"} else "",

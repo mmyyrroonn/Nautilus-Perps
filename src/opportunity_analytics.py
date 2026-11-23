@@ -300,6 +300,12 @@ class AnalyticsCollector:
     def has_active_decay(self):
         return bool(self._active_decay)
 
+    def needs_book(self, instrument_id):
+        active = self._active_decay
+        if not active:
+            return False
+        return any(instrument_id == key[1] or instrument_id == key[2] for key in tuple(active))
+
     def sample_decay(self, state, now_ns, *, symbol=None):
         """Advance due alpha-decay horizons using current immutable books."""
         if not self._active_decay:

@@ -12,6 +12,8 @@ SOFT_EXITS = frozenset({"take_profit", "positive_after_wait"})
 
 def entry_market_snapshot(live, intent, now_ns):
     """Observe the current book at an order callback without changing admission."""
+    if intent.instrument_id not in live.books and hasattr(live, "ensure_book"):
+        live.ensure_book(intent.instrument_id)
     book, market = live.books.get(intent.instrument_id), live.markets.get(intent.instrument_id)
     contexts = getattr(live, "book_evidence", None)
     context = contexts.get(intent.instrument_id) if contexts is not None else None
