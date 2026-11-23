@@ -87,6 +87,9 @@ class ScanPlan:
     hyperliquid_fast_book: bool = False
     pair_allowlist: tuple[tuple[str, str], ...] | None = None
     hyperliquid_bbo_gate: bool = False
+    backpack_quote_cache_only: bool = False
+    backpack_depth_coalesce_ms: int = 0
+    coalesce_book_deltas: bool = False
 
     def select_symbols(self, symbols: set[str]) -> ScanPlan:
         markets = tuple(m for m in self.markets if m.symbol in symbols)
@@ -150,13 +153,22 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
     allowed_keys(runtime, {"depth_levels", "max_levels_per_side", "refresh_ms", "top_n",
                           "duration_secs", "connection_timeout_secs", "evaluation_interval_ms",
                           "aster_snapshot_depth", "aster_subscription_interval_ms",
-                          "hyperliquid_fast_book", "hyperliquid_bbo_gate"}, "runtime")
-    fast_book = runtime.get("hyperliquid_fast_book", False)
-    if type(fast_book) is not bool:
-        raise ScanConfigError("runtime.hyperliquid_fast_book must be boolean")
-    bbo_gate = runtime.get("hyperliquid_bbo_gate", False)
-    if type(bbo_gate) is not bool:
-        raise ScanConfigError("runtime.hyperliquid_bbo_gate must be boolean")
+                          "hyperliquid_fast_book", "hyperliquid_bbo_gate",
+                          "backpack_quote_cache_only", "backpack_depth_coalesce_ms",
+                          "coalesce_book_deltas"}, "runtime")
+
+    def _runtime_bool(key: str) -> bool:
+        value = runtime.get(key, False)
+        if type(value) is not bool:
+            raise ScanConfigError(f"runtime.{key} must be boolean")
+        return value
+
+    fast_book = _runtime_bool("hyperliquid_fast_book")
+    bbo_gate = _runtime_bool("hyperliquid_bbo_gate")
+    backpack_quote_cache_only = _runtime_bool("backpack_quote_cache_only")
+    coalesce_book_deltas = _runtime_bool("coalesce_book_deltas")
+    backpack_depth_coalesce_ms = integer_value(
+        runtime.get("backpack_depth_coalesce_ms", 0), "backpack_depth_coalesce_ms", 0, 1000)
     cap = integer_value(runtime.get("max_levels_per_side", 2000), "max_levels_per_side", 1, 20000)
     depth = integer_value(runtime.get("depth_levels", 20), "depth_levels", 1, cap)
     aster_depth = integer_value(runtime.get("aster_snapshot_depth", 1000), "aster_snapshot_depth", 5, 1000)
@@ -262,7 +274,8 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
         integer_value(runtime.get("evaluation_interval_ms", 0), "evaluation_interval_ms", 0, 60000),
         aster_depth,
         integer_value(runtime.get("aster_subscription_interval_ms", 500), "aster_subscription_interval_ms", 1, 60000),
-        fast_book, pairs, bbo_gate)
+        fast_book, pairs, bbo_gate,
+        backpack_quote_cache_only, backpack_depth_coalesce_ms, coalesce_book_deltas)
 
 
 def load_plan(path: Path) -> ScanPlan:

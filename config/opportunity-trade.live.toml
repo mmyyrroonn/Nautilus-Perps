@@ -117,6 +117,9 @@ timer_interval_ms = 100
 # Market publication/evaluation: 100 baseline, 50 balanced, 20 small batches, 0 per complete event.
 # Change after comparing CPU, queue tails and admission decisions for this deployment.
 evaluation_interval_ms = 20
+backpack_quote_cache_only = true
+backpack_depth_coalesce_ms = 5
+coalesce_book_deltas = true
 # Complete native account reads may take several seconds; BBO freshness is separate.
 account_max_age_ms = 60000
 lighter_margin_max_age_ms = 60000
