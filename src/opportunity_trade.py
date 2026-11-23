@@ -398,6 +398,9 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--duration-secs", type=int)
     parser.add_argument("--evaluation-interval-ms", type=int)
+    parser.add_argument("--coalesce-book-deltas", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--backpack-depth-coalesce-ms", type=int, default=None)
+    parser.add_argument("--backpack-quote-cache-only", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--tape-dir", type=Path)
     parser.add_argument("--symbols")
     add_timing_arguments(parser)
@@ -420,6 +423,24 @@ def _run(args):
             plan = replace(plan, scan=replace(plan.scan,
                 evaluation_interval_ms=integer_value(
                     args.evaluation_interval_ms, "evaluation_interval_ms", 0, 1000)))
+        if args.tape_dir is not None and plan.scan.evaluation_interval_ms == 0:
+            plan = replace(plan, scan=replace(
+                plan.scan,
+                coalesce_book_deltas=False if args.coalesce_book_deltas is None else plan.scan.coalesce_book_deltas,
+                backpack_depth_coalesce_ms=(
+                    0 if args.backpack_depth_coalesce_ms is None else plan.scan.backpack_depth_coalesce_ms
+                ),
+            ))
+        if args.coalesce_book_deltas is not None:
+            plan = replace(plan, scan=replace(plan.scan, coalesce_book_deltas=args.coalesce_book_deltas))
+        if args.backpack_depth_coalesce_ms is not None:
+            plan = replace(plan, scan=replace(
+                plan.scan,
+                backpack_depth_coalesce_ms=integer_value(
+                    args.backpack_depth_coalesce_ms, "backpack_depth_coalesce_ms", 0, 1000)))
+        if args.backpack_quote_cache_only is not None:
+            plan = replace(plan, scan=replace(
+                plan.scan, backpack_quote_cache_only=args.backpack_quote_cache_only))
         if args.symbols:
             requested = set(args.symbols.split(","))
             if not requested <= {m.symbol for m in plan.scan.markets} or "" in requested:

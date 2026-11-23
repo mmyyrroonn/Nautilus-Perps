@@ -54,6 +54,15 @@ def _plain(value):
     return value
 
 
+def _runtime_bool(runtime: dict, key: str, default: bool, scope: str = "live runtime") -> bool:
+    if key not in runtime:
+        return default
+    value = runtime[key]
+    if type(value) is not bool:
+        raise ScanConfigError(f"{scope}.{key} must be boolean")
+    return value
+
+
 @dataclass(frozen=True)
 class LiveRunPlan:
     scan: object
@@ -346,7 +355,8 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     runtime = document.get("runtime", {})
     allowed_keys(runtime, {"duration_secs", "drain_timeout_secs", "timer_interval_ms", "account_max_age_ms",
                            "lighter_margin_max_age_ms", "order_timeout_secs", "retry_interval_ms",
-                           "evaluation_interval_ms"}, "live runtime")
+                           "evaluation_interval_ms", "backpack_quote_cache_only",
+                           "backpack_depth_coalesce_ms", "coalesce_book_deltas"}, "live runtime")
     account_max_age = integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 60000)
     lighter_margin_age = (
         integer_value(runtime["lighter_margin_max_age_ms"], "lighter_margin_max_age_ms", 1, account_max_age)
@@ -359,6 +369,11 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     scan = replace(scan, markets=tuple(m for m in filtered if m.symbol in set(requested) or m.instrument_id in anchors), output_path=None,
         evaluation_interval_ms=integer_value(runtime.get("evaluation_interval_ms", 100),
                                             "evaluation_interval_ms", 0, 1000), duration_secs=duration,
+        backpack_quote_cache_only=_runtime_bool(runtime, "backpack_quote_cache_only", scan.backpack_quote_cache_only),
+        backpack_depth_coalesce_ms=integer_value(
+            runtime.get("backpack_depth_coalesce_ms", scan.backpack_depth_coalesce_ms),
+            "backpack_depth_coalesce_ms", 0, 1000),
+        coalesce_book_deltas=_runtime_bool(runtime, "coalesce_book_deltas", scan.coalesce_book_deltas),
         settings=replace(scan.settings, target_notional=policy.order_notional_usd,
                          min_entry_edge_bps=policy.entry_edge_bps))
     return LiveRunPlan(scan, policy, paths["state_path"], paths["limits_path"], venues, tuple(requested), pairs, gross,
@@ -1058,7 +1073,11 @@ def build_live_node(plan, live, coordinator, *, environ=None):
     builder = (LiveNode.builder("OPPORTUNITY-TRADE", TraderId.from_str("OPPORTUNITY-001"), Environment.LIVE)
         .with_logging(LoggerConfig(stdout_level=LogLevel.WARNING, fileout_level=LogLevel.OFF, print_config=False))
         .with_cache_config(CacheConfig(tick_capacity=1, bar_capacity=1, save_market_data=False, persist_account_events=False))
-        .with_data_engine_config(LiveDataEngineConfig(emit_quotes_from_book=False, emit_quotes_from_book_depths=False))
+        .with_data_engine_config(LiveDataEngineConfig(
+            emit_quotes_from_book=False,
+            emit_quotes_from_book_depths=False,
+            coalesce_book_deltas=plan.scan.coalesce_book_deltas,
+        ))
         .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=False,
             generate_missing_orders=False, inflight_check_interval_ms=0,
             filter_unclaimed_external_orders=True))

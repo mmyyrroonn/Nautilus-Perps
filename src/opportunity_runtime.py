@@ -312,7 +312,9 @@ def data_clients(plan, *, backpack_quota=None):
                 depth_snapshot_limit=snapshot_depth,
                 quote_stale_after_ms=min(plan.settings.max_age_ms, 30_000),
                 http_timeout_secs=min(plan.connection_timeout_secs, 60),
-                shutdown_timeout_secs=10)
+                shutdown_timeout_secs=10,
+                quote_cache_only=plan.backpack_quote_cache_only,
+                depth_coalesce_ms=plan.backpack_depth_coalesce_ms)
             factory = (BackpackDataClientFactory(quota=backpack_quota)
                        if backpack_quota is not None else BackpackDataClientFactory())
         else:
@@ -320,6 +322,42 @@ def data_clients(plan, *, backpack_quota=None):
             factory, config = factories[client_id]([m.instrument_id for m in markets], **kwargs)
         result.append((client_id, factory, config))
     return result
+
+
+class _BookSidePricesView:
+    """Lazy compatibility view over one side of a native OrderBook."""
+
+    __slots__ = ("_book", "_is_bid")
+
+    def __init__(self, book, is_bid: bool):
+        self._book = book
+        self._is_bid = is_bid
+
+    def __len__(self) -> int:
+        return self._book.bid_count() if self._is_bid else self._book.ask_count()
+
+    def __bool__(self) -> bool:
+        return len(self) > 0
+
+    def _price_set(self) -> set[int]:
+        levels = self._book.bids() if self._is_bid else self._book.asks()
+        return {level.price.raw for level in levels}
+
+    def __iter__(self):
+        return iter(self._price_set())
+
+    def __contains__(self, item) -> bool:
+        return item in self._price_set()
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, _BookSidePricesView):
+            return self._price_set() == other._price_set()
+        if isinstance(other, (set, frozenset)):
+            return self._price_set() == other
+        return NotImplemented
+
+    def clear(self) -> None:
+        pass
 
 
 def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer=True, tape_recorder=None):
@@ -337,7 +375,22 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 for instrument_id, market in self.markets.items() if market.venue == "BACKPACK"
             )
             self.local_books = {i: OrderBook(i, BookType.L2_MBP) for i in self.markets}
-            self.level_prices = {i: {"BUY": set(), "SELL": set()} for i in self.markets}
+            sample_book = next(iter(self.local_books.values()), None)
+            self._native_book_counts = bool(
+                sample_book is not None
+                and callable(getattr(sample_book, "bid_count", None))
+                and callable(getattr(sample_book, "ask_count", None))
+            )
+            if self._native_book_counts:
+                self.level_prices = {
+                    i: {
+                        "BUY": _BookSidePricesView(book, True),
+                        "SELL": _BookSidePricesView(book, False),
+                    }
+                    for i, book in self.local_books.items()
+                }
+            else:
+                self.level_prices = {i: {"BUY": set(), "SELL": set()} for i in self.markets}
             self.snapshot_seen = set()
             self.pending_snapshot = set()
             self.halted = set()
@@ -670,97 +723,133 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.maybe_check_backpack()
                 instrument_id = batch.instrument_id
                 market = self.markets[instrument_id]
-                deltas = batch.deltas
-                if self.memory_diagnostics is not None:
-                    self.memory_diagnostics.record_batch(market.venue, len(deltas), batch.ts_init)
-                sides = self.level_prices[instrument_id]
-                act_clear = self._act_clear
-                act_delete = self._act_delete
-                side_buy = self._side_buy
-                side_sell = self._side_sell
-                f_snapshot = self._f_snapshot
-                max_levels = self._max_levels
-                if len(deltas) == 1:
-                    delta = deltas[0]
-                    act = delta.action
-                    is_clear = act == act_clear
-                    if is_clear or ((delta.flags & f_snapshot) and instrument_id not in self.pending_snapshot):
-                        self._begin_snapshot_rebuild(instrument_id, market)
-                    elif instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
-                        return
-                    if not is_clear:
-                        order = delta.order
-                        side = order.side
-                        if side == side_buy:
-                            prices = sides["BUY"]
-                        elif side == side_sell:
-                            prices = sides["SELL"]
-                        else:
-                            raise KeyError(side.name)
-                        if act == act_delete or order.size.raw == 0:
-                            prices.discard(order.price.raw)
-                        else:
-                            prices.add(order.price.raw)
-                            if len(prices) > max_levels:
-                                self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
-                                return
-                else:
+                book = self.local_books[instrument_id]
+                bid_count_fn = getattr(book, "bid_count", None) if self._native_book_counts else None
+                ask_count_fn = getattr(book, "ask_count", None) if self._native_book_counts else None
+                if bid_count_fn is not None and ask_count_fn is not None:
+                    summary_fn = getattr(batch, "batch_summary", None)
+                    if summary_fn is not None:
+                        delta_count, has_clear, has_snapshot = summary_fn()
+                    else:
+                        deltas = batch.deltas
+                        delta_count = len(deltas)
+                        act_clear = self._act_clear
+                        f_snapshot = self._f_snapshot
+                        has_clear = any(d.action == act_clear for d in deltas)
+                        has_snapshot = any(d.flags & f_snapshot for d in deltas)
+                    if self.memory_diagnostics is not None:
+                        self.memory_diagnostics.record_batch(market.venue, delta_count, batch.ts_init)
                     in_pending = instrument_id in self.pending_snapshot
                     in_seen = instrument_id in self.snapshot_seen
-                    rebuilt = False
                     if not in_seen and not in_pending:
-                        if any(d.action == act_clear or (d.flags & f_snapshot) for d in deltas):
+                        if has_clear or has_snapshot:
                             self._begin_snapshot_rebuild(instrument_id, market)
-                            rebuilt = True
                         else:
                             return
-                    elif deltas and (
-                        deltas[0].action == act_clear
-                        or (not in_pending and (deltas[0].flags & f_snapshot))
-                    ):
+                    elif has_clear or (has_snapshot and not in_pending):
                         self._begin_snapshot_rebuild(instrument_id, market)
-                        rebuilt = True
-                    buys, sells = sides["BUY"], sides["SELL"]
-                    idx = 0
-                    total = len(deltas)
-                    while idx < total:
-                        delta = deltas[idx]
+                    book.apply_deltas(batch)
+                    bid_count = bid_count_fn()
+                    ask_count = ask_count_fn()
+                    if bid_count > self._max_levels or ask_count > self._max_levels:
+                        self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
+                        return
+                else:
+                    deltas = batch.deltas
+                    if self.memory_diagnostics is not None:
+                        self.memory_diagnostics.record_batch(market.venue, len(deltas), batch.ts_init)
+                    sides = self.level_prices[instrument_id]
+                    if isinstance(sides["BUY"], _BookSidePricesView):
+                        sides = {"BUY": set(sides["BUY"]), "SELL": set(sides["SELL"])}
+                        self.level_prices[instrument_id] = sides
+                    act_clear = self._act_clear
+                    act_delete = self._act_delete
+                    side_buy = self._side_buy
+                    side_sell = self._side_sell
+                    f_snapshot = self._f_snapshot
+                    max_levels = self._max_levels
+                    if len(deltas) == 1:
+                        delta = deltas[0]
                         act = delta.action
-                        if not rebuilt and (act == act_clear or (not in_pending and (delta.flags & f_snapshot))):
+                        is_clear = act == act_clear
+                        if is_clear or ((delta.flags & f_snapshot) and instrument_id not in self.pending_snapshot):
+                            self._begin_snapshot_rebuild(instrument_id, market)
+                        elif instrument_id not in self.snapshot_seen and instrument_id not in self.pending_snapshot:
+                            return
+                        if not is_clear:
+                            order = delta.order
+                            side = order.side
+                            if side == side_buy:
+                                prices = sides["BUY"]
+                            elif side == side_sell:
+                                prices = sides["SELL"]
+                            else:
+                                raise KeyError(side.name)
+                            if act == act_delete or order.size.raw == 0:
+                                prices.discard(order.price.raw)
+                            else:
+                                prices.add(order.price.raw)
+                                if len(prices) > max_levels:
+                                    self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
+                                    return
+                    else:
+                        in_pending = instrument_id in self.pending_snapshot
+                        in_seen = instrument_id in self.snapshot_seen
+                        rebuilt = False
+                        if not in_seen and not in_pending:
+                            if any(d.action == act_clear or (d.flags & f_snapshot) for d in deltas):
+                                self._begin_snapshot_rebuild(instrument_id, market)
+                                rebuilt = True
+                            else:
+                                return
+                        elif deltas and (
+                            deltas[0].action == act_clear
+                            or (not in_pending and (deltas[0].flags & f_snapshot))
+                        ):
                             self._begin_snapshot_rebuild(instrument_id, market)
                             rebuilt = True
-                            idx = 0
-                            continue
-                        idx += 1
-                        if act == act_clear:
-                            buys.clear()
-                            sells.clear()
-                            continue
-                        order = delta.order
-                        side = order.side
-                        if side == side_buy:
-                            prices = buys
-                        elif side == side_sell:
-                            prices = sells
-                        else:
-                            raise KeyError(side.name)
-                        if act == act_delete or order.size.raw == 0:
-                            prices.discard(order.price.raw)
-                        else:
-                            prices.add(order.price.raw)
-                            if len(prices) > max_levels:
-                                if not rebuilt and any(
-                                    d.action == act_clear or (not in_pending and (d.flags & f_snapshot))
-                                    for d in deltas[idx:]
-                                ):
-                                    self._begin_snapshot_rebuild(instrument_id, market)
-                                    rebuilt = True
-                                    idx = 0
-                                    continue
-                                self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
-                                return
-                book = self.local_books[instrument_id]
-                book.apply_deltas(batch)
+                        buys, sells = sides["BUY"], sides["SELL"]
+                        idx = 0
+                        total = len(deltas)
+                        while idx < total:
+                            delta = deltas[idx]
+                            act = delta.action
+                            if not rebuilt and (act == act_clear or (not in_pending and (delta.flags & f_snapshot))):
+                                self._begin_snapshot_rebuild(instrument_id, market)
+                                rebuilt = True
+                                idx = 0
+                                continue
+                            idx += 1
+                            if act == act_clear:
+                                buys.clear()
+                                sells.clear()
+                                continue
+                            order = delta.order
+                            side = order.side
+                            if side == side_buy:
+                                prices = buys
+                            elif side == side_sell:
+                                prices = sells
+                            else:
+                                raise KeyError(side.name)
+                            if act == act_delete or order.size.raw == 0:
+                                prices.discard(order.price.raw)
+                            else:
+                                prices.add(order.price.raw)
+                                if len(prices) > max_levels:
+                                    if not rebuilt and any(
+                                        d.action == act_clear or (not in_pending and (d.flags & f_snapshot))
+                                        for d in deltas[idx:]
+                                    ):
+                                        self._begin_snapshot_rebuild(instrument_id, market)
+                                        rebuilt = True
+                                        idx = 0
+                                        continue
+                                    self.fail(f"current book exceeds max_levels_per_side: {market.instrument_id}")
+                                    return
+                    book.apply_deltas(batch)
+                    bid_count = len(sides["BUY"])
+                    ask_count = len(sides["SELL"])
                 if not (batch.flags & self._f_last):
                     self.dirty.pop(instrument_id, None)
                     self.clear_book_timing(instrument_id)
@@ -791,7 +880,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                         # F_LAST only: metadata describes a complete local batch,
                         # never a ladder copy or a substitute admission snapshot.
                         state.book_evidence[market.instrument_id].pending = (
-                            *stamp, time.time_ns(), len(sides["BUY"]), len(sides["SELL"]))
+                            *stamp, time.time_ns(), bid_count, ask_count)
                 else:
                     self.publish_book(instrument_id, stamp)
             except Exception as exc:
@@ -807,8 +896,14 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             book = self.local_books[instrument_id]
             depth = plan.depth_levels
             if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
-                sides = self.level_prices[instrument_id]
-                if len(sides["BUY"]) > 5 or len(sides["SELL"]) > 5:
+                bid_count_fn = getattr(book, "bid_count", None) if self._native_book_counts else None
+                ask_count_fn = getattr(book, "ask_count", None) if self._native_book_counts else None
+                if bid_count_fn is not None and ask_count_fn is not None:
+                    exceeds = bid_count_fn() > 5 or ask_count_fn() > 5
+                else:
+                    sides = self.level_prices[instrument_id]
+                    exceeds = len(sides["BUY"]) > 5 or len(sides["SELL"]) > 5
+                if exceeds:
                     raise ScanConfigError("Hyperliquid fast subscription delivered more than five levels")
                 depth = min(depth, 5)
             ts_event, ts_received, sequence = stamp
@@ -1013,7 +1108,8 @@ def build_node(plan, *, state_factory=ScanState, tape_recorder=None):
         .with_cache_config(CacheConfig(tick_capacity=1, bar_capacity=1, save_market_data=False,
                                        persist_account_events=False))
         .with_data_engine_config(LiveDataEngineConfig(emit_quotes_from_book=False,
-                                                     emit_quotes_from_book_depths=False))
+                                                     emit_quotes_from_book_depths=False,
+                                                     coalesce_book_deltas=plan.coalesce_book_deltas))
         .with_load_state(False).with_save_state(False)
         .with_timeout_connection(plan.connection_timeout_secs)
         .with_timeout_reconciliation(0).with_timeout_portfolio(0)
