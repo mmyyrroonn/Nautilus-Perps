@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass, replace
 from decimal import Decimal
+from fractions import Fraction
 import hashlib
 import json
 from pathlib import Path
@@ -22,6 +23,8 @@ from opportunity_timing import add_timing_arguments, run_timed, timed
 
 ENTRY_SLIPPAGE_VENUES = frozenset({"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"})
 ENTRY_SLIPPAGE_VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in ENTRY_SLIPPAGE_VENUES}}
+VENUE_LATENCY_RANK = {"HL": 3, "LIGHTER": 2, "ASTER": 2, "ONDO": 2, "BACKPACK": 1}
+EXECUTION_MODES = frozenset({"simultaneous", "slow_first"})
 
 
 def _normalize_venue_tuple(raw, field_name: str) -> tuple[str, ...]:
@@ -76,6 +79,10 @@ class TradePolicy:
     entry_slippage_bps_by_venue: tuple[tuple[str, Decimal], ...] = ()
     hard_exit_slippage_bps: Decimal = Decimal("10")
     soft_exit_execution_buffer_bps: Decimal = Decimal("0")
+    min_l1_depth_multiple: Decimal = Decimal("0")
+    entry_execution_mode: str = "simultaneous"
+    soft_exit_execution_mode: str = "simultaneous"
+    sequential_leg2_slippage_bps: Decimal = Decimal("15")
     loss_cooldown_secs: int = 0
     max_exit_reversal_bps: Decimal | None = None
     max_exit_reversal_edge_ratio: Decimal | None = None
@@ -93,11 +100,24 @@ class TradePolicy:
         for name in ("order_notional_usd", "entry_edge_bps", "take_profit_bps", "max_loss_bps"):
             value = decimal_value(getattr(self, name), name, positive=True)
             object.__setattr__(self, name, value)
-        for name in ("slippage_bps", "hard_exit_slippage_bps", "soft_exit_execution_buffer_bps"):
+        for name in (
+            "slippage_bps",
+            "hard_exit_slippage_bps",
+            "soft_exit_execution_buffer_bps",
+            "sequential_leg2_slippage_bps",
+        ):
             slip = decimal_value(getattr(self, name), name, nonnegative=True)
             if slip >= 10000:
                 raise ScanConfigError(f"{name} must be below 10000")
             object.__setattr__(self, name, slip)
+        l1_mult = decimal_value(self.min_l1_depth_multiple, "min_l1_depth_multiple", nonnegative=True)
+        if l1_mult > 100:
+            raise ScanConfigError("min_l1_depth_multiple must be at most 100")
+        object.__setattr__(self, "min_l1_depth_multiple", l1_mult)
+        for name in ("entry_execution_mode", "soft_exit_execution_mode"):
+            mode = getattr(self, name)
+            if not isinstance(mode, str) or mode not in EXECUTION_MODES:
+                raise ScanConfigError(f"{name} must be one of {sorted(EXECUTION_MODES)}")
         object.__setattr__(
             self,
             "entry_slippage_bps_by_venue",
@@ -174,12 +194,32 @@ class TradePolicy:
             return max(self.entry_edge_bps, self.slow_pair_entry_edge_bps)
         return self.entry_edge_bps
 
+    def select_slow_leg(
+        self,
+        buy_venue: str,
+        sell_venue: str,
+        buy_fee_bps: Decimal | Fraction,
+        sell_fee_bps: Decimal | Fraction,
+    ) -> str:
+        def rank(venue: str, fee_bps: Decimal | Fraction, tie: int) -> tuple[int, int, Fraction, int]:
+            canonical = ENTRY_SLIPPAGE_VENUE_ALIASES.get(venue, venue)
+            in_slow = 1 if canonical in self.slow_venues else 0
+            return (in_slow, VENUE_LATENCY_RANK.get(canonical, 2), Fraction(fee_bps), tie)
+
+        return "buy" if rank(buy_venue, buy_fee_bps, 1) >= rank(sell_venue, sell_fee_bps, 0) else "sell"
+
     def document(self):
         result = {}
         for key, value in asdict(self).items():
             if key in {"loss_cooldown_secs", "slow_pair_min_persistence_ms",
                        "maker_exit_timeout_ms", "maker_exit_max_attempts",
-                       "soft_exit_execution_buffer_bps"} and value == 0:
+                       "soft_exit_execution_buffer_bps", "min_l1_depth_multiple"} and value == 0:
+                continue
+            if key in {"entry_execution_mode", "soft_exit_execution_mode"} and value == "simultaneous":
+                continue
+            if (key == "sequential_leg2_slippage_bps"
+                    and self.entry_execution_mode == "simultaneous"
+                    and self.soft_exit_execution_mode == "simultaneous"):
                 continue
             if key in {"entry_slippage_bps_by_venue", "maker_fee_bps_by_venue"}:
                 if not value:

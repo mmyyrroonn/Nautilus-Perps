@@ -36,6 +36,7 @@ HARD_MAX_UNHEDGED_NOTIONAL_USD = Decimal("100")
 HARD_MAX_UNHEDGED_SECS = 10
 HARD_MAX_ENTRY_SLIPPAGE_BPS = Decimal("20")
 HARD_MAX_SOFT_EXIT_BUFFER_BPS = Decimal("20")
+HARD_MAX_SEQUENTIAL_LEG2_SLIPPAGE_BPS = Decimal("30")
 SUPPORTED_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
 VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in SUPPORTED_VENUES}}
 CANCEL_REPLACE_VENUES = {"ASTER", "ONDO", "BACKPACK"}
@@ -319,6 +320,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         order_notional_usd=min(policy.order_notional_usd, order_cap, HARD_ORDER_NOTIONAL_USD),
         slippage_bps=min(policy.slippage_bps, effective_entry_slip_cap),
         soft_exit_execution_buffer_bps=min(policy.soft_exit_execution_buffer_bps, HARD_MAX_SOFT_EXIT_BUFFER_BPS),
+        sequential_leg2_slippage_bps=min(policy.sequential_leg2_slippage_bps, HARD_MAX_SEQUENTIAL_LEG2_SLIPPAGE_BPS),
         entry_slippage_bps_by_venue=clamped_by_venue,
     )
     pairs, gross = min(pairs, pairs_cap, HARD_MAX_PAIRS), min(gross, gross_cap, HARD_GROSS_NOTIONAL_USD)
@@ -662,6 +664,7 @@ class LiveCoordinator:
             if discard_invalid_soft_exit(self.live, intent, check_ns, dispatched=dispatched):
                 continue
             if (intent.action == "submit" and order and order["purpose"] == "entry"
+                    and order.get("sequential_role") != "entry_leg2"
                     and order["position_id"] not in entry_states):
                 entry_states[order["position_id"]] = {
                     "first_cid": intent.client_order_id,

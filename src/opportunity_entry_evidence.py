@@ -126,10 +126,13 @@ def entry_dispatch_evidence(live, position, now_ns):
     route_block = getattr(live, "route_max_hold_blocks", {}).get((position["buy_id"], position["sell_id"]))
     if route_block is not None and now_ns < route_block["until_ns"]:
         return ("route_max_hold_block" if route_block["blocked"] else "route_max_hold_cooldown"), evidence
+    seq = position.get("sequential_entry")
+    leg1_order = live.orders.get(seq["leg1_cid"]) if isinstance(seq, dict) else None
+    leg1_meta = live.metadata.get(position[f"{seq['leg1']}_id"]) if isinstance(seq, dict) else None
     for leg in ("buy", "sell"):
         instrument = position[f"{leg}_id"]
-        order = next(live.orders[cid] for cid in position["entry_ids"]
-                     if live.orders[cid]["leg"] == leg)
+        order = next((live.orders[cid] for cid in position["entry_ids"]
+                      if live.orders[cid]["leg"] == leg), None)
         if hasattr(live, "_is_hl_oi_capped") and live._is_hl_oi_capped(instrument):
             return "hl_open_interest_cap", evidence
         block = getattr(live, "instrument_entry_blocks", {}).get(instrument)
@@ -137,12 +140,6 @@ def entry_dispatch_evidence(live, position, now_ns):
             return "instrument_entry_blocked", evidence
         book, meta = live.books.get(instrument), live.metadata.get(instrument)
         row = evidence.setdefault(leg, {})
-        row.update(limit_price=order["price"], quantity=order["quantity"])
-        reason, leverage = live.leverage_problem(instrument, order["price"], order["quantity"], now_ns)
-        if leverage:
-            row["leverage"] = leverage
-        if reason:
-            return reason, evidence
         if book is None:
             return "missing_book", evidence
         row.update(source_wall_ns=book.ts_event_ns, received_wall_ns=book.ts_received_ns,
@@ -156,36 +153,73 @@ def entry_dispatch_evidence(live, position, now_ns):
                 or any(str(getattr(meta, k)) != str(position["entry"][f"{leg}_metadata"].get(k))
                        for k in ("multiplier", "size_increment"))):
             return "metadata_changed", evidence
-        levels = book.asks if leg == "buy" else book.bids
-        quantity, limit = F(order["quantity"]), F(order["price"])
         market = live.markets[instrument]
+        levels = book.asks if leg == "buy" else book.bids
         conversion = F(market.canonical_multiplier) / F(market.quote_to_usd)
         row["available_quantity"] = _number(sum((F(q) for _, q in levels), F(0)))
-        executable = [(F(p) * conversion, F(q)) for p, q in levels
-                      if (F(p) * conversion <= limit if leg == "buy" else F(p) * conversion >= limit)]
-        row["depth_within_limit"] = _number(sum((q for _, q in executable), F(0)))
-        if F(row["available_quantity"]) < quantity:
-            return "insufficient_depth", evidence
-        if F(row["depth_within_limit"]) < quantity:
-            return "price_outside_limit", evidence
-        remaining, cash = quantity, F(0)
-        for price, size in executable:
-            amount = min(remaining, size)
-            cash += amount * price
-            remaining -= amount
-            if not remaining:
-                break
-        row["executable_vwap"] = _number(cash / quantity)
-        base = quantity * F(meta.multiplier)
-        # Persisted entry orders already include their slippage cushion; verify
-        # the current executable walk fits inside that persisted worst-case limit.
-        bound = live._limit(instrument, order["side"], base, now_ns, slippage_bps=0)
-        if bound is None:
-            return "invalid_execution_rules_or_fees", evidence
-        row["current_bound_price"] = str(bound["price"])
-        if ((leg == "buy" and F(bound["price"]) > limit)
-                or (leg == "sell" and F(bound["price"]) < limit)):
-            return "price_outside_limit", evidence
+        if order is None:
+            if leg1_order is None or leg1_meta is None:
+                return "entry_admission_changed", evidence
+            base = F(leg1_order["quantity"]) * F(leg1_meta.multiplier)
+            required_qty = base / F(meta.multiplier)
+            if F(row["available_quantity"]) < required_qty:
+                row.update(limit_price="0", quantity=_number(required_qty))
+                reason, leverage = live.leverage_problem(instrument, "0", _number(required_qty), now_ns)
+                if leverage:
+                    row["leverage"] = leverage
+                return (reason or "insufficient_depth"), evidence
+            slip_bps = live.policy.entry_slippage_bps(market.venue)
+            bound2 = live._limit(instrument, "BUY" if leg == "buy" else "SELL", base, now_ns, slippage_bps=slip_bps)
+            if bound2 is None:
+                return "price_outside_limit", evidence
+            row.update(limit_price=str(bound2["price"]), quantity=str(bound2["quantity"]))
+            reason, leverage = live.leverage_problem(instrument, bound2["price"], bound2["quantity"], now_ns)
+            if leverage:
+                row["leverage"] = leverage
+            if reason:
+                return reason, evidence
+            limit, quantity = F(bound2["price"]), F(bound2["quantity"])
+            row["current_bound_price"] = str(bound2["price"])
+            executable = [(F(p) * conversion, F(q)) for p, q in levels
+                          if (F(p) * conversion <= limit if leg == "buy" else F(p) * conversion >= limit)]
+            row["depth_within_limit"] = _number(sum((q for _, q in executable), F(0)))
+            row["executable_vwap"] = _number(bound2["cash"] / quantity)
+            limit_cash, limit_fee = bound2["cash"], bound2["fee"]
+        else:
+            row.update(limit_price=order["price"], quantity=order["quantity"])
+            reason, leverage = live.leverage_problem(instrument, order["price"], order["quantity"], now_ns)
+            if leverage:
+                row["leverage"] = leverage
+            if reason:
+                return reason, evidence
+            quantity, limit = F(order["quantity"]), F(order["price"])
+            executable = [(F(p) * conversion, F(q)) for p, q in levels
+                          if (F(p) * conversion <= limit if leg == "buy" else F(p) * conversion >= limit)]
+            row["depth_within_limit"] = _number(sum((q for _, q in executable), F(0)))
+            if F(row["available_quantity"]) < quantity:
+                return "insufficient_depth", evidence
+            if F(row["depth_within_limit"]) < quantity:
+                return "price_outside_limit", evidence
+            remaining, cash = quantity, F(0)
+            for price, size in executable:
+                amount = min(remaining, size)
+                cash += amount * price
+                remaining -= amount
+                if not remaining:
+                    break
+            row["executable_vwap"] = _number(cash / quantity)
+            base = quantity * F(meta.multiplier)
+            # Persisted entry orders already include their slippage cushion; verify
+            # the current executable walk fits inside that persisted worst-case limit.
+            bound = live._limit(instrument, order["side"], base, now_ns, slippage_bps=0)
+            if bound is None:
+                return "invalid_execution_rules_or_fees", evidence
+            row["current_bound_price"] = str(bound["price"])
+            if ((leg == "buy" and F(bound["price"]) > limit)
+                    or (leg == "sell" and F(bound["price"]) < limit)):
+                return "price_outside_limit", evidence
+            limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
+            limit_fee = limit_cash * F(meta.taker_fee_bps) / 10000
         bbo = fresh_bbo_quote(live, instrument, book)
         if bbo is not None:
             bbo_bid, bbo_ask, bbo_ts_event, bbo_ts_init = bbo
@@ -196,9 +230,8 @@ def entry_dispatch_evidence(live, position, now_ns):
             if (leg == "buy" and bbo_ask > limit) or (leg == "sell" and bbo_bid < limit):
                 return "bbo_price_outside_limit", evidence
         # Retain worst-case persisted limit economics, including fresh fees.
-        limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
-        bounds[leg] = (limit_cash, limit_cash * F(meta.taker_fee_bps) / 10000)
-        row.update(limit_cash_usd=_number(limit_cash), fee_usd=_number(bounds[leg][1]))
+        bounds[leg] = (limit_cash, limit_fee)
+        row.update(limit_cash_usd=_number(limit_cash), fee_usd=_number(limit_fee))
         # Match entry sizing's conservative standalone valuation. A higher ask
         # can invalidate headroom even while the original sell limit executes.
         standalone_risk = max(limit_cash, base * F(book.asks[0][0]))
@@ -362,6 +395,13 @@ def discard_invalid_entry(live, intent, now_ns, *, dispatched=(), cached_evidenc
         return True
     if order["status"] != "dispatch_released":
         return False
+    if order.get("sequential_role") == "entry_leg2":
+        order["entry_dispatch"] = {
+            "result": "allowed",
+            "reason": "sequential_leg2_hedge",
+            "evidence": {"checked_wall_ns": now_ns},
+        }
+        return False
     position = live._position(order["position_id"])
     if cached_evidence is not None:
         evidence = {**cached_evidence,
@@ -482,6 +522,44 @@ def _maker_soft_exit_dispatch_evidence(live, position, maker_order, remains, cap
     return "valid", evidence
 
 
+def _persisted_soft_exit_leg_pnl(live, position, leg, order, remains, now_ns, evidence, buffered):
+    instrument = position[f"{leg}_id"]
+    book, meta = live.books.get(instrument), live.metadata.get(instrument)
+    evidence[leg] = {"limit_price": order["price"], "quantity": order["quantity"]}
+    err = _validate_exit_leg_environment(live, position, leg, now_ns, evidence)
+    if err is not None:
+        return err, None
+    row = evidence[leg]
+    levels = book.bids if leg == "buy" else book.asks
+    quantity, limit = F(order["quantity"]), F(order["price"])
+    market = live.markets[instrument]
+    conversion = F(market.canonical_multiplier) / F(market.quote_to_usd)
+    row["available_quantity"] = _number(sum((F(q) for _, q in levels), F(0)))
+    executable = [(F(p) * conversion, F(q)) for p, q in levels
+                  if (F(p) * conversion >= limit if leg == "buy" else F(p) * conversion <= limit)]
+    row["depth_within_limit"] = _number(sum((q for _, q in executable), F(0)))
+    if F(row["available_quantity"]) < quantity:
+        return "insufficient_depth", None
+    if F(row["depth_within_limit"]) < quantity:
+        return "price_outside_limit", None
+    base = quantity * F(meta.multiplier)
+    bound = live._limit(instrument, order["side"], base, now_ns, reduce_only=order["reduce_only"])
+    if bound is None:
+        return "invalid_execution_rules_or_fees", None
+    row["current_bound_price"] = str(bound["price"])
+    if ((leg == "buy" and F(bound["price"]) < limit)
+            or (leg == "sell" and F(bound["price"]) > limit)):
+        return "price_outside_limit", None
+    limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
+    limit_fee = limit_cash * F(meta.taker_fee_bps) / 10000
+    scale = remains[leg] / base
+    row.update(limit_cash_usd=_number(limit_cash), fee_usd=_number(limit_fee))
+    if buffered:
+        row.update(bound_cash_usd=_number(bound["cash"]), bound_fee_usd=_number(bound["fee"]))
+        return None, ((bound["cash"] if leg == "buy" else -bound["cash"]) - bound["fee"]) * scale
+    return None, ((limit_cash if leg == "buy" else -limit_cash) - limit_fee) * scale
+
+
 def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
     evidence = {"checked_wall_ns": now_ns, "exit_reason": position["exit_reason"]}
     if live.phase != "active" or live.stopping or live.halt_reason:
@@ -497,49 +575,51 @@ def _soft_exit_dispatch_evidence(live, position, batch_orders, now_ns):
     if len(batch_orders) == 1 and batch_orders[0].get("maker_exit"):
         return _maker_soft_exit_dispatch_evidence(
             live, position, batch_orders[0], remains, capital, now_ns, evidence)
-    by_leg = {o["leg"]: o for o in batch_orders}
-    if len(by_leg) != 2 or set(by_leg) != {"buy", "sell"}:
-        return "exit_pair_incomplete", evidence
     bounds = {}
     buffered = live.policy.soft_exit_execution_buffer_bps > 0
-    for leg in ("buy", "sell"):
-        instrument = position[f"{leg}_id"]
-        order = by_leg[leg]
-        book, meta = live.books.get(instrument), live.metadata.get(instrument)
-        evidence[leg] = {"limit_price": order["price"], "quantity": order["quantity"]}
-        err = _validate_exit_leg_environment(live, position, leg, now_ns, evidence)
+    if len(batch_orders) == 1 and batch_orders[0].get("sequential_role") == "soft_exit_leg1":
+        leg1_order = batch_orders[0]
+        leg1 = leg1_order["leg"]
+        leg2 = "sell" if leg1 == "buy" else "buy"
+        err, leg1_pnl = _persisted_soft_exit_leg_pnl(
+            live, position, leg1, leg1_order, remains, now_ns, evidence, buffered)
         if err is not None:
             return err, evidence
-        row = evidence[leg]
-        levels = book.bids if leg == "buy" else book.asks
-        quantity, limit = F(order["quantity"]), F(order["price"])
-        market = live.markets[instrument]
-        conversion = F(market.canonical_multiplier) / F(market.quote_to_usd)
-        row["available_quantity"] = _number(sum((F(q) for _, q in levels), F(0)))
-        executable = [(F(p) * conversion, F(q)) for p, q in levels
-                      if (F(p) * conversion >= limit if leg == "buy" else F(p) * conversion <= limit)]
-        row["depth_within_limit"] = _number(sum((q for _, q in executable), F(0)))
-        if F(row["available_quantity"]) < quantity:
+        bounds[leg1] = leg1_pnl
+        evidence[leg2] = {}
+        err2 = _validate_exit_leg_environment(live, position, leg2, now_ns, evidence)
+        if err2 is not None:
+            return err2, evidence
+        leg2_id = position[f"{leg2}_id"]
+        leg2_book, leg2_meta = live.books[leg2_id], live.metadata[leg2_id]
+        qty1_base = F(leg1_order["quantity"]) * F(live.metadata[position[f"{leg1}_id"]].multiplier)
+        levels2 = leg2_book.bids if leg2 == "buy" else leg2_book.asks
+        avail2 = sum((F(q) for _, q in levels2), F(0))
+        evidence[leg2]["available_quantity"] = _number(avail2)
+        if avail2 * F(leg2_meta.multiplier) < qty1_base:
             return "insufficient_depth", evidence
-        if F(row["depth_within_limit"]) < quantity:
-            return "price_outside_limit", evidence
-        base = quantity * F(meta.multiplier)
-        bound = live._limit(instrument, order["side"], base, now_ns, reduce_only=order["reduce_only"])
-        if bound is None:
+        side2 = "SELL" if leg2 == "buy" else "BUY"
+        bound2 = live._limit(leg2_id, side2, qty1_base, now_ns, reduce_only=leg1_order["reduce_only"])
+        if bound2 is None:
             return "invalid_execution_rules_or_fees", evidence
-        row["current_bound_price"] = str(bound["price"])
-        if ((leg == "buy" and F(bound["price"]) < limit)
-                or (leg == "sell" and F(bound["price"]) > limit)):
-            return "price_outside_limit", evidence
-        limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
-        limit_fee = limit_cash * F(meta.taker_fee_bps) / 10000
-        scale = remains[leg] / base
-        row.update(limit_cash_usd=_number(limit_cash), fee_usd=_number(limit_fee))
-        if buffered:
-            bounds[leg] = ((bound["cash"] if leg == "buy" else -bound["cash"]) - bound["fee"]) * scale
-            row.update(bound_cash_usd=_number(bound["cash"]), bound_fee_usd=_number(bound["fee"]))
-        else:
-            bounds[leg] = ((limit_cash if leg == "buy" else -limit_cash) - limit_fee) * scale
+        evidence[leg2].update(
+            limit_price=str(bound2["price"]),
+            quantity=str(bound2["quantity"]),
+            limit_cash_usd=_number(bound2["cash"]),
+            fee_usd=_number(bound2["fee"]),
+        )
+        scale2 = remains[leg2] / bound2["base_quantity"]
+        bounds[leg2] = ((bound2["cash"] if leg2 == "buy" else -bound2["cash"]) - bound2["fee"]) * scale2
+    else:
+        by_leg = {o["leg"]: o for o in batch_orders}
+        if len(by_leg) != 2 or set(by_leg) != {"buy", "sell"}:
+            return "exit_pair_incomplete", evidence
+        for leg in ("buy", "sell"):
+            err, leg_pnl = _persisted_soft_exit_leg_pnl(
+                live, position, leg, by_leg[leg], remains, now_ns, evidence, buffered)
+            if err is not None:
+                return err, evidence
+            bounds[leg] = leg_pnl
     if abs(live.books[position["buy_id"]].ts_event_ns - live.books[position["sell_id"]].ts_event_ns) > live.plan.settings.max_skew_ms * 1_000_000:
         return "book_skew", evidence
     pnl = live._pnl(position) + bounds["buy"] + bounds["sell"]
@@ -560,6 +640,8 @@ def discard_invalid_soft_exit(live, intent, now_ns, *, dispatched=()):
     if order["status"] == "local_not_dispatched":
         return True
     if order["status"] != "dispatch_released":
+        return False
+    if order.get("sequential_role") == "soft_exit_leg2":
         return False
     position = live._position(order["position_id"])
     if position is None or position["exit_reason"] not in SOFT_EXITS:
@@ -585,6 +667,7 @@ def discard_invalid_soft_exit(live, intent, now_ns, *, dispatched=()):
         pending["terminal_ns"], pending["status"] = now_ns, "local_not_dispatched"
         pending["exit_dispatch"] = decision
         blocked.append(cid)
+    position.pop("sequential_soft_exit", None)
     position.update(status="open", exit_reason=None, exit_requested_ns=None)
     live.emit("exit_dispatch_blocked", now_ns, position_id=position["position_id"],
               client_order_ids=blocked, reason=reason, previous_exit_reason=previous_reason,
@@ -599,6 +682,10 @@ def entry_pair_result(live, order):
     if position is None:
         return
     orders = [live.orders[cid] for cid in position["entry_ids"]]
+    if len(orders) == 1 and isinstance(position.get("sequential_entry"), dict):
+        if orders[0]["terminal_ns"] is not None and F(orders[0]["filled_quantity"]) == 0:
+            record_entry_pair((orders[0]["request_id"],), "unfilled")
+        return
     if len(orders) == 2 and all(o["terminal_ns"] is not None for o in orders):
         full = all(F(o["filled_quantity"]) == F(o["quantity"]) for o in orders)
         filled = sum(F(o["filled_quantity"]) > 0 for o in orders)
