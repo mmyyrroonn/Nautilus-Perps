@@ -422,6 +422,12 @@ def test_rwa_discovery_normalizes_aliases_prefers_xyz_and_excludes_krw_and_backp
             lighter("HYUNDAI", market_id=166),
             lighter("UNANCHORED", market_id=999),
         ]},
+        "BACKPACK": [
+            backpack("BTC", rwaMarketType=None),
+            {**backpack("NVDA.US", rwaMarketType="STOCK"), "symbol": "NVDA.US_USDC_PERP", "baseSymbol": "NVDA.US"},
+            {**backpack("MSFT.US", rwaMarketType="STOCK", orderBookState="PostOnly", visible=False),
+             "symbol": "MSFT.US_USDC_PERP", "baseSymbol": "MSFT.US"},
+        ],
     }
     document, summary = universe.generate_document(
         data, venues=universe.RWA_VENUES, generated_at="2026-11-24T00:00:00+00:00", asset_class="rwa",
@@ -430,6 +436,9 @@ def test_rwa_discovery_normalizes_aliases_prefers_xyz_and_excludes_krw_and_backp
     assert document["runtime"]["aster_subscription_interval_ms"] == 500
     by_sym_venue = {(m["symbol"], m["venue"]): m for m in document["markets"]}
     assert "BTC" not in {m["symbol"] for m in document["markets"]}
+    assert by_sym_venue["NVDA", "BACKPACK"]["instrument_id"] == "NVDA.US_USDC_PERP.BACKPACK"
+    assert by_sym_venue["NVDA", "BACKPACK"]["backpack_economics"]["taker_fee"] == "0.0005"
+    assert ("MSFT", "BACKPACK") not in by_sym_venue
     assert by_sym_venue["NVDA", "ASTER"]["instrument_id"] == "NVDAUSDT-PERP.ASTER"
     assert by_sym_venue["SNDK", "HL"]["instrument_id"] == "xyz:SNDK-USD-PERP.HYPERLIQUID"
     assert by_sym_venue["GPRO", "HL"]["instrument_id"] == "io:GPRO-USD-PERP.HYPERLIQUID"
@@ -447,7 +456,6 @@ def test_rwa_discovery_normalizes_aliases_prefers_xyz_and_excludes_krw_and_backp
     assert by_sym_venue["SKHYNIX", "LIGHTER"]["instrument_id"] == "SKHYNIXUSD-PERP.LIGHTER"
     assert summary["exclusions"]["LIGHTER"]["non_usd_or_crypto_asset"] == 4
     assert summary["exclusions"]["LIGHTER"]["unanchored_or_ambiguous_asset"] == 1
+    assert summary["exclusions"]["BACKPACK"]["crypto_or_unknown_classification"] == 1
+    assert summary["exclusions"]["BACKPACK"]["inactive_or_hidden"] == 1
     assert "ADBE" not in {m["symbol"] for m in document["markets"]}
-
-    with pytest.raises(universe.UniverseError, match="BACKPACK"):
-        universe.generate_document(data, venues=("HL", "BACKPACK"), asset_class="rwa")
