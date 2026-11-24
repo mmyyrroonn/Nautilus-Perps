@@ -576,8 +576,10 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 return
             market = self.markets[instrument_id]
             client = ClientId.from_str(market.client_id)
-            self.subscribe_instrument(instrument_id, client_id=client)
-            self.subscription_ids["instrument"].add(instrument_id)
+            # Arcus serves the same instrument snapshot already read from the startup cache.
+            if market.venue != "ARCUS":
+                self.subscribe_instrument(instrument_id, client_id=client)
+                self.subscription_ids["instrument"].add(instrument_id)
             kwargs = {"depth": plan.aster_snapshot_depth} if market.venue == "ASTER" else {}
             if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
                 kwargs = {"depth": min(plan.depth_levels, 5), "params": {"fast": True}}

@@ -398,6 +398,19 @@ def test_backpack_partial_start_failure_cleans_up_every_successful_subscription(
     assert observer.operations == operations
 
 
+def test_arcus_snapshot_metadata_and_book_subscription_across_restart(tmp_path, monkeypatch):
+    first, second = plan(tmp_path).markets
+    arcus = replace(first, venue="ARCUS", instrument_id="BTC-USD-PERP.ARCUS")
+    _, state, observer, ids, _, _ = native_observer(tmp_path, monkeypatch, markets=(arcus, second))
+    for attempt in range(2):
+        if attempt:
+            observer.on_start()
+        assert arcus.instrument_id in state.metadata and observer.failure is None
+        observer.on_stop()
+    assert [kind for kind, instrument in observer.operations if instrument == ids[0]] == [
+        "book_deltas", "unsubscribe_book_deltas", "book_deltas", "unsubscribe_book_deltas"]
+
+
 def test_non_backpack_markets_do_not_subscribe_quotes(tmp_path, monkeypatch):
     _, _, observer, ids, _, _ = native_observer(tmp_path, monkeypatch)
     # ONDO (ids[0]) requires quotes for native continuous execution; HL (ids[1]) does not.
