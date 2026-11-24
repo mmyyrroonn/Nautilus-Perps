@@ -6,7 +6,8 @@ state_path = "../reports/opportunity-trading/rwa-paper.sqlite3"
 
 [trade]
 order_notional_usd = "20"
-entry_edge_bps = "30"
+# Suppress simulated paper-trade SQLite churn during pure L2 tape collection.
+entry_edge_bps = "5000"
 take_profit_bps = "10"
 max_loss_bps = "50"
 loss_stop_enabled = true
