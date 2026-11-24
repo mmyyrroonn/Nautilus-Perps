@@ -1,7 +1,7 @@
-# 五交易所配对交易：实盘与 paper
+# 多交易所配对交易
 
 入口为 `src/opportunity_trade.py`，复用现有扫描器的市场映射、费用来源、数量步长、
-盘口新鲜度检查和原生公共行情客户端。`opportunity-trade.live.toml` 使用五所真实执行客户端，
+盘口新鲜度检查和原生公共行情客户端。随仓库的 `opportunity-trade.live.toml` 默认启用 Hyperliquid、Lighter、Aster 和 Backpack。Ondo 和 Arcus 可在 `venues` 中启用。
 `opportunity-trade.paper.toml` 使用本地模拟成交。原有 scanner 与 episode 入口继续用于观察。
 
 ## 实盘启动
@@ -11,13 +11,13 @@
 ```powershell
 $TradePython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 
-# Validate the five-venue plan without credentials, connections or orders.
+# Validate the selected venues offline.
 & $TradePython -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --dry-run
 
 # Trade BTC/ETH after readonly startup account checks; BTC trading self-tests are disabled by default.
 & $TradePython -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --symbols BTC,ETH --execute-live
 
-# Explicitly run BTC trading self-tests on all five venues before continuous trading.
+# Explicitly run BTC trading self-tests on every selected venue before continuous trading.
 & $TradePython -B src\opportunity_trade.py --config config\opportunity-trade.live.toml --symbols BTC,ETH --execute-live --startup-self-test
 
 # Omit --symbols to trade all eligible symbols in the configured registry.
@@ -55,7 +55,7 @@ pm2 stop persarb-live
 ### 可选启动余额检测
 
 `startup.balance_check_enabled = false` 默认关闭。设为 `true`，或在原启动命令后追加
-`--startup-balance-check`，会先启动独立的只读余额检查进程，确认五所结果完整且检查进程
+`--startup-balance-check`，会先启动独立的只读余额检查进程，确认所选各所结果完整且检查进程
 正常退出后，才创建交易账本和连接实盘行情、执行客户端。失败时不会进入实盘客户端启动。
 余额阶段只加载各所 BTC 等一个账户读取所需的品种，不加载整个交易品种表；
 后续实盘客户端仍会核对完整元数据、账户持仓和订单历史。首次启动本进程也可能读到账户旧记录。
@@ -95,7 +95,7 @@ HL 为原生合约/现货合并口径，不能当作所有 DEX 抵押品总额�
 
 该命令直接运行有限时的只读账户会话，自动开启余额读取并关闭交易自检；不需要
 `--execute-live`，也不接受与交易、自检或关闭余额读取的参数混用。追加 `--dry-run`
-则仅检查配置。使用仓库 `.env` 的现有账户配置，输出五所结果后退出，失败返回非零。
+则仅检查配置。使用仓库 `.env` 的现有账户配置，输出所选交易所的结果后退出，失败返回非零。
 独立模式不订阅盘口、不启动配对策略、不打开交易 SQLite 或登记风险占用；原生只读
 客户端的本地状态放在已忽略的 `.native-cache/balance-check/<run-id>/`。
 Ondo 使用 `account_read_only=true`，Backpack 使用只读执行工厂，均不创建生产写入权限。
@@ -105,7 +105,7 @@ Ondo 使用 `account_read_only=true`，Backpack 使用只读执行工厂，均�
 被自动覆盖；vault 配置继续绑定其显式目标。兼容处理只存在于本次只读会话内，不改写
 `.env`，也不改变实盘交易的显式账户配置要求。初始化错误报告包含 `failure_stage`。
 原生客户端连接超时或未就绪时，报告分别给出 `connection_timeout` 或 `clients_not_ready`
-的 `failure_code`；检查尚未开始的交易所标记为 `not_run`，不表示五家余额接口都失败。
+的 `failure_code`；检查尚未开始的交易所标记为 `not_run`，仅表示该所尚未开始检查。
 `clients_not_ready` 本身不能区分网络、交易所服务和 API 权限问题。
 
 | 交易所 | 下单路径 | 启动改价检查 |
@@ -115,13 +115,14 @@ Ondo 使用 `account_read_only=true`，Backpack 使用只读执行工厂，均�
 | Aster | Native ExecutionClientFactory | 确认撤单后新 ID 重挂 |
 | Ondo | Native ExecutionClientFactory + continuous config | 确认撤单后新 ID 重挂 |
 | Backpack | Native ProductionExecutionClientFactory | 确认撤单后新 ID 重挂 |
+| Arcus | ArcusExecutionClientFactory | 原生改单 |
 
-五所共用 `LiveNode → Strategy → NativeOrderGateway`，没有 Python REST 下单旁路。
+六所共用 `LiveNode → Strategy → NativeOrderGateway`，没有 Python REST 下单旁路。
 Ondo/Backpack 的原生身份日志与执行状态按本次会话保存在 `state_path` 同目录的
 `live.native/sessions/<session_id>/` 内，每次启动使用新的会话目录，与本次原生客户端的 run ID 一致。
 旧版直接放在 `live.native/` 下的日志和历史会话目录保留归档，不需要删除。
 当前目录通过 `native_session` 记录；账户恢复检查尚未通过时，SQLite 以 `pending_native_session`
-记录本次目录并保留旧会话，`native_session_prepared` 事件记录每次准备。独立目录不会跳过五所当前空仓和挂单检查。
+记录本次目录并保留旧会话，`native_session_prepared` 事件记录每次准备。独立目录不会跳过所选各所当前空仓和挂单检查。
 Backpack 数据与执行共享同一个公开行情状态、额度对象；程序运行时每 30 秒续期原生执行权限，
 只延长有效期，不扩大金额、账户或交易权限。
 
@@ -140,12 +141,12 @@ Backpack 数据与执行共享同一个公开行情状态、额度对象；程�
 
 默认实盘配置已开启 `[loss_monitor]`，`max_loss_usd = "200"`，
 `interval_secs = 600`（10 分钟）。本次进程在发送任何自检交易或策略订单前，
-确认五所账户空仓、无挂单，并读取总权益作为本次启动基准；不复用历史会话基准。
+确认所选各所账户空仓、无挂单，并读取总权益作为本次启动基准；不复用历史会话基准。
 已有持仓的恢复会话无法建立空仓基准，会保留账本并拒绝启动。
 
 每次到期只暂停**新配对开仓**，正在执行的配对继续按原有止盈、止损、持仓超时等
 规则结束，不新增强平或撤单流程。所有配对结束、原订单全部终结，并取得各所完整
-空仓证明后才读取余额。五所合计权益相对启动基准减少 **至少 200 美元**，程序
+空仓证明后才读取余额。各所合计权益相对启动基准减少 **至少 200 美元**，程序
 记录 `session_loss_limit` 并退出；未触发则恢复新开仓，下次检查在本次成功读取
 10 分钟后。等待平仓的时间会推迟检查，因此它不是盘中浮亏的即时止损。
 
@@ -158,7 +159,7 @@ Backpack 数据与执行共享同一个公开行情状态、额度对象；程�
 本部署按用户指定的单一交易程序场景运行，启动等待期间不假定其他程序交易或人工操作。
 同一次启动已通过的独立余额预检会直接用于初始净值，保留其原始观察时间；仍须取得本次
 启动完整空仓证明。重启账户恢复、初始净值和最终启动门禁共用同一轮账户证明，不因切换
-步骤而要求五所重查，也不复用历史会话保存的结果。
+步骤而要求各所重查，也不复用历史会话保存的结果。
 
 每轮检查逐所保留已取得的完整账户证明和有效余额，等待较慢交易所时不因 15 秒过去而
 清空已完成结果。只有本程序交易活动、无效/断连账户证据等使相关结果失效时才重读。
@@ -239,6 +240,7 @@ SQLite 归档删除，不提供通过 TOML/CLI 更改锁目录的选项。
 |---|---|
 | Hyperliquid | 环境 + 实际交易地址，忽略地址大小写；vault/subaccount 必须让 `HYPERLIQUID_VAULT` 与 `HYPERLIQUID_ACCOUNT_ADDRESS` 一致。不同实际交易地址独立。普通账户通过 `userRole` 只读查询核对签名者所属用户，agent 地址不作为账户身份。 |
 | Lighter | 环境 + `LIGHTER_ACCOUNT_INDEX` 的整数值；不同索引独立，前导零和 API key index 不产生新风险域。账户索引与凭证显式传给原生执行配置。 |
+| Arcus | 环境、主钱包地址和子账户索引共同确定风险域。轮换已注册的交易密钥仍绑定同一账本。 |
 | Aster | 环境 + `ASTER_MAINNET_USER_ADDRESS`；不同用户地址独立，轮换 signer 不产生新风险域。 |
 | Ondo | 环境 + `ONDO_MAINNET_ACCOUNT_ID`；不同 venue account ID 独立，API key 轮换不产生新风险域。原生客户端继续核对 expected account ID。 |
 | Backpack | 当前所有账户/子账户保守共享一个 mainnet 风险域。账本另绑定 API 公钥摘要，换 key 不继承旧账本，也不能绕过共享锁。 |
@@ -285,8 +287,13 @@ Backpack 的[官方账户查询](https://docs.backpack.exchange/#tag/Account)没
 | Aster | `ASTER_MAINNET_USER_ADDRESS`、`ASTER_MAINNET_SIGNER_ADDRESS`、`ASTER_MAINNET_SIGNER_PRIVATE_KEY` |
 | Ondo | `ONDO_MAINNET_API_KEY`、`ONDO_MAINNET_API_SECRET`、`ONDO_MAINNET_ACCOUNT_ID` |
 | Backpack | `BACKPACK_MAINNET_API_KEY`、`BACKPACK_MAINNET_API_SECRET` |
+| Arcus | `ARCUS_ADDRESS`、`ARCUS_API_SECRET`。可选 `ARCUS_SUBACCOUNT_ID`（默认 0，范围 0–9）和用于核对的 `ARCUS_API_KEY`。 |
 
 `--dry-run` 只验证本地配置，不验证账户权限、余额、实际交易所连接或当前标的可交易性。
+启用 Arcus 时，将实盘配置复制到同一目录，在顶层 `venues` 加入 `"ARCUS"`。随仓库的目录已有 BTC 和 ETH。主网地址须具备 Arcus 访问权限，`ARCUS_API_SECRET` 使用该钱包已注册的 32 字节 Ed25519 交易种子，编码为 64 位十六进制。安装 fork wheel 时可用 `--additional-adapter arcus` 校验原生模块。先对这份配置运行 `--dry-run` 和 `--balance-check-only`。需要验证真实下单时，`--symbols BTC --execute-live --self-test-only` 会在所选各所使用配置额度进行挂单、改价、撤单、开平仓和最终账户核对。
+
+Arcus 以美元报价，费用和子账户权益按 `USDG.ARCUS` 的九位小数记账。该入口适用于使用 USDG 的永续合约子账户。账户核对读取该钱包和索引下全部市场的持仓与挂单，分页不完整、账户不匹配、借贷余额或现货抵押都会阻止通过核对。[账户接口](https://docs.arcus.xyz/api-reference/public/get-account) · [挂单接口](https://docs.arcus.xyz/api-reference/public/get-open-orders)
+
 市场目录是明确的配置快照，新增、退市或映射变更后需更新目录；不会自动把同 ticker 当成同资产。
 
 ## 已确认的规则
@@ -435,7 +442,7 @@ $TradePython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 核对通过后释放 pair 锁。共享腿按 pair 子账本归属；若不同 pair 在同一账户相抵，关闭其中一对可能
 需要普通 IOC 而非 reduce-only，但数量和总规模仍受策略限制，不使用账户级 close-all。
 
-Ondo/Backpack 使用原生完整账户核对快照，其他三所使用独立只读账户核对。账户时间为读取开始时间，
+Ondo/Backpack 使用原生完整账户核对快照，其余交易所使用独立只读账户核对。账户时间为读取开始时间，
 必须晚于本程序最近的成交/终态；当前实盘配置的连续账户观察窗口为 60 秒，盘口仍严格最多
 2 秒旧，两种时间不混用。启动/空仓检查已经完成的逐所证明按上述本轮规则复用。
 开仓手续费使用真实成交手续费；退出判断使用当前盘口及预计退出手续费。手续费未知时不触发软止盈。

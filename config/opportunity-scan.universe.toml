@@ -938,6 +938,13 @@ fee_source = "Configured public crypto general taker assumption; classification 
 
 [[markets]]
 symbol = "BTC"
+venue = "ARCUS"
+instrument_id = "BTC-USD-PERP.ARCUS"
+quote_to_usd = "1"
+valuation_source = "Arcus USD-quoted perpetual"
+
+[[markets]]
+symbol = "BTC"
 venue = "HL"
 instrument_id = "BTC-USD-PERP.HYPERLIQUID"
 quote_to_usd = "1"
@@ -1499,6 +1506,13 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 taker_fee_bps = "4"
 fee_source = "Configured public crypto general taker assumption; classification frozen 2026-10-06; verify current published fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "ETH"
+venue = "ARCUS"
+instrument_id = "ETH-USD-PERP.ARCUS"
+quote_to_usd = "1"
+valuation_source = "Arcus USD-quoted perpetual"
 
 [[markets]]
 symbol = "ETH"

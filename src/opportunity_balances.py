@@ -12,6 +12,7 @@ from fractions import Fraction
 BALANCE_SEMANTICS = {
     "HL": "native combined perpetual/spot account balances; not all DEX collateral",
     "LIGHTER": "spot plus perpetual collateral; locked covers spot reservations only",
+    "ARCUS": "USDG margin equity and free collateral in the selected subaccount",
     "ASTER": "wallet balances; not a complete margin statement",
     "ONDO": "verified settlement account balance mapped by the native adapter",
     "BACKPACK": "wallet trading balances; not verified available margin",

@@ -92,6 +92,16 @@ def record_historical_conflict(live, position, order, now_ns, detail):
     live.emit("historical_order_evidence_conflict", now_ns, client_order_id=order["client_order_id"])
 
 
+def commission_in_quote(market, currency, quote):
+    if currency == quote:
+        return True
+    if market.quote_to_usd != 1:
+        return False
+    if market.venue == "ARCUS" and currency == "USDG.ARCUS" and quote == "USD":
+        return True
+    return {currency, quote} <= {"USD", "USDC", "USDT"}
+
+
 def apply_commission_update(live, position, order, fill, identity, signature, now_ns):
     """Enrich a true execution's missing fee without applying quantity or cash twice."""
     if position is None or identity not in position.get("pending_commissions", {}):
@@ -107,8 +117,7 @@ def apply_commission_update(live, position, order, fill, identity, signature, no
         amount = Decimal(str(fill.get("commission_amount")))
     except InvalidOperation:
         return False
-    parity = market.quote_to_usd == 1 and {currency, native["quote_currency"]} <= {"USD", "USDC", "USDT"}
-    if not amount.is_finite() or not (currency == native["quote_currency"] or parity):
+    if not amount.is_finite() or not commission_in_quote(market, currency, native["quote_currency"]):
         return False
     fee = F(amount) * F(market.quote_to_usd)
     if order["purpose"] == "entry":

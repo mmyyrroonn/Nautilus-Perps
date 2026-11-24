@@ -14,7 +14,7 @@ from opportunity_entry_evidence import (
 from opportunity_leverage import leverage_check, leverage_integer
 from opportunity_lighter_margin import margin_check
 from opportunity_entry_admission import EntryAdmissionPolicy
-from opportunity_history import (apply_commission_update, archive_flat_positions, historical_receipt,
+from opportunity_history import (apply_commission_update, archive_flat_positions, commission_in_quote, historical_receipt,
     order_has_execution_risk, position_orders, record_execution_closed, record_historical_conflict,
     refresh_historical_economics)
 
@@ -1665,14 +1665,12 @@ class LiveTradeState(ScanState):
             # execution and its economic debt; never discard a real risk reduction.
             self.halt_reason = self.halt_reason or "exit fill precedes owned entry reconciliation"
         fee_amount, fee_currency = fill.get("commission_amount"), fill.get("commission_currency")
-        stable_parity = (market.quote_to_usd == 1 and
-            {fee_currency, native["quote_currency"]} <= {"USD", "USDC", "USDT"})
         try:
             amount = Decimal(str(fee_amount)) if fee_amount is not None else None
         except InvalidOperation:
             amount = None
         known_fee = (amount is not None and amount.is_finite()
-                     and (fee_currency == native["quote_currency"] or stable_parity))
+                     and commission_in_quote(market, fee_currency, native["quote_currency"]))
         estimated_fee = None
         if known_fee:
             fee = F(amount) * F(market.quote_to_usd)

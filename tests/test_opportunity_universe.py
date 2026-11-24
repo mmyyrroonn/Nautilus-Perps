@@ -216,7 +216,7 @@ def test_total_cap_reserves_comparability_and_represents_multiple_venues():
     assert summary["symbol_count"] == 400
     assert summary["market_count"] == 1000
     assert summary["per_venue_counts"]["BACKPACK"] <= 100
-    assert all(summary["per_venue_counts"][venue] > 0 for venue in universe.VENUES)
+    assert all(summary["per_venue_counts"][venue] > 0 for venue in universe.DEFAULT_VENUES)
     for symbol in {m["symbol"] for m in document["markets"]}:
         assert sum(m["symbol"] == symbol for m in document["markets"]) >= 2
 
@@ -226,8 +226,8 @@ def test_generation_is_deterministic_under_input_order_and_does_not_mutate_metad
     original = deepcopy(data)
     first = generate(data)
     assert data == original
-    reordered = {venue: data[venue] for venue in reversed(universe.VENUES)}
-    for venue in universe.VENUES:
+    reordered = {venue: data[venue] for venue in reversed(universe.DEFAULT_VENUES)}
+    for venue in universe.DEFAULT_VENUES:
         rows(reordered, venue).reverse()
     assert generate(reordered)[0] == first[0]
     assert original == metadata()
@@ -265,7 +265,7 @@ def test_malformed_aster_classification_or_margin_is_excluded(changes):
 
 def save_metadata(path, data):
     path.mkdir()
-    for venue in universe.VENUES:
+    for venue in universe.DEFAULT_VENUES:
         (path / universe.FILES[venue]).write_text(json.dumps(data[venue]), encoding="utf-8")
 
 
@@ -292,7 +292,7 @@ def test_output_venue_selection_keeps_unselected_public_rwa_collision_evidence(t
     inputs = tmp_path / "inputs"
     save_metadata(inputs, data)
     loaded, _ = universe.load_metadata(inputs, ("HL", "LIGHTER"))
-    assert set(loaded) == set(universe.VENUES)
+    assert set(loaded) == set(universe.DEFAULT_VENUES)
     assert universe.main(["--metadata-dir", str(inputs), "--output", str(tmp_path / "absent.toml"),
                           "--venues", "HL,LIGHTER", "--dry-run"]) == 0
     summary = json.loads(capsys.readouterr().out)
@@ -356,3 +356,16 @@ def test_generated_config_and_summary_paths_must_not_collide(tmp_path, capsys):
     assert universe.main(["--metadata-dir", str(inputs), "--output", str(output), "--summary", str(output)]) == 2
     assert "distinct paths" in capsys.readouterr().err
     assert not output.exists()
+
+
+def test_arcus_only_admits_identified_online_crypto_usd_perps():
+    row = {"type": "PERPETUAL", "category": "CRYPTO", "status": "ONLINE", "baseAsset": "BTC",
+           "quoteAsset": "USD", "marketDisplayName": "BTC-USD", "tickSize": "0.1", "stepSize": "0.00001",
+           "effectiveTakerFeePpm": 450, "effectiveMakerFeePpm": -20}
+    data = metadata()
+    data["ARCUS"] = {"markets": [row, *[row | change for change in (
+        {"category": "STOCK"}, {"quoteAsset": "USDC"}, {"status": "OFFLINE"}, {"tickSize": "0"},
+        {"effectiveTakerFeePpm": None}, {"marketDisplayName": "ETH-USD"})]]}
+    doc, summary = generate(data, venues=("HL", "ARCUS"))
+    assert {m["instrument_id"] for m in doc["markets"]} == {"BTC-USD-PERP.HYPERLIQUID", "BTC-USD-PERP.ARCUS"}
+    assert sum(summary["exclusions"]["ARCUS"].values()) == 6

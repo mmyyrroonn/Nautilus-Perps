@@ -78,7 +78,7 @@ def verify_balance_identity(binding, environ):
 
 def _account_settings(environ):
     return {k: v for k, v in environ.items() if k.startswith(
-        ("HYPERLIQUID_", "LIGHTER_", "ASTER_", "ONDO_", "BACKPACK_"))}
+        ("HYPERLIQUID_", "LIGHTER_", "ASTER_", "ONDO_", "BACKPACK_", "ARCUS_"))}
 
 
 def balance_session_error(exc):

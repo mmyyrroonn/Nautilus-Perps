@@ -13,6 +13,7 @@ from fractions import Fraction
 import http.client
 import json
 import os
+import re
 import threading
 import time
 from urllib.parse import quote, urlencode, urlsplit
@@ -465,6 +466,8 @@ class ReadOnlyAccountReader:
         elif venue == "LIGHTER":
             position, orders, started_ns, positions, all_orders, lighter_margin, lighter_margin_error = self._lighter(
                 market.instrument_id, observed_ns)
+        elif venue == "ARCUS":
+            position, orders, started_ns, positions, all_orders = self._arcus(market.instrument_id, observed_ns)
         elif venue == "ASTER":
             position, orders, started_ns, positions, all_orders, leverage, leverage_error = self._aster(
                 market.instrument_id, observed_ns)
@@ -641,6 +644,80 @@ class ReadOnlyAccountReader:
             # Position/order evidence remains usable by reductions if margin admission fails.
             margin_error = "lighter_margin_read_failed"
         return position, ids, started_ns, positions, all_orders, margin, margin_error
+
+    def _arcus(self, instrument_id, observed_ns):
+        from opportunity_account_scope import arcus_account
+        address, index = arcus_account(self.environ, self.environment)
+        base = "https://api.arcus.xyz/v1" if self.environment == "mainnet" else "https://api.testnet.arcus.xyz/v1"
+        query = urlencode({"address": address, "accountIndex": index})
+
+        def market_id(row):
+            name = row.get("marketDisplayName")
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", name):
+                raise AccountReadError("invalid Arcus market identity")
+            if "address" in row and (not isinstance(row["address"], str) or row["address"].lower() != address):
+                raise AccountReadError("mismatched Arcus row address")
+            return name + "-PERP.ARCUS"
+
+        def fetch():
+            account = self.transport("GET", f"{base}/account?{query}")
+            if (not isinstance(account, dict) or not isinstance(account.get("address"), str)
+                    or account["address"].lower() != address or type(account.get("accountIndex")) is not int
+                    or account["accountIndex"] != index or not isinstance(account.get("positions"), dict)):
+                raise AccountReadError("incomplete or mismatched Arcus account")
+            if (account.get("spotPositions", {}) != {}
+                    or (account.get("loanBalance") is not None and exact(account["loanBalance"], "Arcus loan") != 0)):
+                raise AccountReadError("unsupported Arcus collateral account")
+            positions = {}
+            for key, row in account["positions"].items():
+                if (not isinstance(row, dict) or type(row.get("marketId")) is not int
+                        or not 0 <= row["marketId"] <= 65535 or str(row["marketId"]) != key
+                        or type(row.get("accountIndex")) is not int or row["accountIndex"] != index):
+                    raise AccountReadError("invalid Arcus position market")
+                instrument = market_id(row)
+                size = exact(row.get("size"), "Arcus position size")
+                if (instrument in positions or (size > 0 and row.get("side") != "LONG")
+                        or (size < 0 and row.get("side") != "SHORT")):
+                    raise AccountReadError("inconsistent Arcus position")
+                positions[instrument] = size
+
+            orders = {}
+            cursor = None
+            for _ in range(64):
+                url = f"{base}/openOrders?{query}&limit=1000"
+                if cursor is not None:
+                    url += f"&to={cursor}"
+                payload = self.transport("GET", url)
+                if not isinstance(payload, dict):
+                    raise AccountReadError("incomplete Arcus open orders")
+                page = _rows(payload.get("orders"), "Arcus open orders")
+                if len(page) > 1000:
+                    raise AccountReadError("invalid Arcus open-order page size")
+                oldest = None
+                for row in page:
+                    oid, stamp = row.get("orderId"), row.get("createdAt")
+                    row_index = row.get("accountIndex", 0)
+                    if (not isinstance(oid, str) or not oid or oid != oid.strip()
+                            or type(row_index) is not int or row_index != index
+                            or type(stamp) is not int or stamp <= 0 or (cursor is not None and stamp > cursor)
+                            or (oldest is not None and stamp > oldest)):
+                        raise AccountReadError("invalid Arcus open-order evidence")
+                    identity = (market_id(row), "venue:" + oid)
+                    if oid in orders and orders[oid] != identity:
+                        raise AccountReadError("inconsistent Arcus open-order identity")
+                    orders[oid] = identity
+                    oldest = stamp
+                if len(page) < 1000:
+                    return positions, tuple(orders.values())
+                # Arcus's cursor is inclusive. A saturated microsecond cannot prove coverage.
+                if cursor is not None and oldest >= cursor:
+                    break
+                cursor = oldest
+            raise AccountReadError("incomplete Arcus open-order pagination")
+
+        (positions, orders), started_ns = self._cached_read(("ARCUS", address, index), fetch, observed_ns)
+        return (positions.get(instrument_id, Decimal(0)), [oid for market, oid in orders if market == instrument_id],
+                started_ns, positions, orders)
 
     def _signed_aster_query(self, symbol=None):
         prefix = "ASTER_MAINNET_" if self.environment == "mainnet" else "ASTER_"

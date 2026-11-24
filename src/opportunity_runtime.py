@@ -297,7 +297,13 @@ def data_clients(plan, *, backpack_quota=None):
         groups.setdefault(market.client_id, []).append(market)
     result = []
     for client_id, markets in groups.items():
-        if client_id == "BACKPACK":
+        if client_id == "ARCUS":
+            from nautilus_trader.adapters.arcus import ArcusDataClientConfig, ArcusDataClientFactory, ArcusEnvironment
+            from nautilus_trader.model import InstrumentId
+            factory = ArcusDataClientFactory()
+            config = ArcusDataClientConfig(environment=ArcusEnvironment.MAINNET,
+                load_ids=[InstrumentId.from_str(m.instrument_id) for m in markets])
+        elif client_id == "BACKPACK":
             from nautilus_trader.adapters.backpack import (
                 BackpackDataClientConfig, BackpackDataClientFactory, BackpackInstrumentEconomics,
             )

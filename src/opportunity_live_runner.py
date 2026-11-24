@@ -37,7 +37,7 @@ HARD_MAX_UNHEDGED_SECS = 10
 HARD_MAX_ENTRY_SLIPPAGE_BPS = Decimal("20")
 HARD_MAX_SOFT_EXIT_BUFFER_BPS = Decimal("20")
 HARD_MAX_SEQUENTIAL_LEG2_SLIPPAGE_BPS = Decimal("30")
-SUPPORTED_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
+SUPPORTED_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK", "ARCUS"}
 VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in SUPPORTED_VENUES}}
 CANCEL_REPLACE_VENUES = {"ASTER", "ONDO", "BACKPACK"}
 
@@ -210,7 +210,7 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     raw_venues = document.get("venues")
     if not isinstance(raw_venues, list) or not 2 <= len(raw_venues) <= len(SUPPORTED_VENUES) or any(
             not isinstance(v, str) or v not in VENUE_ALIASES for v in raw_venues):
-        raise ScanConfigError("live venues require two to five of HYPERLIQUID, LIGHTER, ASTER, ONDO and BACKPACK")
+        raise ScanConfigError("live venues require two to six of HYPERLIQUID, LIGHTER, ASTER, ONDO, BACKPACK and ARCUS")
     venues = tuple(VENUE_ALIASES[v] for v in raw_venues)
     if len(set(venues)) != len(venues):
         raise ScanConfigError("live venues must be unique")

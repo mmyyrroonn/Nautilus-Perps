@@ -128,7 +128,7 @@ def test_optional_backpack_stub_gate_is_backward_compatible_and_detects_tamperin
     environment = tmp_path / "isolated"
     binaries = {"nautilus_trader/_libnautilus.pyd": b"synthetic-native",
                 **{f"nautilus_trader/adapters/{name}/__init__.pyi": name.encode()
-                   for name in ("aster", "ondo", "backpack")}}
+                   for name in ("aster", "ondo", "backpack", "arcus")}}
     with zipfile.ZipFile(wheel, "w") as archive:
         for name, payload in binaries.items():
             archive.writestr(name, payload)
@@ -150,15 +150,20 @@ def test_optional_backpack_stub_gate_is_backward_compatible_and_detects_tamperin
             setattr(backpack, symbol, type(symbol, (), {}))
         else:
             setattr(getattr(backpack, parts[0]), parts[1], object())
-    monkeypatch.setattr(verifier.importlib, "import_module", lambda name: backpack
-        if name == "nautilus_trader.adapters.backpack" else SimpleNamespace(
-            __file__=str(environment / "nautilus_trader/_libnautilus.pyd")))
+    arcus = SimpleNamespace(**{symbol: object() for symbol in verifier.ARCUS_EXPORTS})
+    modules = {"nautilus_trader.adapters.backpack": backpack, "nautilus_trader.adapters.arcus": arcus}
+    monkeypatch.setattr(verifier.importlib, "import_module", lambda name: modules.get(name, SimpleNamespace(
+            __file__=str(environment / "nautilus_trader/_libnautilus.pyd"))))
     monkeypatch.setattr(sys, "prefix", str(environment))
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     def check(additional=()):
         return verifier.verify(wheel, digest, provenance=None, require_source_binding=False,
                                require_ondo=False, additional_adapters=additional)
     assert len(check()["installed"]["adapter_stub_sha256"]) == 2
+    assert set(check(("arcus",))["installed"]["adapter_exports"]["arcus"]) == set(verifier.ARCUS_EXPORTS)
+    del arcus.ArcusExecutionClientFactory
+    with pytest.raises(ValueError, match="ArcusExecutionClientFactory"):
+        check(("arcus",))
     verified = check(("backpack",))
     assert len(verified["installed"]["adapter_stub_sha256"]) == 3
     assert all(verified["installed"]["adapter_exports"]["backpack"].values())

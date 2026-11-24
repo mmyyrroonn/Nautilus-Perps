@@ -27,6 +27,11 @@ def digest(path: Path) -> str:
 
 SOURCE_PATHS = ("src", "scripts", "tests", "config", ".github", "pyproject.toml", "uv.lock", ".python-version")
 
+ARCUS_EXPORTS = (
+    "ArcusEnvironment", "ArcusDataClientConfig", "ArcusDataClientFactory",
+    "ArcusExecutionClientConfig", "ArcusExecutionClientFactory",
+)
+
 BACKPACK_EXPORTS = (
     "BackpackCredential",
     "BackpackInstrumentEconomics",
@@ -180,17 +185,19 @@ def verify(
         if not installed_stub.is_relative_to(environment) or digest(installed_stub) != expected:
             raise ValueError("installed adapter stub differs from wheel")
     adapter_exports: dict[str, dict[str, bool]] = {}
-    if "backpack" in additional_adapters:
-        backpack = importlib.import_module("nautilus_trader.adapters.backpack")
+    for name, required in (("backpack", BACKPACK_EXPORTS), ("arcus", ARCUS_EXPORTS)):
+        if name not in additional_adapters:
+            continue
+        adapter = importlib.import_module(f"nautilus_trader.adapters.{name}")
         exports = {}
-        for symbol in BACKPACK_EXPORTS:
-            value = backpack
+        for symbol in required:
+            value = adapter
             for part in symbol.split("."):
                 value = getattr(value, part, None)
             if value is None:
-                raise ValueError(f"installed Backpack export is absent: {symbol}")
+                raise ValueError(f"installed {name.capitalize()} export is absent: {symbol}")
             exports[symbol] = True
-        adapter_exports["backpack"] = exports
+        adapter_exports[name] = exports
     if require_ondo:
         from nautilus_trader.adapters.ondo import OndoExecutionClientFactory
 
