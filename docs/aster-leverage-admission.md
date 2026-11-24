@@ -27,7 +27,7 @@ Manual targets accept integers from 1 to 125, subject to the current venue limit
 Account settings retain the same supported range. Exchange tier ceilings are
 parsed separately as positive integers: a ceiling such as 150, 200, or 300 does
 not change the account setting or become the automatic target.
-The freshness budget defaults to 5000 ms and can be set from 1 to 15000 ms.
+The freshness budget defaults to 5000 ms and can be set from 1 to `max(account_max_age_ms, 15000)` ms (up to 60000 ms with `account_max_age_ms = 60000`).
 Absent manual targets are resolved automatically. A missing, stale, failed, or
 already over-limit account proof cannot initialize a target; entry remains
 blocked until a valid proof is available. Dry-run output lists instruments using

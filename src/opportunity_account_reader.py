@@ -189,7 +189,8 @@ def http_json(method, url, payload=None, *, timeout=3):
 class ReadOnlyAccountReader:
     def __init__(self, *, environment="mainnet", environ=None, transport=http_json,
                  clock_ns=time.time_ns, aster_signer=None, cache_ttl_ms=1000,
-                 max_native_snapshot_age_ms=15000, oi_cap_cache_ttl_ms=30000):
+                 max_native_snapshot_age_ms=15000, oi_cap_cache_ttl_ms=30000,
+                 aster_instruments=None):
         if environment not in {"mainnet", "testnet"}:
             raise AccountReadError("environment must be mainnet or testnet")
         self.environment = environment
@@ -214,6 +215,14 @@ class ReadOnlyAccountReader:
         self._native_instruments = {}
         self._native_runs = {}
         self._aster_leverage_cache = None
+        if aster_instruments is None:
+            self._aster_instruments = None
+            self._aster_symbols = None
+        else:
+            self._aster_instruments = frozenset(aster_instruments)
+            self._aster_symbols = frozenset(
+                i.removesuffix(".ASTER").removesuffix("-PERP") for i in self._aster_instruments
+            )
 
     def invalidate(self, venue):
         venue = "HL" if venue == "HYPERLIQUID" else venue
@@ -660,15 +669,21 @@ class ReadOnlyAccountReader:
         if len(matching) != 1 or matching[0].get("positionSide", "BOTH") != "BOTH":
             raise AccountReadError("Aster one-way target position coverage is missing or ambiguous")
         quantity = exact(matching[0].get("positionAmt"))
-        ids, all_orders, all_positions = [], [], {}
+        ids, all_orders, all_positions, seen_instruments = [], [], {}, set()
         for row in positions:
             symbol_name = row.get("symbol")
             if not isinstance(symbol_name, str) or not symbol_name or row.get("positionSide", "BOTH") != "BOTH":
                 raise AccountReadError("Aster one-way account coverage is missing or ambiguous")
             instrument = symbol_name + "-PERP.ASTER"
-            if instrument in all_positions:
+            if instrument in seen_instruments:
                 raise AccountReadError("duplicate Aster account position")
-            all_positions[instrument] = exact(row.get("positionAmt"))
+            seen_instruments.add(instrument)
+            row_qty = exact(row.get("positionAmt"))
+            # Drop unconfigured flat rows to cut per-read work while retaining
+            # any non-zero exposure so LiveTradeState still fails closed.
+            if (self._aster_instruments is None or instrument in self._aster_instruments
+                    or instrument == instrument_id or symbol_name == symbol or row_qty != 0):
+                all_positions[instrument] = row_qty
         for row in _rows(orders, "Aster open orders"):
             if not isinstance(row.get("symbol"), str) or not isinstance(row.get("clientOrderId"), str) or not row["clientOrderId"]:
                 raise AccountReadError("Aster open order identity mismatch")
@@ -684,13 +699,16 @@ class ReadOnlyAccountReader:
                 self.transport("GET", base + "/fapi/v3/leverageBrackets?" + self._signed_aster_query()),
                 observed_ns)
             proof_ns = min(started_ns, bracket_ns)
+            allowed = None if self._aster_symbols is None else (
+                self._aster_symbols if symbol in self._aster_symbols else self._aster_symbols | {symbol}
+            )
             previous = self._aster_leverage_cache
             if (previous is not None and previous[0] is positions and previous[1] is brackets
-                    and previous[2].started_ns == proof_ns):
+                    and previous[2].started_ns == proof_ns and previous[3] == allowed):
                 leverage = previous[2]
             else:
-                leverage = parse_leverage(positions, brackets, proof_ns)
-                self._aster_leverage_cache = (positions, brackets, leverage)
+                leverage = parse_leverage(positions, brackets, proof_ns, allowed_symbols=allowed)
+                self._aster_leverage_cache = (positions, brackets, leverage, allowed)
         except Exception:
             self._aster_leverage_cache = None
             leverage_error = "leverage_read_failed"

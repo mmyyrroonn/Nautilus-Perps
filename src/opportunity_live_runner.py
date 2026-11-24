@@ -233,7 +233,6 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         raise ScanConfigError("aster_leverage.targets must be an instrument table")
     leverage_targets = tuple(sorted((instrument, integer_value(target, "Aster target leverage", 1, 125))
                                     for instrument, target in leverage_targets.items()))
-    leverage_age = integer_value(leverage.get("max_age_ms", 5000), "aster_leverage.max_age_ms", 1, 15000)
     raw_excluded = document.get("excluded_symbols", [])
     if not isinstance(raw_excluded, list) or any(not isinstance(s, str) or not s.strip() for s in raw_excluded):
         raise ScanConfigError("excluded_symbols must be a list of non-empty symbol strings")
@@ -358,6 +357,12 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
                            "evaluation_interval_ms", "backpack_quote_cache_only",
                            "backpack_depth_coalesce_ms", "coalesce_book_deltas"}, "live runtime")
     account_max_age = integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 60000)
+    leverage_age = integer_value(
+        leverage.get("max_age_ms", 5000),
+        "aster_leverage.max_age_ms",
+        1,
+        max(account_max_age, 15000),
+    )
     lighter_margin_age = (
         integer_value(runtime["lighter_margin_max_age_ms"], "lighter_margin_max_age_ms", 1, account_max_age)
         if "lighter_margin_max_age_ms" in runtime else None

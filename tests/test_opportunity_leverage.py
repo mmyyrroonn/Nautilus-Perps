@@ -349,6 +349,31 @@ def test_leverage_block_does_not_disable_owned_reduce_only_cleanup():
     assert live.leverage_rejections[position["sell_id"]] == now
 
 
+def test_parse_leverage_allowed_symbols_skips_unconfigured_tiers_while_failing_closed():
+    positions, brackets = payloads()
+    extra_positions, extra_brackets = payloads(maximum=0)
+    extra_positions[0]["symbol"] = extra_brackets[0]["symbol"] = "UNCONFIGUREDUSDT"
+    extra_positions[0]["leverage"] = "999"
+    # Unfiltered parse rejects the invalid unconfigured tier ceiling.
+    with pytest.raises(ValueError, match="invalid Aster tier leverage"):
+        parse_leverage(positions + extra_positions, brackets + extra_brackets, NOW)
+
+    # Filtered parse skips unconfigured symbols/tiers cleanly.
+    snapshot = parse_leverage(
+        positions + extra_positions,
+        brackets + extra_brackets,
+        NOW,
+        allowed_symbols={"STXUSDT"},
+    )
+    assert [row.instrument_id for row in snapshot.symbols] == ["STXUSDT-PERP.ASTER"]
+    assert check(snapshot) is None
+
+    # Hedge mode or duplicate unconfigured position still fails closed.
+    bad_pos = [dict(extra_positions[0], positionSide="LONG")]
+    with pytest.raises(ValueError, match="ambiguous Aster leverage position"):
+        parse_leverage(positions + bad_pos, brackets + extra_brackets, NOW, allowed_symbols={"STXUSDT"})
+
+
 def test_late_configuration_event_enriches_cached_terminal_without_reopening_order():
     store = MemoryStore()
     live, events = state(store=store)

@@ -154,6 +154,43 @@ class AccountSnapshot:
             if type(self.hl_oi_capped) is not tuple:
                 object.__setattr__(self, "hl_oi_capped", capped)
 
+    def project(self, instrument_id, position_quantity, open_order_ids=()):
+        """Project validated account-wide coverage onto another market without re-validating shared payloads."""
+        if self.account_positions is None or self.account_open_orders is None:
+            raise ValueError("account-only evidence requires complete coverage and no quote timestamp")
+        if not isinstance(instrument_id, str) or not instrument_id:
+            raise ValueError("instrument_id must be a non-empty string")
+        if isinstance(position_quantity, bool) or not isinstance(position_quantity, (str, int, Decimal)):
+            raise ValueError("position_quantity must be an exact decimal")
+        quantity = Decimal(position_quantity)
+        if not quantity.is_finite():
+            raise ValueError("position_quantity must be finite")
+        orders = tuple(open_order_ids)
+        if any(not isinstance(i, str) or not i for i in orders):
+            raise ValueError("open orders require explicit client order identities")
+        projected = object.__new__(type(self))
+        for name, value in (
+            ("venue", self.venue),
+            ("instrument_id", instrument_id),
+            ("bid", None),
+            ("ask", None),
+            ("observed_ns", self.observed_ns),
+            ("position_quantity", quantity),
+            ("open_order_ids", orders),
+            ("connected", self.connected),
+            ("authoritative", self.authoritative),
+            ("book_observed_ns", None),
+            ("account_positions", self.account_positions),
+            ("account_open_orders", self.account_open_orders),
+            ("aster_leverage", self.aster_leverage),
+            ("aster_leverage_error", self.aster_leverage_error),
+            ("lighter_margin", self.lighter_margin),
+            ("lighter_margin_error", self.lighter_margin_error),
+            ("hl_oi_capped", self.hl_oi_capped),
+        ):
+            object.__setattr__(projected, name, value)
+        return projected
+
 
 @dataclass(frozen=True)
 class OrderIntent:
