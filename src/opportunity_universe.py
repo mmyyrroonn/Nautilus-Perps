@@ -21,9 +21,11 @@ import urllib.request
 from opportunity_identity import LIGHTER_PRL_QUARANTINE_CODE, identity_quarantine_reason
 
 
-VENUES = ("HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK")
+DEFAULT_VENUES = ("HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK")
+VENUES = (*DEFAULT_VENUES, "ARCUS")
 FILES = {venue: f"{venue.lower()}-metadata.json" for venue in VENUES}
 URLS = {
+    "ARCUS": "https://api.arcus.xyz/v1/markets",
     "HL": "https://api.hyperliquid.xyz/info",
     "LIGHTER": "https://mainnet.zklighter.elliot.ai/api/v1/orderBooks",
     "ASTER": "https://fapi.asterdex.com/fapi/v1/exchangeInfo",
@@ -48,9 +50,9 @@ class UniverseError(ValueError):
 
 
 def _selected(venues):
-    selected = set(VENUES if venues is None else venues)
+    selected = set(DEFAULT_VENUES if venues is None else venues)
     if not selected or selected - set(VENUES):
-        raise UniverseError("venues must be a nonempty subset of HL,LIGHTER,ASTER,ONDO,BACKPACK")
+        raise UniverseError("venues must be a nonempty subset of " + ",".join(VENUES))
     return tuple(venue for venue in VENUES if venue in selected)
 
 
@@ -81,6 +83,8 @@ def _rows(venue, data):
             if type(data.get("code")) is not int or data["code"] != 200:
                 raise UniverseError("LIGHTER metadata did not report code 200")
             rows = data.get("order_books", data.get("order_book_details"))
+        elif venue == "ARCUS":
+            rows = data["markets"]
         elif venue == "ASTER":
             rows = data["symbols"]
         elif venue == "ONDO":
@@ -115,7 +119,7 @@ def _mapping(venue, canonical, native):
                        backpack_economics={"margin_init": "0.1", "margin_maint": "0.05",
                            "maker_fee": "0", "taker_fee": "0.0005", "source": "Configured",
                            "source_reference": reference})
-    # Lighter and Ondo retain native fee metadata, without guessing overrides.
+    # Other venues use their native fee metadata.
     return mapping
 
 
@@ -131,6 +135,19 @@ def _candidate(venue, row):
         if type(row.get("szDecimals")) is not int or not 0 <= row["szDecimals"] <= 16:
             return None, None, "invalid_quantity_precision"
         return canonical, f"{raw}-USD-PERP.HYPERLIQUID", None
+    if venue == "ARCUS":
+        canonical = _token(row.get("baseAsset"))
+        if row.get("category") != "CRYPTO" or row.get("type") != "PERPETUAL" or row.get("quoteAsset") != "USD":
+            return None, None, "unsupported_product_or_quote"
+        if row.get("status") != "ONLINE":
+            return None, None, "inactive_or_unknown_status"
+        if canonical is None or row.get("baseAsset") != canonical or row.get("marketDisplayName") != canonical + "-USD":
+            return None, None, "inconsistent_identity"
+        if any(_decimal(row.get(k), positive=True) is None for k in ("stepSize", "tickSize")):
+            return None, None, "invalid_increments"
+        if any(type(row.get(k)) is not int for k in ("effectiveTakerFeePpm", "effectiveMakerFeePpm")):
+            return None, None, "missing_or_invalid_fee"
+        return canonical, canonical + "-USD-PERP.ARCUS", None
     if venue == "ASTER":
         canonical = _token(row.get("baseAsset"))
         raw = row.get("symbol")
@@ -203,6 +220,8 @@ def _rwa_names(venue, rows):
         if venue == "ASTER" and (row.get("symbolType") == 1 or (
                 isinstance(subtypes, list) and any(isinstance(value, str) and value.upper() in RWA_SUBTYPES
                                                 for value in subtypes))):
+            raw = row.get("baseAsset")
+        elif venue == "ARCUS" and row.get("category") in ("EQUITIES", "COMMODITIES", "INDICES"):
             raw = row.get("baseAsset")
         elif venue == "ONDO" and isinstance(row.get("tags"), list) and any(
                 tag in row["tags"] for tag in ("Stock", "ETF", "Commodity", "Index", "FX")):
@@ -413,7 +432,7 @@ def main(argv=None):
     parser.add_argument("--metadata-dir", type=Path, help="offline captured public JSON; otherwise fetch fixed public URLs directly")
     parser.add_argument("--output", type=Path, required=True, help="requested scanner TOML path")
     parser.add_argument("--summary", type=Path, help="optional requested JSON provenance summary")
-    parser.add_argument("--venues", default=",".join(VENUES), help="comma-separated supported venue subset")
+    parser.add_argument("--venues", default=",".join(DEFAULT_VENUES), help="comma-separated supported venue subset")
     parser.add_argument("--symbols", help="optional comma-separated canonical uppercase symbols")
     parser.add_argument("--timeout-secs", type=int, default=30)
     parser.add_argument("--dry-run", action="store_true", help="validate and print summary without creating config or summary files")

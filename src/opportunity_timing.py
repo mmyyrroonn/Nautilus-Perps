@@ -28,7 +28,7 @@ DEFAULT_DIRECTORY = Path(__file__).resolve().parents[1] / "reports/opportunity-t
 _active = None
 _session_lock = threading.Lock()
 _disabled_span = nullcontext()
-_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"}
+_VENUES = {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK", "ARCUS"}
 _OUTCOMES = {"connect", "reconcile", "submit", "modify", "cancel", "accepted", "updated", "partial_fill", "full_fill",
              "fill", "filled", "terminal", "canceled", "expired", "rejected", "denied",
              "modify_rejected", "cancel_rejected", "connected", "unknown", "account"}

@@ -23,7 +23,7 @@ from opportunity_account_reader import AccountReadError, ReadOnlyAccountReader
 from opportunity_preflight import ExecutionReceipt
 
 
-SUPPORTED_VENUES = frozenset({"HL", "HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK"})
+SUPPORTED_VENUES = frozenset({"HL", "HYPERLIQUID", "LIGHTER", "ASTER", "ONDO", "BACKPACK", "ARCUS"})
 CANCEL_REPLACE_VENUES = frozenset({"ASTER", "ONDO", "BACKPACK"})
 MAX_PENDING_SUBMIT_TIMINGS = 1024
 BACKPACK_IDLE_RECONCILE_INTERVAL_NS = 1_000_000_000
@@ -162,6 +162,20 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                 api_key_index=int(env[prefix + "API_KEY_INDEX"]), private_key=env[prefix + "API_SECRET"],
                 sendtx_quota_per_min=36)
             factory = LighterExecutionClientFactory()
+        elif client == "ARCUS":
+            from nautilus_trader.adapters.arcus import (
+                ArcusEnvironment, ArcusExecutionClientConfig, ArcusExecutionClientFactory)
+            from opportunity_account_scope import arcus_account
+            prefix = "ARCUS_" if environment == "mainnet" else "ARCUS_TESTNET_"
+            address, subaccount = arcus_account(env, environment)
+            if not env.get(prefix + "API_SECRET"):
+                raise ValueError("explicit Arcus Ed25519 credentials are required")
+            config = ArcusExecutionClientConfig(
+                account_id=account_id, address=address, subaccount_id=subaccount,
+                environment=ArcusEnvironment.MAINNET if environment == "mainnet" else ArcusEnvironment.TESTNET,
+                api_secret=env[prefix + "API_SECRET"], api_key=env.get(prefix + "API_KEY") or None,
+                load_ids=[model.InstrumentId.from_str(m.instrument_id) for m in markets])
+            factory = ArcusExecutionClientFactory()
         elif client == "ASTER":
             from nautilus_trader.adapters.aster import (
                 AsterEnvironment, AsterExecutionClientConfig, AsterExecutionClientFactory)
@@ -493,6 +507,17 @@ class NativeOrderGateway:
     def _client(self, venue):
         return self.model.ClientId.from_str("HYPERLIQUID" if venue in {"HL", "HYPERLIQUID"} else venue)
 
+    def _native_quantity(self, intent, quantity):
+        if intent.venue == "ARCUS":
+            # Nautilus stores cumulative fills at the order's precision, including sub-clip fills.
+            instrument = self.strategy.cache.instrument(self.model.InstrumentId.from_str(intent.instrument_id))
+            text = format(quantity, f".{instrument.size_precision}f")
+            if Decimal(text) != quantity:
+                raise ValueError("Arcus quantity exceeds instrument precision")
+        else:
+            text = format(quantity, "f")
+        return self.model.Quantity.from_str(text)
+
     def query_balance(self, venue):
         """Request native account refresh without any order mutation."""
         from opportunity_balances import NativeBalanceReader
@@ -647,7 +672,7 @@ class NativeOrderGateway:
                 order = self.strategy.order_factory.limit(
                     instrument_id=self.model.InstrumentId.from_str(intent.instrument_id),
                     order_side=getattr(self.model.OrderSide, intent.side),
-                    quantity=self.model.Quantity.from_str(format(quantity, "f")),
+                    quantity=self._native_quantity(intent, quantity),
                     price=self.model.Price.from_str(format(price, "f")),
                     time_in_force=getattr(self.model.TimeInForce, intent.time_in_force),
                     post_only=intent.post_only, reduce_only=intent.reduce_only,
@@ -685,7 +710,7 @@ class NativeOrderGateway:
                 if quantity <= 0 or price <= 0:
                     raise ValueError("invalid modify amounts")
                 self.strategy.modify_order(self.model.ClientOrderId.from_str(cid),
-                    quantity=self.model.Quantity.from_str(format(quantity, "f")),
+                    quantity=self._native_quantity(intent, quantity),
                     price=self.model.Price.from_str(format(price, "f")), client_id=client)
         except Exception:
             # A raised send may have crossed the dispatch boundary. Preserve its ID.

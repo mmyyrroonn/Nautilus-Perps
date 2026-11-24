@@ -37,7 +37,7 @@ class LossMonitorPolicy:
                 "interval_secs": self.interval_secs, "read_timeout_secs": self.read_timeout_secs,
                 "retry_interval_secs": self.retry_interval_secs,
                 "basis": "session_start_flat_account_equity", "check_only_when_flat": True,
-                "valuation": "USD/USDC/USDT/USD1 nominal USD parity",
+                "valuation": "USD/USDC/USDT/USD1/USDG.ARCUS nominal USD parity",
                 "action": "pause_entries_wait_flat_check_then_resume_or_exit"}
 
 
@@ -72,9 +72,10 @@ def flat_equity(snapshot, venue, now_ns, max_age_ms, activity_ns, required_curre
             values[name] = Fraction(value)
         if values["total"] != values["free"] + values["locked"]:
             raise BalanceUnavailable("equity_amounts_inconsistent")
-        if currency not in USD_CURRENCIES and any(values.values()):
+        valued = currency in USD_CURRENCIES or (venue == "ARCUS" and currency == "USDG.ARCUS")
+        if not valued and any(values.values()):
             raise BalanceUnavailable("equity_currency_not_valued")
-        if currency in USD_CURRENCIES:
+        if valued:
             amounts[currency] = values["total"]
     if not amounts or not set(required_currencies) <= amounts.keys():
         raise BalanceUnavailable("equity_currency_coverage_missing")

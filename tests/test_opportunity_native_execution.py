@@ -61,6 +61,7 @@ def harness():
     strategy, receipts, accounts, fills = FakeStrategy(), [], [], []
     markets = [NS(venue="HL", instrument_id="BTC-USD-PERP.HYPERLIQUID"),
                NS(venue="ASTER", instrument_id="BTCUSDT-PERP.ASTER"),
+               NS(venue="ARCUS", instrument_id="BTC-USD-PERP.ARCUS"),
                NS(venue="ONDO", instrument_id="BTC-USD-PERP.ONDO"),
                NS(venue="BACKPACK", instrument_id="BTC_USDC_PERP.BACKPACK")]
     gateway = NativeOrderGateway(strategy, markets, receipts.append, accounts.append, fills.append, model=MODEL)
@@ -455,3 +456,55 @@ def test_actual_five_venue_builder_preserves_native_config_and_caps_offline(tmp_
             builder = builder.add_exec_client(*values)
         node = builder.build()
         assert node is not None  # Deliberately no node.run(), start(), submit or account read.
+
+def test_arcus_preserves_lot_precision_for_partial_fills_on_submit_and_modify(harness):
+    gateway, strategy, _, _, _ = harness
+    strategy.cache.instrument = lambda iid: NS(size_precision=8)
+    command = intent(venue="ARCUS", instrument_id="BTC-USD-PERP.ARCUS", quantity=D(".001"),
+                     time_in_force="GTC", post_only=True)
+    gateway.dispatch(command, 1_000_000_000)
+    assert strategy.cached["owned-1"].quantity == "0.00100000"
+    gateway.dispatch(replace(command, action="modify", request_id="modify", quantity=D(".002")), 1_000_000_001)
+    assert strategy.calls[-1][2]["quantity"] == "0.00200000"
+    gateway.dispatch(replace(command, client_order_id="off-lot", request_id="off-lot",
+                             quantity=D(".001000001")), 1_000_000_002)
+    assert "off-lot" not in strategy.cached
+
+
+def test_arcus_native_partial_fill_then_cancel_releases_original_order(harness):
+    from nautilus_trader import model
+    from nautilus_trader.common import Clock, OrderFactory
+    from nautilus_trader.core import UUID4
+
+    gateway, strategy, receipts, _, fills = harness
+    gateway.model = model
+    trader = model.TraderId.from_str("TEST-001")
+    owner = model.StrategyId.from_str("TEST-001")
+    strategy.order_factory = OrderFactory(trader, owner, Clock.new_test())
+    strategy.cache.instrument = lambda _: NS(size_precision=8)
+    strategy.submit_order = lambda order, **_: strategy.cached.update({order.client_order_id: order})
+    command = intent(venue="ARCUS", instrument_id="BTC-USD-PERP.ARCUS", quantity=D(".001"), time_in_force="GTC")
+    now = 1_000_000_000
+    gateway.dispatch(command, now)
+    order, = strategy.cached.values()
+    ids = dict(trader_id=trader, strategy_id=owner, instrument_id=order.instrument_id,
+               client_order_id=order.client_order_id, account_id=model.AccountId.from_str("ARCUS-001"))
+    order.apply(model.OrderSubmitted(**ids, event_id=UUID4(), ts_event=now, ts_init=now))
+    ids.update(venue_order_id=model.VenueOrderId.from_str("77"), reconciliation=False)
+    accepted = model.OrderAccepted(**ids, event_id=UUID4(), ts_event=now+1, ts_init=now+1)
+    order.apply(accepted)
+    gateway.on_native_event("accepted", accepted, now+1)
+    filled = model.OrderFilled(**ids, event_id=UUID4(), ts_event=now+2, ts_init=now+2,
+        trade_id=model.TradeId.from_str("execution-1"), order_side=model.OrderSide.BUY, order_type=model.OrderType.LIMIT,
+        last_qty=model.Quantity.from_str("0.00050000"), last_px=order.price, currency=model.Currency.from_str("USD"),
+        liquidity_side=model.LiquiditySide.MAKER, commission=model.Money.from_str("-0.000000013 USDG.ARCUS"))
+    order.apply(filled)
+    gateway.on_native_event("filled", filled, now+2)
+    gateway.on_native_event("filled", filled, now+2)
+    gateway.dispatch(replace(command, action="cancel", request_id="cancel-1"), now+3)
+    canceled = model.OrderCanceled(**ids, event_id=UUID4(), ts_event=now+4, ts_init=now+4)
+    order.apply(canceled)
+    gateway.on_native_event("canceled", canceled, now+4)
+    assert len(fills) == 1 and fills[0]["commission_amount"] == D("-0.000000013")
+    assert [(r.request_id, r.kind, r.final_filled_quantity) for r in receipts[-2:]] == [
+        ("cancel-1", "canceled", D("0.0005")), (command.request_id, "terminal", D("0.0005"))]

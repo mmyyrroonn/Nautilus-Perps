@@ -18,7 +18,7 @@ from opportunity_identity import identity_quarantine_reason
 CLIENTS = {
     "HL": "HYPERLIQUID", "ENTROPY": "HYPERLIQUID", "LIGHTER": "LIGHTER",
     "LIGHTER_RH": "LIGHTER_ROBINHOOD", "ASTER": "ASTER", "ONDO": "ONDO",
-    "BACKPACK": "BACKPACK",
+    "BACKPACK": "BACKPACK", "ARCUS": "ARCUS",
 }
 
 

@@ -162,7 +162,7 @@ def test_stale_prl_config_cannot_bypass_guard_with_cli_symbol_selection(tmp_path
 
 
 @pytest.mark.parametrize("filename,symbol_count,market_count", [
-    ("opportunity-scan.universe.toml", 171, 508),
+    ("opportunity-scan.universe.toml", 171, 510),
     ("opportunity-scan.dg-us.toml", 163, 423),
 ])
 def test_checked_in_generated_configs_exclude_prl_and_still_validate(filename, symbol_count, market_count):
@@ -396,6 +396,19 @@ def test_backpack_partial_start_failure_cleans_up_every_successful_subscription(
     operations = list(observer.operations)
     observer.on_stop()
     assert observer.operations == operations
+
+
+def test_arcus_snapshot_metadata_and_book_subscription_across_restart(tmp_path, monkeypatch):
+    first, second = plan(tmp_path).markets
+    arcus = replace(first, venue="ARCUS", instrument_id="BTC-USD-PERP.ARCUS")
+    _, state, observer, ids, _, _ = native_observer(tmp_path, monkeypatch, markets=(arcus, second))
+    for attempt in range(2):
+        if attempt:
+            observer.on_start()
+        assert arcus.instrument_id in state.metadata and observer.failure is None
+        observer.on_stop()
+    assert [kind for kind, instrument in observer.operations if instrument == ids[0]] == [
+        "book_deltas", "unsubscribe_book_deltas", "book_deltas", "unsubscribe_book_deltas"]
 
 
 def test_non_backpack_markets_do_not_subscribe_quotes(tmp_path, monkeypatch):

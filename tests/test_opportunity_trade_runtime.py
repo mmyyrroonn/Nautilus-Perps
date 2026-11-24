@@ -11,7 +11,7 @@ from opportunity_paper import PaperTradeState
 from opportunity_trade import TradePolicy, load_trade_plan
 
 
-def test_paper_state_builds_with_all_five_public_native_clients_without_connecting():
+def test_paper_state_builds_with_configured_public_native_clients_without_connecting():
     pytest.importorskip("nautilus_trader.adapters.backpack")
     root = Path(__file__).resolve().parents[1]
     trade = load_trade_plan(root / "config/opportunity-trade.paper.toml")
@@ -19,7 +19,7 @@ def test_paper_state_builds_with_all_five_public_native_clients_without_connecti
     node, observer, state = runtime.build_node(scan,
         state_factory=lambda plan: PaperTradeState(plan, trade.policy))
     assert not observer.running and not state.books and not state.positions
-    assert len({m.venue for m in scan.markets}) == 5
+    assert {m.venue for m in scan.markets} == {"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK", "ARCUS"}
     assert state.document()["orders_sent"] == 0
 
 

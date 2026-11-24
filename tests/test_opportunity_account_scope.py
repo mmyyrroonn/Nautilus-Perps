@@ -618,3 +618,20 @@ def test_release_flat_claim_retains_claim_and_fingerprint_on_failures(registry, 
     assert ledger.execute("SELECT fingerprint FROM ownership WHERE id=1").fetchone()[0] == old_fp
     assert ledger.execute("SELECT fingerprint FROM state WHERE id=1").fetchone()[0] == old_fp
     ledger.close()
+
+
+def test_arcus_risk_domain_binds_environment_wallet_and_subaccount_across_signer_rotation():
+    env = {"ARCUS_ADDRESS": "0x" + "AB" * 20, "ARCUS_API_SECRET": "signer-a"}
+    def bind(settings, environment="mainnet"):
+        return scope.resolve_account_binding(("ARCUS",), environment, settings)
+    first = bind(env)
+    assert first == bind(env | {"ARCUS_ADDRESS": env["ARCUS_ADDRESS"].lower(),
+                                "ARCUS_SUBACCOUNT_ID": "0", "ARCUS_API_SECRET": "signer-b"})
+    assert first.risk_domains != bind(env | {"ARCUS_SUBACCOUNT_ID": "1"}).risk_domains
+    assert first.risk_domains != bind(env | {"ARCUS_ADDRESS": "0x" + "cd" * 20}).risk_domains
+    assert first.risk_domains != bind({"ARCUS_TESTNET_ADDRESS": env["ARCUS_ADDRESS"]}, "testnet").risk_domains
+    with pytest.raises(ValueError, match="ARCUS_TESTNET_ADDRESS"):
+        bind(env, "testnet")
+    for invalid in ["-1", "10", "00", "1 "]:
+        with pytest.raises(ValueError, match="subaccount"):
+            bind(env | {"ARCUS_SUBACCOUNT_ID": invalid})

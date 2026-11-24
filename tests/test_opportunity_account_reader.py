@@ -633,3 +633,62 @@ def test_native_gateway_passes_configured_aster_instruments_to_reader():
         assert gateway.reader._aster_symbols == frozenset({"BTCUSDT", "ETHUSDT"})
     finally:
         gateway.close()
+
+
+def test_arcus_complete_subaccount_snapshot_caches_paged_orders_and_invalidates_after_activity():
+    from urllib.parse import parse_qs, urlsplit
+    address = "0x" + "ab" * 20
+    positions = {"2": {"marketId": 2, "marketDisplayName": "ETH-USD", "side": "SHORT",
+                       "size": "-0.002", "accountIndex": 3}}
+    def order(n):
+        return {"orderId": str(n), "createdAt": n, "accountIndex": 3,
+                "marketDisplayName": "BTC-USD" if n == 1 else "ETH-USD"}
+    calls = []
+    def transport(method, url):
+        target = urlsplit(url)
+        query = parse_qs(target.query)
+        assert method == "GET" and target.hostname == "api.arcus.xyz"
+        assert query["address"] == [address] and query["accountIndex"] == ["3"]
+        calls.append(target.path)
+        if target.path == "/v1/account":
+            return {"address": address, "accountIndex": 3, "positions": positions}
+        assert target.path == "/v1/openOrders" and query["limit"] == ["1000"]
+        if "to" not in query:
+            return {"orders": [order(n) for n in range(1001, 1, -1)]}
+        assert query["to"] == ["2"]
+        return {"orders": [order(2), order(1)]}
+    reader = ReadOnlyAccountReader(environ={"ARCUS_ADDRESS": address, "ARCUS_SUBACCOUNT_ID": "3"},
+                                   transport=transport, clock_ns=lambda: 50)
+    btc, eth = [market("ARCUS", name + "-USD-PERP.ARCUS") for name in ("BTC", "ETH")]
+    b = reader.read(btc, None, None, 50)
+    e = reader.read(eth, None, None, 50)
+    assert b.authoritative and b.position_quantity == 0 and b.open_order_ids == ("venue:1",)
+    assert e.position_quantity == D("-0.002") and b.account_positions == ((eth.instrument_id, D("-0.002")),)
+    assert len(e.account_open_orders) == 1001 and len(e.open_order_ids) == 1000 and len(calls) == 3
+    reader.invalidate("ARCUS")
+    reader.read(eth, None, None, 50)
+    assert len(calls) == 6
+
+
+@pytest.mark.parametrize(("account", "orders", "reason"), [
+    ({"accountIndex": 2}, [], "mismatched"),
+    ({"positions": None}, [], "incomplete"),
+    ({"positions": {"3": {"marketId": 3, "marketDisplayName": "ETH-USD", "accountIndex": 0,
+                           "size": "-1", "side": "LONG"}}}, [], "inconsistent Arcus position"),
+    ({"loanBalance": "0.01"}, [], "unsupported"),
+    ({"spotPositions": {"4": {"size": "2"}}}, [], "unsupported"),
+    ({}, None, "order"),
+    ({}, [{"orderId": "X", "address": "0x" + "ab" * 20, "marketDisplayName": "BTC-USD", "createdAt": 1}],
+     "mismatched Arcus row"),
+    ({}, [{"orderId": "X", "accountIndex": 1, "marketDisplayName": "ETH-USD", "createdAt": 1}], "evidence"),
+    ({}, [{"orderId": str(n), "marketDisplayName": "ETH-USD", "createdAt": 2} for n in range(1000)], "pagination"),
+])
+def test_arcus_rejects_incomplete_or_inconsistent_account_proofs(account, orders, reason):
+    address = "0x" + "12" * 20
+    def transport(method, url):
+        if "/account?" in url:
+            return {"address": address, "accountIndex": 0, "positions": {}} | account
+        return {"orders": orders}
+    reader = ReadOnlyAccountReader(environ={"ARCUS_ADDRESS": address}, transport=transport)
+    with pytest.raises(AccountReadError, match=reason):
+        reader.read(market("ARCUS", "BTC-USD-PERP.ARCUS"), None, None, 50)

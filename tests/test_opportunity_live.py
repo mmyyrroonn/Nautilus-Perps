@@ -638,3 +638,21 @@ def test_reconcile_accounts_requests_scope_representatives_for_native_snapshots(
     assert len(reads) == 2 and all(i.action == "reconcile" for i in reads)
     assert {i.instrument_id for i in reads} == {
         live._account_representative(instruments) for instruments in live.account_scopes.values()}
+
+
+@pytest.mark.parametrize("late", [False, True])
+def test_arcus_fill_and_late_rebate_preserve_usdg_ledger_precision(late):
+    live, _ = state(make_plan(venues=("ARCUS", "HL")))
+    set_book(live, "ARCUS", "99.99", "100")
+    set_book(live, "HL", "100.3", "100.31")
+    live.evaluate_symbol("BTC", NOW)
+    arcus, hl = sorted(submissions(live), key=lambda intent: intent.venue)
+    fill(live, hl, NOW + 1)
+    rebate = D("-0.000000013")
+    payload = fill(live, arcus, NOW + 2, fee=None if late else rebate, currency="USDG.ARCUS")
+    position, = live.positions.values()
+    if late:
+        assert position["pending_commissions"]
+        live.on_fill(payload | {"commission_amount": rebate}, NOW + 3)
+    assert not position["pending_commissions"]
+    assert D(position["actual_entry"]["buy_fee_usd"]) == rebate

@@ -341,3 +341,10 @@ def test_shipped_monitor_is_enabled_with_user_selected_frequency_and_legacy_iden
     current = load_live_plan(path)
     assert not old.loss_monitor.enabled and current.loss_monitor.enabled
     assert current.fingerprint() == old.fingerprint()
+
+
+def test_arcus_flat_equity_values_subaccount_usdg_at_ledger_precision():
+    amount = "1000.000000019"
+    assert flat_equity(balance("ARCUS", NOW, amount, "USDG.ARCUS"), "ARCUS", NOW, 15000, 0)["equity_usd"] == amount
+    with pytest.raises(BalanceUnavailable, match="not_valued"):
+        flat_equity(balance("HL", NOW, amount, "USDG.ARCUS"), "HL", NOW, 15000, 0)

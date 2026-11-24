@@ -1015,11 +1015,12 @@ def native_build_credentials():
         "ASTER_MAINNET_SIGNER_PRIVATE_KEY": key, "ASTER_MAINNET_SIGNER_ADDRESS": address,
         "ASTER_MAINNET_USER_ADDRESS": address, "ONDO_MAINNET_API_KEY": "ondoKeyId_BUILD_TEST_ONLY",
         "ONDO_MAINNET_API_SECRET": "ondoApiSecret_BUILD_TEST_ONLY", "ONDO_MAINNET_ACCOUNT_ID": "fixture-account",
+        "ARCUS_ADDRESS": address, "ARCUS_API_SECRET": seed.hex(), "ARCUS_API_KEY": public.hex(),
         "BACKPACK_MAINNET_API_SECRET": base64.b64encode(seed).decode(),
         "BACKPACK_MAINNET_API_KEY": base64.b64encode(public).decode()}
 
 
-def _five_venue_live_config(tmp_path: Path) -> Path:
+def _native_live_config(tmp_path: Path, *, include_arcus=False) -> Path:
     text = (ROOT / "config/opportunity-trade.live.toml").read_text(encoding="utf-8")
     text = (
         text.replace(
@@ -1039,18 +1040,25 @@ def _five_venue_live_config(tmp_path: Path) -> Path:
             'state_path = "live.sqlite3"',
         )
     )
-    path = tmp_path / "live-five-venue.toml"
+    if include_arcus:
+        text = text.replace('"ONDO", "BACKPACK"]', '"ONDO", "BACKPACK", "ARCUS"]', 1)
+    path = tmp_path / "live.toml"
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def test_complete_live_node_builds_with_installed_five_venue_factories_without_connecting(tmp_path):
+@pytest.mark.parametrize("include_arcus", [False, True])
+def test_complete_live_node_builds_with_installed_venue_factories_without_connecting(tmp_path, include_arcus):
     import os
     from unittest.mock import patch
     from opportunity_live import LiveTradeState
     fake = native_build_credentials()
-    plan = replace(load_live_plan(_five_venue_live_config(tmp_path), symbols="BTC,ETH"),
+    plan = replace(load_live_plan(_native_live_config(tmp_path, include_arcus=include_arcus), symbols="BTC,ETH"),
         state_path=tmp_path / "live.sqlite3")
+    assert ("ARCUS" in plan.venues) == include_arcus
+    if include_arcus:
+        assert {m.instrument_id for m in plan.scan.markets if m.venue == "ARCUS"} == {
+            "BTC-USD-PERP.ARCUS", "ETH-USD-PERP.ARCUS"}
     proxy = SessionStoreProxy(MemoryStore())
     live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
         max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy)
@@ -1073,7 +1081,7 @@ def test_native_restart_with_existing_bound_journals_uses_fresh_session_director
     from unittest.mock import patch
     import opportunity_native_execution
     from opportunity_live import LiveTradeState
-    plan = replace(load_live_plan(_five_venue_live_config(tmp_path), symbols="BTC,ETH"),
+    plan = replace(load_live_plan(_native_live_config(tmp_path), symbols="BTC,ETH"),
                    state_path=tmp_path / "live.sqlite3")
     store = MemoryStore()
     original_clients = opportunity_native_execution.execution_clients

@@ -21,7 +21,7 @@ from opportunity_scan import (ScanConfigError, ScanPlan, allowed_keys, decimal_v
 from opportunity_timing import add_timing_arguments, run_timed, timed
 
 
-ENTRY_SLIPPAGE_VENUES = frozenset({"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK"})
+ENTRY_SLIPPAGE_VENUES = frozenset({"HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK", "ARCUS"})
 ENTRY_SLIPPAGE_VENUE_ALIASES = {"HYPERLIQUID": "HL", **{v: v for v in ENTRY_SLIPPAGE_VENUES}}
 VENUE_LATENCY_RANK = {"HL": 3, "LIGHTER": 2, "ASTER": 2, "ONDO": 2, "BACKPACK": 1}
 EXECUTION_MODES = frozenset({"simultaneous", "slow_first"})

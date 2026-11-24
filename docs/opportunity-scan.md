@@ -33,14 +33,13 @@ $ScanPython = 'E:\persarb\worktrees\opportunity-scan\.venv\Scripts\python.exe'
 
 ### 多币种目录与连接检查
 
-`config/opportunity-scan.universe.toml` 基于 2026-10-06 的五所公开目录快照，经 2026-10-07 PRL 隔离后，
-本地配置包含 166 个币种、496 个市场：HL 149、Lighter 108、Aster 160、Ondo 9、Backpack 70。
-每个币种至少覆盖两个所。`config/opportunity-scan.dg-us.toml` 是现有 Linux 安装包可用的四所配置，
+`config/opportunity-scan.universe.toml` 的 171 个币种包含 510 个市场，其中 HL 152、Lighter 108、Aster 166、Ondo 12、Backpack 70、Arcus 2。Arcus 的 BTC、ETH 通过原生客户端订阅 L2 盘口。重新发现 Arcus 合约时，显式指定 `--venues` 并加入 `ARCUS`。Arcus 映射只接受在线、以 USD 报价且分类为 CRYPTO 的永续合约。每个入选币种至少覆盖两个所。
+`config/opportunity-scan.dg-us.toml` 是现有 Linux 安装包可用的四所配置，
 同样隔离 PRL 后，本地包含 163 个币种、423 个市场。
 目录快照不是持续行情历史，也不代表每条盘口始终新鲜。新上市、停牌或退市后应重新生成。
 
 ```powershell
-& $ScanPython -B src\opportunity_universe.py --output config\opportunity-scan.universe.toml
+& $ScanPython -B src\opportunity_universe.py --venues HL,LIGHTER,ASTER,ONDO,BACKPACK,ARCUS --output config\opportunity-scan.universe.toml
 & $ScanPython -B src\opportunity_universe.py --venues HL,LIGHTER,ASTER,ONDO --output config\opportunity-scan.dg-us.toml
 & $ScanPython -B src\opportunity_connections.py --config config\opportunity-scan.universe.toml --duration-secs 240
 & $ScanPython -B src\opportunity_scan.py --config config\opportunity-scan.universe.toml --duration-secs 0

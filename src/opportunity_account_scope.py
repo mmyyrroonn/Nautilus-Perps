@@ -44,6 +44,15 @@ def lighter_account_index(env, environment):
     return int(value)
 
 
+def arcus_account(environ, environment):
+    prefix = "ARCUS_" if environment == "mainnet" else "ARCUS_TESTNET_"
+    address = _address(environ, prefix + "ADDRESS")
+    index = environ.get(prefix + "SUBACCOUNT_ID", "0")
+    if not isinstance(index, str) or not re.fullmatch(r"[0-9]", index):
+        raise ValueError("Arcus subaccount must be an integer from 0 to 9")
+    return address, int(index)
+
+
 @dataclass(frozen=True)
 class AccountBinding:
     environment: str
@@ -78,6 +87,8 @@ def resolve_account_binding(venues, environment, environ):
                 raise ValueError("Hyperliquid vault must match the reconciled trading account")
         elif venue == "LIGHTER":
             identity = str(lighter_account_index(environ, environment))
+        elif venue == "ARCUS":
+            identity = arcus_account(environ, environment)
         elif venue == "ASTER":
             prefix = "ASTER_MAINNET_" if environment == "mainnet" else "ASTER_"
             identity = _address(environ, prefix + "USER_ADDRESS")
