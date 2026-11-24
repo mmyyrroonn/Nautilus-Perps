@@ -105,6 +105,50 @@ def fresh_bbo_quote(live, instrument_id, book):
     return F(bbo_bid), F(bbo_ask), ts_event, ts_init
 
 
+def fresh_bbo_l1_quote(live, instrument_id, book):
+    """Return `(bid, ask, bid_sz, ask_sz, ts_event_ns, ts_init_ns)` if a newer BBO quote exists."""
+    l1_provider = getattr(live, "bbo_l1_provider", None)
+    if l1_provider is not None:
+        quote = l1_provider(instrument_id)
+        if quote is None:
+            return None
+        bbo_bid, bbo_ask, bbo_bid_sz, bbo_ask_sz, bbo_ts_event, bbo_ts_init = quote
+        ts_event = int(bbo_ts_event)
+        ts_init = int(bbo_ts_init)
+        if not (ts_event > book.ts_event_ns or (ts_event == book.ts_event_ns and ts_init > book.ts_received_ns)):
+            return None
+        return (
+            F(bbo_bid),
+            F(bbo_ask),
+            None if bbo_bid_sz is None else F(bbo_bid_sz),
+            None if bbo_ask_sz is None else F(bbo_ask_sz),
+            ts_event,
+            ts_init,
+        )
+    quote = fresh_bbo_quote(live, instrument_id, book)
+    if quote is None:
+        return None
+    bbo_bid, bbo_ask, ts_event, ts_init = quote
+    return bbo_bid, bbo_ask, None, None, ts_event, ts_init
+
+
+def bbo_l1_depth_insufficient(leg, bbo_bid, bbo_ask, bbo_bid_sz, bbo_ask_sz, limit_px, required_qty, book, market):
+    """Fail closed when fresh BBO L1 qty is below order qty on a moved or limit-touch BBO."""
+    if leg == "buy":
+        bbo_touch = bbo_ask
+        bbo_side_sz = bbo_ask_sz
+        book_touch_canon = F(book.asks[0][0])
+    else:
+        bbo_touch = bbo_bid
+        bbo_side_sz = bbo_bid_sz
+        book_touch_canon = F(book.bids[0][0])
+    if bbo_side_sz is None or bbo_side_sz >= required_qty:
+        return False
+    conversion = F(market.canonical_multiplier) / F(market.quote_to_usd)
+    book_touch_native = book_touch_canon * conversion
+    return bbo_touch != book_touch_native or bbo_touch == limit_px
+
+
 def entry_dispatch_evidence(live, position, now_ns):
     """Validate both original IOC legs against current immutable book evidence.
 
@@ -222,15 +266,22 @@ def entry_dispatch_evidence(live, position, now_ns):
                 return "price_outside_limit", evidence
             limit_cash = quantity * limit * F(live.instruments[instrument]["native_multiplier"]) * F(market.quote_to_usd)
             limit_fee = limit_cash * F(meta.taker_fee_bps) / 10000
-        bbo = fresh_bbo_quote(live, instrument, book)
+        bbo = fresh_bbo_l1_quote(live, instrument, book)
         if bbo is not None:
-            bbo_bid, bbo_ask, bbo_ts_event, bbo_ts_init = bbo
+            bbo_bid, bbo_ask, bbo_bid_sz, bbo_ask_sz, bbo_ts_event, bbo_ts_init = bbo
             row["bbo_bid_price"] = _number(bbo_bid)
             row["bbo_ask_price"] = _number(bbo_ask)
+            if bbo_bid_sz is not None:
+                row["bbo_bid_size"] = _number(bbo_bid_sz)
+            if bbo_ask_sz is not None:
+                row["bbo_ask_size"] = _number(bbo_ask_sz)
             row["bbo_ts_event_ns"] = bbo_ts_event
             row["bbo_ts_init_ns"] = bbo_ts_init
             if (leg == "buy" and bbo_ask > limit) or (leg == "sell" and bbo_bid < limit):
                 return "bbo_price_outside_limit", evidence
+            if bbo_l1_depth_insufficient(
+                    leg, bbo_bid, bbo_ask, bbo_bid_sz, bbo_ask_sz, limit, quantity, book, market):
+                return "bbo_insufficient_depth", evidence
         # Retain worst-case persisted limit economics, including fresh fees.
         bounds[leg] = (limit_cash, limit_fee)
         row.update(limit_cash_usd=_number(limit_cash), fee_usd=_number(limit_fee))
@@ -298,7 +349,7 @@ def _block_entry_pair(live, position, reason, decision, now_ns, *, dispatched=()
 def entry_pair_snapshot(live, position):
     """Cheap immutable token covering every state input read by entry admission."""
     buy_id, sell_id = position["buy_id"], position["sell_id"]
-    bbo_provider = getattr(live, "bbo_provider", None)
+    bbo_snap = getattr(live, "bbo_l1_provider", None) or getattr(live, "bbo_provider", None)
     return (
         id(live.books.get(buy_id)), id(live.books.get(sell_id)),
         id(live.metadata.get(buy_id)), id(live.metadata.get(sell_id)),
@@ -314,7 +365,7 @@ def entry_pair_snapshot(live, position):
         any(p.get("unhedged_breach") for p in live.positions.values()),
         sum(o["status"] == "unknown" for o in live.execution_orders()),
         id(getattr(live, "route_max_hold_blocks", {}).get((buy_id, sell_id))),
-        (bbo_provider(buy_id), bbo_provider(sell_id)) if bbo_provider is not None else None,
+        (bbo_snap(buy_id), bbo_snap(sell_id)) if bbo_snap is not None else None,
     )
 
 
