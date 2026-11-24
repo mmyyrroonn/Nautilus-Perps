@@ -16,12 +16,15 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 import urllib.request
 
 from opportunity_identity import LIGHTER_PRL_QUARANTINE_CODE, identity_quarantine_reason
 
 
 VENUES = ("HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK")
+RWA_VENUES = ("HL", "LIGHTER", "ASTER", "ONDO")
+HL_HIP3_DEXES = ("xyz", "io", "para")
 FILES = {venue: f"{venue.lower()}-metadata.json" for venue in VENUES}
 URLS = {
     "HL": "https://api.hyperliquid.xyz/info",
@@ -38,6 +41,30 @@ GROUP_B = frozenset((
     "PUNDIAIUSDT", "RTXUSDT", "SKHYNIXUSDT",
 ))
 RWA_SUBTYPES = frozenset(("STOCK", "STOCKS", "COMMODITY", "COMMODITIES", "ETF", "INDEX", "FX", "FOREX", "USD1-RWA"))
+ONDO_RWA_TAGS = frozenset(("Stock", "ETF", "Commodity", "Index", "FX", "Pre-IPO"))
+RWA_ALIASES = {
+    "GOLD": "XAU",
+    "SILVER": "XAG",
+    "COPPER": "XCU",
+    "PLATINUM": "XPT",
+    "PALLADIUM": "XPD",
+    "WTI": "CL",
+    "BRENT": "BRENTOIL",
+    "NATGAS": "NG",
+    "SP500": "SPX",
+    "US500": "SPX",
+    "XYZ100": "NDX",
+    "US100": "NDX",
+    "EUR": "EURUSD",
+    "JPY": "USDJPY",
+    "GBP": "GBPUSD",
+    "SKHX": "SKHYNIX",
+    "SKHYNIXUSD": "SKHYNIX",
+    "SMSN": "SAMSUNG",
+    "SAMSUNGUSD": "SAMSUNG",
+    "HYUNDAIUSD": "HYUNDAI",
+}
+LIGHTER_KRW_EXCLUDED = frozenset(("SAMSUNG", "SKHYNIX", "HYUNDAI"))
 TOKEN = re.compile(r"[A-Z0-9][A-Z0-9_-]{0,39}\Z")
 MAX_METADATA_BYTES = 16 * 1024 * 1024
 FX_SOURCE = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
@@ -96,7 +123,7 @@ def _rows(venue, data):
     return rows
 
 
-def _mapping(venue, canonical, native):
+def _mapping(venue, canonical, native, *, asset_class="crypto"):
     mapping = {"symbol": canonical, "venue": venue, "instrument_id": native,
                "quote_to_usd": "1", "valuation_source": FX_SOURCE}
     if venue == "HL":
@@ -105,10 +132,14 @@ def _mapping(venue, canonical, native):
             "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"))
     elif venue == "ASTER":
         raw = native.removesuffix("-PERP.ASTER")
-        group = "Group B" if raw in GROUP_B else "crypto general"
-        mapping.update(taker_fee_bps="10" if raw in GROUP_B else "4", fee_source=(
-            f"Configured public {group} taker assumption; classification frozen 2026-10-06; "
-            f"verify current published fees; {ASTER_FEES_URL}"))
+        if asset_class == "rwa":
+            mapping.update(taker_fee_bps="4", fee_source=(
+                f"Configured public RWA taker assumption 4 bps; verify current published RWA fees; {ASTER_FEES_URL}"))
+        else:
+            group = "Group B" if raw in GROUP_B else "crypto general"
+            mapping.update(taker_fee_bps="10" if raw in GROUP_B else "4", fee_source=(
+                f"Configured public {group} taker assumption; classification frozen 2026-10-06; "
+                f"verify current published fees; {ASTER_FEES_URL}"))
     elif venue == "BACKPACK":
         reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
         mapping.update(taker_fee_bps="5", fee_source=reference,
@@ -117,6 +148,195 @@ def _mapping(venue, canonical, native):
                            "source_reference": reference})
     # Lighter and Ondo retain native fee metadata, without guessing overrides.
     return mapping
+
+
+def _canonical_rwa(symbol):
+    return RWA_ALIASES.get(symbol, symbol)
+
+
+def _hl_hip3_pairs(entry, dex):
+    if isinstance(entry, list) and len(entry) == 2 and isinstance(entry[0], dict) and isinstance(entry[1], list):
+        universe, ctxs = entry[0].get("universe"), entry[1]
+    elif isinstance(entry, dict):
+        universe, ctxs = entry.get("universe"), entry.get("ctxs", [])
+    else:
+        raise UniverseError(f"HL HIP-3 {dex} metadata has an invalid response envelope")
+    if not isinstance(universe, list) or any(not isinstance(row, dict) for row in universe):
+        raise UniverseError(f"HL HIP-3 {dex} metadata must contain a list of market objects")
+    if not isinstance(ctxs, list):
+        raise UniverseError(f"HL HIP-3 {dex} context metadata must be a list")
+    if len(ctxs) != len(universe):
+        return [(row, {}) for row in universe]
+    return list(zip(universe, ctxs))
+
+
+def _crypto_anchor_names(rows):
+    names = set()
+    for row in rows.get("HL", ()):
+        raw = row.get("name")
+        if row.get("isDelisted", False) is False and isinstance(raw, str) and ":" not in raw:
+            canonical = _token(raw)
+            if canonical:
+                names.add(canonical)
+    for row in rows.get("ASTER", ()):
+        subtypes = row.get("underlyingSubType", [])
+        if (row.get("underlyingType") == "COIN" and row.get("symbolType") == 0
+                and row.get("status") == "TRADING" and isinstance(subtypes, list)
+                and not any(isinstance(v, str) and v.upper() in RWA_SUBTYPES for v in subtypes)):
+            canonical = _token(row.get("baseAsset"))
+            if canonical:
+                names.add(canonical)
+    return names
+
+
+def _discover_rwa_candidates(metadata, rows, exclusions):
+    crypto_names = _crypto_anchor_names(rows)
+    eligible = {}
+    anchors = set()
+
+    if "HL" in metadata:
+        hip3 = metadata["HL"].get("hip3", {})
+        if not isinstance(hip3, dict):
+            raise UniverseError("HL hip3 metadata must be a mapping")
+        hl_picks = {}
+        hl_dups = defaultdict(list)
+        for dex in HL_HIP3_DEXES:
+            entry = hip3.get(dex)
+            if entry is None:
+                continue
+            for row, ctx in _hl_hip3_pairs(entry, dex):
+                raw = row.get("name")
+                if not isinstance(raw, str) or not raw.startswith(f"{dex}:"):
+                    exclusions["HL"]["nonprimary_or_invalid_identity"] += 1
+                    continue
+                base = _token(raw.split(":", 1)[1])
+                if base is None:
+                    exclusions["HL"]["nonprimary_or_invalid_identity"] += 1
+                    continue
+                if base in crypto_names:
+                    exclusions["HL"]["crypto_asset_excluded"] += 1
+                    continue
+                if row.get("isDelisted", False) is not False:
+                    exclusions["HL"]["inactive_or_unknown_status"] += 1
+                    continue
+                if type(row.get("szDecimals")) is not int or not 0 <= row["szDecimals"] <= 16:
+                    exclusions["HL"]["invalid_quantity_precision"] += 1
+                    continue
+                canonical = _canonical_rwa(base)
+                vlm = _decimal(ctx.get("dayNtlVlm", "0")) if isinstance(ctx, dict) else None
+                priority = (dex == "xyz", vlm or Decimal(0), -HL_HIP3_DEXES.index(dex))
+                native = f"{raw}-USD-PERP.HYPERLIQUID"
+                hl_dups[(canonical, dex)].append(native)
+                prev = hl_picks.get(canonical)
+                if prev is None or priority > prev[0]:
+                    hl_picks[canonical] = (priority, native, dex)
+        for canonical, (_, native, dex) in hl_picks.items():
+            if len(hl_dups[(canonical, dex)]) != 1:
+                exclusions["HL"]["ambiguous_duplicate_market"] += len(hl_dups[(canonical, dex)])
+            else:
+                eligible[canonical, "HL"] = native
+                anchors.add(canonical)
+
+    if "ASTER" in rows:
+        aster_by_quote = defaultdict(lambda: defaultdict(list))
+        for row in rows["ASTER"]:
+            subtypes = row.get("underlyingSubType", [])
+            is_rwa = (
+                row.get("underlyingType") != "COIN"
+                or (type(row.get("symbolType")) is int and row["symbolType"] != 0)
+                or (isinstance(subtypes, list)
+                    and any(isinstance(v, str) and v.upper() in RWA_SUBTYPES for v in subtypes))
+            )
+            if not is_rwa:
+                exclusions["ASTER"]["crypto_or_unknown_classification"] += 1
+                continue
+            if row.get("contractType") != "PERPETUAL" or row.get("status") != "TRADING":
+                exclusions["ASTER"]["inactive_or_nonperpetual"] += 1
+                continue
+            quote = row.get("quoteAsset")
+            if quote not in {"USDT", "USD1"} or row.get("marginAsset") != quote:
+                exclusions["ASTER"]["unsupported_quote_or_margin"] += 1
+                continue
+            base = _token(row.get("baseAsset"))
+            raw = row.get("symbol")
+            if base is None or raw != base + quote:
+                exclusions["ASTER"]["inconsistent_identity"] += 1
+                continue
+            aster_by_quote[_canonical_rwa(base)][quote].append(f"{raw}-PERP.ASTER")
+        for canonical, by_quote in aster_by_quote.items():
+            natives = by_quote.get("USDT") or by_quote.get("USD1")
+            if len(natives) != 1:
+                exclusions["ASTER"]["ambiguous_duplicate_market"] += len(natives)
+            else:
+                eligible[canonical, "ASTER"] = natives[0]
+                anchors.add(canonical)
+
+    if "ONDO" in rows:
+        ondo_candidates = defaultdict(list)
+        for row in rows["ONDO"]:
+            raw = row.get("market")
+            tags = row.get("tags")
+            is_rwa = isinstance(tags, list) and (
+                any(tag in ONDO_RWA_TAGS for tag in tags) or "Crypto" not in tags
+            )
+            if not is_rwa:
+                exclusions["ONDO"]["crypto_or_unknown_classification"] += 1
+                continue
+            base = _token(raw.removesuffix("-USD.P")) if isinstance(raw, str) and raw.endswith("-USD.P") else None
+            if base is None:
+                exclusions["ONDO"]["invalid_identity"] += 1
+                continue
+            status = row.get("status", "active")
+            if row.get("disabled", False) is not False or not isinstance(status, str) or status.lower() not in (
+                    "active", "enabled", "trading", "open"):
+                exclusions["ONDO"]["inactive_or_unknown_status"] += 1
+                continue
+            if any(_decimal(row.get(field), positive=True) is None for field in ("baseIncrement", "quoteIncrement")):
+                exclusions["ONDO"]["invalid_increments"] += 1
+                continue
+            if _decimal(row.get("takerFee")) is None:
+                exclusions["ONDO"]["missing_or_invalid_fee"] += 1
+                continue
+            ondo_candidates[_canonical_rwa(base)].append(raw.removesuffix(".P") + "-PERP.ONDO")
+        for canonical, natives in ondo_candidates.items():
+            if len(natives) != 1:
+                exclusions["ONDO"]["ambiguous_duplicate_market"] += len(natives)
+            else:
+                eligible[canonical, "ONDO"] = natives[0]
+                anchors.add(canonical)
+
+    if "LIGHTER" in rows:
+        lighter_candidates = defaultdict(list)
+        for row in rows["LIGHTER"]:
+            if row.get("market_type") != "perp" or row.get("status") != "active" or row.get("is_frozen", False) is not False:
+                exclusions["LIGHTER"]["inactive_spot_or_frozen"] += 1
+                continue
+            base = _token(row.get("symbol"))
+            if base is None or type(row.get("market_id")) is not int:
+                exclusions["LIGHTER"]["invalid_identity"] += 1
+                continue
+            native = f"{base}-PERP.LIGHTER"
+            if identity_quarantine_reason("LIGHTER", base, native):
+                exclusions["LIGHTER"][LIGHTER_PRL_QUARANTINE_CODE] += 1
+                continue
+            if _decimal(row.get("multiplier", "1"), positive=True) != 1:
+                exclusions["LIGHTER"]["unsupported_nonunit_multiplier"] += 1
+                continue
+            if base in LIGHTER_KRW_EXCLUDED or base in crypto_names:
+                exclusions["LIGHTER"]["non_usd_or_crypto_asset"] += 1
+                continue
+            canonical = _canonical_rwa(base)
+            if canonical not in anchors:
+                exclusions["LIGHTER"]["unanchored_or_ambiguous_asset"] += 1
+                continue
+            lighter_candidates[canonical].append(native)
+        for canonical, natives in lighter_candidates.items():
+            if len(natives) != 1:
+                exclusions["LIGHTER"]["ambiguous_duplicate_market"] += len(natives)
+            else:
+                eligible[canonical, "LIGHTER"] = natives[0]
+
+    return eligible
 
 
 def _candidate(venue, row):
@@ -216,13 +436,17 @@ def _rwa_names(venue, rows):
     return names
 
 
-def generate_document(metadata, *, venues=None, symbols=None, provenance=None, generated_at=None):
+def generate_document(metadata, *, venues=None, symbols=None, provenance=None, generated_at=None, asset_class="crypto"):
     """Return a deterministic registry document and bounded discovery summary.
 
     Metadata can include unselected venues as classification evidence. Ambiguous
     per-symbol/per-venue duplicates are all excluded, rather than picking a leg.
     """
+    if asset_class not in {"crypto", "rwa"}:
+        raise UniverseError("asset_class must be crypto or rwa")
     selected = _selected(venues)
+    if asset_class == "rwa" and "BACKPACK" in selected:
+        raise UniverseError("BACKPACK RWA symbols (.US) are unsupported by the current native adapter")
     if not isinstance(metadata, dict) or set(selected) - metadata.keys():
         raise UniverseError("metadata is missing a selected venue")
     if metadata.keys() - set(VENUES):
@@ -232,38 +456,49 @@ def generate_document(metadata, *, venues=None, symbols=None, provenance=None, g
         raise UniverseError("symbols must contain canonical uppercase identifiers")
     rows = {venue: _rows(venue, data) for venue, data in metadata.items()}
     exclusions = {venue: Counter() for venue in rows}
-    candidates = defaultdict(list)
-    anchors = set()
-    rwa_names = set()
-    for venue in VENUES:
-        if venue not in rows:
-            continue
-        rwa_names.update(_rwa_names(venue, rows[venue]))
-        for row in rows[venue]:
-            canonical, native, reason = _candidate(venue, row)
-            if reason:
-                exclusions[venue][reason] += 1
+    if asset_class == "rwa":
+        eligible = _discover_rwa_candidates(metadata, rows, exclusions)
+        for key in list(eligible):
+            canonical, venue = key
+            if venue not in selected:
+                exclusions[venue]["venue_not_selected"] += 1
+                del eligible[key]
+            elif requested is not None and canonical not in requested:
+                exclusions[venue]["symbol_not_selected"] += 1
+                del eligible[key]
+    else:
+        candidates = defaultdict(list)
+        anchors = set()
+        rwa_names = set()
+        for venue in VENUES:
+            if venue not in rows:
+                continue
+            rwa_names.update(_rwa_names(venue, rows[venue]))
+            for row in rows[venue]:
+                canonical, native, reason = _candidate(venue, row)
+                if reason:
+                    exclusions[venue][reason] += 1
+                else:
+                    candidates[canonical, venue].append(native)
+        eligible = {}
+        for (canonical, venue), native_ids in candidates.items():
+            if len(native_ids) != 1:
+                exclusions[venue]["ambiguous_duplicate_market"] += len(native_ids)
             else:
-                candidates[canonical, venue].append(native)
-    eligible = {}
-    for (canonical, venue), native_ids in candidates.items():
-        if len(native_ids) != 1:
-            exclusions[venue]["ambiguous_duplicate_market"] += len(native_ids)
-        else:
-            eligible[canonical, venue] = native_ids[0]
-            if venue != "LIGHTER":
-                anchors.add(canonical)
-    for key in list(eligible):
-        canonical, venue = key
-        if venue == "LIGHTER" and (canonical not in anchors or canonical in rwa_names):
-            exclusions[venue]["unanchored_or_ambiguous_asset"] += 1
-            del eligible[key]
-        elif venue not in selected:
-            exclusions[venue]["venue_not_selected"] += 1
-            del eligible[key]
-        elif requested is not None and canonical not in requested:
-            exclusions[venue]["symbol_not_selected"] += 1
-            del eligible[key]
+                eligible[canonical, venue] = native_ids[0]
+                if venue != "LIGHTER":
+                    anchors.add(canonical)
+        for key in list(eligible):
+            canonical, venue = key
+            if venue == "LIGHTER" and (canonical not in anchors or canonical in rwa_names):
+                exclusions[venue]["unanchored_or_ambiguous_asset"] += 1
+                del eligible[key]
+            elif venue not in selected:
+                exclusions[venue]["venue_not_selected"] += 1
+                del eligible[key]
+            elif requested is not None and canonical not in requested:
+                exclusions[venue]["symbol_not_selected"] += 1
+                del eligible[key]
     comparable = {symbol for symbol, _ in eligible if sum((symbol, venue) in eligible for venue in selected) >= 2}
     markets = []
     optional = []
@@ -281,7 +516,7 @@ def generate_document(metadata, *, venues=None, symbols=None, provenance=None, g
             if venue == "BACKPACK" and venue_counts[venue] >= 100:
                 exclusions[venue]["backpack_100_market_cap"] += 1
                 continue
-            legs.append(_mapping(venue, canonical, eligible[canonical, venue]))
+            legs.append(_mapping(venue, canonical, eligible[canonical, venue], asset_class=asset_class))
         if len(legs) < 2:
             for leg in legs:
                 exclusions[leg["venue"]]["fewer_than_two_venues_after_cap"] += 1
@@ -308,7 +543,8 @@ def generate_document(metadata, *, venues=None, symbols=None, provenance=None, g
             venue_counts[leg["venue"]] += 1
     markets.sort(key=lambda market: (market["symbol"], VENUES.index(market["venue"])))
     if not markets:
-        raise UniverseError("no unambiguous active crypto symbols occur on two selected venues")
+        raise UniverseError(f"no unambiguous active {asset_class} symbols occur on two selected venues")
+    aster_interval_ms = 500 if asset_class == "rwa" else 1000
     document = {"schema_version": 1,
         "scan": {"target_notional": "500", "min_entry_edge_bps": "1", "reserve_bps": "5",
                  "max_age_ms": 2000, "max_skew_ms": 500, "max_receive_age_ms": 2000},
@@ -317,17 +553,20 @@ def generate_document(metadata, *, venues=None, symbols=None, provenance=None, g
         "runtime": {"connection_timeout_secs": 300, "duration_secs": 3600, "depth_levels": 20,
                     "max_levels_per_side": 20000, "refresh_ms": 1000, "top_n": 20,
                     "evaluation_interval_ms": 100, "aster_snapshot_depth": 100,
-                    "aster_subscription_interval_ms": 1000},
+                    "aster_subscription_interval_ms": aster_interval_ms},
         "markets": markets}
     observed_operators = Counter(str(row.get("operator_account_index", "missing"))
                                  for row in rows.get("LIGHTER", []))
-    summary = {"schema_version": 1, "generated_at_utc": generated_at or datetime.now(timezone.utc).isoformat(),
+    summary = {"schema_version": 1, "asset_class": asset_class,
+        "generated_at_utc": generated_at or datetime.now(timezone.utc).isoformat(),
         "symbol_count": len({market["symbol"] for market in markets}), "market_count": len(markets),
         "selected_venues": list(selected), "requested_symbols": sorted(requested) if requested is not None else None,
         "per_venue_counts": {venue: sum(market["venue"] == venue for market in markets) for venue in selected},
         "input_counts": {venue: len(rows[venue]) for venue in VENUES if venue in rows},
         "exclusions": {venue: dict(sorted(exclusions[venue].items())) for venue in VENUES if venue in rows},
-        "alias_policy": "exact native base units only; k/1000 aliases not merged or independently verified",
+        "alias_policy": ("explicit USD-quoted RWA aliases normalized across venues; KRW bare tickers excluded"
+                         if asset_class == "rwa" else
+                         "exact native base units only; k/1000 aliases not merged or independently verified"),
         "capacity_policy": "reserve two legs per alphabetically ordered symbol, then favor underrepresented optional venues; Backpack cap100, total cap1000",
         "lighter_identity_policy": "ticker-only crypto anchor intersection; known RWA collisions and quarantined Lighter PRL excluded; operator index is not a classifier; other asset identities are not certified",
         "lighter_public_operator_counts": dict(sorted(observed_operators.items())),
@@ -390,21 +629,48 @@ def load_metadata(directory, venues=None):
     return metadata, provenance
 
 
-def fetch_metadata(venues=None, timeout_secs=30):
+def _open_with_retries(opener, url, payload, timeout_secs, *, attempts=4):
+    headers = {"Accept": "application/json", "Content-Type": "application/json", "User-Agent": "persarb-public-universe/1"}
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            request = urllib.request.Request(url, data=payload, headers=headers)
+            with opener.open(request, timeout=timeout_secs) as response:
+                return response.read(MAX_METADATA_BYTES + 1)
+        except OSError as exc:
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep(0.5)
+    raise last_exc
+
+
+def fetch_metadata(venues=None, timeout_secs=30, *, asset_class="crypto"):
     """Fetch fixed credential-free public URLs directly, without proxy inheritance."""
     if type(timeout_secs) is not int or not 1 <= timeout_secs <= 300:
         raise UniverseError("timeout_secs must be an integer in [1,300]")
+    if asset_class not in {"crypto", "rwa"}:
+        raise UniverseError("asset_class must be crypto or rwa")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     metadata, provenance = {}, {}
     for venue in _selected(venues):
         payload = b'{"type":"meta"}' if venue == "HL" else None
-        request = urllib.request.Request(URLS[venue], data=payload,
-            headers={"Accept": "application/json", "Content-Type": "application/json", "User-Agent": "persarb-public-universe/1"})
-        with opener.open(request, timeout=timeout_secs) as response:
-            raw = response.read(MAX_METADATA_BYTES + 1)
-        metadata[venue] = _decode(raw, venue)
-        provenance[venue] = {"url": URLS[venue], "sha256": hashlib.sha256(raw).hexdigest(),
-            "fetched_at_utc": datetime.now(timezone.utc).isoformat(), "source_capture_time": "unknown"}
+        raw = _open_with_retries(opener, URLS[venue], payload, timeout_secs)
+        decoded = _decode(raw, venue)
+        prov = {"url": URLS[venue], "sha256": hashlib.sha256(raw).hexdigest(),
+                "fetched_at_utc": datetime.now(timezone.utc).isoformat(), "source_capture_time": "unknown"}
+        if asset_class == "rwa" and venue == "HL":
+            hip3 = {}
+            hip3_hashes = {}
+            for dex in HL_HIP3_DEXES:
+                dex_payload = json.dumps({"type": "metaAndAssetCtxs", "dex": dex}).encode()
+                dex_raw = _open_with_retries(opener, URLS["HL"], dex_payload, timeout_secs)
+                hip3[dex] = _decode(dex_raw, "HL")
+                hip3_hashes[dex] = hashlib.sha256(dex_raw).hexdigest()
+            decoded["hip3"] = hip3
+            prov["hip3_sha256"] = hip3_hashes
+        metadata[venue] = decoded
+        provenance[venue] = prov
     return metadata, provenance
 
 
@@ -413,18 +679,32 @@ def main(argv=None):
     parser.add_argument("--metadata-dir", type=Path, help="offline captured public JSON; otherwise fetch fixed public URLs directly")
     parser.add_argument("--output", type=Path, required=True, help="requested scanner TOML path")
     parser.add_argument("--summary", type=Path, help="optional requested JSON provenance summary")
-    parser.add_argument("--venues", default=",".join(VENUES), help="comma-separated supported venue subset")
+    parser.add_argument("--asset-class", choices=("crypto", "rwa"), default="crypto",
+                        help="asset class to discover (default: crypto)")
+    parser.add_argument("--venues", default=None, help="comma-separated supported venue subset")
     parser.add_argument("--symbols", help="optional comma-separated canonical uppercase symbols")
     parser.add_argument("--timeout-secs", type=int, default=30)
     parser.add_argument("--dry-run", action="store_true", help="validate and print summary without creating config or summary files")
     args = parser.parse_args(argv)
     try:
-        venues = _selected(args.venues.split(","))
+        default_venues = RWA_VENUES if args.asset_class == "rwa" else VENUES
+        venues = _selected(default_venues if args.venues is None else args.venues.split(","))
+        if args.asset_class == "rwa" and "BACKPACK" in venues:
+            raise UniverseError("BACKPACK RWA symbols (.US) are unsupported by the current native adapter")
         # Output selection must not remove trusted RWA/crypto identity evidence.
-        evidence_venues = set(venues) | {"HL", "ASTER", "ONDO", "BACKPACK"}
-        metadata, provenance = load_metadata(args.metadata_dir, venues) if args.metadata_dir else fetch_metadata(evidence_venues, args.timeout_secs)
-        document, summary = generate_document(metadata, venues=venues,
-            symbols=args.symbols.split(",") if args.symbols is not None else None, provenance=provenance)
+        evidence_venues = (
+            set(venues) | ({"HL", "ASTER", "ONDO"} if args.asset_class == "rwa" else {"HL", "ASTER", "ONDO", "BACKPACK"})
+        )
+        metadata, provenance = (
+            load_metadata(args.metadata_dir, venues)
+            if args.metadata_dir
+            else fetch_metadata(evidence_venues, args.timeout_secs, asset_class=args.asset_class)
+        )
+        document, summary = generate_document(
+            metadata, venues=venues,
+            symbols=args.symbols.split(",") if args.symbols is not None else None,
+            provenance=provenance, asset_class=args.asset_class,
+        )
         from opportunity_scan import parse_plan
         parse_plan(document, args.output.parent)
         if not args.dry_run:

@@ -1,0 +1,2821 @@
+# Generated public crypto registry; assumptions require verification.
+schema_version = 1
+
+[scan]
+target_notional = "500"
+min_entry_edge_bps = "1"
+reserve_bps = "5"
+max_age_ms = 2000
+max_skew_ms = 500
+max_receive_age_ms = 2000
+
+[recording]
+enabled = true
+path = "../reports/opportunities/opportunities.jsonl"
+cooldown_ms = 5000
+edge_change_bps = "2"
+quantity_change_fraction = "0.1"
+
+[runtime]
+connection_timeout_secs = 300
+duration_secs = 3600
+depth_levels = 20
+max_levels_per_side = 20000
+refresh_ms = 1000
+top_n = 20
+evaluation_interval_ms = 100
+aster_snapshot_depth = 100
+aster_subscription_interval_ms = 500
+
+[[markets]]
+symbol = "AAOI"
+venue = "HL"
+instrument_id = "xyz:AAOI-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "AAOI"
+venue = "LIGHTER"
+instrument_id = "AAOI-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AAOI"
+venue = "ASTER"
+instrument_id = "AAOIUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "AAPL"
+venue = "HL"
+instrument_id = "xyz:AAPL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "AAPL"
+venue = "LIGHTER"
+instrument_id = "AAPL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AAPL"
+venue = "ASTER"
+instrument_id = "AAPLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "AAPL"
+venue = "ONDO"
+instrument_id = "AAPL-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AMAT"
+venue = "HL"
+instrument_id = "xyz:AMAT-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "AMAT"
+venue = "ASTER"
+instrument_id = "AMATUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "AMD"
+venue = "HL"
+instrument_id = "xyz:AMD-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "AMD"
+venue = "LIGHTER"
+instrument_id = "AMD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AMD"
+venue = "ASTER"
+instrument_id = "AMDUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "AMD"
+venue = "ONDO"
+instrument_id = "AMD-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AMZN"
+venue = "HL"
+instrument_id = "xyz:AMZN-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "AMZN"
+venue = "LIGHTER"
+instrument_id = "AMZN-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AMZN"
+venue = "ASTER"
+instrument_id = "AMZNUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "AMZN"
+venue = "ONDO"
+instrument_id = "AMZN-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ANT"
+venue = "HL"
+instrument_id = "xyz:ANT-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "ANT"
+venue = "LIGHTER"
+instrument_id = "ANT-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ANT"
+venue = "ASTER"
+instrument_id = "ANTUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "ANT"
+venue = "ONDO"
+instrument_id = "ANT-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ARM"
+venue = "HL"
+instrument_id = "xyz:ARM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "ARM"
+venue = "LIGHTER"
+instrument_id = "ARM-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ARM"
+venue = "ASTER"
+instrument_id = "ARMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "ARM"
+venue = "ONDO"
+instrument_id = "ARM-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ASML"
+venue = "HL"
+instrument_id = "xyz:ASML-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "ASML"
+venue = "LIGHTER"
+instrument_id = "ASML-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ASML"
+venue = "ASTER"
+instrument_id = "ASMLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "ASML"
+venue = "ONDO"
+instrument_id = "ASML-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AVGO"
+venue = "HL"
+instrument_id = "xyz:AVGO-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "AVGO"
+venue = "LIGHTER"
+instrument_id = "AVGO-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "AVGO"
+venue = "ASTER"
+instrument_id = "AVGOUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "AVGO"
+venue = "ONDO"
+instrument_id = "AVGO-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BABA"
+venue = "HL"
+instrument_id = "xyz:BABA-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "BABA"
+venue = "LIGHTER"
+instrument_id = "BABA-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BABA"
+venue = "ASTER"
+instrument_id = "BABAUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "BABA"
+venue = "ONDO"
+instrument_id = "BABA-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BE"
+venue = "HL"
+instrument_id = "xyz:BE-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "BE"
+venue = "LIGHTER"
+instrument_id = "BE-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BE"
+venue = "ASTER"
+instrument_id = "BEUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "BMNR"
+venue = "HL"
+instrument_id = "xyz:BMNR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "BMNR"
+venue = "LIGHTER"
+instrument_id = "BMNR-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BMNR"
+venue = "ASTER"
+instrument_id = "BMNRUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "BMNR"
+venue = "ONDO"
+instrument_id = "BMNR-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BOT"
+venue = "HL"
+instrument_id = "xyz:BOT-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "BOT"
+venue = "LIGHTER"
+instrument_id = "BOT-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BRENTOIL"
+venue = "HL"
+instrument_id = "xyz:BRENTOIL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "BRENTOIL"
+venue = "LIGHTER"
+instrument_id = "BRENTOIL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BRENTOIL"
+venue = "ONDO"
+instrument_id = "BRENT-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "BX"
+venue = "HL"
+instrument_id = "xyz:BX-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "BX"
+venue = "ASTER"
+instrument_id = "BXUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CBRS"
+venue = "HL"
+instrument_id = "xyz:CBRS-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "CBRS"
+venue = "LIGHTER"
+instrument_id = "CBRS-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CBRS"
+venue = "ASTER"
+instrument_id = "CBRSUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CBRS"
+venue = "ONDO"
+instrument_id = "CBRS-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CL"
+venue = "HL"
+instrument_id = "xyz:CL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "CL"
+venue = "LIGHTER"
+instrument_id = "WTI-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CL"
+venue = "ASTER"
+instrument_id = "CLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CL"
+venue = "ONDO"
+instrument_id = "WTI-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "COHR"
+venue = "HL"
+instrument_id = "para:COHR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "COHR"
+venue = "ASTER"
+instrument_id = "COHRUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "COIN"
+venue = "HL"
+instrument_id = "xyz:COIN-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "COIN"
+venue = "LIGHTER"
+instrument_id = "COIN-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "COIN"
+venue = "ASTER"
+instrument_id = "COINUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "COIN"
+venue = "ONDO"
+instrument_id = "COIN-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "COST"
+venue = "HL"
+instrument_id = "xyz:COST-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "COST"
+venue = "ASTER"
+instrument_id = "COSTUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CRCL"
+venue = "HL"
+instrument_id = "xyz:CRCL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "CRCL"
+venue = "LIGHTER"
+instrument_id = "CRCL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CRCL"
+venue = "ASTER"
+instrument_id = "CRCLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CRCL"
+venue = "ONDO"
+instrument_id = "CRCL-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CRDO"
+venue = "HL"
+instrument_id = "para:CRDO-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "CRDO"
+venue = "ASTER"
+instrument_id = "CRDOUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CRWD"
+venue = "HL"
+instrument_id = "xyz:CRWD-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "CRWD"
+venue = "ASTER"
+instrument_id = "CRWDUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CRWV"
+venue = "HL"
+instrument_id = "xyz:CRWV-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "CRWV"
+venue = "LIGHTER"
+instrument_id = "CRWV-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CRWV"
+venue = "ASTER"
+instrument_id = "CRWVUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CRWV"
+venue = "ONDO"
+instrument_id = "CRWV-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CXMT"
+venue = "HL"
+instrument_id = "xyz:CXMT-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "CXMT"
+venue = "LIGHTER"
+instrument_id = "CXMT-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "CXMT"
+venue = "ASTER"
+instrument_id = "CXMTUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "CXMT"
+venue = "ONDO"
+instrument_id = "CXMT-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "DELL"
+venue = "HL"
+instrument_id = "xyz:DELL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "DELL"
+venue = "LIGHTER"
+instrument_id = "DELL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "DELL"
+venue = "ASTER"
+instrument_id = "DELLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "DKNG"
+venue = "HL"
+instrument_id = "xyz:DKNG-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "DKNG"
+venue = "ASTER"
+instrument_id = "DKNGUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "DKNG"
+venue = "ONDO"
+instrument_id = "DKNG-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "DRAM"
+venue = "HL"
+instrument_id = "xyz:DRAM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "DRAM"
+venue = "LIGHTER"
+instrument_id = "DRAM-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "DRAM"
+venue = "ASTER"
+instrument_id = "DRAMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "DRAM"
+venue = "ONDO"
+instrument_id = "DRAM-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "EBAY"
+venue = "HL"
+instrument_id = "xyz:EBAY-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "EBAY"
+venue = "ASTER"
+instrument_id = "EBAYUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "EURUSD"
+venue = "HL"
+instrument_id = "xyz:EUR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "EURUSD"
+venue = "LIGHTER"
+instrument_id = "EURUSD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "EURUSD"
+venue = "ONDO"
+instrument_id = "EURUSD-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "EWJ"
+venue = "HL"
+instrument_id = "xyz:EWJ-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "EWJ"
+venue = "ASTER"
+instrument_id = "EWJUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "EWT"
+venue = "HL"
+instrument_id = "xyz:EWT-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "EWT"
+venue = "ASTER"
+instrument_id = "EWTUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "EWY"
+venue = "HL"
+instrument_id = "xyz:EWY-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "EWY"
+venue = "LIGHTER"
+instrument_id = "EWY-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "EWY"
+venue = "ASTER"
+instrument_id = "EWYUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "EWY"
+venue = "ONDO"
+instrument_id = "EWY-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "EWZ"
+venue = "HL"
+instrument_id = "xyz:EWZ-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "EWZ"
+venue = "ASTER"
+instrument_id = "EWZUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "GBPUSD"
+venue = "HL"
+instrument_id = "xyz:GBP-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "GBPUSD"
+venue = "LIGHTER"
+instrument_id = "GBPUSD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "GEV"
+venue = "HL"
+instrument_id = "xyz:GEV-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "GEV"
+venue = "LIGHTER"
+instrument_id = "GEV-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "GIGADEV"
+venue = "HL"
+instrument_id = "xyz:GIGADEV-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "GIGADEV"
+venue = "ONDO"
+instrument_id = "GIGADEV-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "GLW"
+venue = "HL"
+instrument_id = "xyz:GLW-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "GLW"
+venue = "ASTER"
+instrument_id = "GLWUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "GLW"
+venue = "ONDO"
+instrument_id = "GLW-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "GME"
+venue = "HL"
+instrument_id = "xyz:GME-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "GME"
+venue = "LIGHTER"
+instrument_id = "GME-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "GME"
+venue = "ASTER"
+instrument_id = "GMEUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "GOOGL"
+venue = "HL"
+instrument_id = "xyz:GOOGL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "GOOGL"
+venue = "LIGHTER"
+instrument_id = "GOOGL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "GOOGL"
+venue = "ASTER"
+instrument_id = "GOOGLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "GOOGL"
+venue = "ONDO"
+instrument_id = "GOOGL-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "GPRO"
+venue = "HL"
+instrument_id = "io:GPRO-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "GPRO"
+venue = "ASTER"
+instrument_id = "GPROUSD1-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "HIMS"
+venue = "HL"
+instrument_id = "xyz:HIMS-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "HIMS"
+venue = "ASTER"
+instrument_id = "HIMSUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "HOOD"
+venue = "HL"
+instrument_id = "xyz:HOOD-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "HOOD"
+venue = "LIGHTER"
+instrument_id = "HOOD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "HOOD"
+venue = "ASTER"
+instrument_id = "HOODUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "HOOD"
+venue = "ONDO"
+instrument_id = "HOOD-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "HYUNDAI"
+venue = "HL"
+instrument_id = "xyz:HYUNDAI-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "HYUNDAI"
+venue = "LIGHTER"
+instrument_id = "HYUNDAIUSD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "HYUNDAI"
+venue = "ASTER"
+instrument_id = "HYUNDAIUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "IBM"
+venue = "HL"
+instrument_id = "xyz:IBM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "IBM"
+venue = "LIGHTER"
+instrument_id = "IBM-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "IBM"
+venue = "ASTER"
+instrument_id = "IBMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "IBM"
+venue = "ONDO"
+instrument_id = "IBM-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "INTC"
+venue = "HL"
+instrument_id = "xyz:INTC-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "INTC"
+venue = "LIGHTER"
+instrument_id = "INTC-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "INTC"
+venue = "ASTER"
+instrument_id = "INTCUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "INTC"
+venue = "ONDO"
+instrument_id = "INTC-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "IREN"
+venue = "HL"
+instrument_id = "xyz:IREN-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "IREN"
+venue = "LIGHTER"
+instrument_id = "IREN-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "IREN"
+venue = "ASTER"
+instrument_id = "IRENUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "IWM"
+venue = "LIGHTER"
+instrument_id = "IWM-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "IWM"
+venue = "ASTER"
+instrument_id = "IWMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "KIOXIA"
+venue = "HL"
+instrument_id = "xyz:KIOXIA-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "KIOXIA"
+venue = "LIGHTER"
+instrument_id = "KIOXIA-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "KORU"
+venue = "HL"
+instrument_id = "xyz:KORU-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "KORU"
+venue = "LIGHTER"
+instrument_id = "KORU-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "KORU"
+venue = "ASTER"
+instrument_id = "KORUUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "KORU"
+venue = "ONDO"
+instrument_id = "KORU-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "KSTR"
+venue = "HL"
+instrument_id = "xyz:KSTR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "KSTR"
+venue = "ASTER"
+instrument_id = "KSTRUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "LITE"
+venue = "HL"
+instrument_id = "xyz:LITE-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "LITE"
+venue = "LIGHTER"
+instrument_id = "LITE-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "LITE"
+venue = "ASTER"
+instrument_id = "LITEUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "LITE"
+venue = "ONDO"
+instrument_id = "LITE-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "LLY"
+venue = "HL"
+instrument_id = "xyz:LLY-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "LLY"
+venue = "ASTER"
+instrument_id = "LLYUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "LLY"
+venue = "ONDO"
+instrument_id = "LLY-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "LYTE"
+venue = "HL"
+instrument_id = "xyz:LYTE-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "LYTE"
+venue = "ASTER"
+instrument_id = "LYTEUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "META"
+venue = "HL"
+instrument_id = "xyz:META-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "META"
+venue = "LIGHTER"
+instrument_id = "META-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "META"
+venue = "ASTER"
+instrument_id = "METAUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "META"
+venue = "ONDO"
+instrument_id = "META-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MINIMAX"
+venue = "HL"
+instrument_id = "xyz:MINIMAX-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "MINIMAX"
+venue = "LIGHTER"
+instrument_id = "MINIMAX-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MINIMAX"
+venue = "ASTER"
+instrument_id = "MINIMAXUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "MINIMAX"
+venue = "ONDO"
+instrument_id = "MINIMAX-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MRNA"
+venue = "HL"
+instrument_id = "xyz:MRNA-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "MRNA"
+venue = "LIGHTER"
+instrument_id = "MRNA-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MRNA"
+venue = "ASTER"
+instrument_id = "MRNAUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "MRNA"
+venue = "ONDO"
+instrument_id = "MRNA-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MRVL"
+venue = "HL"
+instrument_id = "xyz:MRVL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "MRVL"
+venue = "LIGHTER"
+instrument_id = "MRVL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MRVL"
+venue = "ASTER"
+instrument_id = "MRVLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "MRVL"
+venue = "ONDO"
+instrument_id = "MRVL-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MSFT"
+venue = "HL"
+instrument_id = "xyz:MSFT-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "MSFT"
+venue = "LIGHTER"
+instrument_id = "MSFT-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MSFT"
+venue = "ASTER"
+instrument_id = "MSFTUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "MSFT"
+venue = "ONDO"
+instrument_id = "MSFT-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MSTR"
+venue = "HL"
+instrument_id = "xyz:MSTR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "MSTR"
+venue = "LIGHTER"
+instrument_id = "MSTR-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MSTR"
+venue = "ASTER"
+instrument_id = "MSTRUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "MSTR"
+venue = "ONDO"
+instrument_id = "MSTR-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MU"
+venue = "HL"
+instrument_id = "xyz:MU-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "MU"
+venue = "LIGHTER"
+instrument_id = "MU-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MU"
+venue = "ASTER"
+instrument_id = "MUUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "MU"
+venue = "ONDO"
+instrument_id = "MU-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MUU"
+venue = "HL"
+instrument_id = "xyz:MUU-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "MUU"
+venue = "ASTER"
+instrument_id = "MUUUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "NBIS"
+venue = "HL"
+instrument_id = "xyz:NBIS-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "NBIS"
+venue = "LIGHTER"
+instrument_id = "NBIS-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NBIS"
+venue = "ASTER"
+instrument_id = "NBISUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "NBIS"
+venue = "ONDO"
+instrument_id = "NBIS-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NDX"
+venue = "HL"
+instrument_id = "xyz:XYZ100-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "NDX"
+venue = "LIGHTER"
+instrument_id = "US100-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NDX"
+venue = "ONDO"
+instrument_id = "US100-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NFLX"
+venue = "HL"
+instrument_id = "xyz:NFLX-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "NFLX"
+venue = "ASTER"
+instrument_id = "NFLXUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "NFLX"
+venue = "ONDO"
+instrument_id = "NFLX-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NG"
+venue = "HL"
+instrument_id = "xyz:NATGAS-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "NG"
+venue = "LIGHTER"
+instrument_id = "NATGAS-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NG"
+venue = "ASTER"
+instrument_id = "NATGASUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "NG"
+venue = "ONDO"
+instrument_id = "NATGAS-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NOK"
+venue = "HL"
+instrument_id = "xyz:NOK-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "NOK"
+venue = "ASTER"
+instrument_id = "NOKUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "NOW"
+venue = "HL"
+instrument_id = "xyz:NOW-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "NOW"
+venue = "LIGHTER"
+instrument_id = "NOW-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NOW"
+venue = "ASTER"
+instrument_id = "NOWUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "NVDA"
+venue = "HL"
+instrument_id = "xyz:NVDA-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "NVDA"
+venue = "LIGHTER"
+instrument_id = "NVDA-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "NVDA"
+venue = "ASTER"
+instrument_id = "NVDAUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "NVDA"
+venue = "ONDO"
+instrument_id = "NVDA-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "OPENAI"
+venue = "LIGHTER"
+instrument_id = "OPENAI-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "OPENAI"
+venue = "ASTER"
+instrument_id = "OPENAIUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "OPENAI"
+venue = "ONDO"
+instrument_id = "OPENAI-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ORCL"
+venue = "HL"
+instrument_id = "xyz:ORCL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "ORCL"
+venue = "LIGHTER"
+instrument_id = "ORCL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ORCL"
+venue = "ASTER"
+instrument_id = "ORCLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "ORCL"
+venue = "ONDO"
+instrument_id = "ORCL-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "OURA"
+venue = "HL"
+instrument_id = "xyz:OURA-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "OURA"
+venue = "LIGHTER"
+instrument_id = "OURA-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "OURA"
+venue = "ASTER"
+instrument_id = "OURAUSD1-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "PLTR"
+venue = "HL"
+instrument_id = "xyz:PLTR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "PLTR"
+venue = "LIGHTER"
+instrument_id = "PLTR-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "PLTR"
+venue = "ASTER"
+instrument_id = "PLTRUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "PLTR"
+venue = "ONDO"
+instrument_id = "PLTR-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "QCOM"
+venue = "HL"
+instrument_id = "xyz:QCOM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "QCOM"
+venue = "LIGHTER"
+instrument_id = "QCOM-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "QCOM"
+venue = "ASTER"
+instrument_id = "QCOMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "QQQ"
+venue = "LIGHTER"
+instrument_id = "QQQ-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "QQQ"
+venue = "ASTER"
+instrument_id = "QQQUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "QQQ"
+venue = "ONDO"
+instrument_id = "QQQ-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "RDDT"
+venue = "HL"
+instrument_id = "xyz:RDDT-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "RDDT"
+venue = "ONDO"
+instrument_id = "RDDT-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "RIVN"
+venue = "HL"
+instrument_id = "xyz:RIVN-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "RIVN"
+venue = "ASTER"
+instrument_id = "RIVNUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "RKLB"
+venue = "HL"
+instrument_id = "xyz:RKLB-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "RKLB"
+venue = "LIGHTER"
+instrument_id = "RKLB-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "RKLB"
+venue = "ASTER"
+instrument_id = "RKLBUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SAMSUNG"
+venue = "HL"
+instrument_id = "xyz:SMSN-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SAMSUNG"
+venue = "LIGHTER"
+instrument_id = "SAMSUNGUSD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SAMSUNG"
+venue = "ASTER"
+instrument_id = "SAMSUNGUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SAMSUNG"
+venue = "ONDO"
+instrument_id = "SMSN-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SHEIN"
+venue = "HL"
+instrument_id = "xyz:SHEIN-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SHEIN"
+venue = "LIGHTER"
+instrument_id = "SHEIN-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SKHY"
+venue = "HL"
+instrument_id = "xyz:SKHY-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SKHY"
+venue = "LIGHTER"
+instrument_id = "SKHY-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SKHY"
+venue = "ASTER"
+instrument_id = "SKHYUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SKHY"
+venue = "ONDO"
+instrument_id = "SKHY-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SKHYNIX"
+venue = "HL"
+instrument_id = "xyz:SKHX-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SKHYNIX"
+venue = "LIGHTER"
+instrument_id = "SKHYNIXUSD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SKHYNIX"
+venue = "ASTER"
+instrument_id = "SKHYNIXUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SKHYNIX"
+venue = "ONDO"
+instrument_id = "SKHYNIX-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SNDK"
+venue = "HL"
+instrument_id = "xyz:SNDK-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SNDK"
+venue = "LIGHTER"
+instrument_id = "SNDK-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SNDK"
+venue = "ASTER"
+instrument_id = "SNDKUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SNDK"
+venue = "ONDO"
+instrument_id = "SNDK-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SNXX"
+venue = "HL"
+instrument_id = "xyz:SNXX-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SNXX"
+venue = "ASTER"
+instrument_id = "SNXXUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SOXL"
+venue = "HL"
+instrument_id = "xyz:SOXL-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SOXL"
+venue = "LIGHTER"
+instrument_id = "SOXL-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SOXL"
+venue = "ASTER"
+instrument_id = "SOXLUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SOXL"
+venue = "ONDO"
+instrument_id = "SOXL-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SPCX"
+venue = "HL"
+instrument_id = "xyz:SPCX-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SPCX"
+venue = "LIGHTER"
+instrument_id = "SPCX-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SPCX"
+venue = "ASTER"
+instrument_id = "SPCXUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SPCX"
+venue = "ONDO"
+instrument_id = "SPCX-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SPX"
+venue = "HL"
+instrument_id = "xyz:SP500-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "SPX"
+venue = "LIGHTER"
+instrument_id = "US500-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SPX"
+venue = "ONDO"
+instrument_id = "US500-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SPY"
+venue = "LIGHTER"
+instrument_id = "SPY-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SPY"
+venue = "ASTER"
+instrument_id = "SPYUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "SPY"
+venue = "ONDO"
+instrument_id = "SPY-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "STRC"
+venue = "HL"
+instrument_id = "xyz:STRC-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "STRC"
+venue = "LIGHTER"
+instrument_id = "STRC-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "STRC"
+venue = "ASTER"
+instrument_id = "STRCUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "TENCENT"
+venue = "LIGHTER"
+instrument_id = "TENCENT-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TENCENT"
+venue = "ASTER"
+instrument_id = "TENCENTUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "TENCENT"
+venue = "ONDO"
+instrument_id = "TENCENT-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TSLA"
+venue = "HL"
+instrument_id = "xyz:TSLA-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "TSLA"
+venue = "LIGHTER"
+instrument_id = "TSLA-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TSLA"
+venue = "ASTER"
+instrument_id = "TSLAUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "TSLA"
+venue = "ONDO"
+instrument_id = "TSLA-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TSM"
+venue = "HL"
+instrument_id = "xyz:TSM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "TSM"
+venue = "LIGHTER"
+instrument_id = "TSM-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TSM"
+venue = "ASTER"
+instrument_id = "TSMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "TSM"
+venue = "ONDO"
+instrument_id = "TSM-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TTWO"
+venue = "HL"
+instrument_id = "xyz:TTWO-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "TTWO"
+venue = "LIGHTER"
+instrument_id = "TTWO-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TTWO"
+venue = "ONDO"
+instrument_id = "TTWO-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "UNITREE"
+venue = "HL"
+instrument_id = "xyz:UNITREE-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "UNITREE"
+venue = "LIGHTER"
+instrument_id = "UNITREE-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "UNITREE"
+venue = "ASTER"
+instrument_id = "UNITREEUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "UNITREE"
+venue = "ONDO"
+instrument_id = "UNITREE-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "URNM"
+venue = "HL"
+instrument_id = "xyz:URNM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "URNM"
+venue = "ASTER"
+instrument_id = "URNMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "URNM"
+venue = "ONDO"
+instrument_id = "URNM-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "USAR"
+venue = "HL"
+instrument_id = "xyz:USAR-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "USAR"
+venue = "ASTER"
+instrument_id = "USARUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "USDJPY"
+venue = "HL"
+instrument_id = "xyz:JPY-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "USDJPY"
+venue = "LIGHTER"
+instrument_id = "USDJPY-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "USDJPY"
+venue = "ONDO"
+instrument_id = "USDJPY-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "WDC"
+venue = "HL"
+instrument_id = "xyz:WDC-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "WDC"
+venue = "LIGHTER"
+instrument_id = "WDC-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "WDC"
+venue = "ASTER"
+instrument_id = "WDCUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "WEN"
+venue = "LIGHTER"
+instrument_id = "WEN-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "WEN"
+venue = "ONDO"
+instrument_id = "WEN-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XAG"
+venue = "HL"
+instrument_id = "xyz:SILVER-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XAG"
+venue = "LIGHTER"
+instrument_id = "XAG-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XAG"
+venue = "ASTER"
+instrument_id = "XAGUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "XAG"
+venue = "ONDO"
+instrument_id = "XAG-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XAU"
+venue = "HL"
+instrument_id = "xyz:GOLD-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XAU"
+venue = "LIGHTER"
+instrument_id = "XAU-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XAU"
+venue = "ASTER"
+instrument_id = "XAUUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "XAU"
+venue = "ONDO"
+instrument_id = "XAU-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XCU"
+venue = "HL"
+instrument_id = "xyz:COPPER-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XCU"
+venue = "LIGHTER"
+instrument_id = "XCU-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XCU"
+venue = "ASTER"
+instrument_id = "XCUUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "XCU"
+venue = "ONDO"
+instrument_id = "COPPER-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XIAOMI"
+venue = "HL"
+instrument_id = "io:XIAOMI-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XIAOMI"
+venue = "LIGHTER"
+instrument_id = "XIAOMI-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XIAOMI"
+venue = "ASTER"
+instrument_id = "XIAOMIUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "XIAOMI"
+venue = "ONDO"
+instrument_id = "XIAOMI-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XLE"
+venue = "HL"
+instrument_id = "xyz:XLE-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XLE"
+venue = "ASTER"
+instrument_id = "XLEUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "XPD"
+venue = "HL"
+instrument_id = "xyz:PALLADIUM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XPD"
+venue = "LIGHTER"
+instrument_id = "XPD-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XPD"
+venue = "ASTER"
+instrument_id = "XPDUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "XPT"
+venue = "HL"
+instrument_id = "xyz:PLATINUM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "XPT"
+venue = "LIGHTER"
+instrument_id = "XPT-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "XPT"
+venue = "ASTER"
+instrument_id = "XPTUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "ZHIPU"
+venue = "HL"
+instrument_id = "xyz:ZHIPU-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "ZHIPU"
+venue = "LIGHTER"
+instrument_id = "ZHIPU-PERP.LIGHTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ZHIPU"
+venue = "ASTER"
+instrument_id = "ZHIPUUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
+symbol = "ZHIPU"
+venue = "ONDO"
+instrument_id = "ZHIPU-USD-PERP.ONDO"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ZM"
+venue = "HL"
+instrument_id = "xyz:ZM-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "ZM"
+venue = "ASTER"
+instrument_id = "ZMUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"

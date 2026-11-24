@@ -356,3 +356,98 @@ def test_generated_config_and_summary_paths_must_not_collide(tmp_path, capsys):
     assert universe.main(["--metadata-dir", str(inputs), "--output", str(output), "--summary", str(output)]) == 2
     assert "distinct paths" in capsys.readouterr().err
     assert not output.exists()
+
+
+def test_rwa_discovery_normalizes_aliases_prefers_xyz_and_excludes_krw_and_backpack():
+    data = {
+        "HL": {
+            "universe": [hl("BTC")],
+            "hip3": {
+                "xyz": [
+                    {"universe": [
+                        hl("xyz:BTC"),
+                        hl("xyz:NVDA"),
+                        hl("xyz:GOLD"),
+                        hl("xyz:SKHX"),
+                        hl("xyz:SP500"),
+                        hl("xyz:XYZ100"),
+                        hl("xyz:EUR"),
+                        hl("xyz:JPY"),
+                        hl("xyz:SNDK"),
+                        {**hl("xyz:DELIST"), "isDelisted": True},
+                    ]},
+                    [{"dayNtlVlm": "0"}, {"dayNtlVlm": "500"}, {"dayNtlVlm": "400"},
+                     {"dayNtlVlm": "300"}, {"dayNtlVlm": "200"}, {"dayNtlVlm": "200"},
+                     {"dayNtlVlm": "100"}, {"dayNtlVlm": "100"}, {"dayNtlVlm": "100"}, {"dayNtlVlm": "0"}],
+                ],
+                "io": [
+                    {"universe": [hl("io:SNDK"), hl("io:GPRO")]},
+                    [{"dayNtlVlm": "999999"}, {"dayNtlVlm": "50"}],
+                ],
+                "para": [
+                    {"universe": [hl("para:COHR"), hl("para:SNDK")]},
+                    [{"dayNtlVlm": "80"}, {"dayNtlVlm": "999999"}],
+                ],
+            },
+        },
+        "ASTER": {"symbols": [
+            aster("BTC"),
+            aster("NVDA", symbolType=1, underlyingSubType=["STOCK"]),
+            {**aster("NVDA", quoteAsset="USD1", marginAsset="USD1", symbolType=1, underlyingSubType=["STOCK"]), "symbol": "NVDAUSD1"},
+            aster("XAU", symbolType=1, underlyingSubType=["Commodities"]),
+            aster("SKHYNIX", symbolType=1, underlyingSubType=["STOCK"]),
+            {**aster("GPRO", quoteAsset="USD1", marginAsset="USD1", symbolType=1, underlyingSubType=["STOCK", "USD1-RWA"]), "symbol": "GPROUSD1"},
+            aster("COHR", symbolType=1, underlyingSubType=["STOCK"]),
+            aster("CL", symbolType=1, underlyingSubType=["Commodities"]),
+        ]},
+        "ONDO": {"success": True, "result": {"perps": {"tradingPairs": [
+            ondo("BTC", tags=["Crypto"]),
+            ondo("NVDA", tags=["Stock"]),
+            ondo("XAU", tags=["Commodity"]),
+            ondo("US500", tags=["Index"]),
+            ondo("US100", tags=["Index"]),
+            ondo("EURUSD", tags=["FX"]),
+            ondo("USDJPY", tags=["FX"]),
+            ondo("WTI", tags=["Commodity"]),
+            ondo("SNDK", tags=["Stock"]),
+            ondo("ADBE", tags=["Stock"], disabled=True),
+        ]}}},
+        "LIGHTER": {"code": 200, "order_books": [
+            lighter("BTC", market_id=1),
+            lighter("NVDA", market_id=110),
+            lighter("XAU", market_id=92),
+            lighter("SKHYNIX", market_id=163),
+            lighter("SKHYNIXUSD", market_id=161),
+            lighter("SAMSUNG", market_id=165),
+            lighter("HYUNDAI", market_id=166),
+            lighter("UNANCHORED", market_id=999),
+        ]},
+    }
+    document, summary = universe.generate_document(
+        data, venues=universe.RWA_VENUES, generated_at="2026-11-24T00:00:00+00:00", asset_class="rwa",
+    )
+    assert summary["asset_class"] == "rwa"
+    assert document["runtime"]["aster_subscription_interval_ms"] == 500
+    by_sym_venue = {(m["symbol"], m["venue"]): m for m in document["markets"]}
+    assert "BTC" not in {m["symbol"] for m in document["markets"]}
+    assert by_sym_venue["NVDA", "ASTER"]["instrument_id"] == "NVDAUSDT-PERP.ASTER"
+    assert by_sym_venue["SNDK", "HL"]["instrument_id"] == "xyz:SNDK-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["GPRO", "HL"]["instrument_id"] == "io:GPRO-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["GPRO", "ASTER"]["instrument_id"] == "GPROUSD1-PERP.ASTER"
+    assert by_sym_venue["COHR", "HL"]["instrument_id"] == "para:COHR-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["XAU", "HL"]["instrument_id"] == "xyz:GOLD-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["CL", "ONDO"]["instrument_id"] == "WTI-USD-PERP.ONDO"
+    assert by_sym_venue["SPX", "HL"]["instrument_id"] == "xyz:SP500-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["SPX", "ONDO"]["instrument_id"] == "US500-USD-PERP.ONDO"
+    assert by_sym_venue["NDX", "HL"]["instrument_id"] == "xyz:XYZ100-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["NDX", "ONDO"]["instrument_id"] == "US100-USD-PERP.ONDO"
+    assert by_sym_venue["EURUSD", "HL"]["instrument_id"] == "xyz:EUR-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["USDJPY", "HL"]["instrument_id"] == "xyz:JPY-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["SKHYNIX", "HL"]["instrument_id"] == "xyz:SKHX-USD-PERP.HYPERLIQUID"
+    assert by_sym_venue["SKHYNIX", "LIGHTER"]["instrument_id"] == "SKHYNIXUSD-PERP.LIGHTER"
+    assert summary["exclusions"]["LIGHTER"]["non_usd_or_crypto_asset"] == 4
+    assert summary["exclusions"]["LIGHTER"]["unanchored_or_ambiguous_asset"] == 1
+    assert "ADBE" not in {m["symbol"] for m in document["markets"]}
+
+    with pytest.raises(universe.UniverseError, match="BACKPACK"):
+        universe.generate_document(data, venues=("HL", "BACKPACK"), asset_class="rwa")
