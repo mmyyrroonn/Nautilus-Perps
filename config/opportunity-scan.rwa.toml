@@ -85,6 +85,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "AAPL"
+venue = "BACKPACK"
+instrument_id = "AAPL.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "AMAT"
 venue = "HL"
 instrument_id = "xyz:AMAT-USD-PERP.HYPERLIQUID"
@@ -135,6 +151,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "AMD"
+venue = "BACKPACK"
+instrument_id = "AMD.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "AMZN"
 venue = "HL"
 instrument_id = "xyz:AMZN-USD-PERP.HYPERLIQUID"
@@ -167,6 +199,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "AMZN"
+venue = "BACKPACK"
+instrument_id = "AMZN.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "ANT"
 venue = "HL"
 instrument_id = "xyz:ANT-USD-PERP.HYPERLIQUID"
@@ -197,6 +245,22 @@ venue = "ONDO"
 instrument_id = "ANT-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "ANT"
+venue = "BACKPACK"
+instrument_id = "ANT.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "ARM"
@@ -605,6 +669,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "CRCL"
+venue = "BACKPACK"
+instrument_id = "CRCL.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "CRDO"
 venue = "HL"
 instrument_id = "para:CRDO-USD-PERP.HYPERLIQUID"
@@ -785,6 +865,22 @@ venue = "ONDO"
 instrument_id = "DRAM-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "DRAM"
+venue = "BACKPACK"
+instrument_id = "DRAM.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "EBAY"
@@ -1044,6 +1140,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "GOOGL"
+venue = "BACKPACK"
+instrument_id = "GOOGL.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "GPRO"
 venue = "HL"
 instrument_id = "io:GPRO-USD-PERP.HYPERLIQUID"
@@ -1110,6 +1222,22 @@ venue = "ONDO"
 instrument_id = "HOOD-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "HOOD"
+venue = "BACKPACK"
+instrument_id = "HOOD.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "HYUNDAI"
@@ -1199,6 +1327,22 @@ venue = "ONDO"
 instrument_id = "INTC-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "INTC"
+venue = "BACKPACK"
+instrument_id = "INTC.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "IREN"
@@ -1415,6 +1559,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "META"
+venue = "BACKPACK"
+instrument_id = "META.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "MINIMAX"
 venue = "HL"
 instrument_id = "xyz:MINIMAX-USD-PERP.HYPERLIQUID"
@@ -1605,6 +1765,22 @@ venue = "ONDO"
 instrument_id = "MU-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "MU"
+venue = "BACKPACK"
+instrument_id = "MU.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "MUU"
@@ -1812,6 +1988,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "NVDA"
+venue = "BACKPACK"
+instrument_id = "NVDA.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "OPENAI"
 venue = "LIGHTER"
 instrument_id = "OPENAI-PERP.LIGHTER"
@@ -1972,6 +2164,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "QQQ"
+venue = "BACKPACK"
+instrument_id = "QQQ.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "RDDT"
 venue = "HL"
 instrument_id = "xyz:RDDT-USD-PERP.HYPERLIQUID"
@@ -2111,6 +2319,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "SKHY"
+venue = "BACKPACK"
+instrument_id = "SKHY.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "SKHYNIX"
 venue = "HL"
 instrument_id = "xyz:SKHX-USD-PERP.HYPERLIQUID"
@@ -2173,6 +2397,22 @@ venue = "ONDO"
 instrument_id = "SNDK-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SNDK"
+venue = "BACKPACK"
+instrument_id = "SNDK.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "SNXX"
@@ -2257,6 +2497,22 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "SPCX"
+venue = "BACKPACK"
+instrument_id = "SPCX.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+
+[[markets]]
 symbol = "SPX"
 venue = "HL"
 instrument_id = "xyz:SP500-USD-PERP.HYPERLIQUID"
@@ -2301,6 +2557,22 @@ venue = "ONDO"
 instrument_id = "SPY-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "SPY"
+venue = "BACKPACK"
+instrument_id = "SPY.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "STRC"
@@ -2351,6 +2623,24 @@ quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
 
 [[markets]]
+symbol = "TQQQ"
+venue = "HL"
+instrument_id = "xyz:TQQQ-USD-PERP.HYPERLIQUID"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4.5"
+fee_source = "Configured standard public taker assumption 4.5 bps; account tier unverified; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees"
+
+[[markets]]
+symbol = "TQQQ"
+venue = "ASTER"
+instrument_id = "TQQQUSDT-PERP.ASTER"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "4"
+fee_source = "Configured public RWA taker assumption 4 bps; verify current published RWA fees; https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees"
+
+[[markets]]
 symbol = "TSLA"
 venue = "HL"
 instrument_id = "xyz:TSLA-USD-PERP.HYPERLIQUID"
@@ -2381,6 +2671,22 @@ venue = "ONDO"
 instrument_id = "TSLA-USD-PERP.ONDO"
 quote_to_usd = "1"
 valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+
+[[markets]]
+symbol = "TSLA"
+venue = "BACKPACK"
+instrument_id = "TSLA.US_USDC_PERP.BACKPACK"
+quote_to_usd = "1"
+valuation_source = "Configured USD/USDC/USDT parity assumption; not a live FX rate"
+taker_fee_bps = "5"
+fee_source = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
+[markets.backpack_economics]
+margin_init = "0.1"
+margin_maint = "0.05"
+maker_fee = "0"
+taker_fee = "0.0005"
+source = "Configured"
+source_reference = "Configured public sample assumptions; account fees/margins unverified; https://backpack.exchange/fees"
 
 [[markets]]
 symbol = "TSM"

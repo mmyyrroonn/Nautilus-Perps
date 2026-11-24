@@ -23,7 +23,7 @@ from opportunity_identity import LIGHTER_PRL_QUARANTINE_CODE, identity_quarantin
 
 
 VENUES = ("HL", "LIGHTER", "ASTER", "ONDO", "BACKPACK")
-RWA_VENUES = ("HL", "LIGHTER", "ASTER", "ONDO")
+RWA_VENUES = VENUES
 HL_HIP3_DEXES = ("xyz", "io", "para")
 FILES = {venue: f"{venue.lower()}-metadata.json" for venue in VENUES}
 URLS = {
@@ -305,6 +305,41 @@ def _discover_rwa_candidates(metadata, rows, exclusions):
                 eligible[canonical, "ONDO"] = natives[0]
                 anchors.add(canonical)
 
+    if "BACKPACK" in rows:
+        bp_candidates = defaultdict(list)
+        for row in rows["BACKPACK"]:
+            if row.get("marketType") != "PERP" or row.get("quoteSymbol") != "USDC":
+                exclusions["BACKPACK"]["unsupported_product_or_quote"] += 1
+                continue
+            if row.get("rwaMarketType") is None:
+                exclusions["BACKPACK"]["crypto_or_unknown_classification"] += 1
+                continue
+            if row.get("orderBookState") != "Open" or row.get("visible") is not True:
+                exclusions["BACKPACK"]["inactive_or_hidden"] += 1
+                continue
+            base_symbol = row.get("baseSymbol")
+            if not isinstance(base_symbol, str) or "." not in base_symbol:
+                exclusions["BACKPACK"]["inconsistent_identity"] += 1
+                continue
+            stem, suffix = base_symbol.split(".", 1)
+            base = _token(stem)
+            if base is None or stem != base or _token(suffix) != suffix or row.get("symbol") != f"{base_symbol}_USDC_PERP":
+                exclusions["BACKPACK"]["inconsistent_identity"] += 1
+                continue
+            filters = row.get("filters")
+            if not isinstance(filters, dict) or any(
+                    not isinstance(filters.get(side), dict) or _decimal(filters[side].get(field), positive=True) is None
+                    for side, field in (("price", "tickSize"), ("quantity", "stepSize"), ("quantity", "minQuantity"))):
+                exclusions["BACKPACK"]["invalid_filters"] += 1
+                continue
+            bp_candidates[_canonical_rwa(base)].append(f"{row['symbol']}.BACKPACK")
+        for canonical, natives in bp_candidates.items():
+            if len(natives) != 1:
+                exclusions["BACKPACK"]["ambiguous_duplicate_market"] += len(natives)
+            else:
+                eligible[canonical, "BACKPACK"] = natives[0]
+                anchors.add(canonical)
+
     if "LIGHTER" in rows:
         lighter_candidates = defaultdict(list)
         for row in rows["LIGHTER"]:
@@ -445,8 +480,6 @@ def generate_document(metadata, *, venues=None, symbols=None, provenance=None, g
     if asset_class not in {"crypto", "rwa"}:
         raise UniverseError("asset_class must be crypto or rwa")
     selected = _selected(venues)
-    if asset_class == "rwa" and "BACKPACK" in selected:
-        raise UniverseError("BACKPACK RWA symbols (.US) are unsupported by the current native adapter")
     if not isinstance(metadata, dict) or set(selected) - metadata.keys():
         raise UniverseError("metadata is missing a selected venue")
     if metadata.keys() - set(VENUES):
@@ -689,12 +722,8 @@ def main(argv=None):
     try:
         default_venues = RWA_VENUES if args.asset_class == "rwa" else VENUES
         venues = _selected(default_venues if args.venues is None else args.venues.split(","))
-        if args.asset_class == "rwa" and "BACKPACK" in venues:
-            raise UniverseError("BACKPACK RWA symbols (.US) are unsupported by the current native adapter")
         # Output selection must not remove trusted RWA/crypto identity evidence.
-        evidence_venues = (
-            set(venues) | ({"HL", "ASTER", "ONDO"} if args.asset_class == "rwa" else {"HL", "ASTER", "ONDO", "BACKPACK"})
-        )
+        evidence_venues = set(venues) | {"HL", "ASTER", "ONDO", "BACKPACK"}
         metadata, provenance = (
             load_metadata(args.metadata_dir, venues)
             if args.metadata_dir
