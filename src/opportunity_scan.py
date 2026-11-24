@@ -90,6 +90,9 @@ class ScanPlan:
     backpack_quote_cache_only: bool = False
     backpack_depth_coalesce_ms: int = 0
     coalesce_book_deltas: bool = False
+    backpack_max_buffer_frames: int = 2048
+    hl_ws_select_candidates: int = 1
+    hl_ws_select_probe_ms: int = 2500
 
     def select_symbols(self, symbols: set[str]) -> ScanPlan:
         markets = tuple(m for m in self.markets if m.symbol in symbols)
@@ -155,7 +158,8 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
                           "aster_snapshot_depth", "aster_subscription_interval_ms",
                           "hyperliquid_fast_book", "hyperliquid_bbo_gate",
                           "backpack_quote_cache_only", "backpack_depth_coalesce_ms",
-                          "coalesce_book_deltas"}, "runtime")
+                          "backpack_max_buffer_frames", "coalesce_book_deltas",
+                          "hl_ws_select_candidates", "hl_ws_select_probe_ms"}, "runtime")
 
     def _runtime_bool(key: str) -> bool:
         value = runtime.get(key, False)
@@ -169,6 +173,12 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
     coalesce_book_deltas = _runtime_bool("coalesce_book_deltas")
     backpack_depth_coalesce_ms = integer_value(
         runtime.get("backpack_depth_coalesce_ms", 0), "backpack_depth_coalesce_ms", 0, 1000)
+    backpack_max_buffer_frames = integer_value(
+        runtime.get("backpack_max_buffer_frames", 2048), "backpack_max_buffer_frames", 1, 16384)
+    hl_ws_select_candidates = integer_value(
+        runtime.get("hl_ws_select_candidates", 1), "hl_ws_select_candidates", 1, 12)
+    hl_ws_select_probe_ms = integer_value(
+        runtime.get("hl_ws_select_probe_ms", 2500), "hl_ws_select_probe_ms", 100, 15000)
     cap = integer_value(runtime.get("max_levels_per_side", 2000), "max_levels_per_side", 1, 20000)
     depth = integer_value(runtime.get("depth_levels", 20), "depth_levels", 1, cap)
     aster_depth = integer_value(runtime.get("aster_snapshot_depth", 1000), "aster_snapshot_depth", 5, 1000)
@@ -275,7 +285,8 @@ def parse_plan(document: dict, config_dir: Path) -> ScanPlan:
         aster_depth,
         integer_value(runtime.get("aster_subscription_interval_ms", 500), "aster_subscription_interval_ms", 1, 60000),
         fast_book, pairs, bbo_gate,
-        backpack_quote_cache_only, backpack_depth_coalesce_ms, coalesce_book_deltas)
+        backpack_quote_cache_only, backpack_depth_coalesce_ms, coalesce_book_deltas,
+        backpack_max_buffer_frames, hl_ws_select_candidates, hl_ws_select_probe_ms)
 
 
 def load_plan(path: Path) -> ScanPlan:

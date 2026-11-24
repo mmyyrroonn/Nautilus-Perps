@@ -355,7 +355,9 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
     allowed_keys(runtime, {"duration_secs", "drain_timeout_secs", "timer_interval_ms", "account_max_age_ms",
                            "lighter_margin_max_age_ms", "order_timeout_secs", "retry_interval_ms",
                            "evaluation_interval_ms", "backpack_quote_cache_only",
-                           "backpack_depth_coalesce_ms", "coalesce_book_deltas"}, "live runtime")
+                           "backpack_depth_coalesce_ms", "backpack_max_buffer_frames",
+                           "coalesce_book_deltas", "hl_ws_select_candidates",
+                           "hl_ws_select_probe_ms"}, "live runtime")
     account_max_age = integer_value(runtime.get("account_max_age_ms", 15000), "account_max_age_ms", 1, 60000)
     leverage_age = integer_value(
         leverage.get("max_age_ms", 5000),
@@ -378,7 +380,16 @@ def load_live_plan(path, *, symbols=None, max_pairs=None, max_gross_notional_usd
         backpack_depth_coalesce_ms=integer_value(
             runtime.get("backpack_depth_coalesce_ms", scan.backpack_depth_coalesce_ms),
             "backpack_depth_coalesce_ms", 0, 1000),
+        backpack_max_buffer_frames=integer_value(
+            runtime.get("backpack_max_buffer_frames", scan.backpack_max_buffer_frames),
+            "backpack_max_buffer_frames", 1, 16384),
         coalesce_book_deltas=_runtime_bool(runtime, "coalesce_book_deltas", scan.coalesce_book_deltas),
+        hl_ws_select_candidates=integer_value(
+            runtime.get("hl_ws_select_candidates", scan.hl_ws_select_candidates),
+            "hl_ws_select_candidates", 1, 12),
+        hl_ws_select_probe_ms=integer_value(
+            runtime.get("hl_ws_select_probe_ms", scan.hl_ws_select_probe_ms),
+            "hl_ws_select_probe_ms", 100, 15000),
         settings=replace(scan.settings, target_notional=policy.order_notional_usd,
                          min_entry_edge_bps=policy.entry_edge_bps))
     return LiveRunPlan(scan, policy, paths["state_path"], paths["limits_path"], venues, tuple(requested), pairs, gross,

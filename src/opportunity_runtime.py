@@ -307,18 +307,28 @@ def data_clients(plan, *, backpack_quota=None):
             backpack_cap = min(plan.max_levels_per_side, 10_000)
             snapshot_depth = max(depth for depth in (5, 10, 20, 50, 100, 500, 1000)
                                  if depth <= backpack_cap)
-            config = BackpackDataClientConfig(list(economics), economics,
-                max_levels_per_side=backpack_cap,
-                depth_snapshot_limit=snapshot_depth,
-                quote_stale_after_ms=min(plan.settings.max_age_ms, 30_000),
-                http_timeout_secs=min(plan.connection_timeout_secs, 60),
-                shutdown_timeout_secs=10,
-                quote_cache_only=plan.backpack_quote_cache_only,
-                depth_coalesce_ms=plan.backpack_depth_coalesce_ms)
+            bp_kwargs = {
+                "max_levels_per_side": backpack_cap,
+                "depth_snapshot_limit": snapshot_depth,
+                "quote_stale_after_ms": min(plan.settings.max_age_ms, 30_000),
+                "http_timeout_secs": min(plan.connection_timeout_secs, 60),
+                "shutdown_timeout_secs": 10,
+                "quote_cache_only": plan.backpack_quote_cache_only,
+                "depth_coalesce_ms": plan.backpack_depth_coalesce_ms,
+            }
+            max_buffer_frames = getattr(plan, "backpack_max_buffer_frames", 2048)
+            if max_buffer_frames != 2048:
+                bp_kwargs["max_buffer_frames"] = max_buffer_frames
+            config = BackpackDataClientConfig(list(economics), economics, **bp_kwargs)
             factory = (BackpackDataClientFactory(quota=backpack_quota)
                        if backpack_quota is not None else BackpackDataClientFactory())
         else:
             kwargs = {"bbo_cache_only": True} if client_id == "HYPERLIQUID" and plan.hyperliquid_bbo_gate else {}
+            if client_id == "HYPERLIQUID":
+                candidates = getattr(plan, "hl_ws_select_candidates", 1)
+                if candidates > 1:
+                    kwargs["ws_select_candidates"] = candidates
+                    kwargs["ws_select_probe_ms"] = getattr(plan, "hl_ws_select_probe_ms", 2500)
             factory, config = factories[client_id]([m.instrument_id for m in markets], **kwargs)
         result.append((client_id, factory, config))
     return result

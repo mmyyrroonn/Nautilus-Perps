@@ -414,7 +414,13 @@ def _adapter_missing(venue_key: str, module: str) -> str:
     )
 
 
-def _hyperliquid_client(instrument_ids: Sequence[str], *, bbo_cache_only: bool = False) -> tuple[object, object]:
+def _hyperliquid_client(
+    instrument_ids: Sequence[str],
+    *,
+    bbo_cache_only: bool = False,
+    ws_select_candidates: int = 1,
+    ws_select_probe_ms: int = 2500,
+) -> tuple[object, object]:
     """Hyperliquid mainnet data client (public market data, no keys)."""
     try:
         from nautilus_trader.adapters.hyperliquid import (
@@ -424,7 +430,10 @@ def _hyperliquid_client(instrument_ids: Sequence[str], *, bbo_cache_only: bool =
         )
     except ImportError as exc:
         raise SystemExit(_adapter_missing("HL", "nautilus_trader.adapters.hyperliquid")) from exc
-    kwargs = {"bbo_cache_only": True} if bbo_cache_only else {}
+    kwargs: dict[str, object] = {"bbo_cache_only": True} if bbo_cache_only else {}
+    if ws_select_candidates > 1:
+        kwargs["ws_select_candidates"] = ws_select_candidates
+        kwargs["ws_select_probe_ms"] = ws_select_probe_ms
     return (
         HyperliquidDataClientFactory(),
         HyperliquidDataClientConfig(environment=HyperliquidEnvironment.MAINNET, **kwargs),

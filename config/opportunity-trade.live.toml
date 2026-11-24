@@ -119,7 +119,10 @@ timer_interval_ms = 100
 evaluation_interval_ms = 20
 backpack_quote_cache_only = true
 backpack_depth_coalesce_ms = 5
+backpack_max_buffer_frames = 8192
 coalesce_book_deltas = true
+hl_ws_select_candidates = 8
+hl_ws_select_probe_ms = 2500
 # Complete native account reads may take several seconds; BBO freshness is separate.
 account_max_age_ms = 60000
 lighter_margin_max_age_ms = 60000

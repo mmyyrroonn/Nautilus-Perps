@@ -137,10 +137,15 @@ def execution_clients(scan_plan, environment="mainnet", *, environ=None,
                 raise ValueError("explicit Hyperliquid ACCOUNT_ADDRESS is required for independent account reconciliation")
             if not env.get(prefix + "PK"):
                 raise ValueError("explicit Hyperliquid signing key is required")
+            hl_kwargs = {}
+            candidates = getattr(scan_plan, "hl_ws_select_candidates", 1)
+            if candidates > 1:
+                hl_kwargs["ws_select_candidates"] = candidates
+                hl_kwargs["ws_select_probe_ms"] = getattr(scan_plan, "hl_ws_select_probe_ms", 2500)
             config = HyperliquidExecutionClientConfig(account_id=account_id,
                 environment=HyperliquidEnvironment.MAINNET if environment == "mainnet" else HyperliquidEnvironment.TESTNET,
                 private_key=env[prefix + "PK"], vault_address=env.get(prefix + "VAULT"),
-                account_address=address, include_builder_attribution=False)
+                account_address=address, include_builder_attribution=False, **hl_kwargs)
             factory = HyperliquidExecutionClientFactory()
         elif client == "LIGHTER":
             from nautilus_trader.adapters.lighter import (
