@@ -13,7 +13,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 import opportunity_account_scope as scope
-from opportunity_live_runner import SessionStoreProxy, load_live_plan, run_live
+from opportunity_live_runner import (
+    SessionStoreProxy,
+    _flat_claim_recovery_plan,
+    load_live_plan,
+    run_live,
+    run_release_flat_claim,
+)
 from opportunity_trade_store import TradeStore
 
 
@@ -385,3 +391,230 @@ def test_runner_holds_claim_through_cleanup_and_only_releases_clean_sessions(
     outcome = contender(registry, tmp_path / "other.sqlite3", binding()).stdout.strip()
     assert outcome == ("acquired" if failure is None else "blocked")
     capsys.readouterr()
+
+
+def _live_config_with_eth(tmp_path, *, excluded=""):
+    from test_opportunity_live_runner import configs
+
+    live_path = configs(tmp_path, venues='["HYPERLIQUID", "LIGHTER"]', mandatory="false")
+    if excluded:
+        text = live_path.read_text(encoding="utf-8")
+        live_path.write_text(
+            text.replace('environment = "mainnet"\n', f'environment = "mainnet"\nexcluded_symbols = [{excluded}]\n'),
+            encoding="utf-8",
+        )
+    return live_path
+
+
+def _seed_retained_claim(registry, tmp_path, monkeypatch, capsys, env):
+    import opportunity_live_runner as runner
+    import opportunity_shutdown
+
+    dotenv = pytest.importorskip("dotenv")
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(os, "environ", dict(env))
+    monkeypatch.setattr(scope, "verify_execution_identity", lambda *args: None)
+    monkeypatch.setattr(opportunity_shutdown, "collect_native_shutdown", lambda controls: {"clean": False, "venues": {}})
+
+    old_path = _live_config_with_eth(tmp_path)
+    old_plan = load_live_plan(old_path)
+
+    def build_dirty(plan, live, coordinator, *, environ):
+        def run():
+            coordinator.finished = True
+        coordinator.gateway = SimpleNamespace(close=lambda: None, poll=lambda now: None, dispatch=lambda i, now: None)
+        return SimpleNamespace(run=run, dispose=lambda: None), SimpleNamespace(failure=None), object()
+
+    monkeypatch.setattr(runner, "build_live_node", build_dirty)
+    assert run_live(old_plan) == 1
+    capsys.readouterr()
+    old_fp = old_plan.fingerprint(binding().document())
+    assert contender(registry, tmp_path / "other.sqlite3", binding()).stdout.strip() == "blocked"
+    return old_fp
+
+
+def test_flat_claim_recovery_plan_picks_one_representative_per_venue_and_dex(tmp_path):
+    live_path = _live_config_with_eth(tmp_path, excluded='"ETH"')
+    base = load_live_plan(live_path)
+    hl_market = next(m for m in base.scan.markets if m.venue == "HL")
+    dex_market = replace(hl_market, instrument_id="xyz:XYZ100-USD-PERP.HYPERLIQUID", symbol="xyz:XYZ100")
+    plan = replace(
+        base,
+        scan=replace(base.scan, markets=(*base.scan.markets, dex_market), hl_ws_select_candidates=8),
+        startup_self_test=True,
+        startup_balance_check=True,
+        duration_secs=300,
+    )
+    rec = _flat_claim_recovery_plan(plan)
+    assert rec.scan.hl_ws_select_candidates == 1
+    assert rec.trade_symbols == ()
+    assert rec.startup_self_test is False
+    assert rec.startup_balance_check is False
+    assert rec.duration_secs == 0
+    assert rec.loss_monitor.enabled is False
+    assert {m.instrument_id for m in rec.scan.markets} == {
+        "BTC-PERP.HYPERLIQUID",
+        "xyz:XYZ100-USD-PERP.HYPERLIQUID",
+        "BTC-PERP.LIGHTER",
+    }
+
+
+def test_release_flat_claim_success_with_changed_excluded_symbols(registry, tmp_path, monkeypatch, capsys):
+    from decimal import Decimal
+    import sqlite3
+    import opportunity_live_runner as runner
+    import opportunity_shutdown
+    from opportunity_preflight import AccountSnapshot
+
+    env = credentials()
+    old_fp = _seed_retained_claim(registry, tmp_path, monkeypatch, capsys, env)
+
+    new_path = _live_config_with_eth(tmp_path, excluded='"ETH"')
+    new_plan = load_live_plan(new_path)
+    new_fp = new_plan.fingerprint(binding().document())
+    assert new_fp != old_fp
+
+    # Normal run_live refuses mismatched configuration while the ledger stays bound to old_fp.
+    with pytest.raises(ValueError, match="different policy or market configuration|different account or configuration"):
+        run_live(new_plan)
+
+    monkeypatch.setattr(opportunity_shutdown, "collect_native_shutdown", lambda controls: {"clean": True, "venues": {}})
+    verified = []
+    monkeypatch.setattr(scope, "verify_execution_identity", lambda *args: verified.append(args))
+
+    def build_recovery(plan, live, coordinator, *, environ):
+        assert plan.scan.hl_ws_select_candidates == 1
+        assert len(plan.scan.markets) == 2
+
+        def run():
+            now = 2_000_000_000_000_000_000
+            coordinator.tick(now)
+            for m in plan.scan.markets:
+                coordinator.on_account(
+                    AccountSnapshot(
+                        m.venue, m.instrument_id, None, None, now + 1, Decimal(0),
+                        account_positions=(), account_open_orders=(),
+                    ),
+                    now + 1,
+                )
+            coordinator.tick(now + 2)
+
+        coordinator.gateway = SimpleNamespace(close=lambda: None, poll=lambda now: None, dispatch=lambda i, now: None)
+        return SimpleNamespace(run=run, dispose=lambda: None), SimpleNamespace(failure=None), object()
+
+    monkeypatch.setattr(runner, "build_live_node", build_recovery)
+    assert run_release_flat_claim(new_plan) == 0
+    assert len(verified) == 1
+    out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    summary = json.loads("\n".join(out_lines[out_lines.index("{"):]))
+    assert summary["event"] == "release_flat_claim"
+    assert summary["released"] is True
+    assert summary["rebound"] is True
+    assert summary["previous_fingerprint"] == old_fp
+    assert summary["new_fingerprint"] == new_fp
+    assert summary["account_recovery"]["result"] == "passed"
+
+    con = sqlite3.connect(registry / "claims.sqlite3")
+    assert con.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 0
+    con.close()
+
+    ledger = sqlite3.connect(new_plan.state_path)
+    assert ledger.execute("SELECT fingerprint FROM ownership WHERE id=1").fetchone()[0] == new_fp
+    assert ledger.execute("SELECT fingerprint FROM state WHERE id=1").fetchone()[0] == new_fp
+    kinds = [r[0] for r in ledger.execute("SELECT kind FROM events ORDER BY sequence").fetchall()]
+    assert "previous_session_archived" in kinds
+    assert "ledger_fingerprint_rebound" in kinds
+    ledger.close()
+
+    # Subsequent run_live with the rebound configuration claims and completes cleanly.
+    def build_clean_live(plan, live, coordinator, *, environ):
+        def run():
+            coordinator.finished = True
+        coordinator.gateway = SimpleNamespace(close=lambda: None)
+        return SimpleNamespace(run=run, dispose=lambda: None), SimpleNamespace(failure=None), object()
+
+    monkeypatch.setattr(runner, "build_live_node", build_clean_live)
+    assert run_live(new_plan) == 0
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize("fault", ["not_flat_timeout", "dirty_shutdown", "dispose_failure", "wrong_binding", "copied_ledger"])
+def test_release_flat_claim_retains_claim_and_fingerprint_on_failures(registry, tmp_path, monkeypatch, capsys, fault):
+    from decimal import Decimal
+    import shutil
+    import sqlite3
+    import opportunity_live_runner as runner
+    import opportunity_shutdown
+    from opportunity_preflight import AccountSnapshot
+
+    env = credentials()
+    old_fp = _seed_retained_claim(registry, tmp_path, monkeypatch, capsys, env)
+    new_path = _live_config_with_eth(tmp_path, excluded='"ETH"')
+    new_plan = load_live_plan(new_path)
+    ledger_path = new_plan.state_path
+
+    monkeypatch.setattr(
+        opportunity_shutdown,
+        "collect_native_shutdown",
+        lambda controls: {"clean": fault != "dirty_shutdown", "venues": {}},
+    )
+    if fault == "wrong_binding":
+        monkeypatch.setattr(os, "environ", env | {"HYPERLIQUID_ACCOUNT_ADDRESS": "0x" + "99" * 20})
+    elif fault == "copied_ledger":
+        copied = tmp_path / "copied.sqlite3"
+        shutil.copy2(ledger_path, copied)
+        new_plan = replace(new_plan, state_path=copied)
+
+    def build_faulty(plan, live, coordinator, *, environ):
+        def run():
+            now = 2_000_000_000_000_000_000
+            if fault == "not_flat_timeout":
+                coordinator.tick(now)
+                coordinator.on_account(
+                    AccountSnapshot(
+                        "HL", plan.scan.markets[0].instrument_id, None, None, now + 1, Decimal("1"),
+                        account_positions=(("BTC-PERP.HYPERLIQUID", Decimal("1")),), account_open_orders=(),
+                    ),
+                    now + 1,
+                )
+                coordinator.tick(now + 120 * 1_000_000_000)
+            else:
+                coordinator.tick(now)
+                for m in plan.scan.markets:
+                    coordinator.on_account(
+                        AccountSnapshot(
+                            m.venue, m.instrument_id, None, None, now + 1, Decimal(0),
+                            account_positions=(), account_open_orders=(),
+                        ),
+                        now + 1,
+                    )
+                coordinator.tick(now + 2)
+
+        def dispose():
+            if fault == "dispose_failure":
+                raise RuntimeError("synthetic dispose failure")
+
+        coordinator.gateway = SimpleNamespace(close=lambda: None, poll=lambda now: None, dispatch=lambda i, now: None)
+        return SimpleNamespace(run=run, dispose=dispose), SimpleNamespace(failure=None), object()
+
+    monkeypatch.setattr(runner, "build_live_node", build_faulty)
+    if fault in {"dispose_failure", "wrong_binding", "copied_ledger"}:
+        with pytest.raises((RuntimeError, ValueError)):
+            run_release_flat_claim(new_plan)
+        assert "released" not in capsys.readouterr().out
+    else:
+        assert run_release_flat_claim(new_plan) == 1
+        out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+        summary = json.loads("\n".join(out_lines[out_lines.index("{"):]))
+        assert summary["released"] is False
+        assert summary["rebound"] is False
+
+    con = sqlite3.connect(registry / "claims.sqlite3")
+    rows = con.execute("SELECT fingerprint FROM claims").fetchall()
+    con.close()
+    assert len(rows) == 2 and all(r[0] == old_fp for r in rows)
+
+    ledger = sqlite3.connect(ledger_path)
+    assert ledger.execute("SELECT fingerprint FROM ownership WHERE id=1").fetchone()[0] == old_fp
+    assert ledger.execute("SELECT fingerprint FROM state WHERE id=1").fetchone()[0] == old_fp
+    ledger.close()
