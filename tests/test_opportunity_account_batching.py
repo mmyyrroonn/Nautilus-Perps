@@ -145,3 +145,37 @@ def test_account_payload_sharing_keeps_input_immutable_and_serializable():
     assert changed.account_positions is not observation.account_positions
     with pytest.raises(ValueError, match="finite"):
         replace(projected, account_positions=(("BTC.HL", D("NaN")),))
+
+
+def test_account_snapshot_project_preserves_shared_payload_and_validates_target_fields():
+    live = empty_state()
+    observation = AccountSnapshot(
+        "HL", "BTC.HL", D("100"), D("101"), NOW, D(0), ("ord-1",),
+        book_observed_ns=NOW,
+        account_positions=(("BTC.HL", D(0)), ("ETH.HL", D("1.5"))),
+        account_open_orders=(("BTC.HL", "ord-1"), ("ETH.HL", "ord-2")),
+        hl_oi_capped=("XYZ-USD-PERP.HYPERLIQUID",),
+    )
+    projected = observation.project("ETH.HL", D("1.5"), ("ord-2",))
+    assert projected.venue == "HL" and projected.instrument_id == "ETH.HL"
+    assert projected.bid is None and projected.ask is None and projected.book_observed_ns is None
+    assert projected.position_quantity == D("1.5") and projected.open_order_ids == ("ord-2",)
+    assert projected.account_positions is observation.account_positions
+    assert projected.account_open_orders is observation.account_open_orders
+    assert projected.hl_oi_capped is observation.hl_oi_capped
+    assert asdict(projected)["position_quantity"] == D("1.5")
+
+    live.on_account(observation, NOW)
+    assert live.accounts["ETH.HL"].account_positions is observation.account_positions
+    assert live.accounts["ETH.HL"].open_order_ids == ("ord-2",)
+    assert live.accounts["ETH.HL"].bid is None
+
+    with pytest.raises(ValueError, match="instrument_id"):
+        observation.project("", D(0))
+    with pytest.raises(ValueError, match="finite"):
+        observation.project("ETH.HL", D("NaN"))
+    with pytest.raises(ValueError, match="client order"):
+        observation.project("ETH.HL", D(0), ("",))
+    legacy = AccountSnapshot("HL", "BTC.HL", D("100"), D("101"), NOW, D(0))
+    with pytest.raises(ValueError, match="complete coverage"):
+        legacy.project("ETH.HL", D(0))

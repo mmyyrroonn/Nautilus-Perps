@@ -127,4 +127,4 @@ order_timeout_secs = 10
 retry_interval_ms = 1000
 
 [aster_leverage]
-max_age_ms = 15000
+max_age_ms = 60000

@@ -127,8 +127,9 @@ class LiveTradeState(ScanState):
                 raise ValueError("Aster leverage target requires a configured Aster instrument")
             if type(target) is not int or leverage_integer(target) != target:
                 raise ValueError("Aster leverage target must be an integer")
-        if type(aster_leverage_max_age_ms) is not int or not 1 <= aster_leverage_max_age_ms <= 15000:
-            raise ValueError("Aster leverage age must be between 1 and 15000 ms")
+        max_leverage_age_ms = max(account_max_age_ms, 15000)
+        if type(aster_leverage_max_age_ms) is not int or not 1 <= aster_leverage_max_age_ms <= max_leverage_age_ms:
+            raise ValueError(f"Aster leverage age must be between 1 and {max_leverage_age_ms} ms")
         self.aster_leverage_max_age_ns = aster_leverage_max_age_ms * 1_000_000
         resolved_margin_age_ms = (
             aster_leverage_max_age_ms if lighter_margin_max_age_ms is None else lighter_margin_max_age_ms
@@ -1096,6 +1097,9 @@ class LiveTradeState(ScanState):
         if account.account_positions is not None:
             positions = dict(account.account_positions)
             if F(positions.get(instrument_id, 0)) == F(account.position_quantity):
+                open_orders_by_instrument = {}
+                for order_inst, cid in account.account_open_orders:
+                    open_orders_by_instrument.setdefault(order_inst, []).append(cid)
                 # Project only account facts. Another market must never inherit
                 # the representative's quote or quote timestamp.
                 for covered in self._account_coverage(account):
@@ -1103,10 +1107,11 @@ class LiveTradeState(ScanState):
                         continue
                     previous = self.accounts.get(covered)
                     if previous is None or previous.observed_ns <= account.observed_ns:
-                        self.accounts[covered] = replace(account, instrument_id=covered,
-                            position_quantity=positions.get(covered, Decimal(0)),
-                            open_order_ids=tuple(cid for i, cid in account.account_open_orders if i == covered),
-                            bid=None, ask=None, book_observed_ns=None)
+                        self.accounts[covered] = account.project(
+                            covered,
+                            positions.get(covered, Decimal(0)),
+                            tuple(open_orders_by_instrument.get(covered, ())),
+                        )
         archive_flat_positions(self, now_ns)
         problem = self._account_problem(instrument_id, now_ns)
         self.emit("account_read_completed", now_ns, instrument_id=instrument_id, request_id=request_id,

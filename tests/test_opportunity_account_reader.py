@@ -564,3 +564,72 @@ def test_rate_limit_cooldown_survives_cache_invalidation_and_market_changes():
     snapshot = reader.read(market("LIGHTER", "ETH-PERP.LIGHTER"), None, None, now[0])
     assert snapshot.account_positions == () and len(calls) == 3
     assert "orderBookDetails" in calls[-1][1]
+
+
+def test_aster_configured_filter_drops_flat_unconfigured_rows_but_keeps_nonzero_and_checks_integrity():
+    def run_reader(*, extra_amt="0", extra_side="BOTH", extra_max=0, extra_lev="999", duplicate_extra=False):
+        positions = [
+            {"symbol": "ETHUSDT", "positionSide": "BOTH", "positionAmt": "0",
+             "markPrice": "3000", "leverage": "5"},
+            {"symbol": "UNCONFIGURED", "positionSide": extra_side, "positionAmt": extra_amt,
+             "markPrice": "1", "leverage": extra_lev},
+        ]
+        if duplicate_extra:
+            positions.append(dict(positions[1]))
+        brackets = [
+            {"symbol": "ETHUSDT", "brackets": [{"initialLeverage": 20, "notionalFloor": 0, "notionalCap": 10000}]},
+            {"symbol": "UNCONFIGURED", "brackets": [{"initialLeverage": extra_max, "notionalFloor": 0, "notionalCap": 10000}]},
+        ]
+        def transport(method, url):
+            if "/positionRisk?" in url:
+                return positions
+            if "/openOrders?" in url:
+                return []
+            return brackets
+        reader = ReadOnlyAccountReader(
+            environ={"ASTER_MAINNET_SIGNER_PRIVATE_KEY": "fixture",
+                     "ASTER_MAINNET_SIGNER_ADDRESS": "0x" + "1" * 40,
+                     "ASTER_MAINNET_USER_ADDRESS": "0x" + "2" * 40},
+            transport=transport,
+            aster_signer=lambda *args: "0x" + "a" * 130,
+            clock_ns=lambda: 10_000,
+            aster_instruments=("ETHUSDT-PERP.ASTER",),
+        )
+        return reader.read(market("ASTER", "ETHUSDT-PERP.ASTER"), D(2999), D(3001), 50)
+
+    # Flat unconfigured row is dropped from account_positions and its invalid brackets are skipped.
+    snap = run_reader()
+    assert snap.account_positions == (("ETHUSDT-PERP.ASTER", D(0)),)
+    assert snap.aster_leverage is not None
+    assert [row.instrument_id for row in snap.aster_leverage.symbols] == ["ETHUSDT-PERP.ASTER"]
+
+    # Non-zero unconfigured position is ALWAYS retained so LiveTradeState triggers position_mismatch.
+    nonzero = run_reader(extra_amt="1.25")
+    assert dict(nonzero.account_positions) == {
+        "ETHUSDT-PERP.ASTER": D(0),
+        "UNCONFIGURED-PERP.ASTER": D("1.25"),
+    }
+
+    # Malformed hedge-mode or duplicate unconfigured rows still fail closed.
+    with pytest.raises(AccountReadError, match="ambiguous"):
+        run_reader(extra_side="LONG")
+    with pytest.raises(AccountReadError, match="duplicate"):
+        run_reader(duplicate_extra=True)
+
+
+def test_native_gateway_passes_configured_aster_instruments_to_reader():
+    from opportunity_native_execution import NativeOrderGateway
+    from test_opportunity_native_execution import FakeStrategy, MODEL
+    markets = [
+        market("ASTER", "BTCUSDT-PERP.ASTER"),
+        market("ASTER", "ETHUSDT-PERP.ASTER"),
+        market("HL", "BTC-USD-PERP.HYPERLIQUID"),
+    ]
+    gateway = NativeOrderGateway(
+        FakeStrategy(), markets, lambda _: None, lambda _: None, lambda _: None, model=MODEL,
+    )
+    try:
+        assert gateway.reader._aster_instruments == frozenset({"BTCUSDT-PERP.ASTER", "ETHUSDT-PERP.ASTER"})
+        assert gateway.reader._aster_symbols == frozenset({"BTCUSDT", "ETHUSDT"})
+    finally:
+        gateway.close()

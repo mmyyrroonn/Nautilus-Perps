@@ -292,8 +292,10 @@ class NativeOrderGateway:
         self._has_backpack = any(m.venue == "BACKPACK" for m in self.markets.values())
         self._ondo_ids = tuple(sorted(m.instrument_id for m in self.markets.values() if m.venue == "ONDO"))
         self.on_receipt, self.on_account, self.on_fill = on_receipt, on_account, on_fill
+        aster_instruments = tuple(sorted(i for i, m in self.markets.items() if m.venue == "ASTER"))
         self.reader = reader or ReadOnlyAccountReader(environment=environment, environ=environ,
-            max_native_snapshot_age_ms=account_max_age_ms)
+            max_native_snapshot_age_ms=account_max_age_ms,
+            aster_instruments=aster_instruments or None)
         self.environment = environment
         self.model = model or _native()
         self.timeout_ns = timeout_secs * 1_000_000_000

@@ -215,6 +215,37 @@ def test_aster_proactive_refresh_tracks_leverage_half_life():
     assert any(i.action == "reconcile" and i.instrument_id == "BTC.ASTER" for i in live.outbox)
 
 
+def test_aster_leverage_max_age_scales_with_account_max_age_and_rejects_above_bound(tmp_path):
+    from opportunity_live_runner import load_live_plan
+    from opportunity_scan import ScanConfigError
+    from test_opportunity_live_runner import configs
+    live, _ = state(
+        make_plan(venues=("HL", "ASTER")),
+        account_max_age_ms=60000,
+        aster_leverage_max_age_ms=60000,
+    )
+    t20 = NOW + 20 * SECOND
+    assert live.leverage_problem("BTC.ASTER", D("100"), D("1"), t20)[0] is None
+    live.outbox.clear()
+    live.reconcile_accounts(t20)
+    assert not any(i.action == "reconcile" and i.instrument_id == "BTC.ASTER" for i in live.outbox)
+    live.reconcile_accounts(NOW + 30 * SECOND)
+    assert any(i.action == "reconcile" and i.instrument_id == "BTC.ASTER" for i in live.outbox)
+
+    with pytest.raises(ValueError, match="Aster leverage age"):
+        state(
+            make_plan(venues=("HL", "ASTER")),
+            account_max_age_ms=60000,
+            aster_leverage_max_age_ms=60001,
+        )
+
+    path = configs(tmp_path)
+    text = path.read_text()
+    path.write_text(text + "\n[aster_leverage]\nmax_age_ms = 60001\n")
+    with pytest.raises(ScanConfigError, match="aster_leverage.max_age_ms"):
+        load_live_plan(path)
+
+
 def test_lighter_market_entry_blocks_detects_frozen_and_oi_cap():
     payload = {
         "code": 200,

@@ -49,14 +49,18 @@ def tier_leverage_integer(value):
     raise ValueError("invalid Aster tier leverage")
 
 
-def parse_leverage(positions, brackets, started_ns):
+def parse_leverage(positions, brackets, started_ns, *, allowed_symbols=None):
     """Discard private response fields and reject ambiguous tier coverage."""
     from opportunity_account_reader import exact, _rows
-    tiers = {}
+    allowed = None if allowed_symbols is None else frozenset(allowed_symbols)
+    tiers, seen_brackets = {}, set()
     for row in _rows(brackets, "Aster leverage brackets"):
         symbol = row.get("symbol")
-        if not isinstance(symbol, str) or not symbol or symbol in tiers:
+        if not isinstance(symbol, str) or not symbol or symbol in seen_brackets:
             raise ValueError("invalid Aster leverage symbol")
+        seen_brackets.add(symbol)
+        if allowed is not None and symbol not in allowed:
+            continue
         values = []
         for tier in _rows(row.get("brackets"), "Aster leverage tiers"):
             floor, cap = exact(tier.get("notionalFloor")), exact(tier.get("notionalCap"))
@@ -78,7 +82,7 @@ def parse_leverage(positions, brackets, started_ns):
             raise ValueError("ambiguous Aster leverage position")
         seen.add(symbol)
         # Missing symbols remain explicitly unavailable at admission.
-        if symbol not in tiers:
+        if (allowed is not None and symbol not in allowed) or symbol not in tiers:
             continue
         position = exact(row.get("positionAmt"))
         mark = exact(row.get("markPrice"))
