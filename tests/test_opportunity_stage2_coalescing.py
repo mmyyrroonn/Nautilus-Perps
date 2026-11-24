@@ -132,18 +132,27 @@ def test_scan_plan_stage2_defaults_and_validation(tmp_path):
     assert default_plan.backpack_quote_cache_only is False
     assert default_plan.backpack_depth_coalesce_ms == 0
     assert default_plan.coalesce_book_deltas is False
+    assert default_plan.backpack_max_buffer_frames == 2048
+    assert default_plan.hl_ws_select_candidates == 1
+    assert default_plan.hl_ws_select_probe_ms == 2500
 
     enabled = parse_plan(
         _scan_doc(
             backpack_quote_cache_only=True,
             backpack_depth_coalesce_ms=5,
             coalesce_book_deltas=True,
+            backpack_max_buffer_frames=8192,
+            hl_ws_select_candidates=8,
+            hl_ws_select_probe_ms=3000,
         ),
         tmp_path,
     )
     assert enabled.backpack_quote_cache_only is True
     assert enabled.backpack_depth_coalesce_ms == 5
     assert enabled.coalesce_book_deltas is True
+    assert enabled.backpack_max_buffer_frames == 8192
+    assert enabled.hl_ws_select_candidates == 8
+    assert enabled.hl_ws_select_probe_ms == 3000
 
     for bad_runtime in (
         {"backpack_quote_cache_only": "true"},
@@ -151,6 +160,15 @@ def test_scan_plan_stage2_defaults_and_validation(tmp_path):
         {"backpack_depth_coalesce_ms": -1},
         {"backpack_depth_coalesce_ms": 1001},
         {"backpack_depth_coalesce_ms": True},
+        {"backpack_max_buffer_frames": 0},
+        {"backpack_max_buffer_frames": 16385},
+        {"backpack_max_buffer_frames": True},
+        {"hl_ws_select_candidates": 0},
+        {"hl_ws_select_candidates": 13},
+        {"hl_ws_select_candidates": True},
+        {"hl_ws_select_probe_ms": 99},
+        {"hl_ws_select_probe_ms": 15001},
+        {"hl_ws_select_probe_ms": True},
     ):
         with pytest.raises(ScanConfigError):
             parse_plan(_scan_doc(**bad_runtime), tmp_path)
@@ -164,7 +182,10 @@ def test_live_config_defaults_and_paper_config_untouched():
     assert live_plan.timer_interval_ms == 100
     assert live_plan.scan.backpack_quote_cache_only is True
     assert live_plan.scan.backpack_depth_coalesce_ms == 5
+    assert live_plan.scan.backpack_max_buffer_frames == 8192
     assert live_plan.scan.coalesce_book_deltas is True
+    assert live_plan.scan.hl_ws_select_candidates == 8
+    assert live_plan.scan.hl_ws_select_probe_ms == 2500
 
     paper_cfg = ROOT / "config" / "opportunity-trade.paper.toml"
     if paper_cfg.is_file():
@@ -173,7 +194,10 @@ def test_live_config_defaults_and_paper_config_untouched():
         paper_plan = load_trade_plan(paper_cfg)
         assert paper_plan.scan.backpack_quote_cache_only is False
         assert paper_plan.scan.backpack_depth_coalesce_ms == 0
+        assert paper_plan.scan.backpack_max_buffer_frames == 2048
         assert paper_plan.scan.coalesce_book_deltas is False
+        assert paper_plan.scan.hl_ws_select_candidates == 1
+        assert paper_plan.scan.hl_ws_select_probe_ms == 2500
 
 
 def test_trade_cli_preserves_raw_tape_recording_and_supports_toggles(tmp_path, capsys):
@@ -974,3 +998,120 @@ def test_native_backpack_quote_cache_only_depth_coalesce_and_admission(tmp_path)
                     node.dispose()
 
     asyncio.run(scenario())
+
+
+def test_runtime_and_execution_propagate_backpack_buffer_and_hl_ws_selection(monkeypatch):
+    import opportunity_native_execution
+    import spread_watch
+
+    captured = {}
+
+    class FakeObj:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    def fake_bp_config(symbols, economics, **kwargs):
+        captured["bp_data"] = kwargs
+        return FakeObj(**kwargs)
+
+    def fake_hl_data_config(**kwargs):
+        captured["hl_data"] = kwargs
+        return FakeObj(**kwargs)
+
+    def fake_hl_exec_config(**kwargs):
+        captured["hl_exec"] = kwargs
+        return FakeObj(**kwargs)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.backpack",
+        SimpleNamespace(
+            BackpackDataClientConfig=fake_bp_config,
+            BackpackDataClientFactory=lambda **kw: FakeObj(**kw),
+            BackpackInstrumentEconomics=lambda **kw: FakeObj(**kw),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.hyperliquid",
+        SimpleNamespace(
+            HyperliquidDataClientConfig=fake_hl_data_config,
+            HyperliquidDataClientFactory=lambda: FakeObj(),
+            HyperliquidExecutionClientConfig=fake_hl_exec_config,
+            HyperliquidExecutionClientFactory=lambda: FakeObj(),
+            HyperliquidEnvironment=SimpleNamespace(MAINNET="MAINNET", TESTNET="TESTNET"),
+        ),
+    )
+    monkeypatch.setattr(
+        opportunity_native_execution,
+        "_native",
+        lambda: SimpleNamespace(AccountId=SimpleNamespace(from_str=lambda s: s)),
+    )
+    # Keep spread_watch lazy import pointed at our fake hyperliquid module.
+    _ = spread_watch
+
+    markets = (
+        MarketPlan("BTC", "HL", "BTC-USD-PERP.HYPERLIQUID", D(1), "synthetic parity"),
+        MarketPlan(
+            "BTC",
+            "BACKPACK",
+            "BTC_USDC_PERP.BACKPACK",
+            D(1),
+            "synthetic parity",
+            backpack_economics=_TEST_BP_ECONOMICS,
+        ),
+    )
+    plan = ScanPlan(
+        markets,
+        ScanSettings(),
+        None,
+        hyperliquid_bbo_gate=True,
+        backpack_quote_cache_only=True,
+        backpack_depth_coalesce_ms=5,
+        backpack_max_buffer_frames=8192,
+        hl_ws_select_candidates=8,
+        hl_ws_select_probe_ms=2500,
+    )
+
+    clients = opportunity_runtime.data_clients(plan)
+    assert len(clients) == 2
+    assert captured["bp_data"]["max_buffer_frames"] == 8192
+    assert captured["bp_data"]["quote_cache_only"] is True
+    assert captured["bp_data"]["depth_coalesce_ms"] == 5
+    assert captured["hl_data"]["bbo_cache_only"] is True
+    assert captured["hl_data"]["ws_select_candidates"] == 8
+    assert captured["hl_data"]["ws_select_probe_ms"] == 2500
+
+    hl_only_plan = ScanPlan(
+        (markets[0],),
+        ScanSettings(),
+        None,
+        hl_ws_select_candidates=8,
+        hl_ws_select_probe_ms=2500,
+    )
+    exec_clients = opportunity_native_execution.execution_clients(
+        hl_only_plan,
+        "mainnet",
+        environ={
+            "HYPERLIQUID_ACCOUNT_ADDRESS": "0x1111111111111111111111111111111111111111",
+            "HYPERLIQUID_PK": "0x59c6995e998f97a5a0044966f094538a1da6d1310dce3f687da73cf015b05d7e",
+        },
+    )
+    assert len(exec_clients) == 1
+    assert captured["hl_exec"]["ws_select_candidates"] == 8
+    assert captured["hl_exec"]["ws_select_probe_ms"] == 2500
+
+    # Disabled (1 candidate) omits ws_select_* kwargs for compatibility.
+    captured.clear()
+    default_plan = ScanPlan((markets[0],), ScanSettings(), None, hyperliquid_bbo_gate=True)
+    opportunity_runtime.data_clients(default_plan)
+    opportunity_native_execution.execution_clients(
+        default_plan,
+        "mainnet",
+        environ={
+            "HYPERLIQUID_ACCOUNT_ADDRESS": "0x1111111111111111111111111111111111111111",
+            "HYPERLIQUID_PK": "0x59c6995e998f97a5a0044966f094538a1da6d1310dce3f687da73cf015b05d7e",
+        },
+    )
+    assert "ws_select_candidates" not in captured["hl_data"]
+    assert "ws_select_candidates" not in captured["hl_exec"]
