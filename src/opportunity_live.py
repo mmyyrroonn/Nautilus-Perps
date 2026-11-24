@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from opportunity_timing import (begin_entry_trace, current_analytics, record_entry_stage,
                                 record_latency, span, start_latency, timed)
-from opportunity_entry_evidence import entry_pair_result, fresh_bbo_quote
+from opportunity_entry_evidence import (
+    bbo_l1_depth_insufficient, entry_pair_result, fresh_bbo_l1_quote, fresh_bbo_quote,
+)
 from opportunity_leverage import leverage_check, leverage_integer
 from opportunity_lighter_margin import margin_check
 from opportunity_entry_admission import EntryAdmissionPolicy
@@ -112,6 +114,7 @@ class LiveTradeState(ScanState):
         self.policy, self.max_pairs, self.max_gross = policy, max_pairs, F(gross)
         self.entry_admission = entry_admission
         self.bbo_provider = None
+        self.bbo_l1_provider = None
         self.book_publications = {}  # One immutable snapshot identity/time per configured market.
         self.entry_clocks = {}  # Pending entry IDs only; monotonic clocks never survive restart.
         self.account_max_age_ns = account_max_age_ms * 1_000_000
@@ -1450,16 +1453,27 @@ class LiveTradeState(ScanState):
                 analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                         "live_rejected", detail="rounded_limit_edge_insufficient")
             return False
-        for leg, leg_id, limit_px in (("buy", buy_id, F(buy["price"])), ("sell", sell_id, F(sell["price"]))):
-            bbo = fresh_bbo_quote(self, leg_id, self.books[leg_id])
+        for leg, leg_id, limit_px, req_qty in (
+                ("buy", buy_id, F(buy["price"]), F(buy["quantity"])),
+                ("sell", sell_id, F(sell["price"]), F(sell["quantity"])),
+        ):
+            bbo = fresh_bbo_l1_quote(self, leg_id, self.books[leg_id])
             if bbo is None:
                 continue
-            bbo_bid, bbo_ask, _, _ = bbo
+            bbo_bid, bbo_ask, bbo_bid_sz, bbo_ask_sz, _, _ = bbo
             if (leg == "buy" and bbo_ask > limit_px) or (leg == "sell" and bbo_bid < limit_px):
                 self._clear_slow_persistence(buy_id, sell_id)
                 if analytics is not None:
                     analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
                                             "live_rejected", detail="hl_bbo_outside_limit")
+                return False
+            if bbo_l1_depth_insufficient(
+                    leg, bbo_bid, bbo_ask, bbo_bid_sz, bbo_ask_sz, limit_px, req_qty,
+                    self.books[leg_id], self.markets[leg_id]):
+                self._clear_slow_persistence(buy_id, sell_id)
+                if analytics is not None:
+                    analytics.record_funnel(buy_market.symbol, buy_market.venue, sell_market.venue,
+                                            "live_rejected", detail="hl_bbo_insufficient_depth")
                 return False
         if self.policy.max_exit_reversal_bps is not None or self.policy.max_exit_reversal_edge_ratio is not None:
             from opportunity_analytics import compute_exit_liquidity

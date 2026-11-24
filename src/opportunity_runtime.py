@@ -435,6 +435,20 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 )
                 for i, m in self.markets.items()
             }
+            self._hl_config = client_configs.get("HYPERLIQUID") if client_configs else None
+            self._hl_instrument_ids = tuple(
+                i for i, m in self.markets.items() if m.client_id == "HYPERLIQUID"
+            )
+            self._hl_bbo_overlay_enabled = bool(
+                plan.hyperliquid_bbo_gate
+                and tape_recorder is None
+                and plan.output_path is None
+                and self._hl_config is not None
+                and hasattr(self._hl_config, "latest_bbo")
+                and self._hl_instrument_ids
+            )
+            self._hl_l2_stamps = {}
+            self._hl_bbo_state = {}
             self._lazy_books = (
                 bool(getattr(state, "supports_lazy_books", False))
                 and tape_recorder is None
@@ -443,7 +457,7 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             if self._lazy_books:
                 state.attach_book_materializer(self._materialize_book)
             if plan.hyperliquid_bbo_gate and hasattr(state, "bbo_provider"):
-                hl_config = client_configs.get("HYPERLIQUID") if client_configs else None
+                hl_config = self._hl_config
                 if hl_config is not None and hasattr(hl_config, "latest_bbo"):
                     hl_native_ids = {
                         m.instrument_id: InstrumentId.from_str(m.instrument_id)
@@ -465,6 +479,26 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                         )
 
                     state.bbo_provider = _hl_bbo
+                    if hasattr(state, "bbo_l1_provider"):
+                        def _hl_bbo_l1(instrument_id):
+                            native_id = hl_native_ids.get(instrument_id)
+                            if native_id is None:
+                                return None
+                            quote = hl_config.latest_bbo(native_id)
+                            if quote is None:
+                                return None
+                            bid_sz = getattr(quote, "bid_size", None)
+                            ask_sz = getattr(quote, "ask_size", None)
+                            return (
+                                Fraction(str(quote.bid_price)),
+                                Fraction(str(quote.ask_price)),
+                                None if bid_sz is None else Fraction(str(bid_sz)),
+                                None if ask_sz is None else Fraction(str(ask_sz)),
+                                int(quote.ts_event),
+                                int(quote.ts_init),
+                            )
+
+                        state.bbo_l1_provider = _hl_bbo_l1
 
         def fail(self, message):
             self.failure = message
@@ -548,10 +582,147 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 self.subscribe_market(self.pending_aster.popleft())
                 self.next_aster_ns = now_ns + plan.aster_subscription_interval_ms * 1_000_000
 
+        def _read_fresh_hl_bbo(self, instrument_id, l2_stamp, now_ns):
+            quote = self._hl_config.latest_bbo(instrument_id)
+            if quote is None:
+                return None
+            bbo_ts_event, bbo_ts_init = int(quote.ts_event), int(quote.ts_init)
+            l2_ts_event, l2_ts_received, _ = l2_stamp
+            if not (bbo_ts_event > l2_ts_event or (bbo_ts_event == l2_ts_event and bbo_ts_init > l2_ts_received)):
+                return None
+            prev = self._hl_bbo_state.get(instrument_id)
+            if prev is not None and prev[0] == bbo_ts_event and prev[1] == bbo_ts_init:
+                return (prev, False)
+            if not 0 < bbo_ts_event <= bbo_ts_init <= now_ns:
+                return None
+            bid_sz_raw = getattr(quote, "bid_size", None)
+            ask_sz_raw = getattr(quote, "ask_size", None)
+            if bid_sz_raw is None or ask_sz_raw is None:
+                return None
+            try:
+                bid_px = Decimal(str(quote.bid_price))
+                ask_px = Decimal(str(quote.ask_price))
+                bid_sz = Decimal(str(bid_sz_raw))
+                ask_sz = Decimal(str(ask_sz_raw))
+            except (InvalidOperation, ValueError, TypeError):
+                return None
+            if not (
+                bid_px.is_finite() and ask_px.is_finite()
+                and bid_sz.is_finite() and ask_sz.is_finite()
+                and Decimal(0) < bid_px < ask_px and bid_sz > 0 and ask_sz > 0
+            ):
+                return None
+            overlay = (bbo_ts_event, bbo_ts_init, bid_px, ask_px, bid_sz, ask_sz, now_ns)
+            self._hl_bbo_state[instrument_id] = overlay
+            return (overlay, True)
+
+        def _build_hl_overlay_snapshot(self, instrument_id, book, overlay, valid):
+            bbo_ts_event, bbo_ts_init, bid_px, ask_px, bid_sz, ask_sz, _ = overlay
+            market = self.markets[instrument_id]
+            depth = min(plan.depth_levels, 5) if plan.hyperliquid_fast_book else plan.depth_levels
+            best_bid_fn = getattr(book, "best_bid_price", None)
+            best_ask_fn = getattr(book, "best_ask_price", None)
+            raw_bids = raw_asks = None
+            same_l1_price = False
+            if best_bid_fn is not None and best_ask_fn is not None:
+                bp, ap = best_bid_fn(), best_ask_fn()
+                if bp is not None and ap is not None:
+                    same_l1_price = Decimal(str(bp)) == bid_px and Decimal(str(ap)) == ask_px
+            else:
+                raw_bids = tuple(book.bids_to_dict(depth).items())
+                raw_asks = tuple(book.asks_to_dict(depth).items())
+                same_l1_price = bool(
+                    raw_bids and raw_asks and raw_bids[0][0] == bid_px and raw_asks[0][0] == ask_px
+                )
+            if same_l1_price:
+                if raw_bids is None:
+                    raw_bids = tuple(book.bids_to_dict(depth).items())
+                    raw_asks = tuple(book.asks_to_dict(depth).items())
+                if raw_bids and raw_asks and raw_bids[0][0] == bid_px and raw_asks[0][0] == ask_px:
+                    bids = ((bid_px, bid_sz),) + raw_bids[1:]
+                    asks = ((ask_px, ask_sz),) + raw_asks[1:]
+                    cov_limit = depth
+                else:
+                    bids = ((bid_px, bid_sz),)
+                    asks = ((ask_px, ask_sz),)
+                    cov_limit = 1
+            else:
+                bids = ((bid_px, bid_sz),)
+                asks = ((ask_px, ask_sz),)
+                cov_limit = 1
+            return BookSnapshot(
+                market.venue, market.symbol,
+                normalized_levels(market, bids), normalized_levels(market, asks),
+                bbo_ts_event, bbo_ts_init, valid=valid, coverage_limit=cov_limit,
+            )
+
+        def _publish_hl_bbo_overlay(self, instrument_id, overlay):
+            market = self.markets[instrument_id]
+            inst_str = self._str_ids[instrument_id]
+            if inst_str not in state.metadata:
+                return
+            book = self.local_books[instrument_id]
+            valid = (
+                instrument_id not in self.halted
+                and instrument_id not in self.metadata_stale
+                and instrument_id not in self.disconnected
+                and instrument_id not in self.backpack_unhealthy
+            )
+            bbo_ts_event, bbo_ts_init, bid_px, ask_px, _, _, pub_ns = overlay
+            update_count = getattr(book, "update_count", None)
+            if (
+                self._lazy_books
+                and not state.needs_full_book(inst_str)
+                and getattr(book, "best_bid_price", None) is not None
+                and update_count is not None
+            ):
+                factor = self._norm_factors[instrument_id]
+                bid_f = float(bid_px) if factor == 1.0 else float(bid_px) * factor
+                ask_f = float(ask_px) if factor == 1.0 else float(ask_px) * factor
+                if 0.0 < bid_f < ask_f and math.isfinite(ask_f):
+                    fast_bbo = FastBbo(
+                        market.venue, market.symbol, bid_f, ask_f,
+                        bbo_ts_event, bbo_ts_init, valid, pub_ns,
+                        0, update_count,
+                    )
+                    state.update_fast_bbo(inst_str, fast_bbo, evaluate=False)
+                    return
+            snapshot = self._build_hl_overlay_snapshot(instrument_id, book, overlay, valid)
+            state.update_book(inst_str, snapshot, pub_ns, evaluate=False)
+
+        def _sync_hl_bbo(self, changed, affected, now_ns):
+            for instrument_id in self._hl_instrument_ids:
+                if (
+                    instrument_id not in self.snapshot_seen
+                    or instrument_id in self.pending_snapshot
+                    or instrument_id in self.dirty
+                    or instrument_id in self.halted
+                    or instrument_id in self.metadata_stale
+                    or instrument_id in self.disconnected
+                ):
+                    continue
+                inst_str = self._str_ids[instrument_id]
+                if inst_str not in state.metadata:
+                    continue
+                l2_stamp = self._hl_l2_stamps.get(instrument_id)
+                if l2_stamp is None:
+                    continue
+                result = self._read_fresh_hl_bbo(instrument_id, l2_stamp, now_ns)
+                if result is None:
+                    continue
+                overlay, is_new = result
+                if not is_new:
+                    continue
+                self._publish_hl_bbo_overlay(instrument_id, overlay)
+                changed.add(self.markets[instrument_id].symbol)
+                affected.add(inst_str)
+
         def on_stop(self):
             self.running = False
             self.pending_aster.clear()
             self.dirty.clear()
+            self._hl_l2_stamps.clear()
+            self._hl_bbo_state.clear()
             self.book_timings.clear()
             self.pending_quote_timings.clear()
             self.publication_timings.clear()
@@ -592,6 +763,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             self.snapshot_seen.discard(instrument_id)
             self.pending_snapshot.discard(instrument_id)
             self.dirty.pop(instrument_id, None)
+            self._hl_l2_stamps.pop(instrument_id, None)
+            self._hl_bbo_state.pop(instrument_id, None)
             self.clear_book_timing(instrument_id)
             if notify:
                 now_ns = time.time_ns()
@@ -619,18 +792,26 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
             book = self.local_books[native_id]
             if getattr(book, "update_count", None) != fast_bbo.update_count:
                 return None
-            market = self.markets[native_id]
-            depth = plan.depth_levels
-            if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
-                depth = min(depth, 5)
-            raw_bids = tuple(book.bids_to_dict(depth).items())
-            raw_asks = tuple(book.asks_to_dict(depth).items())
-            snapshot = BookSnapshot(
-                market.venue, market.symbol,
-                normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
-                fast_bbo.ts_event_ns, fast_bbo.ts_received_ns,
-                valid=fast_bbo.valid, coverage_limit=depth,
-            )
+            overlay = self._hl_bbo_state.get(native_id) if self._hl_bbo_overlay_enabled else None
+            if (
+                overlay is not None
+                and overlay[0] == fast_bbo.ts_event_ns
+                and overlay[1] == fast_bbo.ts_received_ns
+            ):
+                snapshot = self._build_hl_overlay_snapshot(native_id, book, overlay, fast_bbo.valid)
+            else:
+                market = self.markets[native_id]
+                depth = plan.depth_levels
+                if market.client_id == "HYPERLIQUID" and plan.hyperliquid_fast_book:
+                    depth = min(depth, 5)
+                raw_bids = tuple(book.bids_to_dict(depth).items())
+                raw_asks = tuple(book.asks_to_dict(depth).items())
+                snapshot = BookSnapshot(
+                    market.venue, market.symbol,
+                    normalized_levels(market, raw_bids), normalized_levels(market, raw_asks),
+                    fast_bbo.ts_event_ns, fast_bbo.ts_received_ns,
+                    valid=fast_bbo.valid, coverage_limit=depth,
+                )
             state.books[inst_str] = snapshot
             state.fast_books[inst_str] = replace(fast_bbo, source=snapshot)
             if hasattr(state, "book_publications"):
@@ -852,6 +1033,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     ask_count = len(sides["SELL"])
                 if not (batch.flags & self._f_last):
                     self.dirty.pop(instrument_id, None)
+                    self._hl_l2_stamps.pop(instrument_id, None)
+                    self._hl_bbo_state.pop(instrument_id, None)
                     self.clear_book_timing(instrument_id)
                     now_ns = time.time_ns()
                     inv_reason = ("snapshot_rebuilding" if instrument_id in self.pending_snapshot
@@ -864,6 +1047,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                     self.pending_snapshot.discard(instrument_id)
                     self.snapshot_seen.add(instrument_id)
                 stamp = (batch.ts_event, batch.ts_init, batch.sequence)
+                if self._hl_bbo_overlay_enabled and market.client_id == "HYPERLIQUID":
+                    self._hl_l2_stamps[instrument_id] = stamp
                 if callback_ns is not None:
                     self.pending_quote_timings[instrument_id] = QuoteTiming(
                         *stamp, callback_ns, time.perf_counter_ns())
@@ -913,6 +1098,19 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                 and instrument_id not in self.disconnected
                 and instrument_id not in self.backpack_unhealthy
             )
+            if self._hl_bbo_overlay_enabled and market.client_id == "HYPERLIQUID":
+                self._hl_l2_stamps[instrument_id] = stamp
+                result = self._read_fresh_hl_bbo(instrument_id, stamp, time.time_ns())
+                if result is not None:
+                    overlay, _ = result
+                    self._publish_hl_bbo_overlay(instrument_id, overlay)
+                    self.pending_quote_timings.pop(instrument_id, None)
+                    if state.quote_timings is not None:
+                        state.quote_timings.pop(inst_str, None)
+                    if evaluate:
+                        self.evaluate_published(market.symbol, changed_id=inst_str)
+                    return
+                self._hl_bbo_state.pop(instrument_id, None)
             lazy_published = False
             if self._lazy_books and not state.needs_full_book(inst_str):
                 best_bid_fn = getattr(book, "best_bid_price", None)
@@ -1074,6 +1272,8 @@ def create_observer(plan, state, stop, client_configs, *, drive_evaluation_timer
                             self.publish_book(instrument_id, stamp, evaluate=False)
                             changed.add(self.markets[instrument_id].symbol)
                             affected.add(self._str_ids[instrument_id])
+                    if self._hl_bbo_overlay_enabled:
+                        self._sync_hl_bbo(changed, affected, now_ns)
                     # Every changed leg is current before evaluating any pair.
                     changed.update(state.pending_evaluation_symbols())
                     if changed:

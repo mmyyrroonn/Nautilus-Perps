@@ -404,7 +404,7 @@ def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason
         if type(wall_ns) is int:
             row["wall_ns"] = wall_ns
         if reason in {"valid", "missing_book", "metadata_unavailable", "metadata_changed", "stale_or_invalid_book",
-                "insufficient_depth", "price_outside_limit", "bbo_price_outside_limit",
+                "insufficient_depth", "price_outside_limit", "bbo_price_outside_limit", "bbo_insufficient_depth",
                 "invalid_execution_rules_or_fees", "book_skew",
                 "net_edge_insufficient", "ioc_no_match", "rate_limit", "insufficient_balance", "invalid_order",
                 "post_only", "venue_other", "open_interest_cap", "reduce_only_market",
@@ -424,8 +424,8 @@ def record_entry_stage(request_id, stage, *, wall_ns=None, evidence=None, reason
                       "dispatch_delay_ns", "dispatch_deadline_wall_ns", "source_skew_ns", "timing_failures"}
             leg_fields = {"limit_price", "quantity", "source_wall_ns", "received_wall_ns", "source_age_ms",
                 "receive_age_ms", "available_quantity", "depth_within_limit", "executable_vwap",
-                "current_bound_price", "bbo_bid_price", "bbo_ask_price", "bbo_ts_event_ns",
-                "bbo_ts_init_ns", "limit_cash_usd", "fee_usd", "standalone_risk_usd",
+                "current_bound_price", "bbo_bid_price", "bbo_ask_price", "bbo_bid_size", "bbo_ask_size",
+                "bbo_ts_event_ns", "bbo_ts_init_ns", "limit_cash_usd", "fee_usd", "standalone_risk_usd",
                 "published_wall_ns", "source_age_ns", "receive_age_ns", "publication_wait_ns",
                 "published_to_check_ns", "temporal_failures"}
             row["evidence"] = {k: v for k, v in evidence.items() if k in fields}
