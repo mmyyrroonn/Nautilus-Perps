@@ -429,14 +429,14 @@ class NativeBuildError(RuntimeError):
 
 class SessionStoreProxy:
     """Keep startup evidence and live ownership in one transactional state row."""
-    def __init__(self, store, *, restart_from_flat=False):
+    def __init__(self, store, *, restart_from_flat=False, force_restart_pending=False):
         self.store = store
         self.serializes_immediately = bool(getattr(store, "serializes_immediately", False))
         saved = store.load()
         if saved and (saved.get("schema_version") != 1 or saved.get("mode", "live") != "live"):
             raise ValueError("unknown live session envelope version")
         self.saved = saved
-        self.restart_pending = bool(saved and restart_from_flat)
+        self.restart_pending = bool((saved or force_restart_pending) and restart_from_flat)
         self.startup = saved.get("startup") if saved else None
         self.startup_complete = bool(saved and saved.get("startup_complete"))
         self.latest_live = saved.get("live") if saved else None
@@ -458,7 +458,8 @@ class SessionStoreProxy:
     def save(self, snapshot, events):
         self.latest_live = snapshot
         if self.restart_pending:
-            self.store.save({**self.saved, "account_recovery": self.account_recovery,
+            base = self.saved if self.saved is not None else self._document(snapshot)
+            self.store.save({**base, "account_recovery": self.account_recovery,
                              "pending_native_session": self.native_session}, events)
             return
         self.store.save(self._document(snapshot), events)
@@ -553,7 +554,8 @@ def native_quote(state, instrument_id, now_ns):
 class LiveCoordinator:
     """Route callbacks and durable intents across startup and continuous trading."""
     def __init__(self, plan, live, proxy, *, self_test_only=False, stop=None, balance_reporter=None,
-                 initial_balance=None, loss_reporter=None, account_reporter=None):
+                 initial_balance=None, loss_reporter=None, account_reporter=None,
+                 release_flat_claim=False):
         from opportunity_balances import StartupBalanceCheck
         self.plan, self.live, self.proxy = plan, live, proxy
         self.loss_monitor = SessionLossMonitor(getattr(plan, "loss_monitor", LossMonitorPolicy()),
@@ -602,6 +604,10 @@ class LiveCoordinator:
             self.phase = "waiting_account_recovery"
         if plan.startup_balance_check and self.balance_check.result != "passed":
             self.after_balance_phase, self.phase = self.phase, "waiting_balances"
+        self.release_flat_claim = bool(release_flat_claim)
+        if self.release_flat_claim:
+            self.startup_self_test = False
+            self.phase = "waiting_account_recovery"
 
     def attach(self, gateway, preflight=None):
         self.gateway, self.preflight = gateway, preflight
@@ -930,11 +936,26 @@ class LiveCoordinator:
                 self.proxy.checkpoint_account_recovery(document, now_ns)
                 self.account_reporter(document)
             if not ready:
+                if self.release_flat_claim:
+                    deadline_ns = max(
+                        self.plan.startup_timeout_secs,
+                        self.plan.scan.connection_timeout_secs,
+                        60,
+                    ) * 1_000_000_000
+                    if now_ns - self.started_ns >= deadline_ns:
+                        self.failure = "flat-account claim release did not confirm all accounts flat before deadline"
+                        self.finished = True
+                        self.stop()
                 # Reuse account backoff/Retry-After; no timeout can certify flatness.
                 return
             self.account_recovery_completed_ns = now_ns
             self.proxy.complete_restart(self.live.snapshot(), now_ns)
             self.live.set_entry_pause(None, now_ns)
+            if self.release_flat_claim:
+                self.phase = "claim_released"
+                self.finished = True
+                self.stop()
+                return
             self.phase = "waiting_baseline" if self.loss_monitor.policy.enabled else "waiting_books"
         if (self.loss_monitor.policy.enabled and self.stop_requested_ns is None
                 and (self.phase == "active" or self.loss_monitor.baseline_usd is None)):
@@ -1240,6 +1261,18 @@ def build_live_node(plan, live, coordinator, *, environ=None):
             wakeup = getattr(self, "intent_wakeup", None)
             if wakeup is not None:
                 wakeup.close()
+            if (not coordinator.finished
+                    and coordinator.phase in {"active", "draining"}
+                    and coordinator.failure is None
+                    and not coordinator.proxy.restart_pending
+                    and not coordinator._has_residual()):
+                try:
+                    reason = coordinator.stop_reason or "operator_stop"
+                    coordinator.stop_reason = reason
+                    live.stop_entries(time.time_ns(), reason=reason)
+                    coordinator.finished = True
+                except Exception as exc:
+                    coordinator.failure = "shutdown persistence failed: " + type(exc).__name__
             if coordinator.gateway:
                 coordinator.gateway.close()
 
@@ -1263,6 +1296,80 @@ def build_live_node(plan, live, coordinator, *, environ=None):
         observer.memory_diagnostics.attach_handle(handle)
     node.add_actor(observer)
     return node, observer, strategy
+
+
+def _install_stop_signals(signal_module, stop_signal):
+    signals = [signal_module.SIGINT]
+    if hasattr(signal_module, "SIGUSR1"):
+        signals.append(signal_module.SIGUSR1)
+    previous = {}
+
+    def _handle(*_args):
+        stop_signal.set()
+
+    for sig in signals:
+        previous[sig] = signal_module.getsignal(sig)
+        signal_module.signal(sig, _handle)
+
+    def restore():
+        for sig, prev in reversed(list(previous.items())):
+            signal_module.signal(sig, prev)
+
+    return restore
+
+
+def _build_live_state(LiveTradeState, plan, proxy):
+    return LiveTradeState(
+        plan.scan, plan.policy, max_pairs=plan.max_pairs,
+        max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
+        max_unhedged_notional_usd=plan.max_unhedged_notional_usd,
+        max_unhedged_secs=plan.max_unhedged_secs,
+        entry_unhedged_reserve_bps=plan.entry_unhedged_reserve_bps,
+        aster_leverage_targets=plan.aster_leverage_targets,
+        aster_leverage_max_age_ms=plan.aster_leverage_max_age_ms,
+        lighter_margin_max_age_ms=plan.lighter_margin_max_age_ms,
+        entry_admission=plan.entry_admission,
+        basis_filter=plan.basis_filter,
+        max_session_realized_loss_usd=plan.max_session_realized_loss_usd,
+        max_consecutive_losses=plan.max_consecutive_losses,
+        max_consecutive_single_legs=plan.max_consecutive_single_legs,
+        entry_reject_block_secs=plan.entry_reject_block_secs,
+        account_max_age_ms=plan.account_max_age_ms,
+        order_timeout_secs=plan.order_timeout_secs,
+        retry_interval_ms=plan.retry_interval_ms,
+        trade_symbols=plan.trade_symbols,
+    )
+
+
+def _flat_claim_recovery_plan(plan):
+    scopes = {}
+    for market in plan.scan.markets:
+        venue = "HL" if market.venue in {"HL", "HYPERLIQUID"} else market.venue
+        dex = market.instrument_id.split(":", 1)[0] if venue == "HL" and ":" in market.instrument_id else ""
+        scopes.setdefault((venue, dex), []).append(market)
+    rep_markets = tuple(
+        min(
+            markets,
+            key=lambda m: (m.symbol != "BTC", m.symbol not in plan.trade_symbols, m.instrument_id),
+        )
+        for _, markets in sorted(scopes.items())
+    )
+    rep_ids = {m.instrument_id for m in rep_markets}
+    filtered_targets = (
+        {k: v for k, v in plan.aster_leverage_targets.items() if k in rep_ids}
+        if isinstance(plan.aster_leverage_targets, dict)
+        else tuple((k, v) for k, v in plan.aster_leverage_targets if k in rep_ids)
+    )
+    return replace(
+        plan,
+        scan=replace(plan.scan, markets=rep_markets, hl_ws_select_candidates=1),
+        trade_symbols=(),
+        aster_leverage_targets=filtered_targets,
+        startup_self_test=False,
+        startup_balance_check=False,
+        duration_secs=0,
+        loss_monitor=replace(plan.loss_monitor, enabled=False),
+    )
 
 
 @timed("run.live")
@@ -1293,7 +1400,7 @@ def run_live(plan, *, self_test_only=False):
     store = None
     coordinator = None
     node = None
-    previous_signal = None
+    restore_signals = None
     stop_signal = threading.Event()
     release_claim = False
     try:
@@ -1302,21 +1409,7 @@ def run_live(plan, *, self_test_only=False):
         guard.claim(store)
         with span("startup.restore_session"):
             proxy = SessionStoreProxy(store, restart_from_flat=True)
-            live = LiveTradeState(plan.scan, plan.policy, max_pairs=plan.max_pairs,
-                max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
-                max_unhedged_notional_usd=plan.max_unhedged_notional_usd, max_unhedged_secs=plan.max_unhedged_secs,
-                entry_unhedged_reserve_bps=plan.entry_unhedged_reserve_bps,
-                aster_leverage_targets=plan.aster_leverage_targets,
-                aster_leverage_max_age_ms=plan.aster_leverage_max_age_ms,
-                lighter_margin_max_age_ms=plan.lighter_margin_max_age_ms,
-                entry_admission=plan.entry_admission,
-                basis_filter=plan.basis_filter,
-                max_session_realized_loss_usd=plan.max_session_realized_loss_usd,
-                max_consecutive_losses=plan.max_consecutive_losses,
-                max_consecutive_single_legs=plan.max_consecutive_single_legs,
-                entry_reject_block_secs=plan.entry_reject_block_secs,
-                account_max_age_ms=plan.account_max_age_ms, order_timeout_secs=plan.order_timeout_secs,
-                retry_interval_ms=plan.retry_interval_ms, trade_symbols=plan.trade_symbols)
+            live = _build_live_state(LiveTradeState, plan, proxy)
             coordinator = LiveCoordinator(plan, live, proxy, self_test_only=self_test_only,
                 initial_balance=initial_balance,
                 loss_reporter=lambda document: print(json.dumps(
@@ -1338,8 +1431,7 @@ def run_live(plan, *, self_test_only=False):
         # environment fallback. Refuse a changed scope before starting clients.
         if resolve_account_binding(plan.venues, plan.environment, os.environ) != binding:
             raise ValueError("execution account environment changed during native construction")
-        previous_signal = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, lambda *_: stop_signal.set())
+        restore_signals = _install_stop_signals(signal, stop_signal)
         # A native stop can fail without leaving an application-owned pair. Keep
         # its independent account/order/economics proof in the durable envelope.
         try:
@@ -1363,8 +1455,8 @@ def run_live(plan, *, self_test_only=False):
     finally:
         try:
             try:
-                if previous_signal is not None:
-                    signal.signal(signal.SIGINT, previous_signal)
+                if restore_signals is not None:
+                    restore_signals()
             finally:
                 try:
                     if coordinator and coordinator.gateway:
@@ -1385,12 +1477,129 @@ def run_live(plan, *, self_test_only=False):
                 guard.close()
 
 
+@timed("run.release_flat_claim")
+def run_release_flat_claim(plan):
+    if not plan.ready:
+        raise ScanConfigError("set explicit positive risk limits and complete limits.toml before starting execution")
+    from dotenv import load_dotenv
+    from opportunity_live import LiveTradeState
+    from opportunity_trade_store import TradeStore
+    from opportunity_account_scope import AccountRiskGuard, resolve_account_binding, verify_execution_identity
+    from opportunity_shutdown import collect_native_shutdown
+    import signal
+    import threading
+    from types import MappingProxyType
+
+    load_dotenv(Path(__file__).resolve().parents[1]/".env", override=False)
+    environ = MappingProxyType(dict(os.environ))
+    binding = resolve_account_binding(plan.venues, plan.environment, environ)
+    guard = AccountRiskGuard(binding)
+    store = None
+    coordinator = None
+    node = None
+    restore_signals = None
+    stop_signal = threading.Event()
+    release_claim = False
+    released = False
+    rebound = False
+    try:
+        store = TradeStore.open_bound_owner(plan.state_path, account_binding=binding.document())
+        previous_fingerprint = store.fingerprint
+        target_fingerprint = plan.fingerprint(binding.document())
+        guard.claim(store)
+        recovery_plan = _flat_claim_recovery_plan(plan)
+        with span("startup.restore_session"):
+            proxy = SessionStoreProxy(store, restart_from_flat=True, force_restart_pending=True)
+            live = _build_live_state(LiveTradeState, recovery_plan, proxy)
+            coordinator = LiveCoordinator(
+                recovery_plan, live, proxy, release_flat_claim=True,
+                account_reporter=lambda document: print(json.dumps(
+                    {"event": "startup_account_recovery", **document}), flush=True),
+            )
+        coordinator.stop_signal = stop_signal
+        coordinator.loss_monitor.balance_epoch_ns = time.time_ns()
+        verify_execution_identity(binding, environ)
+        try:
+            node, observer, _strategy = build_live_node(recovery_plan, live, coordinator, environ=environ)
+        except Exception as exc:
+            raise NativeBuildError(exc) from None
+        if resolve_account_binding(plan.venues, plan.environment, os.environ) != binding:
+            raise ValueError("execution account environment changed during native construction")
+        try:
+            restore_signals = _install_stop_signals(signal, stop_signal)
+            try:
+                with span("runtime.native_node"):
+                    node.run()
+            except Exception as exc:
+                coordinator.failure = "native node failed: " + type(exc).__name__
+            proxy.native_shutdown = collect_native_shutdown({
+                venue: coordinator.native_controls.get(venue)
+                for venue in recovery_plan.venues if venue in {"ONDO", "BACKPACK"}})
+            if not proxy.native_shutdown["clean"]:
+                coordinator.failure = coordinator.failure or "native shutdown lacks complete clean account/order proof"
+            if not coordinator.finished:
+                coordinator.failure = coordinator.failure or "native node stopped before flat-account claim release completed"
+            if coordinator.phase != "claim_released" or (proxy.account_recovery or {}).get("result") != "passed":
+                coordinator.failure = coordinator.failure or "flat-account recovery proof is incomplete"
+            proxy.save(live.snapshot(), [])
+            release_claim = not (coordinator.failure or coordinator._has_residual() or observer.failure)
+        finally:
+            try:
+                if restore_signals is not None:
+                    restore_signals()
+            finally:
+                try:
+                    if coordinator and coordinator.gateway:
+                        coordinator.gateway.close()
+                finally:
+                    if node is not None:
+                        with span("shutdown.native_dispose"):
+                            node.dispose()
+        if release_claim:
+            guard.release_clean()
+            released = True
+            if target_fingerprint != previous_fingerprint:
+                store.rebind_fingerprint(
+                    target_fingerprint,
+                    time.time_ns(),
+                    account_recovery=proxy.account_recovery,
+                )
+                rebound = True
+        new_fingerprint = store.fingerprint
+        account_recovery = proxy.account_recovery
+        native_shutdown = proxy.native_shutdown
+        failure = coordinator.failure
+    finally:
+        try:
+            if store is not None:
+                store.close()
+        finally:
+            guard.close()
+
+    print(json.dumps({
+        "event": "release_flat_claim",
+        "released": released,
+        "rebound": rebound,
+        "previous_fingerprint": previous_fingerprint,
+        "new_fingerprint": new_fingerprint,
+        "account_recovery": account_recovery,
+        "native_shutdown": native_shutdown,
+        "failure": failure,
+    }, default=str, indent=2), flush=True)
+    return 0 if released else 1
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--execute-live", action="store_true")
     mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument(
+        "--release-flat-claim",
+        action="store_true",
+        help="prove every bound venue account is flat, release the ledger's retained risk claim, and rebind the flat ledger to the current configuration without trading",
+    )
     parser.add_argument("--self-test-only", action="store_true")
     parser.add_argument("--startup-self-test", action="store_true",
                         help="opt in to one BTC trading self-test per venue before continuous trading")
@@ -1415,12 +1624,15 @@ def main(argv=None):
 def _run(args):
     try:
         if args.balance_check_only and (args.execute_live or args.startup_self_test or args.self_test_only
-                                       or args.startup_balance_check is False):
+                                       or args.release_flat_claim or args.startup_balance_check is False):
             raise ScanConfigError("balance-only mode conflicts with trading or disabled balance flags")
+        if args.release_flat_claim and (args.balance_check_only or args.self_test_only or args.startup_self_test
+                                         or args.duration_secs is not None or args.startup_balance_check is not None):
+            raise ScanConfigError("flat-claim release conflicts with trading, self-test, balance-only or duration flags")
         plan = load_live_plan(args.config, symbols=args.symbols, max_pairs=args.max_pairs,
             max_gross_notional_usd=args.max_gross_notional_usd, duration_secs=args.duration_secs,
-            startup_self_test=False if args.balance_check_only else True if args.startup_self_test or args.self_test_only else None,
-            startup_balance_check=True if args.balance_check_only else args.startup_balance_check)
+            startup_self_test=False if args.balance_check_only or args.release_flat_claim else True if args.startup_self_test or args.self_test_only else None,
+            startup_balance_check=True if args.balance_check_only else False if args.release_flat_claim else args.startup_balance_check)
         if args.balance_check_only:
             if args.dry_run:
                 print(json.dumps({"mode": "balance_check_only", "runtime_started": False,
@@ -1429,6 +1641,8 @@ def _run(args):
                 return 0
             from opportunity_balance_runner import run_balance_check
             return run_balance_check(plan)
+        if args.release_flat_claim:
+            return run_release_flat_claim(plan)
         if not args.execute_live:
             document = plan.document()
             document["self_test_only"] = args.self_test_only

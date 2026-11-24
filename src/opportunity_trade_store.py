@@ -95,6 +95,71 @@ class TradeStore:
             self.close()
             raise
 
+    @classmethod
+    @timed("store.open")
+    def open_bound_owner(cls, path: Path, *, account_binding: dict) -> TradeStore:
+        """Open an existing bound ledger and verify ownership without changing its fingerprint."""
+        store = cls.__new__(cls)
+        store.path = Path(path).resolve()
+        store.path.parent.mkdir(parents=True, exist_ok=True)
+        store._lock = FileLock(store.path.with_suffix(store.path.suffix + ".lock"))
+        store.connection = None
+        store.owner_id = None
+        store.account_binding = account_binding
+        try:
+            store.connection = sqlite3.connect(store.path)
+            store.connection.execute("PRAGMA journal_mode=WAL")
+            store.connection.execute("PRAGMA synchronous=FULL")
+            has_ownership = store.connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ownership'").fetchone()
+            ownership = (store.connection.execute(
+                "SELECT owner, binding, fingerprint FROM ownership WHERE id=1").fetchone()
+                if has_ownership else None)
+            if not ownership:
+                raise ValueError("no bound account ledger exists at state_path")
+            if account_binding != json.loads(ownership[1]):
+                raise ValueError("state belongs to a different account; use the original identity")
+            has_state = store.connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='state'").fetchone()
+            row = (store.connection.execute(
+                "SELECT fingerprint FROM state WHERE id=1").fetchone()
+                if has_state else None)
+            if row and row[0] != ownership[2]:
+                raise ValueError("ledger ownership and state fingerprints disagree")
+            store.owner_id = ownership[0]
+            store.fingerprint = ownership[2]
+            return store
+        except BaseException:
+            store.close()
+            raise
+
+    @timed("store.save")
+    def rebind_fingerprint(self, new_fingerprint: str, observed_ns: int, *, account_recovery: dict) -> None:
+        """Atomically rebind an account-owned flat ledger after fresh complete flat proof."""
+        if not self.owner_id or self.account_binding is None:
+            raise ValueError("fingerprint rebind requires an account-bound ledger")
+        if not isinstance(account_recovery, dict) or account_recovery.get("result") != "passed":
+            raise ValueError("fingerprint rebind requires fresh complete flat-account proof")
+        if new_fingerprint == self.fingerprint:
+            return
+        payload = json.dumps({
+            "event": "ledger_fingerprint_rebound",
+            "observed_ns": observed_ns,
+            "previous_fingerprint": self.fingerprint,
+            "new_fingerprint": new_fingerprint,
+            "account_recovery": account_recovery,
+        }, sort_keys=True)
+        with span("store.sqlite_transaction"):
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO events(observed_ns, kind, payload) VALUES (?, ?, ?)",
+                    (observed_ns, "ledger_fingerprint_rebound", payload))
+                self.connection.execute(
+                    "UPDATE ownership SET fingerprint=? WHERE id=1", (new_fingerprint,))
+                self.connection.execute(
+                    "UPDATE state SET fingerprint=? WHERE id=1", (new_fingerprint,))
+        self.fingerprint = new_fingerprint
+
     @timed("store.load")
     def load(self) -> dict | None:
         row = self.connection.execute("SELECT snapshot FROM state WHERE id=1").fetchone()

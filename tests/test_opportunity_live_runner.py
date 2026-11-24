@@ -1309,3 +1309,88 @@ def test_wakeup_fast_path_dispatches_without_poll_and_falls_back_on_guards(tmp_p
     state.tick(NOW + 6)
     assert live.entry_pause_reason == "session_loss_check"
     assert len(polls) == 5 and len(timers) == 5
+
+
+def test_continuous_strategy_on_stop_marks_finished_only_when_flat_and_active(tmp_path):
+    from unittest.mock import patch
+    import os
+    from opportunity_live import LiveTradeState
+
+    path = configs(tmp_path, venues='["HYPERLIQUID", "LIGHTER", "ASTER"]', mandatory="false")
+    plan = replace(load_live_plan(path, symbols="BTC"), state_path=tmp_path / "live.sqlite3")
+    env = native_build_credentials()
+    proxy = SessionStoreProxy(MemoryStore())
+    live = LiveTradeState(
+        plan.scan, plan.policy, max_pairs=plan.max_pairs,
+        max_gross_notional_usd=plan.max_gross_notional_usd, store=proxy,
+    )
+    coordinator = LiveCoordinator(plan, live, proxy)
+    closed_calls = []
+    coordinator.gateway = SimpleNamespace(close=lambda: closed_calls.append("closed"))
+    with patch.dict(os.environ, env, clear=True):
+        node, _, strategy = build_live_node(plan, live, coordinator, environ=env)
+    try:
+        # 1. Flat active session without failure -> on_stop fences entries and marks finished=True.
+        coordinator.phase = "active"
+        coordinator.finished = False
+        coordinator.failure = None
+        strategy.on_stop()
+        assert coordinator.finished is True
+        assert coordinator.stop_reason == "operator_stop"
+        assert closed_calls == ["closed"]
+
+        # 2. Startup/recovery phase -> on_stop must NOT mark finished=True.
+        coordinator.finished = False
+        coordinator.stop_reason = None
+        coordinator.phase = "waiting_account_recovery"
+        strategy.on_stop()
+        assert coordinator.finished is False
+
+        # 3. Residual open position in active phase -> on_stop must NOT mark finished=True.
+        coordinator.finished = False
+        coordinator.phase = "active"
+        live.positions["p1"] = {"pair_id": "p1"}
+        strategy.on_stop()
+        assert coordinator.finished is False
+        live.positions.clear()
+
+        # 4. Prior failure set -> on_stop must NOT mark finished=True.
+        coordinator.finished = False
+        coordinator.phase = "active"
+        coordinator.failure = "prior failure"
+        strategy.on_stop()
+        assert coordinator.finished is False
+    finally:
+        node.dispose()
+
+
+def test_release_flat_claim_cli_rejects_conflicting_flags_and_dispatches(tmp_path, monkeypatch, capsys):
+    import opportunity_live_runner as runner
+
+    path = configs(tmp_path, venues='["HYPERLIQUID", "LIGHTER"]', mandatory="false")
+    for bad_flag in (
+        ["--balance-check-only"],
+        ["--self-test-only"],
+        ["--startup-self-test"],
+        ["--duration-secs", "10"],
+        ["--startup-balance-check"],
+        ["--no-startup-balance-check"],
+    ):
+        assert main(["--config", str(path), "--release-flat-claim", *bad_flag]) == 2
+        assert "[live-trade] refused:" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        main(["--config", str(path), "--release-flat-claim", "--execute-live"])
+    with pytest.raises(SystemExit):
+        main(["--config", str(path), "--release-flat-claim", "--dry-run"])
+
+    seen = []
+    def fake_release(plan):
+        seen.append(plan)
+        return 0
+
+    monkeypatch.setattr(runner, "run_release_flat_claim", fake_release)
+    assert main(["--config", str(path), "--release-flat-claim"]) == 0
+    assert len(seen) == 1
+    assert seen[0].startup_self_test is False
+    assert seen[0].startup_balance_check is False
