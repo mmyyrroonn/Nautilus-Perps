@@ -14,6 +14,7 @@ from .config import CarryPlan, CarryPolicy
 from .executor import CarryExecutionController, OrderAck, PaperVenueGateway
 from .funding_feed import LegMarketInfo, PublicCarryFeed
 from .ledger import CarryLedger
+from .recorder import CarryRecorder
 from .risk import BasisStopTracker, FastRiskEvaluator
 from .signal import (
     InstrumentSpec,
@@ -275,7 +276,13 @@ def build_execution_clients(plan: CarryPlan, *, environ: Mapping[str, str] | Non
     return clients
 
 
-def _create_carry_strategy(plan: CarryPlan, ledger: CarryLedger, *, mode: str):
+def _create_carry_strategy(
+    plan: CarryPlan,
+    ledger: CarryLedger,
+    *,
+    mode: str,
+    recorder: CarryRecorder | None = None,
+):
     from nautilus_trader.model import InstrumentId
     from nautilus_trader.trading import Strategy, StrategyConfig
 
@@ -285,6 +292,7 @@ def _create_carry_strategy(plan: CarryPlan, ledger: CarryLedger, *, mode: str):
             self.plan = plan
             self.ledger = ledger
             self.mode = mode
+            self.recorder = recorder
             self.feed = PublicCarryFeed(venues=plan.venues)
             self.subs = SubscriptionManager(
                 top_k=plan.runtime.watch_top_k,
@@ -334,8 +342,18 @@ def _create_carry_strategy(plan: CarryPlan, ledger: CarryLedger, *, mode: str):
             bid = float(tick.bid_price)
             ask = float(tick.ask_price)
             if bid > 0 and ask >= bid:
+                mid = 0.5 * (bid + ask)
                 self.live_quotes[iid] = (bid, ask)
-                self.live_mids[iid] = 0.5 * (bid + ask)
+                self.live_mids[iid] = mid
+                if self.recorder is not None:
+                    self.recorder.record_bbo(
+                        instrument_id=iid,
+                        bid=bid,
+                        ask=ask,
+                        mid=mid,
+                        now_s=time.time(),
+                        event_ts_ns=getattr(tick, "ts_event", None),
+                    )
 
         def on_order_filled(self, event: Any) -> None:
             coid = str(event.client_order_id)
@@ -468,7 +486,7 @@ def _create_carry_strategy(plan: CarryPlan, ledger: CarryLedger, *, mode: str):
                 venue_used[lv] = venue_used.get(lv, Decimal("0")) + self.plan.risk.leg_notional_usd
                 venue_used[sv] = venue_used.get(sv, Decimal("0")) + self.plan.risk.leg_notional_usd
 
-            cands = evaluate_entry_candidates(
+            watch_cands = evaluate_entry_candidates(
                 self.snapshot,
                 open_symbols=open_syms,
                 venue_notional_used=venue_used,
@@ -476,10 +494,11 @@ def _create_carry_strategy(plan: CarryPlan, ledger: CarryLedger, *, mode: str):
                 policy=self.plan.policy,
                 risk=self.plan.risk,
                 now_s=now_s,
+                respect_capacity=False,
             )
 
             open_iids = {str(p["iid_long"]) for p in active.values()} | {str(p["iid_short"]) for p in active.values()}
-            to_sub, to_unsub = self.subs.reconcile(open_instrument_ids=open_iids, ranked_candidates=cands, now_s=now_s)
+            to_sub, to_unsub = self.subs.reconcile(open_instrument_ids=open_iids, ranked_candidates=watch_cands, now_s=now_s)
             for iid in to_sub:
                 try:
                     self.subscribe_quotes(InstrumentId.from_str(iid))
@@ -491,8 +510,17 @@ def _create_carry_strategy(plan: CarryPlan, ledger: CarryLedger, *, mode: str):
                 except Exception:
                     pass
 
+            if self.recorder is not None:
+                self.recorder.record_slow_snapshot(
+                    ts_s=now_s,
+                    snapshot=self.snapshot,
+                    candidates=watch_cands,
+                    active_count=len(active),
+                    subscribed_count=len(self.subs.active_instruments),
+                )
+
             self.log.info(
-                f"[carry] active={len(active)} cands={len(cands)} sub={len(self.subs.active_instruments)} (+{len(to_sub)}/-{len(to_unsub)})"
+                f"[carry] active={len(active)} cands={len(watch_cands)} sub={len(self.subs.active_instruments)} (+{len(to_sub)}/-{len(to_unsub)})"
             )
             if self.mode not in ("paper", "live") or not self.reconciled:
                 return
@@ -514,11 +542,26 @@ def _create_carry_strategy(plan: CarryPlan, ledger: CarryLedger, *, mode: str):
                             pid, specs=specs, quotes=self.live_quotes, mids=self.live_mids, reason=rsn, now_s=now_s
                         )
 
-            # Open highest-ranked entry candidate if slots remain
+            # Open highest-ranked entry candidate if slots & venue/gross capacity remain
             active_after = self.ledger.active_positions()
-            if len(active_after) < self.plan.risk.max_slots:
-                for cand in cands:
-                    if cand.symbol in {str(p["symbol"]) for p in active_after.values()}:
+            open_syms_after = {str(p["symbol"]) for p in active_after.values()}
+            venue_used_after: dict[str, Decimal] = {}
+            for pos in active_after.values():
+                lv, sv = str(pos["long_venue"]), str(pos["short_venue"])
+                venue_used_after[lv] = venue_used_after.get(lv, Decimal("0")) + self.plan.risk.leg_notional_usd
+                venue_used_after[sv] = venue_used_after.get(sv, Decimal("0")) + self.plan.risk.leg_notional_usd
+            gross_used_after = sum(venue_used_after.values(), Decimal("0"))
+            leg_n = self.plan.risk.leg_notional_usd
+            if (
+                len(active_after) < self.plan.risk.max_slots
+                and gross_used_after + Decimal("2") * leg_n <= self.plan.risk.max_gross_notional_usd
+            ):
+                for cand in watch_cands:
+                    if cand.symbol in open_syms_after:
+                        continue
+                    if venue_used_after.get(cand.long_venue, Decimal("0")) + leg_n > self.plan.risk.max_venue_notional_usd:
+                        continue
+                    if venue_used_after.get(cand.short_venue, Decimal("0")) + leg_n > self.plan.risk.max_venue_notional_usd:
                         continue
                     if cand.long_leg.instrument_id in specs and cand.short_leg.instrument_id in specs:
                         pid, err = self.controller.start_entry(cand, specs=specs, now_s=now_s)
@@ -556,7 +599,12 @@ def build_live_node(plan: CarryPlan, *, mode: str, environ: Mapping[str, str] | 
         for client_id, factory, config in build_execution_clients(plan, environ=environ):
             builder = builder.add_exec_client(client_id, factory, config)
     node = builder.build()
-    strategy = _create_carry_strategy(plan, ledger, mode=mode)
+    recorder = (
+        CarryRecorder(plan.runtime.record_dir, bbo_interval_secs=plan.runtime.bbo_record_interval_secs)
+        if plan.runtime.record_dir is not None
+        else None
+    )
+    strategy = _create_carry_strategy(plan, ledger, mode=mode, recorder=recorder)
     node.add_strategy(strategy)
     return node, ledger, strategy
 
@@ -565,7 +613,7 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
     if mode == "live" and not execute_live:
         raise ValueError("--mode live refuses to start without explicit --execute-live")
     dur = plan.runtime.duration_secs if duration_secs is None else duration_secs
-    node, ledger, _strategy = build_live_node(plan, mode=mode)
+    node, ledger, strategy = build_live_node(plan, mode=mode)
     handle = node.handle()
     timer = None
     if dur > 0:
@@ -579,5 +627,10 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
     finally:
         if timer is not None:
             timer.cancel()
+        if getattr(strategy, "recorder", None) is not None:
+            try:
+                strategy.recorder.close()
+            except Exception:
+                pass
         ledger.close()
     return 0

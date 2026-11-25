@@ -121,6 +121,8 @@ class CarryRuntimePolicy:
     hedge_ioc_slippage_bps: Decimal = Decimal("15")
     update_instruments_interval_mins: int = 60
     duration_secs: int = 0
+    record_dir: Path | None = None
+    bbo_record_interval_secs: int = 1
 
 
 @dataclass(frozen=True)
@@ -148,9 +150,11 @@ class CarryPlan:
             return obj
 
         doc = _plain(asdict(self))
-        # Mode and duration may change cleanly across paper -> live/restarts; preserve ledger identity on venue/risk/state.
+        # Mode, duration, and telemetry recording settings may change cleanly across restarts without altering ledger identity.
         doc.pop("mode", None)
         doc["runtime"].pop("duration_secs", None)
+        doc["runtime"].pop("record_dir", None)
+        doc["runtime"].pop("bbo_record_interval_secs", None)
         raw = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
 
@@ -306,9 +310,19 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
             "slow_poll_secs", "fast_risk_poll_secs", "basis_sample_secs", "quote_stale_secs",
             "watch_top_k", "unsubscribe_hysteresis_secs", "maker_requote_secs", "maker_max_attempts",
             "hedge_ioc_slippage_bps", "update_instruments_interval_mins", "duration_secs",
+            "record_dir", "bbo_record_interval_secs",
         },
         "runtime",
     )
+    rd_raw = rt_raw.get("record_dir")
+    if rd_raw is None:
+        record_dir: Path | None = None
+    elif not isinstance(rd_raw, str):
+        raise CarryConfigError(f"runtime.record_dir must be string or omitted, got {rd_raw!r}")
+    elif not rd_raw.strip():
+        record_dir = None
+    else:
+        record_dir = (path.parent / rd_raw).resolve() if not Path(rd_raw).is_absolute() else Path(rd_raw)
     runtime = CarryRuntimePolicy(
         slow_poll_secs=_int_val(rt_raw.get("slow_poll_secs", 60), "runtime.slow_poll_secs", 10, 600),
         fast_risk_poll_secs=_int_val(rt_raw.get("fast_risk_poll_secs", 1), "runtime.fast_risk_poll_secs", 1, 10),
@@ -321,6 +335,8 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         hedge_ioc_slippage_bps=exact_decimal(rt_raw.get("hedge_ioc_slippage_bps", "15"), "runtime.hedge_ioc_slippage_bps", positive=True),
         update_instruments_interval_mins=_int_val(rt_raw.get("update_instruments_interval_mins", 60), "runtime.update_instruments_interval_mins", 5, 1440),
         duration_secs=_int_val(rt_raw.get("duration_secs", 0), "runtime.duration_secs", 0, 31_536_000),
+        record_dir=record_dir,
+        bbo_record_interval_secs=_int_val(rt_raw.get("bbo_record_interval_secs", 1), "runtime.bbo_record_interval_secs", 1, 60),
     )
 
     return CarryPlan(
