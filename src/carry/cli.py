@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         "fingerprint": plan.fingerprint(),
         "plan": _serialize(asdict(plan)),
     }
-    print(json.dumps(summary, indent=2, sort_keys=True))
+    print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
 
     if not should_run:
         return 0
