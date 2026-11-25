@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .config import CEX_VENUES, CarryPolicy, CarryRiskPolicy, DEX_VENUES
 from .funding_feed import LegMarketInfo
@@ -262,6 +262,89 @@ def evaluate_entry_candidates(
 
     candidates.sort(key=lambda c: (-c.net_score_bps_h, c.symbol, c.long_venue, c.short_venue))
     return candidates
+
+
+def evaluate_watch_candidates(
+    snapshot: Mapping[str, Mapping[str, LegMarketInfo]],
+    *,
+    strict_candidates: Sequence[EntryCandidate],
+    open_symbols: set[str],
+    excluded_symbols: set[str],
+    policy: CarryPolicy,
+    top_k: int,
+    min_watch_carry_bps_h: float = 0.35,
+) -> list[EntryCandidate]:
+    """Expand watchlist with relaxed near-miss symbols for telemetry without affecting strict entry."""
+    out = list(strict_candidates)
+    strict_syms = {c.symbol for c in strict_candidates}
+    if len(strict_syms) >= top_k or min_watch_carry_bps_h <= 0:
+        return out
+
+    covered = strict_syms | set(open_symbols)
+    allowed_ac = set(policy.asset_classes)
+    max_eb = float(policy.max_entry_basis_bps)
+    extras: list[tuple[float, float, EntryCandidate]] = []
+
+    for sym, vmap in sorted(snapshot.items()):
+        if sym in covered or sym in excluded_symbols:
+            continue
+        vs = sorted(vmap.keys())
+        best_rank: tuple[float, float] | None = None
+        best_cand: EntryCandidate | None = None
+        for i in range(len(vs)):
+            for j in range(i + 1, len(vs)):
+                v1, v2 = vs[i], vs[j]
+                for lv, sv in ((v1, v2), (v2, v1)):
+                    leg_l, leg_s = vmap[lv], vmap[sv]
+                    if leg_l.asset_class not in allowed_ac or leg_s.asset_class not in allowed_ac:
+                        continue
+                    cat = _route_cat(lv, sv)
+                    if not _route_allowed(cat, policy.route_scope):
+                        continue
+                    ok, _ = _passes_split_and_market_sanity(leg_l, leg_s, policy)
+                    if not ok:
+                        continue
+                    if (
+                        leg_l.r8_bps_h is None
+                        or leg_s.r8_bps_h is None
+                        or leg_l.r24_bps_h is None
+                        or leg_s.r24_bps_h is None
+                    ):
+                        continue
+                    c8 = leg_s.r8_bps_h - leg_l.r8_bps_h
+                    c24 = leg_s.r24_bps_h - leg_l.r24_bps_h
+                    hi = max(c8, c24)
+                    lo = min(c8, c24)
+                    if hi < min_watch_carry_bps_h:
+                        continue
+                    mid = 0.5 * (leg_l.mid + leg_s.mid)
+                    basis = (leg_s.mid - leg_l.mid) / mid * 1e4
+                    if abs(basis) > max_eb:
+                        continue
+                    rank = (hi, lo)
+                    if best_rank is None or rank > best_rank:
+                        rt_cost = float(policy.fee_pair_rt_bps(lv, sv))
+                        best_rank = rank
+                        best_cand = EntryCandidate(
+                            symbol=sym,
+                            long_venue=lv,
+                            short_venue=sv,
+                            long_leg=leg_l,
+                            short_leg=leg_s,
+                            route_cat=cat,
+                            carry_8h_bps_h=c8,
+                            carry_24h_bps_h=c24,
+                            basis_bps=basis,
+                            rt_cost_bps=rt_cost,
+                            net_score_bps_h=lo - rt_cost / 24.0,
+                        )
+        if best_rank is not None and best_cand is not None:
+            extras.append((best_rank[0], best_rank[1], best_cand))
+
+    extras.sort(key=lambda item: (-item[0], -item[1], item[2].symbol, item[2].long_venue, item[2].short_venue))
+    needed = max(0, top_k - len(strict_syms))
+    out.extend(item[2] for item in extras[:needed])
+    return out
 
 
 def should_exit_carry_decay(

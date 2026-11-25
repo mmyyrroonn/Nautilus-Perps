@@ -42,6 +42,7 @@ from src.carry.signal import (
     SubscriptionManager,
     align_leg_quantities,
     evaluate_entry_candidates,
+    evaluate_watch_candidates,
     should_exit_carry_decay,
 )
 
@@ -555,3 +556,68 @@ def test_recorder_config_fingerprint_stability_and_watch_capacity_separation(tmp
         respect_capacity=False,
     )
     assert len(watch) == 1 and watch[0].symbol == "SOL"
+
+
+def test_watch_fill_expands_subscriptions_without_relaxing_strict_entries(tmp_path: Path) -> None:
+    paper_plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    live_plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    assert paper_plan.runtime.watch_top_k == 30
+    assert paper_plan.runtime.watch_fill_min_carry_bps_h == D("0.35")
+    assert live_plan.runtime.watch_top_k == 15
+    assert live_plan.runtime.watch_fill_min_carry_bps_h == D("0.35")
+
+    alt_cfg = tmp_path / "carry-altfill.toml"
+    alt_text = (REPO_ROOT / "config" / "carry-paper.toml").read_text(encoding="utf-8")
+    alt_text = alt_text.replace('state_path = "../reports/carry/paper.sqlite3"', f'state_path = "{paper_plan.state_path}"')
+    alt_text = alt_text.replace('watch_fill_min_carry_bps_h = "0.35"', 'watch_fill_min_carry_bps_h = "0.20"')
+    alt_cfg.write_text(alt_text, encoding="utf-8")
+    assert load_carry_plan(alt_cfg).fingerprint() == paper_plan.fingerprint()
+
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.1, r24=0.1, bid=100.0, ask=100.04),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=1.5, r24=1.5, bid=100.2, ask=100.24),
+        },
+        "ETH": {
+            "HL": _make_leg("HL", "ETH", r8=0.1, r24=0.1, bid=2000.0, ask=2000.4),
+            "OKX": _make_leg("OKX", "ETH", interval_h=8, next_settle_ts=now_s + 7200, r8=0.60, r24=0.55, bid=2000.4, ask=2000.8),
+        },
+        "XRP": {
+            "HL": _make_leg("HL", "XRP", r8=0.1, r24=0.1, bid=1.0, ask=1.001),
+            "OKX": _make_leg("OKX", "XRP", interval_h=8, next_settle_ts=now_s + 7200, r8=0.20, r24=0.20, bid=1.002, ask=1.003),
+        },
+    }
+
+    strict = evaluate_entry_candidates(
+        snap,
+        open_symbols=set(),
+        venue_notional_used={},
+        excluded_symbols=set(),
+        policy=paper_plan.policy,
+        risk=paper_plan.risk,
+        now_s=now_s,
+        respect_capacity=False,
+    )
+    assert [c.symbol for c in strict] == ["SOL"]
+
+    watch = evaluate_watch_candidates(
+        snap,
+        strict_candidates=strict,
+        open_symbols=set(),
+        excluded_symbols=set(),
+        policy=paper_plan.policy,
+        top_k=paper_plan.runtime.watch_top_k,
+        min_watch_carry_bps_h=float(paper_plan.runtime.watch_fill_min_carry_bps_h),
+    )
+    assert [c.symbol for c in watch] == ["SOL", "ETH"]
+
+    subs = SubscriptionManager(top_k=paper_plan.runtime.watch_top_k, unsubscribe_hysteresis_secs=600)
+    to_sub, to_unsub = subs.reconcile(open_instrument_ids=set(), ranked_candidates=watch, now_s=now_s)
+    assert to_unsub == []
+    assert set(to_sub) == {
+        "ETH-USD-PERP.HYPERLIQUID",
+        "ETH-USDT-SWAP.OKX",
+        "SOL-USD-PERP.HYPERLIQUID",
+        "SOL-USDT-SWAP.OKX",
+    }
