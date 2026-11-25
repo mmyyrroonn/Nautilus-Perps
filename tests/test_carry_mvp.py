@@ -626,9 +626,11 @@ def test_watch_fill_expands_subscriptions_without_relaxing_strict_entries(tmp_pa
 def test_carry_strategy_implements_nautilus_on_quote_and_records_bbo(tmp_path: Path) -> None:
     from types import SimpleNamespace
     from nautilus_trader.trading import Strategy
-    from src.carry.runtime import _create_carry_strategy
+    from src.carry.runtime import _create_carry_strategy, build_data_clients
 
     plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    clients = {cid: cfg for cid, _fac, cfg in build_data_clients(plan)}
+    assert clients["HYPERLIQUID"].bbo_cache_only is False
     led = CarryLedger(tmp_path / "strat.sqlite3", plan.fingerprint())
     rec_dir = tmp_path / "tape"
     rec = CarryRecorder(rec_dir, bbo_interval_secs=1)

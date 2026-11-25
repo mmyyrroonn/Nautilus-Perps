@@ -138,7 +138,7 @@ def build_data_clients(plan: CarryPlan) -> list[tuple[str, Any, Any]]:
                 HyperliquidDataClientFactory(),
                 HyperliquidDataClientConfig(
                     environment=HyperliquidEnvironment.MAINNET if is_main else HyperliquidEnvironment.TESTNET,
-                    bbo_cache_only=True,
+                    bbo_cache_only=False,
                     update_instruments_interval_mins=iv_mins,
                 ),
             ))
