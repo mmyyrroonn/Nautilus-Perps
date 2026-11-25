@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import gzip
 import json
 from pathlib import Path
 import time
@@ -22,6 +23,7 @@ from src.carry.funding_feed import (
     parse_okx_tickers,
 )
 from src.carry.ledger import CarryLedger, LedgerOwnershipError
+from src.carry.recorder import CarryRecorder
 from src.carry.limits import (
     HARD_DAILY_LOSS_USD,
     HARD_GROSS_NOTIONAL_USD,
@@ -447,3 +449,109 @@ def test_cli_dry_run_and_live_safety_refusal(capsys: pytest.CaptureFixture[str])
     # Must refuse `--mode live --run` without `--execute-live`
     rc_refuse = carry_cli_main(["--config", str(REPO_ROOT / "config" / "carry-live.toml"), "--mode", "live", "--run"])
     assert rc_refuse == 2
+
+
+def test_recorder_slow_snapshot_fast_bbo_throttle_rotation_and_reopen(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    rec_dir = tmp_path / "tape"
+    rec = CarryRecorder(rec_dir, bbo_interval_secs=1)
+
+    t0 = 1_800_000_000  # 2027-01-15 UTC
+    snap = {
+        "SINGLE_ONLY": {"HL": _make_leg("HL", "SINGLE_ONLY", r8=2.0, r24=2.0)},
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.1, r24=0.1, bid=100.0, ask=100.04),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=t0 + 7200, r8=1.4, r24=1.4, bid=100.2, ask=100.24),
+        },
+    }
+    cands = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=t0
+    )
+    assert len(cands) == 1
+    assert rec.record_slow_snapshot(ts_s=t0, snapshot=snap, candidates=cands, active_count=1, subscribed_count=2)
+
+    assert rec.record_bbo(instrument_id="SOL-USD-PERP.HYPERLIQUID", bid=100.0, ask=100.04, mid=100.02, now_s=float(t0), event_ts_ns=1234)
+    assert not rec.record_bbo(instrument_id="SOL-USD-PERP.HYPERLIQUID", bid=100.01, ask=100.05, mid=100.03, now_s=float(t0) + 0.4)
+    assert rec.record_bbo(instrument_id="SOL-USD-PERP.HYPERLIQUID", bid=100.02, ask=100.06, mid=100.04, now_s=float(t0) + 1.0)
+    # Next UTC day rotates file
+    assert rec.record_bbo(instrument_id="SOL-USD-PERP.HYPERLIQUID", bid=100.10, ask=100.14, mid=100.12, now_s=float(t0 + 86400))
+    rec.close()
+
+    # Reopen on the same day and append one more BBO line cleanly
+    rec2 = CarryRecorder(rec_dir, bbo_interval_secs=1)
+    assert rec2.record_bbo(instrument_id="SOL-USDT-SWAP.OKX", bid=100.20, ask=100.24, mid=100.22, now_s=float(t0 + 86401))
+    rec2.close()
+
+    slow_files = sorted(rec_dir.glob("slow_snapshots_*.jsonl.gz"))
+    fast_files = sorted(rec_dir.glob("fast_bbo_*.jsonl.gz"))
+    assert len(slow_files) == 1
+    assert len(fast_files) == 2
+
+    with gzip.open(slow_files[0], "rt", encoding="utf-8") as fh:
+        slow_rows = [json.loads(line) for line in fh]
+    assert len(slow_rows) == 1
+    assert {leg["s"] for leg in slow_rows[0]["legs"]} == {"SOL"}
+    assert len(slow_rows[0]["legs"]) == 2
+    assert slow_rows[0]["candidates"][0]["s"] == "SOL"
+
+    with gzip.open(fast_files[0], "rt", encoding="utf-8") as fh:
+        day1_rows = [json.loads(line) for line in fh]
+    with gzip.open(fast_files[1], "rt", encoding="utf-8") as fh:
+        day2_rows = [json.loads(line) for line in fh]
+    assert len(day1_rows) == 2 and day1_rows[0]["ev_ns"] == 1234
+    assert len(day2_rows) == 2 and day2_rows[1]["iid"] == "SOL-USDT-SWAP.OKX"
+
+
+def test_recorder_config_fingerprint_stability_and_watch_capacity_separation(tmp_path: Path) -> None:
+    paper_plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    assert paper_plan.runtime.record_dir == (REPO_ROOT / "reports" / "carry" / "tape-paper").resolve()
+    assert paper_plan.runtime.bbo_record_interval_secs == 1
+
+    alt_cfg = tmp_path / "carry-norec.toml"
+    alt_text = (REPO_ROOT / "config" / "carry-paper.toml").read_text(encoding="utf-8")
+    alt_text = alt_text.replace('state_path = "../reports/carry/paper.sqlite3"', f'state_path = "{paper_plan.state_path}"')
+    alt_text = alt_text.replace('record_dir = "../reports/carry/tape-paper"', 'record_dir = ""')
+    alt_text = alt_text.replace("bbo_record_interval_secs = 1", "bbo_record_interval_secs = 5")
+    alt_cfg.write_text(alt_text, encoding="utf-8")
+    alt_plan = load_carry_plan(alt_cfg)
+    assert alt_plan.runtime.record_dir is None
+    assert alt_plan.runtime.bbo_record_interval_secs == 5
+    assert alt_plan.fingerprint() == paper_plan.fingerprint()
+
+    bad_cfg = tmp_path / "carry-badrec.toml"
+    bad_cfg.write_text(alt_text.replace("bbo_record_interval_secs = 5", "bbo_record_interval_secs = 0"), encoding="utf-8")
+    with pytest.raises(CarryConfigError):
+        load_carry_plan(bad_cfg)
+
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.1, r24=0.1, bid=100.0, ask=100.04),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=1.5, r24=1.5, bid=100.2, ask=100.24),
+        }
+    }
+    full_slots = {"A", "B", "C", "D", "E", "F"}
+    assert (
+        evaluate_entry_candidates(
+            snap,
+            open_symbols=full_slots,
+            venue_notional_used={"HL": D("400"), "OKX": D("400")},
+            excluded_symbols=set(),
+            policy=paper_plan.policy,
+            risk=paper_plan.risk,
+            now_s=now_s,
+            respect_capacity=True,
+        )
+        == []
+    )
+    watch = evaluate_entry_candidates(
+        snap,
+        open_symbols=full_slots,
+        venue_notional_used={"HL": D("400"), "OKX": D("400")},
+        excluded_symbols=set(),
+        policy=paper_plan.policy,
+        risk=paper_plan.risk,
+        now_s=now_s,
+        respect_capacity=False,
+    )
+    assert len(watch) == 1 and watch[0].symbol == "SOL"

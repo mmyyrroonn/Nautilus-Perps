@@ -190,13 +190,15 @@ def evaluate_entry_candidates(
     policy: CarryPolicy,
     risk: CarryRiskPolicy,
     now_s: int,
+    respect_capacity: bool = True,
 ) -> list[EntryCandidate]:
     """Evaluate all ordered multi-venue pairs deterministically and rank by net carry score."""
-    if len(open_symbols) >= risk.max_slots:
-        return []
-    gross_used = sum(venue_notional_used.values(), Decimal("0"))
-    if gross_used + Decimal("2") * risk.leg_notional_usd > risk.max_gross_notional_usd:
-        return []
+    if respect_capacity:
+        if len(open_symbols) >= risk.max_slots:
+            return []
+        gross_used = sum(venue_notional_used.values(), Decimal("0"))
+        if gross_used + Decimal("2") * risk.leg_notional_usd > risk.max_gross_notional_usd:
+            return []
 
     candidates: list[EntryCandidate] = []
     allowed_ac = set(policy.asset_classes)
@@ -218,10 +220,11 @@ def evaluate_entry_candidates(
                     cat = _route_cat(lv, sv)
                     if not _route_allowed(cat, policy.route_scope):
                         continue
-                    if venue_notional_used.get(lv, Decimal("0")) + risk.leg_notional_usd > risk.max_venue_notional_usd:
-                        continue
-                    if venue_notional_used.get(sv, Decimal("0")) + risk.leg_notional_usd > risk.max_venue_notional_usd:
-                        continue
+                    if respect_capacity:
+                        if venue_notional_used.get(lv, Decimal("0")) + risk.leg_notional_usd > risk.max_venue_notional_usd:
+                            continue
+                        if venue_notional_used.get(sv, Decimal("0")) + risk.leg_notional_usd > risk.max_venue_notional_usd:
+                            continue
                     ok, _ = _passes_split_and_market_sanity(leg_l, leg_s, policy)
                     if not ok:
                         continue

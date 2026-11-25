@@ -62,3 +62,5 @@ maker_max_attempts = 4
 hedge_ioc_slippage_bps = "15"
 update_instruments_interval_mins = 60
 duration_secs = 0
+record_dir = "../reports/carry/tape-paper"
+bbo_record_interval_secs = 1
