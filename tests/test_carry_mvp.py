@@ -621,3 +621,31 @@ def test_watch_fill_expands_subscriptions_without_relaxing_strict_entries(tmp_pa
         "SOL-USD-PERP.HYPERLIQUID",
         "SOL-USDT-SWAP.OKX",
     }
+
+
+def test_carry_strategy_implements_nautilus_on_quote_and_records_bbo(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from nautilus_trader.trading import Strategy
+    from src.carry.runtime import _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "strat.sqlite3", plan.fingerprint())
+    rec_dir = tmp_path / "tape"
+    rec = CarryRecorder(rec_dir, bbo_interval_secs=1)
+    strat = _create_carry_strategy(plan, led, mode="paper", recorder=rec)
+    try:
+        assert hasattr(Strategy, "on_quote")
+        assert type(strat).on_quote is not Strategy.on_quote
+        assert not hasattr(strat, "on_quote_tick")
+        strat.on_quote(SimpleNamespace(instrument_id="SOL-USDT-SWAP.OKX", bid_price=100.0, ask_price=100.04, ts_event=999))
+        assert strat.live_quotes["SOL-USDT-SWAP.OKX"] == (100.0, 100.04)
+    finally:
+        rec.close()
+        led.close()
+
+    fast_files = sorted(rec_dir.glob("fast_bbo_*.jsonl.gz"))
+    assert len(fast_files) == 1
+    with gzip.open(fast_files[0], "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert len(rows) == 1
+    assert rows[0]["iid"] == "SOL-USDT-SWAP.OKX" and rows[0]["ev_ns"] == 999

@@ -338,7 +338,7 @@ def _create_carry_strategy(
             # Run initial slow discovery immediately so dynamic subscriptions start right away
             self._on_slow_timer(None)
 
-        def on_quote_tick(self, tick: Any) -> None:
+        def on_quote(self, tick: Any) -> None:
             iid = str(tick.instrument_id)
             bid = float(tick.bid_price)
             ask = float(tick.ask_price)
