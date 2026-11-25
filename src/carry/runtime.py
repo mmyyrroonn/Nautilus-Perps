@@ -20,6 +20,7 @@ from .signal import (
     InstrumentSpec,
     SubscriptionManager,
     evaluate_entry_candidates,
+    evaluate_watch_candidates,
     should_exit_carry_decay,
 )
 
@@ -486,7 +487,7 @@ def _create_carry_strategy(
                 venue_used[lv] = venue_used.get(lv, Decimal("0")) + self.plan.risk.leg_notional_usd
                 venue_used[sv] = venue_used.get(sv, Decimal("0")) + self.plan.risk.leg_notional_usd
 
-            watch_cands = evaluate_entry_candidates(
+            strict_cands = evaluate_entry_candidates(
                 self.snapshot,
                 open_symbols=open_syms,
                 venue_notional_used=venue_used,
@@ -495,6 +496,15 @@ def _create_carry_strategy(
                 risk=self.plan.risk,
                 now_s=now_s,
                 respect_capacity=False,
+            )
+            watch_cands = evaluate_watch_candidates(
+                self.snapshot,
+                strict_candidates=strict_cands,
+                open_symbols=open_syms,
+                excluded_symbols=set(self.plan.excluded_symbols),
+                policy=self.plan.policy,
+                top_k=self.plan.runtime.watch_top_k,
+                min_watch_carry_bps_h=float(self.plan.runtime.watch_fill_min_carry_bps_h),
             )
 
             open_iids = {str(p["iid_long"]) for p in active.values()} | {str(p["iid_short"]) for p in active.values()}
@@ -514,13 +524,13 @@ def _create_carry_strategy(
                 self.recorder.record_slow_snapshot(
                     ts_s=now_s,
                     snapshot=self.snapshot,
-                    candidates=watch_cands,
+                    candidates=strict_cands,
                     active_count=len(active),
                     subscribed_count=len(self.subs.active_instruments),
                 )
 
             self.log.info(
-                f"[carry] active={len(active)} cands={len(watch_cands)} sub={len(self.subs.active_instruments)} (+{len(to_sub)}/-{len(to_unsub)})"
+                f"[carry] active={len(active)} strict={len(strict_cands)} watch={len(watch_cands)} sub={len(self.subs.active_instruments)} (+{len(to_sub)}/-{len(to_unsub)})"
             )
             if self.mode not in ("paper", "live") or not self.reconciled:
                 return
@@ -556,7 +566,7 @@ def _create_carry_strategy(
                 len(active_after) < self.plan.risk.max_slots
                 and gross_used_after + Decimal("2") * leg_n <= self.plan.risk.max_gross_notional_usd
             ):
-                for cand in watch_cands:
+                for cand in strict_cands:
                     if cand.symbol in open_syms_after:
                         continue
                     if venue_used_after.get(cand.long_venue, Decimal("0")) + leg_n > self.plan.risk.max_venue_notional_usd:

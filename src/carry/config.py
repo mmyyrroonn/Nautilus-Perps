@@ -123,6 +123,7 @@ class CarryRuntimePolicy:
     duration_secs: int = 0
     record_dir: Path | None = None
     bbo_record_interval_secs: int = 1
+    watch_fill_min_carry_bps_h: Decimal = Decimal("0.35")
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,7 @@ class CarryPlan:
         doc["runtime"].pop("duration_secs", None)
         doc["runtime"].pop("record_dir", None)
         doc["runtime"].pop("bbo_record_interval_secs", None)
+        doc["runtime"].pop("watch_fill_min_carry_bps_h", None)
         raw = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
 
@@ -310,10 +312,17 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
             "slow_poll_secs", "fast_risk_poll_secs", "basis_sample_secs", "quote_stale_secs",
             "watch_top_k", "unsubscribe_hysteresis_secs", "maker_requote_secs", "maker_max_attempts",
             "hedge_ioc_slippage_bps", "update_instruments_interval_mins", "duration_secs",
-            "record_dir", "bbo_record_interval_secs",
+            "record_dir", "bbo_record_interval_secs", "watch_fill_min_carry_bps_h",
         },
         "runtime",
     )
+    watch_fill_min = exact_decimal(
+        rt_raw.get("watch_fill_min_carry_bps_h", "0.35"),
+        "runtime.watch_fill_min_carry_bps_h",
+        nonnegative=True,
+    )
+    if watch_fill_min > Decimal("5.0"):
+        raise CarryConfigError(f"runtime.watch_fill_min_carry_bps_h must be <= 5.0, got {watch_fill_min}")
     rd_raw = rt_raw.get("record_dir")
     if rd_raw is None:
         record_dir: Path | None = None
@@ -337,6 +346,7 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         duration_secs=_int_val(rt_raw.get("duration_secs", 0), "runtime.duration_secs", 0, 31_536_000),
         record_dir=record_dir,
         bbo_record_interval_secs=_int_val(rt_raw.get("bbo_record_interval_secs", 1), "runtime.bbo_record_interval_secs", 1, 60),
+        watch_fill_min_carry_bps_h=watch_fill_min,
     )
 
     return CarryPlan(
