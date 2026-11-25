@@ -651,3 +651,36 @@ def test_carry_strategy_implements_nautilus_on_quote_and_records_bbo(tmp_path: P
         rows = [json.loads(line) for line in fh]
     assert len(rows) == 1
     assert rows[0]["iid"] == "SOL-USDT-SWAP.OKX" and rows[0]["ev_ns"] == 999
+
+
+def test_stale_live_quotes_are_evicted_and_never_corrupt_slow_snapshot(tmp_path: Path) -> None:
+    from src.carry.runtime import _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    assert plan.runtime.quote_stale_secs == 15
+    led = CarryLedger(tmp_path / "stale.sqlite3", plan.fingerprint())
+    strat = _create_carry_strategy(plan, led, mode="paper")
+    try:
+        iid = "BIGTIME-USDT-SWAP.OKX"
+        strat.live_quotes[iid] = (0.00639, 0.006393)
+        strat.live_mids[iid] = 0.0063915
+        strat.live_quote_ts[iid] = 1000.0
+        fresh_rest = _make_leg("OKX", "BIGTIME", bid=0.006524, ask=0.006527)
+        strat.snapshot = {"BIGTIME": {"OKX": fresh_rest}}
+
+        # Age 5s <= 15s -> fresh WS quote overlays snapshot
+        strat._overlay_fresh_quotes(1005.0)
+        assert strat.snapshot["BIGTIME"]["OKX"].bid == 0.00639
+
+        # Reset to fresh REST and evaluate at age 20s > 15s -> stale quote evicted, REST kept
+        strat.snapshot = {"BIGTIME": {"OKX": fresh_rest}}
+        strat._overlay_fresh_quotes(1020.0)
+        assert iid not in strat.live_quotes
+        assert iid not in strat.live_quote_ts
+        assert strat.snapshot["BIGTIME"]["OKX"].bid == 0.006524
+        assert strat.live_mids[iid] == pytest.approx(0.0065255)
+
+        strat._evict_quote(iid)
+        assert iid not in strat.live_mids
+    finally:
+        led.close()
