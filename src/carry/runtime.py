@@ -314,6 +314,7 @@ def _create_carry_strategy(
             )
             self.live_mids: dict[str, float] = {}
             self.live_quotes: dict[str, tuple[float, float]] = {}
+            self.live_quote_ts: dict[str, float] = {}
             self.snapshot: dict[str, dict[str, LegMarketInfo]] = {}
             self.reconciled = mode == "paper"
 
@@ -343,8 +344,10 @@ def _create_carry_strategy(
             bid = float(tick.bid_price)
             ask = float(tick.ask_price)
             if bid > 0 and ask >= bid:
+                ts_now = time.time()
                 mid = 0.5 * (bid + ask)
                 self.live_quotes[iid] = (bid, ask)
+                self.live_quote_ts[iid] = ts_now
                 self.live_mids[iid] = mid
                 if self.recorder is not None:
                     self.recorder.record_bbo(
@@ -352,9 +355,28 @@ def _create_carry_strategy(
                         bid=bid,
                         ask=ask,
                         mid=mid,
-                        now_s=time.time(),
+                        now_s=ts_now,
                         event_ts_ns=getattr(tick, "ts_event", None),
                     )
+
+        def _evict_quote(self, iid: str) -> None:
+            self.live_quotes.pop(iid, None)
+            self.live_quote_ts.pop(iid, None)
+            self.live_mids.pop(iid, None)
+
+        def _overlay_fresh_quotes(self, now_s: float) -> None:
+            stale_s = float(self.plan.runtime.quote_stale_secs)
+            for iid in [k for k in self.live_quotes if now_s - self.live_quote_ts.get(k, 0.0) > stale_s]:
+                self.live_quotes.pop(iid, None)
+                self.live_quote_ts.pop(iid, None)
+            for vmap in self.snapshot.values():
+                for v, leg in list(vmap.items()):
+                    q = self.live_quotes.get(leg.instrument_id)
+                    ts = self.live_quote_ts.get(leg.instrument_id, 0.0)
+                    if q is not None and (now_s - ts) <= stale_s:
+                        vmap[v] = LegMarketInfo(**{**leg.__dict__, "bid": q[0], "ask": q[1]})
+                    else:
+                        self.live_mids[leg.instrument_id] = leg.mid
 
         def on_order_filled(self, event: Any) -> None:
             coid = str(event.client_order_id)
@@ -472,14 +494,8 @@ def _create_carry_strategy(
                 self.log.warning(f"[carry] slow poll failed: {exc}")
                 return
 
-            # Overlay live WS BBO quotes onto slow snapshot so spread & basis use exact L1 prices
-            for vmap in self.snapshot.values():
-                for v, leg in list(vmap.items()):
-                    q = self.live_quotes.get(leg.instrument_id)
-                    if q is not None:
-                        vmap[v] = LegMarketInfo(**{**leg.__dict__, "bid": q[0], "ask": q[1]})
-                    else:
-                        self.live_mids.setdefault(leg.instrument_id, leg.mid)
+            # Overlay only fresh WS BBO quotes onto slow snapshot; stale quotes are evicted to REST
+            self._overlay_fresh_quotes(time.time())
 
             venue_used: dict[str, Decimal] = {}
             for pos in active.values():
@@ -515,6 +531,7 @@ def _create_carry_strategy(
                 except Exception:
                     pass
             for iid in to_unsub:
+                self._evict_quote(iid)
                 try:
                     self.unsubscribe_quotes(InstrumentId.from_str(iid))
                 except Exception:
