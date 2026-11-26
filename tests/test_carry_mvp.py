@@ -821,3 +821,154 @@ def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
     assert D(row2["realized_pnl_usd"]) == pytest.approx(D("0.06") * q)
     assert "SOL" not in led.stop_loss_cooldown_symbols(now_s=now_s + 26 * 3600 + 20, cooldown_hours=24)
     led.close()
+
+
+def test_hybrid_exec_config_validation_and_defaults(tmp_path: Path) -> None:
+    for cfg_name in ("carry-paper.toml", "carry-live.toml"):
+        plan = load_carry_plan(REPO_ROOT / "config" / cfg_name)
+        assert plan.policy.min_exec_basis_bps == D("10")
+        assert plan.policy.taker_fast_entry_basis_bps == D("20")
+
+    base = (REPO_ROOT / "config" / "carry-paper.toml").read_text(encoding="utf-8")
+    bad_exec = tmp_path / "bad_exec.toml"
+    bad_exec.write_text(base.replace('min_exec_basis_bps = "10"', 'min_exec_basis_bps = "60"'), encoding="utf-8")
+    with pytest.raises(CarryConfigError):
+        load_carry_plan(bad_exec)
+
+    bad_fast = tmp_path / "bad_fast.toml"
+    bad_fast.write_text(base.replace('taker_fast_entry_basis_bps = "20"', 'taker_fast_entry_basis_bps = "65"'), encoding="utf-8")
+    with pytest.raises(CarryConfigError):
+        load_carry_plan(bad_fast)
+
+
+def test_signal_screens_out_wide_spread_negative_exec_basis() -> None:
+    now_s = 1_800_000_000
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    snap = {
+        # Wide OKX ask causes maker_exec_basis = +2.99bp < 10bp despite mid_basis = +10.99bp >= 10bp
+        "BADEXEC": {
+            "OKX": _make_leg("OKX", "BADEXEC", interval_h=8, next_settle_ts=now_s + 7200, r8=0.0, r24=0.0, cur_rate=0.0, bid=99.95, ask=100.19),
+            "HL": _make_leg("HL", "BADEXEC", r8=2.0, r24=2.0, cur_rate=2.0, bid=100.14, ask=100.22),
+        },
+        "GOODEXEC": {
+            "OKX": _make_leg("OKX", "GOODEXEC", interval_h=8, next_settle_ts=now_s + 7200, r8=0.0, r24=0.0, cur_rate=0.0, bid=100.00, ask=100.04),
+            "HL": _make_leg("HL", "GOODEXEC", r8=2.0, r24=2.0, cur_rate=2.0, bid=100.18, ask=100.22),
+        },
+    }
+    cands = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(),
+        policy=plan.policy, risk=plan.risk, now_s=now_s,
+    )
+    assert [c.symbol for c in cands] == ["GOODEXEC"]
+
+
+def test_hybrid_dual_taker_fast_path_fills_wide_basis_synchronously(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "taker.sqlite3", plan.fingerprint())
+    gw = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True)
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw.register_spec(spec_l, D("100.00"))
+    gw.register_spec(spec_s, D("100.30"))
+    gw.update_quote(spec_l.instrument_id, D("99.98"), D("100.02"))
+    gw.update_quote(spec_s.instrument_id, D("100.28"), D("100.32"))
+
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.28, ask=100.32),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(),
+        policy=plan.policy, risk=plan.risk, now_s=now_s,
+    )[0]
+    pid, err = ctrl.start_entry(cand, specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}, now_s=now_s)
+    assert err is None and pid is not None
+    assert ctrl._active_makers == {}
+    ctrl.advance_pending_slices(
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        quotes={spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.28, 100.32)},
+        mids={spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.30},
+        now_s=now_s + 1,
+    )
+    pos = led.active_positions()[pid]
+    assert pos["status"] == "OPEN"
+    rows = led.conn.execute("SELECT role, order_type, price, status FROM orders WHERE position_id=?", (pid,)).fetchall()
+    assert rows and all(r["role"] == "TAKER_OPEN" and r["order_type"] == "IOC" and r["status"] == "FILLED" for r in rows)
+    assert any(D(r["price"]) == D("100.02") for r in rows)
+    assert any(D(r["price"]) == D("100.28") for r in rows)
+    led.close()
+
+
+def test_realistic_bbo_maker_fill_and_max_attempt_timeout_abort(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "realbbo.sqlite3", plan.fingerprint())
+    gw = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True)
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw.register_spec(spec_l, D("100.00"))
+    gw.register_spec(spec_s, D("100.15"))
+    gw.update_quote(spec_l.instrument_id, D("99.98"), D("100.02"))
+    gw.update_quote(spec_s.instrument_id, D("100.13"), D("100.17"))
+
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.13, ask=100.17),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(),
+        policy=plan.policy, risk=plan.risk, now_s=now_s,
+    )[0]
+    pid, err = ctrl.start_entry(cand, specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}, now_s=now_s)
+    assert err is None and pid is not None
+    # Stays pending without optimistic fill when BBO does not cross post price (99.98)
+    assert gw.update_quote(spec_l.instrument_id, D("99.99"), D("100.03")) == []
+    ctrl.poll_active_makers(live_mids={spec_l.instrument_id: 100.01, spec_s.instrument_id: 100.15}, now_s=now_s + 2)
+    assert D(led.active_positions()[pid]["long_base_qty"]) == D("0")
+
+    # Touching/crossing ask <= 99.98 triggers passive Maker fill + realistic OKX IOC fill at bid 100.13
+    filled_coids = gw.update_quote(spec_l.instrument_id, D("99.96"), D("99.98"))
+    assert len(filled_coids) == 1
+    ctrl.poll_active_makers(
+        live_mids={spec_l.instrument_id: 99.97, spec_s.instrument_id: 100.15},
+        now_s=now_s + 3,
+        live_quotes={spec_l.instrument_id: (99.96, 99.98), spec_s.instrument_id: (100.13, 100.17)},
+    )
+    pos = led.active_positions()[pid]
+    assert D(pos["long_base_qty"]) > D("0") and D(pos["short_base_qty"]) == D(pos["long_base_qty"])
+    hg_row = led.conn.execute("SELECT price FROM orders WHERE position_id=? AND role='HEDGE_OPEN'", (pid,)).fetchone()
+    assert D(hg_row["price"]) == D("100.13")
+
+    # Separate fresh entry with max_attempts=2 times out cleanly to entry_maker_timeout
+    gw2 = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True)
+    gw2.register_spec(spec_l, D("100.00"))
+    gw2.register_spec(spec_s, D("100.15"))
+    gw2.update_quote(spec_l.instrument_id, D("99.98"), D("100.02"))
+    gw2.update_quote(spec_s.instrument_id, D("100.13"), D("100.17"))
+    rt_fast = plan.runtime.__class__(**{**plan.runtime.__dict__, "maker_requote_secs": 3, "maker_max_attempts": 2})
+    ctrl2 = CarryExecutionController(ledger=led, gateway=gw2, risk=plan.risk, runtime=rt_fast, policy=plan.policy)
+    pid2, _ = ctrl2.start_entry(cand, specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}, now_s=now_s + 100)
+    ctrl2.poll_active_makers(live_mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.15}, now_s=now_s + 104)
+    ctrl2.advance_pending_slices(
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        quotes={spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.13, 100.17)},
+        mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.15},
+        now_s=now_s + 104,
+    )
+    ctrl2.poll_active_makers(live_mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.15}, now_s=now_s + 108)
+    ctrl2.advance_pending_slices(
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        quotes={spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.13, 100.17)},
+        mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.15},
+        now_s=now_s + 108,
+    )
+    row2 = dict(led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id=?", (pid2,)).fetchone())
+    assert row2["status"] == "CLOSED" and row2["close_reason"] == "entry_maker_timeout"
+    led.close()

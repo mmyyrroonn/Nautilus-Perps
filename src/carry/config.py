@@ -50,6 +50,8 @@ class CarryPolicy:
     exit_carry_8h_bps_h: Decimal = Decimal("0.25")
     min_hold_h: int = 6
     min_entry_basis_bps: Decimal = Decimal("10")
+    min_exec_basis_bps: Decimal = Decimal("10")
+    taker_fast_entry_basis_bps: Decimal = Decimal("20")
     max_entry_basis_bps: Decimal = Decimal("60")
     min_24h_vol_usd: Decimal = Decimal("500000")
     max_leg_spread_bps: Decimal = Decimal("25")
@@ -219,7 +221,8 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         pol_raw,
         {
             "route_scope", "asset_classes", "entry_carry_bps_h", "exit_carry_8h_bps_h",
-            "min_hold_h", "min_entry_basis_bps", "max_entry_basis_bps", "min_24h_vol_usd",
+            "min_hold_h", "min_entry_basis_bps", "min_exec_basis_bps", "taker_fast_entry_basis_bps",
+            "max_entry_basis_bps", "min_24h_vol_usd",
             "max_leg_spread_bps", "max_price_ratio_deviation", "max_1h_split_divergence",
             "cex_entry_blackout_before_settle_mins", "cex_exit_defer_before_settle_mins",
             "maker_fee_bps_by_venue", "taker_fee_bps_by_venue",
@@ -267,6 +270,18 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
     if min_eb >= max_eb:
         raise CarryConfigError("policy.min_entry_basis_bps must be < policy.max_entry_basis_bps")
 
+    min_exec_b = exact_decimal(pol_raw.get("min_exec_basis_bps", "10"), "policy.min_exec_basis_bps")
+    if min_exec_b >= max_eb:
+        raise CarryConfigError("policy.min_exec_basis_bps must be < policy.max_entry_basis_bps")
+
+    taker_fast_b = exact_decimal(
+        pol_raw.get("taker_fast_entry_basis_bps", "20"),
+        "policy.taker_fast_entry_basis_bps",
+        nonnegative=True,
+    )
+    if taker_fast_b > 0 and taker_fast_b > max_eb:
+        raise CarryConfigError("policy.taker_fast_entry_basis_bps must be <= policy.max_entry_basis_bps")
+
     exit_c = exact_decimal(pol_raw.get("exit_carry_8h_bps_h", "0.25"), "policy.exit_carry_8h_bps_h", nonnegative=True)
     if exit_c >= clamped.min_entry_carry_bps_h:
         raise CarryConfigError("policy.exit_carry_8h_bps_h must be < clamped entry_carry_bps_h")
@@ -278,6 +293,8 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         exit_carry_8h_bps_h=exit_c,
         min_hold_h=_int_val(pol_raw.get("min_hold_h", 6), "policy.min_hold_h", 1, 72),
         min_entry_basis_bps=min_eb,
+        min_exec_basis_bps=min_exec_b,
+        taker_fast_entry_basis_bps=taker_fast_b,
         max_entry_basis_bps=max_eb,
         min_24h_vol_usd=exact_decimal(pol_raw.get("min_24h_vol_usd", "500000"), "policy.min_24h_vol_usd", nonnegative=True),
         max_leg_spread_bps=exact_decimal(pol_raw.get("max_leg_spread_bps", "25"), "policy.max_leg_spread_bps", positive=True),

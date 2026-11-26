@@ -7,7 +7,7 @@ import time
 from typing import Mapping, Protocol
 import uuid
 
-from .config import CarryRiskPolicy, CarryRuntimePolicy, DEX_VENUES
+from .config import CarryPolicy, CarryRiskPolicy, CarryRuntimePolicy, DEX_VENUES
 from .ledger import CarryLedger
 from .signal import EntryCandidate, InstrumentSpec, align_leg_quantities
 
@@ -56,17 +56,55 @@ class VenueGateway(Protocol):
 class PaperVenueGateway:
     """Deterministic in-memory simulator for paper mode and behavioral testing."""
 
-    def __init__(self, *, fill_maker_immediately: bool = False, maker_partial_ratio: Decimal = Decimal("1")) -> None:
+    def __init__(
+        self,
+        *,
+        fill_maker_immediately: bool = False,
+        maker_partial_ratio: Decimal = Decimal("1"),
+        use_realistic_bbo: bool = False,
+    ) -> None:
         self.fill_maker_immediately = fill_maker_immediately
         self.maker_partial_ratio = maker_partial_ratio
+        self.use_realistic_bbo = use_realistic_bbo
         self.orders: dict[str, dict] = {}
         self.specs: dict[str, InstrumentSpec] = {}
         self.mids: dict[str, Decimal] = {}
+        self.quotes: dict[str, tuple[Decimal, Decimal]] = {}
 
     def register_spec(self, spec: InstrumentSpec, mid: Decimal | None = None) -> None:
         self.specs[spec.instrument_id] = spec
         if mid is not None:
             self.mids[spec.instrument_id] = mid
+
+    def seed_quote(self, instrument_id: str, bid: Decimal, ask: Decimal) -> None:
+        if instrument_id not in self.quotes and bid > 0 and ask >= bid:
+            self.quotes[instrument_id] = (bid, ask)
+            self.mids.setdefault(instrument_id, Decimal("0.5") * (bid + ask))
+
+    def update_quote(self, instrument_id: str, bid: Decimal, ask: Decimal) -> list[str]:
+        if bid <= 0 or ask < bid:
+            return []
+        self.quotes[instrument_id] = (bid, ask)
+        self.mids[instrument_id] = Decimal("0.5") * (bid + ask)
+        if not self.use_realistic_bbo:
+            return []
+        filled_coids: list[str] = []
+        for coid, rec in self.orders.items():
+            if (
+                rec["instrument_id"] != instrument_id
+                or not rec.get("post_only")
+                or rec["status"] not in ("OPEN", "PARTIAL")
+                or rec["price"] is None
+            ):
+                continue
+            px = rec["price"]
+            crossed = (ask <= px or bid < px) if rec.get("side") == "BUY" else (bid >= px or ask > px)
+            if crossed:
+                rec["filled_base_qty"] = rec["base_qty"]
+                rec["status"] = "FILLED"
+                rec["avg_fill_price"] = px
+                filled_coids.append(coid)
+        return filled_coids
 
     def _base_qty(self, iid: str, qty_contracts: Decimal) -> Decimal:
         spec = self.specs.get(iid)
@@ -79,6 +117,7 @@ class PaperVenueGateway:
         rec["filled_base_qty"] = filled
         rec["status"] = "FILLED" if filled >= rec["base_qty"] else "PARTIAL"
         px = price or rec["price"] or self.mids.get(rec["instrument_id"], Decimal("1"))
+        rec["avg_fill_price"] = px
         return OrderAck(client_order_id, rec["venue_order_id"], rec["status"], filled, px)
 
     def submit_limit(
@@ -96,18 +135,46 @@ class PaperVenueGateway:
     ) -> OrderAck:
         base_qty = self._base_qty(instrument_id, qty_contracts)
         vid = f"PAPER-{uuid.uuid4().hex[:10]}"
-        if ioc or (post_only and self.fill_maker_immediately):
-            filled = (base_qty * self.maker_partial_ratio) if post_only else base_qty
+        if ioc:
+            if self.use_realistic_bbo:
+                mid_fb = self.mids.get(instrument_id, price)
+                bid, ask = self.quotes.get(instrument_id, (mid_fb, mid_fb))
+                can_fill = (price >= ask and ask > 0) if side == "BUY" else (price <= bid and bid > 0)
+                if can_fill:
+                    fill_px = ask if side == "BUY" else bid
+                    self.orders[client_order_id] = {
+                        "venue_order_id": vid, "instrument_id": instrument_id, "side": side, "post_only": False,
+                        "base_qty": base_qty, "filled_base_qty": base_qty, "price": price,
+                        "avg_fill_price": fill_px, "status": "FILLED",
+                    }
+                    return OrderAck(client_order_id, vid, "FILLED", base_qty, fill_px)
+                self.orders[client_order_id] = {
+                    "venue_order_id": vid, "instrument_id": instrument_id, "side": side, "post_only": False,
+                    "base_qty": base_qty, "filled_base_qty": Decimal("0"), "price": price,
+                    "avg_fill_price": None, "status": "CANCELED",
+                }
+                return OrderAck(client_order_id, vid, "CANCELED", Decimal("0"), None, reason="ioc_unfilled")
+            self.orders[client_order_id] = {
+                "venue_order_id": vid, "instrument_id": instrument_id, "side": side, "post_only": False,
+                "base_qty": base_qty, "filled_base_qty": base_qty, "price": price,
+                "avg_fill_price": price, "status": "FILLED",
+            }
+            return OrderAck(client_order_id, vid, "FILLED", base_qty, price)
+
+        if post_only and self.fill_maker_immediately:
+            filled = base_qty * self.maker_partial_ratio
             status = "FILLED" if filled >= base_qty else "PARTIAL"
             self.orders[client_order_id] = {
-                "venue_order_id": vid, "instrument_id": instrument_id, "base_qty": base_qty,
-                "filled_base_qty": filled, "price": price, "status": status,
+                "venue_order_id": vid, "instrument_id": instrument_id, "side": side, "post_only": post_only,
+                "base_qty": base_qty, "filled_base_qty": filled, "price": price,
+                "avg_fill_price": price, "status": status,
             }
             return OrderAck(client_order_id, vid, status, filled, price)
 
         self.orders[client_order_id] = {
-            "venue_order_id": vid, "instrument_id": instrument_id, "base_qty": base_qty,
-            "filled_base_qty": Decimal("0"), "price": price, "status": "OPEN",
+            "venue_order_id": vid, "instrument_id": instrument_id, "side": side, "post_only": post_only,
+            "base_qty": base_qty, "filled_base_qty": Decimal("0"), "price": price,
+            "avg_fill_price": None, "status": "OPEN",
         }
         return OrderAck(client_order_id, vid, "OPEN", Decimal("0"), None)
 
@@ -123,10 +190,15 @@ class PaperVenueGateway:
     ) -> OrderAck:
         base_qty = self._base_qty(instrument_id, qty_contracts)
         vid = f"PAPER-{uuid.uuid4().hex[:10]}"
-        px = self.mids.get(instrument_id, Decimal("1"))
+        if self.use_realistic_bbo and instrument_id in self.quotes:
+            bid, ask = self.quotes[instrument_id]
+            px = ask if side == "BUY" else bid
+        else:
+            px = self.mids.get(instrument_id, Decimal("1"))
         self.orders[client_order_id] = {
-            "venue_order_id": vid, "instrument_id": instrument_id, "base_qty": base_qty,
-            "filled_base_qty": base_qty, "price": px, "status": "FILLED",
+            "venue_order_id": vid, "instrument_id": instrument_id, "side": side, "post_only": False,
+            "base_qty": base_qty, "filled_base_qty": base_qty, "price": px,
+            "avg_fill_price": px, "status": "FILLED",
         }
         return OrderAck(client_order_id, vid, "FILLED", base_qty, px)
 
@@ -138,7 +210,7 @@ class PaperVenueGateway:
 
     def poll_order(self, *, client_order_id: str, venue: str, instrument_id: str) -> OrderAck:
         rec = self.orders[client_order_id]
-        return OrderAck(client_order_id, rec["venue_order_id"], rec["status"], rec["filled_base_qty"], rec.get("price"))
+        return OrderAck(client_order_id, rec["venue_order_id"], rec["status"], rec["filled_base_qty"], rec.get("avg_fill_price", rec.get("price")))
 
 
 @dataclass
@@ -166,12 +238,22 @@ class CarryExecutionController:
         gateway: VenueGateway,
         risk: CarryRiskPolicy,
         runtime: CarryRuntimePolicy,
+        policy: CarryPolicy | None = None,
     ) -> None:
         self.ledger = ledger
         self.gateway = gateway
         self.risk = risk
         self.runtime = runtime
+        self.policy = policy or CarryPolicy()
         self._active_makers: dict[str, ActiveMakerLeg] = {}
+        self._slice_attempts: dict[str, int] = {}
+
+    @staticmethod
+    def _exec_basis_bps(long_px: Decimal, short_px: Decimal) -> Decimal:
+        if long_px <= 0 or short_px <= 0:
+            return Decimal("0")
+        mid = Decimal("0.5") * (long_px + short_px)
+        return ((short_px - long_px) / mid * Decimal("10000")) if mid > 0 else Decimal("0")
 
     def _choose_maker_side(self, v_long: str, v_short: str, sp_l: float, sp_s: float) -> bool:
         """Return True if long leg should be Maker (prefer DEX leg, else wider-spread leg)."""
@@ -298,6 +380,20 @@ class CarryExecutionController:
         if aligned is None:
             return False, err
 
+        if is_opening and self.policy.taker_fast_entry_basis_bps > 0 and leg_l_ask > 0 and leg_s_bid > 0:
+            taker_b = self._exec_basis_bps(leg_l_ask, leg_s_bid)
+            if self.policy.taker_fast_entry_basis_bps <= taker_b <= self.policy.max_entry_basis_bps:
+                return self._submit_dual_taker_slice(
+                    position_id=position_id,
+                    pos=pos,
+                    spec_l=spec_l,
+                    spec_s=spec_s,
+                    aligned=aligned,
+                    leg_l_ask=leg_l_ask,
+                    leg_s_bid=leg_s_bid,
+                    now_s=now_s,
+                )
+
         maker_is_long = self._choose_maker_side(str(pos["long_venue"]), str(pos["short_venue"]), sp_l, sp_s)
         if maker_is_long:
             spec_m, spec_h = spec_l, spec_s
@@ -306,6 +402,7 @@ class CarryExecutionController:
             maker_venue, hedge_venue = str(pos["long_venue"]), str(pos["short_venue"])
             maker_side = "BUY" if is_opening else "SELL"
             px = self._anchored_maker_price(hedge_mid=leg_s_mid, maker_bid=leg_l_bid, maker_ask=leg_l_ask, side=maker_side, spec_maker=spec_m)
+            est_l, est_s = px, leg_s_bid
         else:
             spec_m, spec_h = spec_s, spec_l
             qty_m_contracts = aligned.short_qty_contracts
@@ -313,6 +410,10 @@ class CarryExecutionController:
             maker_venue, hedge_venue = str(pos["short_venue"]), str(pos["long_venue"])
             maker_side = "SELL" if is_opening else "BUY"
             px = self._anchored_maker_price(hedge_mid=leg_l_mid, maker_bid=leg_s_bid, maker_ask=leg_s_ask, side=maker_side, spec_maker=spec_m)
+            est_l, est_s = leg_l_ask, px
+
+        if is_opening and self._exec_basis_bps(est_l, est_s) < self.policy.min_exec_basis_bps:
+            return False, "exec_basis_below_min"
 
         coid = f"mk-{position_id[:12]}-{uuid.uuid4().hex[:8]}"
         self.ledger.register_order_intent(
@@ -340,7 +441,8 @@ class CarryExecutionController:
             reduce_only=not is_opening,
         )
         self.ledger.update_order_state(
-            coid, status=ack.status, filled_base_qty=ack.filled_base_qty, venue_order_id=ack.venue_order_id, ts_s=now_s
+            coid, status=ack.status, filled_base_qty=ack.filled_base_qty, fill_price=ack.avg_fill_price,
+            venue_order_id=ack.venue_order_id, ts_s=now_s,
         )
         if ack.status == "REJECTED":
             return False, f"maker_rejected:{ack.reason}"
@@ -362,7 +464,85 @@ class CarryExecutionController:
             self.on_maker_progress(
                 coid, filled_base_qty=ack.filled_base_qty, terminal=(ack.status == "FILLED"),
                 hedge_mid=leg_s_mid if maker_is_long else leg_l_mid, now_s=now_s,
+                hedge_bbo=(leg_s_bid, leg_s_ask) if maker_is_long else (leg_l_bid, leg_l_ask),
             )
+        return True, None
+
+    def _submit_dual_taker_slice(
+        self,
+        *,
+        position_id: str,
+        pos: Mapping[str, object],
+        spec_l: InstrumentSpec,
+        spec_s: InstrumentSpec,
+        aligned: object,
+        leg_l_ask: Decimal,
+        leg_s_bid: Decimal,
+        now_s: int,
+    ) -> tuple[bool, str | None]:
+        """Submit simultaneous IOC orders on both legs for wide executable-basis opportunities."""
+        slip = self.runtime.hedge_ioc_slippage_bps / Decimal("10000")
+        specs_sides = [
+            (spec_l, str(pos["long_venue"]), "BUY", aligned.long_qty_contracts, aligned.long_base_qty, leg_l_ask, spec_l.round_price(leg_l_ask * (Decimal("1") + slip))),
+            (spec_s, str(pos["short_venue"]), "SELL", aligned.short_qty_contracts, aligned.short_base_qty, leg_s_bid, spec_s.round_price(leg_s_bid * (Decimal("1") - slip))),
+        ]
+        acks: list[OrderAck] = []
+        for spec, venue, side, qty_c, base_q, ref_px, ioc_px in specs_sides:
+            coid = f"tk-{position_id[:12]}-{uuid.uuid4().hex[:8]}"
+            self.ledger.register_order_intent(
+                client_order_id=coid, position_id=position_id, venue=venue,
+                instrument_id=spec.instrument_id, side=side, role="TAKER_OPEN",
+                order_type="IOC", qty_contracts=qty_c, base_qty=base_q, price=ioc_px, ts_s=now_s,
+            )
+            ack = self.gateway.submit_limit(
+                client_order_id=coid, venue=venue, instrument_id=spec.instrument_id,
+                side=side, qty_contracts=qty_c, price=ioc_px, post_only=False, ioc=True, reduce_only=False,
+            )
+            self.ledger.update_order_state(
+                coid, status=ack.status, filled_base_qty=ack.filled_base_qty,
+                fill_price=ack.avg_fill_price, venue_order_id=ack.venue_order_id, ts_s=now_s,
+            )
+            acks.append(ack)
+
+        filled_l, filled_s = acks[0].filled_base_qty, acks[1].filled_base_qty
+        if filled_l <= 0 and filled_s <= 0 and all(a.status in ("CANCELED", "REJECTED") for a in acks):
+            return False, "dual_taker_ioc_unfilled"
+
+        # If one leg filled (at least partially) and the other fell short synchronously, flatten delta with MARKET fallback
+        for idx, (spec, venue, side, _qc, base_q, ref_px, _px) in enumerate(specs_sides):
+            other_filled = acks[1 - idx].filled_base_qty
+            ack = acks[idx]
+            unfilled = base_q - ack.filled_base_qty
+            if other_filled > 0 and unfilled > 0 and ack.status in ("CANCELED", "REJECTED", "PARTIAL"):
+                rem_c = max(spec.size_increment, (unfilled / spec.base_step).to_integral_value() * spec.size_increment)
+                m_coid = f"tm-{position_id[:12]}-{uuid.uuid4().hex[:8]}"
+                self.ledger.register_order_intent(
+                    client_order_id=m_coid, position_id=position_id, venue=venue,
+                    instrument_id=spec.instrument_id, side=side, role="TAKER_OPEN_MARKET_FALLBACK",
+                    order_type="MARKET", qty_contracts=rem_c, base_qty=rem_c * spec.contract_multiplier,
+                    price=None, ts_s=now_s,
+                )
+                m_ack = self.gateway.submit_market(
+                    client_order_id=m_coid, venue=venue, instrument_id=spec.instrument_id,
+                    side=side, qty_contracts=rem_c, reduce_only=False,
+                )
+                self.ledger.update_order_state(
+                    m_coid, status=m_ack.status, filled_base_qty=m_ack.filled_base_qty,
+                    fill_price=m_ack.avg_fill_price or ref_px, venue_order_id=m_ack.venue_order_id, ts_s=now_s,
+                )
+                if idx == 0:
+                    filled_l += m_ack.filled_base_qty
+                else:
+                    filled_s += m_ack.filled_base_qty
+
+        if filled_l > 0 or filled_s > 0:
+            self._slice_attempts[position_id] = 0
+            cur_l = Decimal(str(pos["long_base_qty"]))
+            cur_s = Decimal(str(pos["short_base_qty"]))
+            new_l, new_s = cur_l + filled_l, cur_s + filled_s
+            target_b = Decimal(str(pos["target_base_qty"]))
+            new_status = "OPEN" if min(new_l, new_s) >= target_b * Decimal("0.98") else "OPENING"
+            self.ledger.update_position_status(position_id, status=new_status, ts_s=now_s, long_base_qty=new_l, short_base_qty=new_s)
         return True, None
 
     def on_maker_progress(
@@ -373,6 +553,7 @@ class CarryExecutionController:
         terminal: bool,
         hedge_mid: Decimal,
         now_s: int,
+        hedge_bbo: tuple[Decimal, Decimal] | None = None,
     ) -> OrderAck | None:
         """Immediately hedge any newly filled maker delta on the hedge venue using protected IOC -> Market."""
         ctx = self._active_makers.get(client_order_id)
@@ -383,6 +564,7 @@ class CarryExecutionController:
             if terminal:
                 self._active_makers.pop(client_order_id, None)
             return None
+        self._slice_attempts[ctx.position_id] = 0
 
         # Convert delta_base into nearest aligned hedge contracts
         step_h = ctx.spec_hedge.base_step
@@ -398,7 +580,8 @@ class CarryExecutionController:
             hedge_side = "BUY" if ctx.maker_side_is_long else "SELL"
 
         slip = self.runtime.hedge_ioc_slippage_bps / Decimal("10000")
-        ioc_px = ctx.spec_hedge.round_price(hedge_mid * (Decimal("1") + slip if hedge_side == "BUY" else Decimal("1") - slip))
+        ref_px = (hedge_bbo[1] if hedge_side == "BUY" else hedge_bbo[0]) if hedge_bbo is not None else hedge_mid
+        ioc_px = ctx.spec_hedge.round_price(ref_px * (Decimal("1") + slip if hedge_side == "BUY" else Decimal("1") - slip))
         h_coid = f"hg-{ctx.position_id[:12]}-{uuid.uuid4().hex[:8]}"
         self.ledger.register_order_intent(
             client_order_id=h_coid,
@@ -534,8 +717,20 @@ class CarryExecutionController:
                 rem = Decimal(str(pos["target_base_qty"])) - min(cur_l, cur_s)
                 if rem <= Decimal("0"):
                     self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                    self._slice_attempts.pop(pid, None)
                     continue
-                ok, _ = self._submit_next_slice(
+                if self._slice_attempts.get(pid, 0) >= self.runtime.maker_max_attempts:
+                    if cur_l <= Decimal("0") and cur_s <= Decimal("0"):
+                        self.ledger.update_position_status(
+                            pid, status="CLOSED", ts_s=now_s,
+                            long_base_qty=Decimal("0"), short_base_qty=Decimal("0"),
+                            close_reason="entry_maker_timeout",
+                        )
+                    else:
+                        self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                    self._slice_attempts.pop(pid, None)
+                    continue
+                ok, err = self._submit_next_slice(
                     position_id=pid, is_opening=True, spec_l=spec_l, spec_s=spec_s,
                     leg_l_bid=bid_l, leg_l_ask=ask_l, leg_l_mid=mid_l,
                     leg_s_bid=bid_s, leg_s_ask=ask_s, leg_s_mid=mid_s,
@@ -543,6 +738,19 @@ class CarryExecutionController:
                 )
                 if ok:
                     submitted.append(pid)
+                elif err in ("exec_basis_below_min", "dual_taker_ioc_unfilled"):
+                    cnt = self._slice_attempts.get(pid, 0) + 1
+                    self._slice_attempts[pid] = cnt
+                    if cnt >= self.runtime.maker_max_attempts:
+                        if cur_l <= Decimal("0") and cur_s <= Decimal("0"):
+                            self.ledger.update_position_status(
+                                pid, status="CLOSED", ts_s=now_s,
+                                long_base_qty=Decimal("0"), short_base_qty=Decimal("0"),
+                                close_reason="entry_maker_timeout",
+                            )
+                        else:
+                            self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                        self._slice_attempts.pop(pid, None)
             elif status == "CLOSING":
                 rem = max(cur_l, cur_s)
                 if rem <= Decimal("0"):
@@ -552,6 +760,7 @@ class CarryExecutionController:
                         ts_s=now_s,
                         realized_pnl_usd=self.ledger.compute_position_price_pnl(pid),
                     )
+                    self._slice_attempts.pop(pid, None)
                     continue
                 ok, _ = self._submit_next_slice(
                     position_id=pid, is_opening=False, spec_l=spec_l, spec_s=spec_s,
@@ -580,7 +789,13 @@ class CarryExecutionController:
         self.ledger.update_position_status(position_id, status="CLOSING", ts_s=now_s, close_reason=reason)
         return bool(self.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s))
 
-    def poll_active_makers(self, *, live_mids: Mapping[str, float], now_s: int) -> list[str]:
+    def poll_active_makers(
+        self,
+        *,
+        live_mids: Mapping[str, float],
+        now_s: int,
+        live_quotes: Mapping[str, tuple[float, float]] | None = None,
+    ) -> list[str]:
         """Poll pending makers, hedge partial fills, and cancel stale unfilled orders."""
         timed_out: list[str] = []
         for coid, ctx in list(self._active_makers.items()):
@@ -590,17 +805,21 @@ class CarryExecutionController:
             )
             if ack.filled_base_qty > ctx.hedged_base_qty:
                 h_mid = Decimal(str(live_mids.get(ctx.spec_hedge.instrument_id, 0) or 1))
+                q_h = live_quotes.get(ctx.spec_hedge.instrument_id) if live_quotes is not None else None
+                h_bbo = (Decimal(str(q_h[0])), Decimal(str(q_h[1]))) if (q_h is not None and q_h[0] > 0 and q_h[1] >= q_h[0]) else None
                 self.on_maker_progress(
                     coid,
                     filled_base_qty=ack.filled_base_qty,
                     terminal=(ack.status in ("FILLED", "CANCELED", "REJECTED")),
                     hedge_mid=h_mid,
                     now_s=now_s,
+                    hedge_bbo=h_bbo,
                 )
             if coid in self._active_makers and now_s - ctx.submitted_ts >= self.runtime.maker_requote_secs:
                 self.gateway.cancel_order(client_order_id=coid, venue=ctx.maker_venue, instrument_id=ctx.spec_maker.instrument_id)
                 self.ledger.update_order_state(coid, status="CANCELED", ts_s=now_s)
                 self._active_makers.pop(coid, None)
+                self._slice_attempts[ctx.position_id] = self._slice_attempts.get(ctx.position_id, 0) + 1
                 timed_out.append(coid)
         return timed_out
 

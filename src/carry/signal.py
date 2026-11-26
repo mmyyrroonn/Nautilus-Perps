@@ -138,6 +138,27 @@ def _route_allowed(cat: str, route_scope: str) -> bool:
     return False
 
 
+def estimate_exec_basis_bps(leg_l: LegMarketInfo, leg_s: LegMarketInfo) -> tuple[float, float]:
+    """Return (maker_ioc_basis_bps, taker_cross_basis_bps) from L1 quotes matching Maker leg selection."""
+    if leg_l.ask > 0 and leg_s.bid > 0:
+        taker_mid = 0.5 * (leg_l.ask + leg_s.bid)
+        taker_exec = ((leg_s.bid - leg_l.ask) / taker_mid * 1e4) if taker_mid > 0 else 0.0
+    else:
+        taker_exec = 0.0
+
+    l_dex, s_dex = leg_l.venue in DEX_VENUES, leg_s.venue in DEX_VENUES
+    maker_is_long = l_dex if l_dex != s_dex else ((leg_l.spread_bps or 0.0) >= (leg_s.spread_bps or 0.0))
+    if maker_is_long:
+        est_l = min(leg_l.bid, leg_s.mid)
+        est_s = leg_s.bid
+    else:
+        est_l = leg_l.ask
+        est_s = max(leg_s.ask, leg_l.mid)
+    maker_mid = 0.5 * (est_l + est_s)
+    maker_exec = ((est_s - est_l) / maker_mid * 1e4) if (est_l > 0 and est_s > 0 and maker_mid > 0) else 0.0
+    return maker_exec, taker_exec
+
+
 def _passes_split_and_market_sanity(leg_l: LegMarketInfo, leg_s: LegMarketInfo, policy: CarryPolicy) -> tuple[bool, str | None]:
     m_l, m_s = leg_l.mid, leg_s.mid
     if m_l <= 0 or m_s <= 0:
@@ -204,6 +225,8 @@ def evaluate_entry_candidates(
     allowed_ac = set(policy.asset_classes)
     entry_thresh = float(policy.entry_carry_bps_h)
     min_eb = float(policy.min_entry_basis_bps)
+    min_exec = float(policy.min_exec_basis_bps)
+    taker_fast = float(policy.taker_fast_entry_basis_bps)
     max_eb = float(policy.max_entry_basis_bps)
 
     for sym, vmap in sorted(snapshot.items()):
@@ -241,6 +264,9 @@ def evaluate_entry_candidates(
                     mid = 0.5 * (leg_l.mid + leg_s.mid)
                     basis = (leg_s.mid - leg_l.mid) / mid * 1e4
                     if not (min_eb <= basis <= max_eb):
+                        continue
+                    maker_exec_b, taker_exec_b = estimate_exec_basis_bps(leg_l, leg_s)
+                    if maker_exec_b < min_exec and not (taker_fast > 0 and taker_exec_b >= taker_fast):
                         continue
                     if _cex_entry_blackout_hit(leg_l, leg_s, policy, now_s):
                         continue
