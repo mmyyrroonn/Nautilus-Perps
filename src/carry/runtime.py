@@ -460,7 +460,9 @@ def _create_carry_strategy(
                 specs = self._specs_from_cache()
                 for pid, reason in dec.close_positions:
                     if str(active[pid]["iid_long"]) in specs and str(active[pid]["iid_short"]) in specs:
-                        self.controller.emergency_close_position(pid, specs=specs, reason=reason, now_s=now_s)
+                        self.controller.emergency_close_position(
+                            pid, specs=specs, reason=reason, now_s=now_s, live_mids=self.live_mids
+                        )
 
         def _on_basis_timer(self, _event: Any) -> None:
             now_s = int(time.time())
@@ -478,7 +480,9 @@ def _create_carry_strategy(
                 )
                 if hit and self.mode in ("paper", "live"):
                     if str(pos["iid_long"]) in specs and str(pos["iid_short"]) in specs:
-                        self.controller.emergency_close_position(pid, specs=specs, reason="basis_stop_30m", now_s=now_s)
+                        self.controller.emergency_close_position(
+                            pid, specs=specs, reason="basis_stop_30m", now_s=now_s, live_mids=self.live_mids
+                        )
 
         def _on_slow_timer(self, _event: Any) -> None:
             now_s = int(time.time())
@@ -503,11 +507,15 @@ def _create_carry_strategy(
                 venue_used[lv] = venue_used.get(lv, Decimal("0")) + self.plan.risk.leg_notional_usd
                 venue_used[sv] = venue_used.get(sv, Decimal("0")) + self.plan.risk.leg_notional_usd
 
+            cooldown_syms = self.ledger.stop_loss_cooldown_symbols(
+                now_s=now_s, cooldown_hours=self.plan.risk.stop_loss_cooldown_hours
+            )
+            base_excl = set(self.plan.excluded_symbols)
             strict_cands = evaluate_entry_candidates(
                 self.snapshot,
                 open_symbols=open_syms,
                 venue_notional_used=venue_used,
-                excluded_symbols=set(self.plan.excluded_symbols),
+                excluded_symbols=base_excl | cooldown_syms,
                 policy=self.plan.policy,
                 risk=self.plan.risk,
                 now_s=now_s,
@@ -517,7 +525,7 @@ def _create_carry_strategy(
                 self.snapshot,
                 strict_candidates=strict_cands,
                 open_symbols=open_syms,
-                excluded_symbols=set(self.plan.excluded_symbols),
+                excluded_symbols=base_excl,
                 policy=self.plan.policy,
                 top_k=self.plan.runtime.watch_top_k,
                 min_watch_carry_bps_h=float(self.plan.runtime.watch_fill_min_carry_bps_h),

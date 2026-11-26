@@ -14,7 +14,7 @@ entry_carry_bps_h = "0.75"
 exit_carry_8h_bps_h = "0.25"
 min_hold_h = 6
 min_entry_basis_bps = "10"
-max_entry_basis_bps = "250"
+max_entry_basis_bps = "60"
 min_24h_vol_usd = "500000"
 max_leg_spread_bps = "25"
 max_price_ratio_deviation = "0.05"
@@ -47,6 +47,7 @@ max_unhedged_usd = "60"
 max_unhedged_secs = 10
 max_daily_loss_usd = "40"
 max_consecutive_unhedged = 3
+stop_loss_cooldown_hours = 24
 max_qty_mismatch_pct = "2.0"
 reconcile_tolerance_pct = "2.0"
 

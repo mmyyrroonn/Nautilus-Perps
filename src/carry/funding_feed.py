@@ -23,7 +23,7 @@ USER_AGENT = "Mozilla/5.0 (compatible; NautilusPerpsCarry/1.0)"
 KNOWN_RWA_SYMBOLS = frozenset({
     "AAPL", "AMAT", "AMD", "AMZN", "ANT", "ARM", "ASML", "AVGO", "BABA", "BMNR",
     "BRENT", "CBRS", "COIN", "CRCL", "CRWV", "CXMT", "DKNG", "DRAM", "EURUSD", "EWY",
-    "GIGADEV", "GLW", "GOLD", "GOOGL", "HOOD", "IBM", "INTC", "KORU", "LITE", "LLY",
+    "GIGADEV", "GLW", "GOLD", "GOOGL", "HOOD", "IBM", "INTC", "KIOXIA", "KORU", "LITE", "LLY",
     "META", "MINIMAX", "MSFT", "MSTR", "MU", "NFLX", "NOK", "NVDA", "ORCL", "PAXG",
     "PLTR", "QQQ", "SAMSUNG", "SAN", "SHEIN", "SMSN", "SNDK", "SOXL", "SPCX", "SPY",
     "STRC", "TSLA", "TSM", "UNITREE", "US100", "US500", "WTI", "XAG", "XAU", "XAUT",
@@ -338,11 +338,13 @@ class PublicCarryFeed:
         if cached and now_s - cached["fetched_ts"] < 300:
             r8, r24, iv = cached["r8"], cached["r24"], cached["iv"]
             nxt = cached.get("next_settle_ts") or leg.next_settle_ts
+            cur_rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else cached.get("current_rate_bps_h")
             return LegMarketInfo(
                 **{
                     **leg.__dict__,
                     "r8_bps_h": r8,
                     "r24_bps_h": r24,
+                    "current_rate_bps_h": cur_rate,
                     "interval_h": iv,
                     "next_settle_ts": nxt,
                     "prev_1h_price": cached.get("prev_1h_price", leg.prev_1h_price),
@@ -355,6 +357,7 @@ class PublicCarryFeed:
         prev_1h: float | None = leg.prev_1h_price
         vol1h: float | None = leg.vol1h_usd
         nxt_settle = leg.next_settle_ts
+        cur_rate_bps_h: float | None = leg.current_rate_bps_h
 
         if leg.venue == "HL":
             rows = self._http(HL_INFO_URL, {"type": "fundingHistory", "coin": leg.raw_symbol, "startTime": start_s * 1000, "endTime": now_s * 1000})
@@ -396,6 +399,10 @@ class PublicCarryFeed:
                     leg_iv = leg.interval_h
             else:
                 leg_iv = leg.interval_h
+            if fr_cur:
+                fr_val = fr_cur[0].get("fundingRate")
+                if fr_val not in (None, ""):
+                    cur_rate_bps_h = float(fr_val) * 1e4 / max(1, leg_iv)
             fh = self._http(f"{OKX_BASE}/api/v5/public/funding-rate-history?instId={q}&limit=10", None).get("data", [])
             for r in fh:
                 ts = ((int(r["fundingTime"]) + 60_000) // HOUR_MS) * HOUR
@@ -428,6 +435,7 @@ class PublicCarryFeed:
             "fetched_ts": now_s,
             "r8": r8,
             "r24": r24,
+            "current_rate_bps_h": cur_rate_bps_h,
             "iv": iv,
             "next_settle_ts": nxt_settle,
             "prev_1h_price": prev_1h,
@@ -438,6 +446,7 @@ class PublicCarryFeed:
                 **leg.__dict__,
                 "r8_bps_h": r8,
                 "r24_bps_h": r24,
+                "current_rate_bps_h": cur_rate_bps_h if leg.current_rate_bps_h is None else leg.current_rate_bps_h,
                 "interval_h": iv,
                 "next_settle_ts": nxt_settle,
                 "prev_1h_price": prev_1h,

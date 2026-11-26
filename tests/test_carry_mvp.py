@@ -684,3 +684,140 @@ def test_stale_live_quotes_are_evicted_and_never_corrupt_slow_snapshot(tmp_path:
         assert iid not in strat.live_mids
     finally:
         led.close()
+
+
+def test_live_carry_alignment_okx_cur_rate_and_60bps_basis_cap() -> None:
+    paper_plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    live_plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    assert paper_plan.policy.max_entry_basis_bps == D("60")
+    assert live_plan.policy.max_entry_basis_bps == D("60")
+    assert paper_plan.risk.stop_loss_cooldown_hours == 24
+    assert live_plan.risk.stop_loss_cooldown_hours == 24
+
+    now_s = 1_800_000_000
+    snap = {
+        # High-basis runaway (> 60 bps cap) -> rejected
+        "WIDE": {
+            "HL": _make_leg("HL", "WIDE", r8=0.0, r24=0.0, cur_rate=0.0, bid=100.0, ask=100.02),
+            "BYBIT": _make_leg("BYBIT", "WIDE", interval_h=4, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.89, ask=100.91),
+        },
+        # Lagging 1h vs 4h trap: trailing r8/r24 look good, but live predicted carry is inverted (-84 < 0.25) -> rejected
+        "LAGTRAP": {
+            "HL": _make_leg("HL", "LAGTRAP", r8=-29.0, r24=-15.0, cur_rate=-50.0, bid=100.0, ask=100.02),
+            "OKX": _make_leg("OKX", "LAGTRAP", interval_h=4, next_settle_ts=now_s + 7200, r8=-12.0, r24=-5.0, cur_rate=-134.0, bid=100.34, ask=100.36),
+        },
+        # Healthy aligned pair (basis = 35 bps <= 60, c_live = 1.5 >= 0.25) -> accepted
+        "GOOD": {
+            "HL": _make_leg("HL", "GOOD", r8=0.0, r24=0.0, cur_rate=0.0, bid=100.0, ask=100.02),
+            "BYBIT": _make_leg("BYBIT", "GOOD", interval_h=4, next_settle_ts=now_s + 7200, r8=1.5, r24=1.5, cur_rate=1.5, bid=100.34, ask=100.36),
+        },
+    }
+    cands = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(),
+        policy=paper_plan.policy, risk=paper_plan.risk, now_s=now_s,
+    )
+    assert [c.symbol for c in cands] == ["GOOD"]
+
+    # Verify OKX detail parser populates current_rate_bps_h and caches it across ticks
+    def fake_http(url: str, _body: dict | None = None):
+        if "public/funding-rate?" in url:
+            return {"data": [{"fundingRate": "-0.012", "fundingTime": str((now_s + 3600) * 1000), "prevFundingTime": str((now_s - 3 * 3600) * 1000)}]}
+        if "funding-rate-history" in url:
+            return {"data": [{"fundingTime": str((now_s - 3 * 3600) * 1000), "realizedRate": "-0.004"}]}
+        if "market/candles" in url:
+            return {"data": [[str((now_s - 7200) * 1000), "1", "1", "1", "10.0", "100", "0", "10000"], [str((now_s - 3600) * 1000), "1", "1", "1", "10.1", "100", "0", "10000"]]}
+        return {}
+
+    feed = PublicCarryFeed(venues=("OKX",), http_get=fake_http)
+    leg = _make_leg("OKX", "SOL", interval_h=8, r8=0.0, r24=0.0, cur_rate=None)
+    leg = LegMarketInfo(**{**leg.__dict__, "current_rate_bps_h": None})
+    enriched = feed._fetch_leg_detail(leg, now_s)
+    assert enriched.current_rate_bps_h == pytest.approx(-30.0)
+    cached_enriched = feed._fetch_leg_detail(leg, now_s + 60)
+    assert cached_enriched.current_rate_bps_h == pytest.approx(-30.0)
+
+
+def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    led = CarryLedger(tmp_path / "pnl.sqlite3", plan.fingerprint())
+    gw = PaperVenueGateway(fill_maker_immediately=True)
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw.register_spec(spec_l, D("100.0"))
+    gw.register_spec(spec_s, D("100.2"))
+
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime)
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=100.0, ask=100.0),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=1.5, r24=1.5, cur_rate=1.5, bid=100.2, ask=100.2),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+    pid, err = ctrl.start_entry(cand, specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}, now_s=now_s)
+    assert err is None and pid is not None
+    ctrl.advance_pending_slices(
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        quotes={spec_l.instrument_id: (100.0, 100.0), spec_s.instrument_id: (100.2, 100.2)},
+        mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.2},
+        now_s=now_s + 2,
+    )
+    pos = led.active_positions()[pid]
+    assert pos["status"] == "OPEN"
+    q = D(pos["long_base_qty"])
+
+    # Move short leg up adversely by +3.00 -> unrealized price loss == -3.00 * q
+    gw.register_spec(spec_l, D("100.0"))
+    gw.register_spec(spec_s, D("103.2"))
+    ctrl.emergency_close_position(
+        pid,
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        reason="basis_stop_30m",
+        now_s=now_s + 100,
+        live_mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 103.2},
+    )
+    row = dict(led.conn.execute("SELECT realized_pnl_usd, close_reason FROM positions WHERE position_id=?", (pid,)).fetchone())
+    assert row["close_reason"] == "basis_stop_30m"
+    assert D(row["realized_pnl_usd"]) == pytest.approx(D("-3.0") * q)
+    daily_pnl, _ = led.daily_stats(now_s + 100)
+    assert daily_pnl == pytest.approx(D("-3.0") * q)
+
+    assert "SOL" in led.stop_loss_cooldown_symbols(now_s=now_s + 3600, cooldown_hours=24)
+    assert "SOL" not in led.stop_loss_cooldown_symbols(now_s=now_s + 25 * 3600, cooldown_hours=24)
+
+    # Normal carry_decay close also settles non-zero positive PnL and triggers no stop cooldown
+    gw.register_spec(spec_l, D("100.0"))
+    gw.register_spec(spec_s, D("100.2"))
+    pid2, _ = ctrl.start_entry(cand, specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}, now_s=now_s + 26 * 3600)
+    ctrl.advance_pending_slices(
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        quotes={spec_l.instrument_id: (100.0, 100.0), spec_s.instrument_id: (100.2, 100.2)},
+        mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.2},
+        now_s=now_s + 26 * 3600 + 2,
+    )
+    # Basis converges to 0 (both at 100.0) -> profit == +0.20 * q
+    gw.register_spec(spec_l, D("100.0"))
+    gw.register_spec(spec_s, D("100.0"))
+    ctrl.start_sliced_close(
+        pid2,
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        quotes={spec_l.instrument_id: (100.0, 100.0), spec_s.instrument_id: (100.0, 100.0)},
+        mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.0},
+        reason="carry_decay",
+        now_s=now_s + 26 * 3600 + 10,
+    )
+    ctrl.advance_pending_slices(
+        specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s},
+        quotes={spec_l.instrument_id: (100.0, 100.0), spec_s.instrument_id: (100.0, 100.0)},
+        mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.0},
+        now_s=now_s + 26 * 3600 + 12,
+    )
+    # Maker SELL at 100.01 (+0.01 vs 100.00) + IOC BUY at 100.15 (15 bps slippage cap vs 100.20) -> +0.06 * q
+    row2 = dict(led.conn.execute("SELECT status, realized_pnl_usd FROM positions WHERE position_id=?", (pid2,)).fetchone())
+    assert row2["status"] == "CLOSED"
+    assert D(row2["realized_pnl_usd"]) == pytest.approx(D("0.06") * q)
+    assert "SOL" not in led.stop_loss_cooldown_symbols(now_s=now_s + 26 * 3600 + 20, cooldown_hours=24)
+    led.close()

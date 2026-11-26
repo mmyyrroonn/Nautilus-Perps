@@ -247,7 +247,7 @@ class CarryLedger:
                 """,
                 (status, new_l, new_s, new_pnl, closed_ts, close_reason, position_id),
             )
-            if status == "CLOSED" and realized_pnl_usd is not None:
+            if status == "CLOSED" and row["status"] != "CLOSED" and realized_pnl_usd is not None:
                 day = _utc_day(ts_s)
                 cur = self.conn.execute("SELECT realized_pnl_usd, consecutive_unhedged FROM daily_stats WHERE utc_day=?", (day,)).fetchone()
                 prev_pnl = Decimal(cur["realized_pnl_usd"]) if cur else Decimal("0")
@@ -312,19 +312,68 @@ class CarryLedger:
         *,
         status: str,
         filled_base_qty: Decimal | None = None,
+        fill_price: Decimal | None = None,
         venue_order_id: str | None = None,
         ts_s: int = 0,
     ) -> None:
         with self.conn:
-            row = self.conn.execute("SELECT filled_base_qty, venue_order_id FROM orders WHERE client_order_id=?", (client_order_id,)).fetchone()
+            row = self.conn.execute("SELECT filled_base_qty, price, venue_order_id FROM orders WHERE client_order_id=?", (client_order_id,)).fetchone()
             if row is None:
                 raise KeyError(f"unknown order {client_order_id}")
             new_filled = str(filled_base_qty) if filled_base_qty is not None else row["filled_base_qty"]
+            new_price = str(fill_price) if fill_price is not None else row["price"]
             new_vid = venue_order_id if venue_order_id is not None else row["venue_order_id"]
             self.conn.execute(
-                "UPDATE orders SET status=?, filled_base_qty=?, venue_order_id=?, updated_ts=? WHERE client_order_id=?",
-                (status, new_filled, new_vid, ts_s, client_order_id),
+                "UPDATE orders SET status=?, filled_base_qty=?, price=?, venue_order_id=?, updated_ts=? WHERE client_order_id=?",
+                (status, new_filled, new_price, new_vid, ts_s, client_order_id),
             )
+
+    def stop_loss_cooldown_symbols(self, *, now_s: int, cooldown_hours: int) -> set[str]:
+        """Return symbols closed by basis_stop, margin_guard, or unhedged within the cooldown window."""
+        if cooldown_hours <= 0:
+            return set()
+        cutoff = now_s - cooldown_hours * 3600
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT symbol FROM positions
+            WHERE status='CLOSED' AND closed_ts IS NOT NULL AND closed_ts >= ?
+              AND (close_reason LIKE 'basis_stop%' OR close_reason LIKE 'margin_guard%' OR close_reason LIKE 'unhedged%')
+            """,
+            (cutoff,),
+        ).fetchall()
+        return {str(r["symbol"]).upper() for r in rows}
+
+    def compute_position_price_pnl(self, position_id: str) -> Decimal:
+        """Compute realized price PnL in USD from persisted closing fills against entry prices."""
+        pos = self.conn.execute(
+            "SELECT entry_l, entry_s, iid_long, iid_short FROM positions WHERE position_id=?",
+            (position_id,),
+        ).fetchone()
+        if pos is None:
+            return Decimal("0")
+        entry_l = Decimal(str(pos["entry_l"]))
+        entry_s = Decimal(str(pos["entry_s"]))
+        iid_long = str(pos["iid_long"])
+        iid_short = str(pos["iid_short"])
+        rows = self.conn.execute(
+            """
+            SELECT instrument_id, side, filled_base_qty, price FROM orders
+            WHERE position_id=? AND price IS NOT NULL
+              AND role IN ('MAKER_CLOSE', 'HEDGE_CLOSE', 'HEDGE_CLOSE_MARKET_FALLBACK', 'EMERGENCY_CLOSE_LONG', 'EMERGENCY_CLOSE_SHORT')
+            """,
+            (position_id,),
+        ).fetchall()
+        pnl = Decimal("0")
+        for row in rows:
+            filled = Decimal(str(row["filled_base_qty"]))
+            if filled <= 0:
+                continue
+            px = Decimal(str(row["price"]))
+            if str(row["instrument_id"]) == iid_long and str(row["side"]) == "SELL":
+                pnl += filled * (px - entry_l)
+            elif str(row["instrument_id"]) == iid_short and str(row["side"]) == "BUY":
+                pnl += filled * (entry_s - px)
+        return pnl.quantize(Decimal("0.0001"))
 
     def active_positions(self) -> dict[str, dict[str, Any]]:
         rows = self.conn.execute("SELECT * FROM positions WHERE status != 'CLOSED'").fetchall()
