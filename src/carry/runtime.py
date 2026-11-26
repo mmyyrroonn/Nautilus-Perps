@@ -304,13 +304,14 @@ def _create_carry_strategy(
                 persist_mins=plan.risk.basis_persist_mins,
             )
             self.fast_risk = FastRiskEvaluator(plan.risk)
-            self.paper_gateway = PaperVenueGateway(fill_maker_immediately=True) if mode == "paper" else None
+            self.paper_gateway = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True) if mode == "paper" else None
             self.gateway = self.paper_gateway if self.paper_gateway is not None else _NautilusStrategyGateway(self)
             self.controller = CarryExecutionController(
                 ledger=ledger,
                 gateway=self.gateway,
                 risk=plan.risk,
                 runtime=plan.runtime,
+                policy=plan.policy,
             )
             self.live_mids: dict[str, float] = {}
             self.live_quotes: dict[str, tuple[float, float]] = {}
@@ -349,6 +350,12 @@ def _create_carry_strategy(
                 self.live_quotes[iid] = (bid, ask)
                 self.live_quote_ts[iid] = ts_now
                 self.live_mids[iid] = mid
+                if self.paper_gateway is not None:
+                    filled_coids = self.paper_gateway.update_quote(iid, Decimal(str(bid)), Decimal(str(ask)))
+                    if filled_coids and self.reconciled:
+                        self.controller.poll_active_makers(
+                            live_mids=self.live_mids, now_s=int(ts_now), live_quotes=self.live_quotes
+                        )
                 if self.recorder is not None:
                     self.recorder.record_bbo(
                         instrument_id=iid,
@@ -377,6 +384,8 @@ def _create_carry_strategy(
                         vmap[v] = LegMarketInfo(**{**leg.__dict__, "bid": q[0], "ask": q[1]})
                     else:
                         self.live_mids[leg.instrument_id] = leg.mid
+                        if self.paper_gateway is not None:
+                            self.paper_gateway.seed_quote(leg.instrument_id, Decimal(str(leg.bid)), Decimal(str(leg.ask)))
 
         def on_order_filled(self, event: Any) -> None:
             coid = str(event.client_order_id)
@@ -384,7 +393,9 @@ def _create_carry_strategy(
                 now_s = int(time.time())
                 ctx = self.controller._active_makers[coid]
                 h_mid = Decimal(str(self.live_mids.get(ctx.spec_hedge.instrument_id, 1.0)))
-                self.controller.poll_active_makers(live_mids=self.live_mids, now_s=now_s)
+                self.controller.poll_active_makers(
+                    live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
+                )
                 _ = h_mid
 
         def _reconcile_on_start(self) -> None:
@@ -436,7 +447,9 @@ def _create_carry_strategy(
         def _on_fast_risk_timer(self, _event: Any) -> None:
             now_s = int(time.time())
             if self.mode in ("paper", "live") and self.reconciled:
-                self.controller.poll_active_makers(live_mids=self.live_mids, now_s=now_s)
+                self.controller.poll_active_makers(
+                    live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
+                )
                 halted_now, _ = self.ledger.is_halted()
                 if not halted_now:
                     specs_now = self._specs_from_cache()
@@ -598,7 +611,12 @@ def _create_carry_strategy(
                         continue
                     if venue_used_after.get(cand.short_venue, Decimal("0")) + leg_n > self.plan.risk.max_venue_notional_usd:
                         continue
-                    if cand.long_leg.instrument_id in specs and cand.short_leg.instrument_id in specs:
+                    if (
+                        cand.long_leg.instrument_id in specs
+                        and cand.short_leg.instrument_id in specs
+                        and cand.long_leg.instrument_id in self.live_quotes
+                        and cand.short_leg.instrument_id in self.live_quotes
+                    ):
                         pid, err = self.controller.start_entry(cand, specs=specs, now_s=now_s)
                         if pid:
                             self.log.info(f"[carry] opened {cand.symbol} {cand.long_venue}->{cand.short_venue} score={cand.net_score_bps_h:.2f}")
