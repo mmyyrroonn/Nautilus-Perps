@@ -234,6 +234,10 @@ def evaluate_entry_candidates(
                     c24 = leg_s.r24_bps_h - leg_l.r24_bps_h
                     if c8 < entry_thresh or c24 < entry_thresh:
                         continue
+                    if leg_l.current_rate_bps_h is not None and leg_s.current_rate_bps_h is not None:
+                        c_live = leg_s.current_rate_bps_h - leg_l.current_rate_bps_h
+                        if c_live < float(policy.exit_carry_8h_bps_h):
+                            continue
                     mid = 0.5 * (leg_l.mid + leg_s.mid)
                     basis = (leg_s.mid - leg_l.mid) / mid * 1e4
                     if not (min_eb <= basis <= max_eb):

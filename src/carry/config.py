@@ -50,7 +50,7 @@ class CarryPolicy:
     exit_carry_8h_bps_h: Decimal = Decimal("0.25")
     min_hold_h: int = 6
     min_entry_basis_bps: Decimal = Decimal("10")
-    max_entry_basis_bps: Decimal = Decimal("250")
+    max_entry_basis_bps: Decimal = Decimal("60")
     min_24h_vol_usd: Decimal = Decimal("500000")
     max_leg_spread_bps: Decimal = Decimal("25")
     max_price_ratio_deviation: Decimal = Decimal("0.05")
@@ -104,6 +104,7 @@ class CarryRiskPolicy:
     max_unhedged_secs: int = 10
     max_daily_loss_usd: Decimal = Decimal("40")
     max_consecutive_unhedged: int = 3
+    stop_loss_cooldown_hours: int = 24
     max_qty_mismatch_pct: Decimal = Decimal("2.0")
     reconcile_tolerance_pct: Decimal = Decimal("2.0")
 
@@ -239,7 +240,7 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
             "max_slots", "leg_notional_usd", "slice_usd", "max_venue_notional_usd",
             "max_gross_notional_usd", "basis_stop_bps", "basis_persist_mins",
             "margin_guard_pct", "max_unhedged_usd", "max_unhedged_secs",
-            "max_daily_loss_usd", "max_consecutive_unhedged",
+            "max_daily_loss_usd", "max_consecutive_unhedged", "stop_loss_cooldown_hours",
             "max_qty_mismatch_pct", "reconcile_tolerance_pct",
         },
         "risk",
@@ -262,7 +263,7 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         raise CarryConfigError(str(exc)) from exc
 
     min_eb = exact_decimal(pol_raw.get("min_entry_basis_bps", "10"), "policy.min_entry_basis_bps")
-    max_eb = exact_decimal(pol_raw.get("max_entry_basis_bps", "250"), "policy.max_entry_basis_bps", positive=True)
+    max_eb = exact_decimal(pol_raw.get("max_entry_basis_bps", "60"), "policy.max_entry_basis_bps", positive=True)
     if min_eb >= max_eb:
         raise CarryConfigError("policy.min_entry_basis_bps must be < policy.max_entry_basis_bps")
 
@@ -301,6 +302,7 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         max_unhedged_secs=clamped.max_unhedged_secs,
         max_daily_loss_usd=clamped.max_daily_loss_usd,
         max_consecutive_unhedged=_int_val(risk_raw.get("max_consecutive_unhedged", 3), "risk.max_consecutive_unhedged", 1, 20),
+        stop_loss_cooldown_hours=_int_val(risk_raw.get("stop_loss_cooldown_hours", 24), "risk.stop_loss_cooldown_hours", 0, 168),
         max_qty_mismatch_pct=exact_decimal(risk_raw.get("max_qty_mismatch_pct", "2.0"), "risk.max_qty_mismatch_pct", positive=True),
         reconcile_tolerance_pct=exact_decimal(risk_raw.get("reconcile_tolerance_pct", "2.0"), "risk.reconcile_tolerance_pct", positive=True),
     )

@@ -425,7 +425,12 @@ class CarryExecutionController:
             reduce_only=not ctx.is_opening,
         )
         self.ledger.update_order_state(
-            h_coid, status=ack.status, filled_base_qty=ack.filled_base_qty, venue_order_id=ack.venue_order_id, ts_s=now_s
+            h_coid,
+            status=ack.status,
+            filled_base_qty=ack.filled_base_qty,
+            fill_price=ack.avg_fill_price or hedge_mid,
+            venue_order_id=ack.venue_order_id,
+            ts_s=now_s,
         )
         unfilled_h = base_h - ack.filled_base_qty
         if unfilled_h > Decimal("0") and ack.status != "FILLED":
@@ -437,7 +442,7 @@ class CarryExecutionController:
                 venue=ctx.hedge_venue,
                 instrument_id=ctx.spec_hedge.instrument_id,
                 side=hedge_side,
-                role="HEDGE_MARKET_FALLBACK",
+                role="HEDGE_OPEN_MARKET_FALLBACK" if ctx.is_opening else "HEDGE_CLOSE_MARKET_FALLBACK",
                 order_type="MARKET",
                 qty_contracts=rem_contracts,
                 base_qty=rem_contracts * ctx.spec_hedge.contract_multiplier,
@@ -453,7 +458,12 @@ class CarryExecutionController:
                 reduce_only=not ctx.is_opening,
             )
             self.ledger.update_order_state(
-                m_coid, status=m_ack.status, filled_base_qty=m_ack.filled_base_qty, venue_order_id=m_ack.venue_order_id, ts_s=now_s
+                m_coid,
+                status=m_ack.status,
+                filled_base_qty=m_ack.filled_base_qty,
+                fill_price=m_ack.avg_fill_price or hedge_mid,
+                venue_order_id=m_ack.venue_order_id,
+                ts_s=now_s,
             )
             ack = OrderAck(m_coid, m_ack.venue_order_id, m_ack.status, ack.filled_base_qty + m_ack.filled_base_qty, m_ack.avg_fill_price)
 
@@ -474,7 +484,11 @@ class CarryExecutionController:
             else:
                 new_l, new_s = max(Decimal("0"), cur_l - ack.filled_base_qty), max(Decimal("0"), cur_s - delta_base)
             new_status = "CLOSED" if (new_l <= Decimal("0") and new_s <= Decimal("0")) else "CLOSING"
-            self.ledger.update_position_status(ctx.position_id, status=new_status, ts_s=now_s, long_base_qty=new_l, short_base_qty=new_s)
+            rpnl = self.ledger.compute_position_price_pnl(ctx.position_id) if new_status == "CLOSED" else None
+            self.ledger.update_position_status(
+                ctx.position_id, status=new_status, ts_s=now_s,
+                long_base_qty=new_l, short_base_qty=new_s, realized_pnl_usd=rpnl,
+            )
 
         if terminal:
             self._active_makers.pop(client_order_id, None)
@@ -532,7 +546,12 @@ class CarryExecutionController:
             elif status == "CLOSING":
                 rem = max(cur_l, cur_s)
                 if rem <= Decimal("0"):
-                    self.ledger.update_position_status(pid, status="CLOSED", ts_s=now_s)
+                    self.ledger.update_position_status(
+                        pid,
+                        status="CLOSED",
+                        ts_s=now_s,
+                        realized_pnl_usd=self.ledger.compute_position_price_pnl(pid),
+                    )
                     continue
                 ok, _ = self._submit_next_slice(
                     position_id=pid, is_opening=False, spec_l=spec_l, spec_s=spec_s,
@@ -566,7 +585,9 @@ class CarryExecutionController:
         timed_out: list[str] = []
         for coid, ctx in list(self._active_makers.items()):
             ack = self.gateway.poll_order(client_order_id=coid, venue=ctx.maker_venue, instrument_id=ctx.spec_maker.instrument_id)
-            self.ledger.update_order_state(coid, status=ack.status, filled_base_qty=ack.filled_base_qty, ts_s=now_s)
+            self.ledger.update_order_state(
+                coid, status=ack.status, filled_base_qty=ack.filled_base_qty, fill_price=ack.avg_fill_price, ts_s=now_s
+            )
             if ack.filled_base_qty > ctx.hedged_base_qty:
                 h_mid = Decimal(str(live_mids.get(ctx.spec_hedge.instrument_id, 0) or 1))
                 self.on_maker_progress(
@@ -590,6 +611,7 @@ class CarryExecutionController:
         specs: Mapping[str, InstrumentSpec],
         reason: str,
         now_s: int,
+        live_mids: Mapping[str, float] | None = None,
     ) -> None:
         """Immediately flatten both legs with reduce-only market orders and mark position CLOSED."""
         pos = self.ledger.active_positions().get(position_id)
@@ -606,6 +628,8 @@ class CarryExecutionController:
         s_base = Decimal(str(pos["short_base_qty"]))
         spec_l = specs[str(pos["iid_long"])]
         spec_s = specs[str(pos["iid_short"])]
+        fb_l = Decimal(str(live_mids[spec_l.instrument_id])) if (live_mids and spec_l.instrument_id in live_mids) else None
+        fb_s = Decimal(str(live_mids[spec_s.instrument_id])) if (live_mids and spec_s.instrument_id in live_mids) else None
 
         if l_base > 0:
             qty_l = max(spec_l.size_increment, (l_base / spec_l.base_step).to_integral_value() * spec_l.size_increment)
@@ -619,7 +643,14 @@ class CarryExecutionController:
                 client_order_id=coid_l, venue=str(pos["long_venue"]), instrument_id=spec_l.instrument_id,
                 side="SELL", qty_contracts=qty_l, reduce_only=True,
             )
-            self.ledger.update_order_state(coid_l, status=ack_l.status, filled_base_qty=ack_l.filled_base_qty, venue_order_id=ack_l.venue_order_id, ts_s=now_s)
+            self.ledger.update_order_state(
+                coid_l,
+                status=ack_l.status,
+                filled_base_qty=ack_l.filled_base_qty,
+                fill_price=ack_l.avg_fill_price or fb_l,
+                venue_order_id=ack_l.venue_order_id,
+                ts_s=now_s,
+            )
 
         if s_base > 0:
             qty_s = max(spec_s.size_increment, (s_base / spec_s.base_step).to_integral_value() * spec_s.size_increment)
@@ -633,10 +664,18 @@ class CarryExecutionController:
                 client_order_id=coid_s, venue=str(pos["short_venue"]), instrument_id=spec_s.instrument_id,
                 side="BUY", qty_contracts=qty_s, reduce_only=True,
             )
-            self.ledger.update_order_state(coid_s, status=ack_s.status, filled_base_qty=ack_s.filled_base_qty, venue_order_id=ack_s.venue_order_id, ts_s=now_s)
+            self.ledger.update_order_state(
+                coid_s,
+                status=ack_s.status,
+                filled_base_qty=ack_s.filled_base_qty,
+                fill_price=ack_s.avg_fill_price or fb_s,
+                venue_order_id=ack_s.venue_order_id,
+                ts_s=now_s,
+            )
 
+        rpnl = self.ledger.compute_position_price_pnl(position_id)
         self.ledger.update_position_status(
             position_id, status="CLOSED", ts_s=now_s,
             long_base_qty=Decimal("0"), short_base_qty=Decimal("0"),
-            realized_pnl_usd=Decimal("0"), close_reason=reason,
+            realized_pnl_usd=rpnl, close_reason=reason,
         )
