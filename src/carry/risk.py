@@ -33,6 +33,7 @@ class BasisStopTracker:
         entry_basis_bps: float,
         basis_now_bps: float | None,
         now_s: int,
+        sample_ts: int | None = None,
     ) -> tuple[bool, int]:
         """Return (triggered, elapsed_breach_secs). Resets immediately on basis recovery."""
         st = self._streaks.setdefault(position_id, _BasisStreak())
@@ -45,10 +46,27 @@ class BasisStopTracker:
 
         adverse_bps = basis_now_bps - entry_basis_bps
         if adverse_bps >= self.basis_stop_bps:
+            if sample_ts is None:
+                if st.started_ts is None:
+                    st.started_ts = now_s
+                st.last_breach_ts = now_s
+                elapsed = now_s - st.started_ts
+                return elapsed >= self.persist_secs, elapsed
+
             if st.started_ts is None:
-                st.started_ts = now_s
-            st.last_breach_ts = now_s
-            elapsed = now_s - st.started_ts
+                st.started_ts = sample_ts
+                st.last_breach_ts = sample_ts
+                return False, 0
+            if st.last_breach_ts is not None and sample_ts <= st.last_breach_ts:
+                if (now_s - st.last_breach_ts) > self.max_gap_secs:
+                    st.started_ts = None
+                    st.last_breach_ts = None
+                    return False, 0
+                return False, max(0, st.last_breach_ts - st.started_ts)
+            if st.last_breach_ts is not None and (sample_ts - st.last_breach_ts) > self.max_gap_secs:
+                st.started_ts = sample_ts
+            st.last_breach_ts = sample_ts
+            elapsed = st.last_breach_ts - st.started_ts
             return elapsed >= self.persist_secs, elapsed
 
         st.started_ts = None

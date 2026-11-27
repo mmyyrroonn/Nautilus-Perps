@@ -40,6 +40,7 @@ class _SlowPollResult:
     poll_ts_s: int
     snapshot: Mapping[str, Mapping[str, LegMarketInfo]] | None
     error: str | None = None
+    partial_errors: tuple[tuple[str, str], ...] = ()
 
 
 def _resolve_quote_event_ts(tick: Any, now_s: float) -> float:
@@ -361,6 +362,7 @@ def _create_carry_strategy(
             self.basis_tracker = BasisStopTracker(
                 basis_stop_bps=plan.risk.basis_stop_bps,
                 persist_mins=plan.risk.basis_persist_mins,
+                max_gap_secs=max(30, plan.runtime.slow_poll_secs + 15),
             )
             self.fast_risk = FastRiskEvaluator(plan.risk)
             self.paper_gateway = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True) if mode == "paper" else None
@@ -373,6 +375,7 @@ def _create_carry_strategy(
                 policy=plan.policy,
             )
             self.live_mids: dict[str, float] = {}
+            self.live_mid_ts: dict[str, float] = {}
             self.live_quotes: dict[str, tuple[float, float]] = {}
             self.live_quote_ts: dict[str, float] = {}
             self.snapshot: dict[str, dict[str, LegMarketInfo]] = {}
@@ -513,6 +516,7 @@ def _create_carry_strategy(
                 self.live_quotes[iid] = (bid, ask)
                 self.live_quote_ts[iid] = quote_ts
                 self.live_mids[iid] = mid
+                self.live_mid_ts[iid] = quote_ts
                 if self.paper_gateway is not None:
                     filled_coids = self.paper_gateway.update_quote(iid, Decimal(str(bid)), Decimal(str(ask)))
                     if filled_coids and self._can_trade():
@@ -533,6 +537,10 @@ def _create_carry_strategy(
             self.live_quotes.pop(iid, None)
             self.live_quote_ts.pop(iid, None)
             self.live_mids.pop(iid, None)
+            self.live_mid_ts.pop(iid, None)
+
+        def _fresh_mid_max_age_secs(self) -> float:
+            return max(float(self.plan.runtime.quote_stale_secs), float(self.plan.runtime.slow_poll_secs) + 15.0)
 
         def _prune_stale_quotes(self, now_ts: float) -> list[str]:
             stale_s = float(self.plan.runtime.quote_stale_secs)
@@ -552,9 +560,12 @@ def _create_carry_strategy(
                     if q is not None and (now_s - ts) <= stale_s:
                         vmap[v] = LegMarketInfo(**{**leg.__dict__, "bid": q[0], "ask": q[1]})
                     else:
-                        self.live_mids[leg.instrument_id] = leg.mid
-                        if self.paper_gateway is not None:
-                            self.paper_gateway.seed_quote(leg.instrument_id, Decimal(str(leg.bid)), Decimal(str(leg.ask)))
+                        rest_ts = min(float(now_s), float(leg.fetched_ts)) if leg.fetched_ts > 0 else float(now_s)
+                        if rest_ts >= self.live_mid_ts.get(leg.instrument_id, 0.0):
+                            self.live_mids[leg.instrument_id] = leg.mid
+                            self.live_mid_ts[leg.instrument_id] = rest_ts
+                            if self.paper_gateway is not None:
+                                self.paper_gateway.seed_quote(leg.instrument_id, Decimal(str(leg.bid)), Decimal(str(leg.ask)))
 
         def _handle_order_event(self, event: Any) -> None:
             if not self._can_trade():
@@ -659,9 +670,16 @@ def _create_carry_strategy(
                 )
             active = self.ledger.active_positions()
             daily_pnl, streak = self.ledger.daily_stats(now_s)
+            now_f = time.time()
+            max_age = self._fresh_mid_max_age_secs()
+            fresh_mids = {
+                iid: px
+                for iid, px in self.live_mids.items()
+                if iid in self.live_mid_ts and (now_f - self.live_mid_ts[iid]) <= max_age
+            }
             dec = self.fast_risk.evaluate(
                 positions=active,
-                live_mids=self.live_mids,
+                live_mids=fresh_mids,
                 daily_realized_pnl_usd=daily_pnl,
                 consecutive_unhedged=streak,
                 now_s=now_s,
@@ -690,21 +708,39 @@ def _create_carry_strategy(
                 self._drive_graceful_shutdown(now_s)
 
         def _on_basis_timer(self, _event: Any) -> None:
-            now_s = int(time.time())
+            now_f = time.time()
+            now_s = int(now_f)
+            max_age = self._fresh_mid_max_age_secs()
             active = self.ledger.active_positions()
             specs = self._specs_from_cache() if active else {}
             for pid, pos in active.items():
-                ml = self.live_mids.get(str(pos["iid_long"]))
-                ms = self.live_mids.get(str(pos["iid_short"]))
-                b_now = ((ms - ml) / (0.5 * (ml + ms)) * 1e4) if (ml and ms) else None
+                iid_l = str(pos["iid_long"])
+                iid_s = str(pos["iid_short"])
+                ml = self.live_mids.get(iid_l)
+                ms = self.live_mids.get(iid_s)
+                ts_l = self.live_mid_ts.get(iid_l)
+                ts_s = self.live_mid_ts.get(iid_s)
+                fresh = (
+                    ml is not None
+                    and ms is not None
+                    and ml > 0
+                    and ms > 0
+                    and ts_l is not None
+                    and ts_s is not None
+                    and (now_f - ts_l) <= max_age
+                    and (now_f - ts_s) <= max_age
+                )
+                b_now = ((ms - ml) / (0.5 * (ml + ms)) * 1e4) if fresh else None
+                sample_ts = int(min(ts_l, ts_s)) if fresh and ts_l is not None and ts_s is not None else None
                 hit, _ = self.basis_tracker.observe(
                     position_id=pid,
                     entry_basis_bps=float(pos["entry_basis_bps"]),
                     basis_now_bps=b_now,
                     now_s=now_s,
+                    sample_ts=sample_ts,
                 )
                 if hit and self._can_trade():
-                    if str(pos["iid_long"]) in specs and str(pos["iid_short"]) in specs:
+                    if iid_l in specs and iid_s in specs:
                         self.controller.emergency_close_position(
                             pid, specs=specs, reason="basis_stop_30m", now_s=now_s, live_mids=self.live_mids
                         )
@@ -729,7 +765,8 @@ def _create_carry_strategy(
                         min_24h_vol_usd=min_vol,
                     )
                     frozen = MappingProxyType({sym: MappingProxyType(dict(vmap)) for sym, vmap in raw.items()})
-                    result = _SlowPollResult(poll_ts_s=now_s, snapshot=frozen)
+                    partial = tuple(sorted(getattr(feed, "last_venue_errors", {}).items()))
+                    result = _SlowPollResult(poll_ts_s=now_s, snapshot=frozen, partial_errors=partial)
                 except Exception as exc:
                     result = _SlowPollResult(poll_ts_s=now_s, snapshot=None, error=f"{type(exc).__name__}: {exc}")
                 finally:
@@ -762,18 +799,47 @@ def _create_carry_strategy(
                 return False
             if res.snapshot is None:
                 return False
-            self._last_slow_poll_error = None
-            self._apply_slow_snapshot(res.snapshot)
+            now_s = int(time.time())
+            max_slow_age_s = max(2 * self.plan.runtime.slow_poll_secs, 180)
+            if res.poll_ts_s <= 0 or (now_s - res.poll_ts_s) > max_slow_age_s:
+                age_s = now_s - res.poll_ts_s
+                self._last_slow_poll_error = f"stale_slow_snapshot:age={age_s}s"
+                self.log.warning(f"[carry] discarding stale slow poll snapshot: age={age_s}s > {max_slow_age_s}s")
+                return False
+            if res.partial_errors:
+                summary = "; ".join(f"{v}={err}" for v, err in res.partial_errors)
+                self._last_slow_poll_error = f"partial_venue_failures:{summary}"
+                self.log.warning(f"[carry] slow poll partial venue failures: {summary}")
+            else:
+                self._last_slow_poll_error = None
+            self._apply_slow_snapshot(res.snapshot, poll_ts_s=res.poll_ts_s)
             return True
 
-        def _apply_slow_snapshot(self, frozen_snapshot: Mapping[str, Mapping[str, LegMarketInfo]]) -> None:
+        def _apply_slow_snapshot(
+            self,
+            frozen_snapshot: Mapping[str, Mapping[str, LegMarketInfo]],
+            *,
+            poll_ts_s: int | None = None,
+        ) -> None:
             now_s = int(time.time())
+            max_slow_age_s = max(2 * self.plan.runtime.slow_poll_secs, 180)
+            if poll_ts_s is not None and (poll_ts_s <= 0 or (now_s - poll_ts_s) > max_slow_age_s):
+                return
             active = self.ledger.active_positions()
             open_syms = {str(p["symbol"]) for p in active.values()}
             self.snapshot = {sym: dict(vmap) for sym, vmap in frozen_snapshot.items()}
 
             # Overlay only fresh WS BBO quotes onto slow snapshot; stale quotes are evicted to REST
             self._overlay_fresh_quotes(time.time())
+
+            entry_snapshot = {
+                sym: {
+                    v: leg
+                    for v, leg in vmap.items()
+                    if leg.fetched_ts <= 0 or (now_s - leg.fetched_ts) <= max_slow_age_s
+                }
+                for sym, vmap in self.snapshot.items()
+            }
 
             venue_used: dict[str, Decimal] = {}
             for pos in active.values():
@@ -786,7 +852,7 @@ def _create_carry_strategy(
             )
             base_excl = set(self.plan.excluded_symbols)
             strict_cands = evaluate_entry_candidates(
-                self.snapshot,
+                entry_snapshot,
                 open_symbols=open_syms,
                 venue_notional_used=venue_used,
                 excluded_symbols=base_excl | cooldown_syms,

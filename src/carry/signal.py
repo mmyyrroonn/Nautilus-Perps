@@ -191,8 +191,10 @@ def _cex_entry_blackout_hit(leg_l: LegMarketInfo, leg_s: LegMarketInfo, policy: 
     if win_s <= 0:
         return False
     for leg, is_long in ((leg_l, True), (leg_s, False)):
-        if leg.venue not in CEX_VENUES or leg.interval_h < 4 or leg.next_settle_ts <= now_s:
+        if leg.venue not in CEX_VENUES or leg.interval_h < 4 or leg.next_settle_ts <= 0:
             continue
+        if leg.next_settle_ts <= now_s:
+            return True
         if leg.next_settle_ts - now_s <= win_s:
             rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else (leg.r8_bps_h or 0.0)
             # Positive rate -> longs pay shorts
