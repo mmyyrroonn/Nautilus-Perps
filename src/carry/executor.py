@@ -1,7 +1,7 @@
 """Sliced Maker-First + IOC-Hedge execution controller and PaperVenueGateway."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
 import time
 from typing import Mapping, Protocol
@@ -214,6 +214,7 @@ class PaperVenueGateway:
 
 
 TERMINAL_ORDER_STATUSES = frozenset({"FILLED", "CANCELED", "REJECTED"})
+_EMERGENCY_CLOSE_RETRY_BACKOFF_SECS = (2, 5, 10)
 _OPENING_SLICE_GATE_ERRORS = frozenset(
     {
         "exec_basis_below_min",
@@ -334,8 +335,12 @@ class ActiveEmergencyClose:
     short_venue: str = ""
     ref_price_l: Decimal | None = None
     ref_price_s: Decimal | None = None
-    failed_long: bool = False
-    failed_short: bool = False
+    long_failures: int = 0
+    short_failures: int = 0
+    next_retry_long_ts: int = 0
+    next_retry_short_ts: int = 0
+    manual_takeover: bool = False
+    _counted_failed_coids: set[str] = field(default_factory=set)
 
 
 class CarryExecutionController:
@@ -467,7 +472,128 @@ class CarryExecutionController:
             or self._active_dual_takers
             or self._active_hedges
             or self._active_emergency_closes
+            or self.ledger.open_orders()
         )
+
+    def _has_unhedged_exposure(
+        self,
+        pos: Mapping[str, object],
+        *,
+        spec_l: InstrumentSpec | None,
+        spec_s: InstrumentSpec | None,
+        live_mids: Mapping[str, float],
+    ) -> bool:
+        cur_l = Decimal(str(pos["long_base_qty"]))
+        cur_s = Decimal(str(pos["short_base_qty"]))
+        hi = max(cur_l, cur_s)
+        if hi <= Decimal("0"):
+            return False
+        diff = abs(cur_l - cur_s)
+        step_tol = max(spec_l.base_step, spec_s.base_step) if (spec_l is not None and spec_s is not None) else Decimal("0")
+        if diff <= step_tol:
+            return False
+        ref_px = Decimal(
+            str(
+                live_mids.get(str(pos["iid_long"]))
+                or live_mids.get(str(pos["iid_short"]))
+                or pos["entry_l"]
+                or pos["entry_s"]
+                or 0
+            )
+        )
+        unhedged_usd = diff * ref_px
+        return unhedged_usd > self.risk.max_unhedged_usd or (diff / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
+
+    def reconcile_shutdown_positions(
+        self,
+        *,
+        specs: Mapping[str, InstrumentSpec],
+        now_s: int,
+        live_mids: Mapping[str, float],
+    ) -> None:
+        """Settle completed transitions or flatten unhedged exposure before allowing shutdown."""
+        for pid, pos in sorted(self.ledger.active_positions().items()):
+            if self.has_in_flight_orders(pid):
+                continue
+            status = str(pos["status"])
+            cur_l = Decimal(str(pos["long_base_qty"]))
+            cur_s = Decimal(str(pos["short_base_qty"]))
+            spec_l = specs.get(str(pos["iid_long"]))
+            spec_s = specs.get(str(pos["iid_short"]))
+            imbalanced = self._has_unhedged_exposure(pos, spec_l=spec_l, spec_s=spec_s, live_mids=live_mids)
+            if imbalanced:
+                if not self.ledger.is_reconcile_halted()[0] and spec_l is not None and spec_s is not None:
+                    self.emergency_close_position(
+                        pid,
+                        specs=specs,
+                        reason="shutdown_unhedged_flatten",
+                        now_s=now_s,
+                        live_mids=live_mids,
+                    )
+            elif cur_l <= Decimal("0") and cur_s <= Decimal("0"):
+                if status == "OPENING":
+                    self.ledger.update_position_status(
+                        pid,
+                        status="CLOSED",
+                        ts_s=now_s,
+                        long_base_qty=Decimal("0"),
+                        short_base_qty=Decimal("0"),
+                        close_reason="shutdown_aborted",
+                    )
+                elif status == "CLOSING":
+                    self.ledger.update_position_status(
+                        pid,
+                        status="CLOSED",
+                        ts_s=now_s,
+                        realized_pnl_usd=self.ledger.compute_position_price_pnl(pid),
+                    )
+                else:
+                    self.ledger.update_position_status(
+                        pid,
+                        status="CLOSED",
+                        ts_s=now_s,
+                        close_reason="shutdown_aborted",
+                    )
+                self._slice_attempts.pop(pid, None)
+            else:
+                if status == "OPENING":
+                    self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                    self._slice_attempts.pop(pid, None)
+                elif status == "CLOSING":
+                    if self.ledger.is_kill_halted()[0]:
+                        if not self.ledger.is_reconcile_halted()[0] and spec_l is not None and spec_s is not None:
+                            self.emergency_close_position(
+                                pid,
+                                specs=specs,
+                                reason="shutdown_kill_flatten",
+                                now_s=now_s,
+                                live_mids=live_mids,
+                            )
+                    else:
+                        self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                        self._slice_attempts.pop(pid, None)
+
+    def is_shutdown_ready(
+        self,
+        *,
+        specs: Mapping[str, InstrumentSpec],
+        live_mids: Mapping[str, float],
+    ) -> tuple[bool, list[str]]:
+        """Return whether no orders, unhedged exposure, or transitional ledger states remain."""
+        blockers: list[str] = []
+        if self.has_any_in_flight_orders():
+            blockers.append("in_flight_orders")
+        for pid, pos in sorted(self.ledger.active_positions().items()):
+            status = str(pos["status"])
+            if status != "OPEN":
+                blockers.append(f"position_not_settled:{pid}:{status}")
+            spec_l = specs.get(str(pos["iid_long"]))
+            spec_s = specs.get(str(pos["iid_short"]))
+            if self._has_unhedged_exposure(pos, spec_l=spec_l, spec_s=spec_s, live_mids=live_mids):
+                blockers.append(
+                    f"unhedged_exposure:{pid}:L={pos['long_base_qty']},S={pos['short_base_qty']}"
+                )
+        return len(blockers) == 0, blockers
 
     def _is_position_closing(self, position_id: str, pos: Mapping[str, object] | None = None) -> bool:
         if position_id in self._active_emergency_closes:
@@ -622,7 +748,17 @@ class CarryExecutionController:
         cur_l = Decimal(str(pos["long_base_qty"]))
         cur_s = Decimal(str(pos["short_base_qty"]))
         if status == "OPENING":
-            if min(cur_l, cur_s) >= Decimal(str(pos["target_base_qty"])) * Decimal("0.98"):
+            if cur_l <= Decimal("0") and cur_s <= Decimal("0") and self._stopping:
+                self.ledger.update_position_status(
+                    position_id,
+                    status="CLOSED",
+                    ts_s=now_s,
+                    long_base_qty=Decimal("0"),
+                    short_base_qty=Decimal("0"),
+                    close_reason="shutdown_aborted",
+                )
+                self._slice_attempts.pop(position_id, None)
+            elif min(cur_l, cur_s) >= Decimal(str(pos["target_base_qty"])) * Decimal("0.98"):
                 self.ledger.update_position_status(position_id, status="OPEN", ts_s=now_s)
                 self._slice_attempts.pop(position_id, None)
         elif status == "CLOSING":
@@ -1872,6 +2008,7 @@ class CarryExecutionController:
             if close_task.spec_s is not None and close_task.spec_s.instrument_id in live_mids:
                 close_task.ref_price_s = Decimal(str(live_mids[close_task.spec_s.instrument_id]))
 
+        max_retries = len(_EMERGENCY_CLOSE_RETRY_BACKOFF_SECS)
         for _ in range(4):
             for leg in close_task.legs:
                 delta = leg.filled_base_qty - leg.accounted_base_qty
@@ -1894,11 +2031,20 @@ class CarryExecutionController:
             cur_l = Decimal(str(pos["long_base_qty"]))
             cur_s = Decimal(str(pos["short_base_qty"]))
             for leg in close_task.legs:
+                if leg.client_order_id in close_task._counted_failed_coids:
+                    continue
                 if leg.status == "REJECTED" or (leg.status == "CANCELED" and leg.filled_base_qty < leg.target_base_qty):
+                    close_task._counted_failed_coids.add(leg.client_order_id)
                     if leg.is_long and cur_l > Decimal("0"):
-                        close_task.failed_long = True
+                        close_task.long_failures += 1
+                        if close_task.long_failures <= max_retries:
+                            backoff = _EMERGENCY_CLOSE_RETRY_BACKOFF_SECS[close_task.long_failures - 1]
+                            close_task.next_retry_long_ts = max(close_task.next_retry_long_ts, now_s + backoff)
                     elif (not leg.is_long) and cur_s > Decimal("0"):
-                        close_task.failed_short = True
+                        close_task.short_failures += 1
+                        if close_task.short_failures <= max_retries:
+                            backoff = _EMERGENCY_CLOSE_RETRY_BACKOFF_SECS[close_task.short_failures - 1]
+                            close_task.next_retry_short_ts = max(close_task.next_retry_short_ts, now_s + backoff)
 
             in_flight_l = sum(
                 (
@@ -1919,8 +2065,40 @@ class CarryExecutionController:
             uncovered_l = cur_l - in_flight_l
             uncovered_s = cur_s - in_flight_s
 
+            if (uncovered_l > Decimal("0") and close_task.long_failures > max_retries) or (
+                uncovered_s > Decimal("0") and close_task.short_failures > max_retries
+            ):
+                if not close_task.manual_takeover:
+                    close_task.manual_takeover = True
+                    self.ledger.set_halt(
+                        "HALTED_RECONCILE",
+                        f"emergency_close_failed:{close_task.position_id}",
+                        now_s,
+                    )
+                    self.ledger.record_event(
+                        "emergency_close_manual_takeover",
+                        {
+                            "position_id": close_task.position_id,
+                            "reason": close_task.reason,
+                            "remaining_long": str(cur_l),
+                            "remaining_short": str(cur_s),
+                            "long_failures": close_task.long_failures,
+                            "short_failures": close_task.short_failures,
+                        },
+                        now_s,
+                    )
+                break
+
+            if close_task.manual_takeover or self.ledger.is_reconcile_halted()[0]:
+                break
+
             submitted_any = False
-            if uncovered_l > Decimal("0") and not close_task.failed_long and close_task.spec_l is not None:
+            if (
+                uncovered_l > Decimal("0")
+                and close_task.spec_l is not None
+                and now_s >= close_task.next_retry_long_ts
+                and close_task.long_failures <= max_retries
+            ):
                 close_task.legs.append(
                     self._submit_emergency_close_leg(
                         position_id=close_task.position_id,
@@ -1933,7 +2111,12 @@ class CarryExecutionController:
                     )
                 )
                 submitted_any = True
-            if uncovered_s > Decimal("0") and not close_task.failed_short and close_task.spec_s is not None:
+            if (
+                uncovered_s > Decimal("0")
+                and close_task.spec_s is not None
+                and now_s >= close_task.next_retry_short_ts
+                and close_task.short_failures <= max_retries
+            ):
                 close_task.legs.append(
                     self._submit_emergency_close_leg(
                         position_id=close_task.position_id,
@@ -1953,8 +2136,17 @@ class CarryExecutionController:
             return
         if self._has_in_flight_opening_orders(close_task.position_id):
             return
-        self._active_emergency_closes.pop(close_task.position_id, None)
-        self._maybe_finalize_position(close_task.position_id, now_s=now_s, close_reason=close_task.reason)
+        pos_end = self.ledger.active_positions().get(close_task.position_id)
+        if pos_end is None:
+            self._active_emergency_closes.pop(close_task.position_id, None)
+            return
+        rem_l = Decimal(str(pos_end["long_base_qty"]))
+        rem_s = Decimal(str(pos_end["short_base_qty"]))
+        if rem_l <= Decimal("0") and rem_s <= Decimal("0"):
+            self._active_emergency_closes.pop(close_task.position_id, None)
+            self._maybe_finalize_position(close_task.position_id, now_s=now_s, close_reason=close_task.reason)
+        elif close_task.manual_takeover or self.ledger.is_reconcile_halted()[0]:
+            self._active_emergency_closes.pop(close_task.position_id, None)
 
     def emergency_close_position(
         self,
