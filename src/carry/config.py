@@ -129,6 +129,15 @@ class CarryRuntimePolicy:
     watch_fill_min_carry_bps_h: Decimal = Decimal("0.35")
 
 
+def ledger_domain_for_mode(mode: str) -> str:
+    """Map runtime mode to an isolated ledger domain ('paper' vs 'live')."""
+    if mode == "paper":
+        return "paper"
+    if mode in ("live", "readonly"):
+        return "live"
+    raise ValueError(f"unsupported mode: {mode!r}")
+
+
 @dataclass(frozen=True)
 class CarryPlan:
     schema_version: int
@@ -154,8 +163,8 @@ class CarryPlan:
             return obj
 
         doc = _plain(asdict(self))
-        # Mode, duration, and telemetry recording settings may change cleanly across restarts without altering ledger identity.
-        doc.pop("mode", None)
+        # Isolate paper vs live/readonly ledger domains while allowing live <-> readonly sharing.
+        doc["ledger_domain"] = ledger_domain_for_mode(doc.pop("mode"))
         doc["runtime"].pop("duration_secs", None)
         doc["runtime"].pop("record_dir", None)
         doc["runtime"].pop("bbo_record_interval_secs", None)

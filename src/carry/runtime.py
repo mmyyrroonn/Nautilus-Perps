@@ -10,10 +10,11 @@ import time
 from typing import Any, Mapping
 import uuid
 
-from .config import CarryPlan, CarryPolicy
+from .account_reader import CarryStartupAccountReader, StartupSnapshotError
+from .config import CarryPlan, CarryPolicy, ledger_domain_for_mode
 from .executor import CarryExecutionController, OrderAck, PaperVenueGateway
 from .funding_feed import LegMarketInfo, PublicCarryFeed
-from .ledger import CarryLedger
+from .ledger import CarryLedger, LedgerOwnershipError
 from .recorder import CarryRecorder
 from .risk import BasisStopTracker, FastRiskEvaluator
 from .signal import (
@@ -308,6 +309,8 @@ def _create_carry_strategy(
     *,
     mode: str,
     recorder: CarryRecorder | None = None,
+    environ: Mapping[str, str] | None = None,
+    account_reader: CarryStartupAccountReader | None = None,
 ):
     from nautilus_trader.model import InstrumentId
     from nautilus_trader.trading import Strategy, StrategyConfig
@@ -319,6 +322,11 @@ def _create_carry_strategy(
             self.ledger = ledger
             self.mode = mode
             self.recorder = recorder
+            self.account_reader = (
+                account_reader
+                if account_reader is not None
+                else CarryStartupAccountReader(environment=plan.environment, environ=environ)
+            )
             self.feed = PublicCarryFeed(venues=plan.venues)
             self.subs = SubscriptionManager(
                 top_k=plan.runtime.watch_top_k,
@@ -349,6 +357,12 @@ def _create_carry_strategy(
             self._stop_node_cb: Any = None
             self._stop_node_triggered: bool = False
 
+        def _can_trade(self) -> bool:
+            if self.mode not in ("paper", "live") or not self.reconciled:
+                return False
+            rec_halted, _ = self.ledger.is_reconcile_halted()
+            return not rec_halted
+
         def request_graceful_shutdown(
             self,
             *,
@@ -364,9 +378,10 @@ def _create_carry_strategy(
                 return
             if self._shutdown_drain_started_ts is None:
                 self._shutdown_drain_started_ts = time.monotonic()
-                mids = self.live_mids if (self.mode in ("paper", "live") and self.reconciled) else {}
-                quotes = self.live_quotes if (self.mode in ("paper", "live") and self.reconciled) else None
-                self.controller.begin_shutdown(now_s=now_s, live_mids=mids, live_quotes=quotes)
+                if self._can_trade():
+                    self.controller.begin_shutdown(now_s=now_s, live_mids=self.live_mids, live_quotes=self.live_quotes)
+                else:
+                    self.controller._stopping = True
             elapsed = time.monotonic() - self._shutdown_drain_started_ts
             if not self.controller.has_any_in_flight_orders() or elapsed >= self._shutdown_drain_timeout_secs:
                 self._stop_node_triggered = True
@@ -375,9 +390,11 @@ def _create_carry_strategy(
 
         def on_stop(self) -> None:
             now_s = int(time.time())
-            mids = self.live_mids if self.mode in ("paper", "live") else {}
-            quotes = self.live_quotes if self.mode in ("paper", "live") else None
-            canceled = self.controller.begin_shutdown(now_s=now_s, live_mids=mids, live_quotes=quotes)
+            if self._can_trade():
+                canceled = self.controller.begin_shutdown(now_s=now_s, live_mids=self.live_mids, live_quotes=self.live_quotes)
+            else:
+                self.controller._stopping = True
+                canceled = []
             try:
                 self.log.info(
                     f"[carry] on_stop canceled_makers={len(canceled)} open_positions={len(self.ledger.active_positions())}"
@@ -418,7 +435,7 @@ def _create_carry_strategy(
                 self.live_mids[iid] = mid
                 if self.paper_gateway is not None:
                     filled_coids = self.paper_gateway.update_quote(iid, Decimal(str(bid)), Decimal(str(ask)))
-                    if filled_coids and self.reconciled:
+                    if filled_coids and self._can_trade():
                         self.controller.poll_active_orders(
                             live_mids=self.live_mids, now_s=int(ts_now), live_quotes=self.live_quotes
                         )
@@ -437,11 +454,17 @@ def _create_carry_strategy(
             self.live_quote_ts.pop(iid, None)
             self.live_mids.pop(iid, None)
 
-        def _overlay_fresh_quotes(self, now_s: float) -> None:
+        def _prune_stale_quotes(self, now_ts: float) -> list[str]:
             stale_s = float(self.plan.runtime.quote_stale_secs)
-            for iid in [k for k in self.live_quotes if now_s - self.live_quote_ts.get(k, 0.0) > stale_s]:
+            stale_iids = [k for k in list(self.live_quotes) if now_ts - self.live_quote_ts.get(k, 0.0) > stale_s]
+            for iid in stale_iids:
                 self.live_quotes.pop(iid, None)
                 self.live_quote_ts.pop(iid, None)
+            return stale_iids
+
+        def _overlay_fresh_quotes(self, now_s: float) -> None:
+            stale_s = float(self.plan.runtime.quote_stale_secs)
+            self._prune_stale_quotes(now_s)
             for vmap in self.snapshot.values():
                 for v, leg in list(vmap.items()):
                     q = self.live_quotes.get(leg.instrument_id)
@@ -454,7 +477,7 @@ def _create_carry_strategy(
                             self.paper_gateway.seed_quote(leg.instrument_id, Decimal(str(leg.bid)), Decimal(str(leg.ask)))
 
         def _handle_order_event(self, event: Any) -> None:
-            if self.mode not in ("paper", "live") or not self.reconciled:
+            if not self._can_trade():
                 return
             coid = str(getattr(event, "client_order_id", ""))
             now_s = int(time.time())
@@ -488,28 +511,42 @@ def _create_carry_strategy(
 
         def _reconcile_on_start(self) -> None:
             now_s = int(time.time())
-            venue_pos: dict[tuple[str, str], Decimal] = {}
-            venue_orders: dict[tuple[str, str], int] = {}
-            for pos in self.cache.positions_open():
-                v = str(pos.instrument_id.venue)
-                norm_v = "HL" if v == "HYPERLIQUID" else v
-                qty = Decimal(str(pos.signed_qty))
-                inst = self.cache.instrument(pos.instrument_id)
-                mult = Decimal(str(getattr(inst, "multiplier", 1))) if inst is not None else Decimal("1")
-                venue_pos[(norm_v, str(pos.instrument_id))] = qty * mult
-            for ord_obj in self.cache.orders_open():
-                v = str(ord_obj.instrument_id.venue)
-                norm_v = "HL" if v == "HYPERLIQUID" else v
-                key = (norm_v, str(ord_obj.instrument_id))
-                venue_orders[key] = venue_orders.get(key, 0) + 1
+            okx_multipliers: dict[str, Decimal] = {}
+            try:
+                for inst in self.cache.instruments():
+                    iid = str(inst.id)
+                    if iid.endswith(".OKX"):
+                        mult = Decimal(str(getattr(inst, "multiplier", 1)))
+                        if mult > 0:
+                            okx_multipliers[iid] = mult
+            except Exception:
+                pass
+            try:
+                snap = self.account_reader.fetch_startup_snapshot(
+                    self.plan.venues, okx_multipliers=okx_multipliers
+                )
+            except StartupSnapshotError as exc:
+                reason = f"startup_snapshot_failed:{exc}"[:240]
+                self.ledger.set_halt("HALTED_RECONCILE", reason, now_s)
+                self.reconciled = False
+                self.log.error(f"[carry] HALTED_RECONCILE: {reason}")
+                return
+            except Exception as exc:
+                reason = f"startup_snapshot_failed:{type(exc).__name__}"[:240]
+                self.ledger.set_halt("HALTED_RECONCILE", reason, now_s)
+                self.reconciled = False
+                self.log.error(f"[carry] HALTED_RECONCILE: {reason}")
+                return
+
             res = self.ledger.reconcile_startup(
-                venue_positions=venue_pos,
-                venue_open_orders=venue_orders,
+                venue_positions=snap.positions,
+                venue_open_orders=snap.open_orders,
                 tolerance_pct=self.plan.risk.reconcile_tolerance_pct,
                 ts_s=now_s,
             )
-            self.reconciled = res.ok
-            if not res.ok:
+            rec_halted, _ = self.ledger.is_reconcile_halted()
+            self.reconciled = res.ok and not rec_halted
+            if not self.reconciled:
                 self.log.error(f"[carry] HALTED_RECONCILE: {res.discrepancies}")
 
         def _specs_from_cache(self) -> dict[str, InstrumentSpec]:
@@ -536,21 +573,11 @@ def _create_carry_strategy(
             now_s = int(time.time())
             if self._shutdown_requested.is_set():
                 self._drive_graceful_shutdown(now_s)
-            if self.mode in ("paper", "live") and self.reconciled:
+            if self._can_trade():
                 self.controller.poll_active_orders(
                     live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
                 )
-                halted_now, _ = self.ledger.is_halted()
-                if not halted_now and not self._shutdown_requested.is_set() and not self.controller.is_stopping:
-                    specs_now = self._specs_from_cache()
-                    self.controller.advance_pending_slices(
-                        specs=specs_now, quotes=self.live_quotes, mids=self.live_mids, now_s=now_s
-                    )
-            if self._shutdown_requested.is_set():
-                self._drive_graceful_shutdown(now_s)
             active = self.ledger.active_positions()
-            if not active:
-                return
             daily_pnl, streak = self.ledger.daily_stats(now_s)
             dec = self.fast_risk.evaluate(
                 positions=active,
@@ -560,14 +587,25 @@ def _create_carry_strategy(
                 now_s=now_s,
             )
             if dec.halt_system and dec.halt_reason:
-                self.ledger.set_halt("HALTED_KILL", dec.halt_reason, now_s)
-            if self.mode in ("paper", "live") and dec.close_positions:
+                if not self.ledger.is_kill_halted()[0]:
+                    self.ledger.set_halt("HALTED_KILL", dec.halt_reason, now_s)
+            if self._can_trade() and dec.close_positions:
                 specs = self._specs_from_cache()
                 for pid, reason in dec.close_positions:
                     if str(active[pid]["iid_long"]) in specs and str(active[pid]["iid_short"]) in specs:
                         self.controller.emergency_close_position(
                             pid, specs=specs, reason=reason, now_s=now_s, live_mids=self.live_mids
                         )
+            if self._can_trade():
+                halted_now, _ = self.ledger.is_halted()
+                if not halted_now and not self._shutdown_requested.is_set() and not self.controller.is_stopping:
+                    self._prune_stale_quotes(time.time())
+                    specs_now = self._specs_from_cache()
+                    self.controller.advance_pending_slices(
+                        specs=specs_now, quotes=self.live_quotes, mids=self.live_mids, now_s=now_s
+                    )
+            if self._shutdown_requested.is_set():
+                self._drive_graceful_shutdown(now_s)
 
         def _on_basis_timer(self, _event: Any) -> None:
             now_s = int(time.time())
@@ -583,7 +621,7 @@ def _create_carry_strategy(
                     basis_now_bps=b_now,
                     now_s=now_s,
                 )
-                if hit and self.mode in ("paper", "live"):
+                if hit and self._can_trade():
                     if str(pos["iid_long"]) in specs and str(pos["iid_short"]) in specs:
                         self.controller.emergency_close_position(
                             pid, specs=specs, reason="basis_stop_30m", now_s=now_s, live_mids=self.live_mids
@@ -662,7 +700,7 @@ def _create_carry_strategy(
             self.log.info(
                 f"[carry] active={len(active)} strict={len(strict_cands)} watch={len(watch_cands)} sub={len(self.subs.active_instruments)} (+{len(to_sub)}/-{len(to_unsub)})"
             )
-            if self.mode not in ("paper", "live") or not self.reconciled:
+            if not self._can_trade():
                 return
             halted, _ = self.ledger.is_halted()
             if halted or self._shutdown_requested.is_set() or self.controller.is_stopping:
@@ -681,6 +719,19 @@ def _create_carry_strategy(
                         self.controller.start_sliced_close(
                             pid, specs=specs, quotes=self.live_quotes, mids=self.live_mids, reason=rsn, now_s=now_s
                         )
+
+            daily_pnl_now, streak_now = self.ledger.daily_stats(now_s)
+            kill_dec = self.fast_risk.evaluate(
+                positions={},
+                live_mids={},
+                daily_realized_pnl_usd=daily_pnl_now,
+                consecutive_unhedged=streak_now,
+                now_s=now_s,
+            )
+            if kill_dec.halt_system and kill_dec.halt_reason:
+                if not self.ledger.is_kill_halted()[0]:
+                    self.ledger.set_halt("HALTED_KILL", kill_dec.halt_reason, now_s)
+                return
 
             # Open highest-ranked entry candidate if slots & venue/gross capacity remain
             active_after = self.ledger.active_positions()
@@ -726,7 +777,7 @@ def _live_exec_engine_config(mode: str):
     return LiveExecutionEngineConfig(
         reconciliation=enable_reconcile,
         reconciliation_lookback_mins=60 if enable_reconcile else None,
-        generate_missing_orders=False,
+        generate_missing_orders=enable_reconcile,
         inflight_check_interval_ms=0,
     )
 
@@ -737,36 +788,53 @@ def build_live_node(plan: CarryPlan, *, mode: str, environ: Mapping[str, str] | 
     from nautilus_trader.live import LiveDataEngineConfig, LiveNode
     from nautilus_trader.model import TraderId
 
-    ledger = CarryLedger(plan.state_path, plan.fingerprint())
-    builder = (
-        LiveNode.builder(f"CARRY-{mode.upper()}", TraderId.from_str("CARRY-001"), Environment.LIVE)
-        .with_logging(LoggerConfig(stdout_level=LogLevel.INFO, fileout_level=LogLevel.OFF, print_config=False))
-        .with_cache_config(CacheConfig(tick_capacity=1, bar_capacity=1, save_market_data=False, persist_account_events=False))
-        .with_data_engine_config(LiveDataEngineConfig(emit_quotes_from_book=False, emit_quotes_from_book_depths=False))
-        .with_exec_engine_config(_live_exec_engine_config(mode))
-        .with_reconciliation(mode in ("readonly", "live"))
-        .with_load_state(False)
-        .with_save_state(False)
-        .with_timeout_connection(60)
-        .with_timeout_disconnection_secs(15)
-    )
-    for client_id, factory, config in build_data_clients(plan):
-        builder = builder.add_data_client(client_id, factory, config)
-    if mode in ("readonly", "live"):
-        for client_id, factory, config in build_execution_clients(plan, environ=environ):
-            builder = builder.add_exec_client(client_id, factory, config)
-    node = builder.build()
-    recorder = (
-        CarryRecorder(plan.runtime.record_dir, bbo_interval_secs=plan.runtime.bbo_record_interval_secs)
-        if plan.runtime.record_dir is not None
-        else None
-    )
-    strategy = _create_carry_strategy(plan, ledger, mode=mode, recorder=recorder)
-    node.add_strategy(strategy)
-    return node, ledger, strategy
+    plan_domain = ledger_domain_for_mode(plan.mode)
+    run_domain = ledger_domain_for_mode(mode)
+    if plan_domain != run_domain:
+        raise LedgerOwnershipError(
+            f"cannot run mode '{mode}' (domain={run_domain}) against '{plan.mode}' config state_path {plan.state_path} (domain={plan_domain})"
+        )
+
+    ledger = CarryLedger(plan.state_path, plan.fingerprint(), ledger_domain=run_domain)
+    try:
+        builder = (
+            LiveNode.builder(f"CARRY-{mode.upper()}", TraderId.from_str("CARRY-001"), Environment.LIVE)
+            .with_logging(LoggerConfig(stdout_level=LogLevel.INFO, fileout_level=LogLevel.OFF, print_config=False))
+            .with_cache_config(CacheConfig(tick_capacity=1, bar_capacity=1, save_market_data=False, persist_account_events=False))
+            .with_data_engine_config(LiveDataEngineConfig(emit_quotes_from_book=False, emit_quotes_from_book_depths=False))
+            .with_exec_engine_config(_live_exec_engine_config(mode))
+            .with_reconciliation(mode in ("readonly", "live"))
+            .with_load_state(False)
+            .with_save_state(False)
+            .with_timeout_connection(60)
+            .with_timeout_disconnection_secs(15)
+        )
+        for client_id, factory, config in build_data_clients(plan):
+            builder = builder.add_data_client(client_id, factory, config)
+        if mode in ("readonly", "live"):
+            for client_id, factory, config in build_execution_clients(plan, environ=environ):
+                builder = builder.add_exec_client(client_id, factory, config)
+        node = builder.build()
+        recorder = (
+            CarryRecorder(plan.runtime.record_dir, bbo_interval_secs=plan.runtime.bbo_record_interval_secs)
+            if plan.runtime.record_dir is not None
+            else None
+        )
+        strategy = _create_carry_strategy(plan, ledger, mode=mode, recorder=recorder, environ=environ)
+        node.add_strategy(strategy)
+        return node, ledger, strategy
+    except BaseException:
+        ledger.close()
+        raise
 
 
 def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration_secs: int | None = None) -> int:
+    plan_domain = ledger_domain_for_mode(plan.mode)
+    run_domain = ledger_domain_for_mode(mode)
+    if plan_domain != run_domain:
+        raise LedgerOwnershipError(
+            f"cannot run mode '{mode}' (domain={run_domain}) against '{plan.mode}' config state_path {plan.state_path} (domain={plan_domain})"
+        )
     if mode == "live" and not execute_live:
         raise ValueError("--mode live refuses to start without explicit --execute-live")
     dur = plan.runtime.duration_secs if duration_secs is None else duration_secs
