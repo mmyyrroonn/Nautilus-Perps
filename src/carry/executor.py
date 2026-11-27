@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 import time
 from typing import Mapping, Protocol
 import uuid
@@ -216,6 +216,19 @@ class PaperVenueGateway:
 TERMINAL_ORDER_STATUSES = frozenset({"FILLED", "CANCELED", "REJECTED"})
 
 
+def make_client_order_id(prefix: str, position_id: str, *, rand_len: int = 8) -> str:
+    """Generate an OKX-compatible ASCII-alphanumeric client_order_id in 1..=32 chars."""
+    clean_prefix = "".join(ch for ch in prefix if ch.isascii() and ch.isalnum()) or "ord"
+    clean_pos = "".join(ch for ch in position_id if ch.isascii() and ch.isalnum())
+    rand = uuid.uuid4().hex[: max(6, min(rand_len, 16))]
+    if len(clean_prefix) + len(rand) > 32:
+        clean_prefix = clean_prefix[: max(1, 32 - len(rand))]
+        max_pos_len = 0
+    else:
+        max_pos_len = min(12, 32 - len(clean_prefix) - len(rand))
+    return f"{clean_prefix}{clean_pos[:max_pos_len]}{rand}"[:32]
+
+
 @dataclass
 class ActiveMakerLeg:
     client_order_id: str
@@ -228,7 +241,8 @@ class ActiveMakerLeg:
     spec_hedge: InstrumentSpec
     submitted_ts: int
     attempts: int
-    hedged_base_qty: Decimal = Decimal("0")
+    accounted_maker_base_qty: Decimal = Decimal("0")
+    settled_hedged_base_qty: Decimal = Decimal("0")
     cancel_requested: bool = False
 
 
@@ -282,6 +296,7 @@ class ActiveHedgeOrder:
     fallback_status: str | None = None
     fallback_filled_base_qty: Decimal = Decimal("0")
     fallback_accounted_base_qty: Decimal = Decimal("0")
+    maker_coid: str | None = None
 
 
 @dataclass
@@ -291,6 +306,7 @@ class ActiveCloseLeg:
     venue: str
     spec: InstrumentSpec
     ref_price: Decimal | None
+    target_base_qty: Decimal = Decimal("0")
     status: str = "OPEN"
     filled_base_qty: Decimal = Decimal("0")
     accounted_base_qty: Decimal = Decimal("0")
@@ -302,6 +318,14 @@ class ActiveEmergencyClose:
     reason: str
     legs: list[ActiveCloseLeg]
     submitted_ts: int
+    spec_l: InstrumentSpec | None = None
+    spec_s: InstrumentSpec | None = None
+    long_venue: str = ""
+    short_venue: str = ""
+    ref_price_l: Decimal | None = None
+    ref_price_s: Decimal | None = None
+    failed_long: bool = False
+    failed_short: bool = False
 
 
 class CarryExecutionController:
@@ -326,6 +350,11 @@ class CarryExecutionController:
         self._active_hedges: dict[str, ActiveHedgeOrder] = {}
         self._active_emergency_closes: dict[str, ActiveEmergencyClose] = {}
         self._slice_attempts: dict[str, int] = {}
+        self._stopping: bool = False
+
+    @property
+    def is_stopping(self) -> bool:
+        return self._stopping
 
     @staticmethod
     def _exec_basis_bps(long_px: Decimal, short_px: Decimal) -> Decimal:
@@ -391,6 +420,78 @@ class CarryExecutionController:
         ctx = self._active_makers.get(client_order_id)
         if ctx is not None:
             ctx.cancel_requested = False
+
+    def has_any_in_flight_orders(self) -> bool:
+        return bool(
+            self._active_makers
+            or self._active_dual_takers
+            or self._active_hedges
+            or self._active_emergency_closes
+        )
+
+    def _is_position_closing(self, position_id: str, pos: Mapping[str, object] | None = None) -> bool:
+        if position_id in self._active_emergency_closes:
+            return True
+        if pos is None:
+            pos = self.ledger.active_positions().get(position_id)
+        return pos is not None and str(pos["status"]) == "CLOSING"
+
+    def _has_in_flight_opening_orders(self, position_id: str) -> bool:
+        if any(ctx.position_id == position_id and ctx.is_opening for ctx in self._active_makers.values()):
+            return True
+        batch = self._active_dual_takers.get(position_id)
+        if batch is not None and batch.is_opening:
+            return True
+        return any(h.position_id == position_id and h.is_opening for h in self._active_hedges.values())
+
+    def _maker_unhedged_qty(self, ctx: ActiveMakerLeg) -> Decimal:
+        in_flight = sum(
+            (
+                max(h.target_base_qty, h.filled_base_qty + h.fallback_filled_base_qty)
+                for h in self._active_hedges.values()
+                if h.maker_coid == ctx.client_order_id
+            ),
+            Decimal("0"),
+        )
+        return ctx.accounted_maker_base_qty - (ctx.settled_hedged_base_qty + in_flight)
+
+    def begin_shutdown(
+        self,
+        *,
+        now_s: int,
+        live_mids: Mapping[str, float] | None = None,
+        live_quotes: Mapping[str, tuple[float, float]] | None = None,
+    ) -> list[str]:
+        """Enter stopping mode and cancel all active maker orders while preserving OPEN positions."""
+        self._stopping = True
+        canceled: list[str] = []
+        for coid, ctx in list(self._active_makers.items()):
+            if ctx.cancel_requested:
+                continue
+            c_ack = self.gateway.cancel_order(
+                client_order_id=coid,
+                venue=ctx.maker_venue,
+                instrument_id=ctx.spec_maker.instrument_id,
+            )
+            ctx.cancel_requested = True
+            self._update_order_from_ack(coid, c_ack, now_s=now_s)
+            canceled.append(coid)
+            if c_ack.filled_base_qty > ctx.accounted_maker_base_qty or (
+                c_ack.status in TERMINAL_ORDER_STATUSES and self._maker_unhedged_qty(ctx) > Decimal("0")
+            ):
+                h_mid, h_bbo = self._hedge_quote_ctx(ctx, live_mids or {}, live_quotes)
+                self.on_maker_progress(
+                    coid,
+                    filled_base_qty=c_ack.filled_base_qty,
+                    terminal=(c_ack.status in TERMINAL_ORDER_STATUSES),
+                    hedge_mid=h_mid,
+                    now_s=now_s,
+                    hedge_bbo=h_bbo,
+                )
+            if coid in self._active_makers and c_ack.status in TERMINAL_ORDER_STATUSES:
+                self._active_makers.pop(coid, None)
+                self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+        return canceled
 
     def _update_order_from_ack(
         self,
@@ -532,6 +633,8 @@ class CarryExecutionController:
         now_s: int | None = None,
     ) -> tuple[str | None, str | None]:
         ts = int(time.time()) if now_s is None else now_s
+        if self._stopping:
+            return None, "controller_stopping"
         halted, halt_reason = self.ledger.is_halted()
         if halted:
             return None, f"halted:{halt_reason}"
@@ -634,6 +737,8 @@ class CarryExecutionController:
         pos = self.ledger.active_positions().get(position_id)
         if pos is None:
             return False, "position_not_active"
+        if is_opening and self._is_position_closing(position_id, pos):
+            return False, "position_closing"
 
         mid = Decimal("0.5") * (leg_l_mid + leg_s_mid)
         rem_usd = remaining_base * mid
@@ -689,7 +794,7 @@ class CarryExecutionController:
         if is_opening and self._exec_basis_bps(est_l, est_s) < self.policy.min_exec_basis_bps:
             return False, "exec_basis_below_min"
 
-        coid = f"mk-{position_id[:12]}-{uuid.uuid4().hex[:8]}"
+        coid = make_client_order_id("mk", position_id)
         self.ledger.register_order_intent(
             client_order_id=coid,
             position_id=position_id,
@@ -759,7 +864,7 @@ class CarryExecutionController:
         ]
         legs: list[ActiveDualTakerLeg] = []
         for is_long, spec, venue, side, qty_c, base_q, ref_px, ioc_px in specs_sides:
-            coid = f"tk-{position_id[:12]}-{uuid.uuid4().hex[:8]}"
+            coid = make_client_order_id("tk", position_id)
             self.ledger.register_order_intent(
                 client_order_id=coid, position_id=position_id, venue=venue,
                 instrument_id=spec.instrument_id, side=side, role="TAKER_OPEN",
@@ -824,7 +929,7 @@ class CarryExecutionController:
                 continue
             qty_c = max(spec.size_increment, (close_base / spec.base_step).to_integral_value() * spec.size_increment)
             base_q = qty_c * spec.contract_multiplier
-            coid = f"tc-{position_id[:12]}-{uuid.uuid4().hex[:8]}"
+            coid = make_client_order_id("tc", position_id)
             self.ledger.register_order_intent(
                 client_order_id=coid,
                 position_id=position_id,
@@ -915,10 +1020,17 @@ class CarryExecutionController:
         filled_s = batch.short_leg.filled_base_qty if batch.short_leg is not None else Decimal("0")
         if batch.is_opening and filled_l <= 0 and filled_s <= 0:
             self._active_dual_takers.pop(batch.position_id, None)
+            if batch.position_id in self._active_emergency_closes:
+                self._reconcile_emergency_close(self._active_emergency_closes[batch.position_id], now_s=now_s)
             return "UNFILLED"
 
+        suppress_fallback = (batch.is_opening and self._is_position_closing(batch.position_id)) or (
+            batch.position_id in self._active_emergency_closes
+        )
         if not batch.fallback_submitted:
-            if batch.is_opening:
+            if suppress_fallback:
+                batch.fallback_submitted = True
+            elif batch.is_opening:
                 if filled_l != filled_s and batch.long_leg is not None and batch.short_leg is not None:
                     leading, lagging = (
                         (batch.long_leg, batch.short_leg) if filled_l > filled_s else (batch.short_leg, batch.long_leg)
@@ -930,7 +1042,7 @@ class CarryExecutionController:
                             n_steps = Decimal("1")
                         if n_steps > 0:
                             rem_c = n_steps * lagging.spec.size_increment
-                            m_coid = f"tm-{batch.position_id[:12]}-{uuid.uuid4().hex[:8]}"
+                            m_coid = make_client_order_id("tm", batch.position_id)
                             self.ledger.register_order_intent(
                                 client_order_id=m_coid,
                                 position_id=batch.position_id,
@@ -973,7 +1085,7 @@ class CarryExecutionController:
                             leg.spec.size_increment,
                             (unfilled / leg.spec.base_step).to_integral_value() * leg.spec.size_increment,
                         )
-                        m_coid = f"tmc-{batch.position_id[:11]}-{uuid.uuid4().hex[:8]}"
+                        m_coid = make_client_order_id("tmc", batch.position_id)
                         self.ledger.register_order_intent(
                             client_order_id=m_coid,
                             position_id=batch.position_id,
@@ -1018,40 +1130,48 @@ class CarryExecutionController:
         self._active_dual_takers.pop(batch.position_id, None)
         tot_l = (batch.long_leg.filled_base_qty + batch.long_leg.fallback_filled_base_qty) if batch.long_leg is not None else Decimal("0")
         tot_s = (batch.short_leg.filled_base_qty + batch.short_leg.fallback_filled_base_qty) if batch.short_leg is not None else Decimal("0")
-        if batch.is_opening:
-            hi = max(tot_l, tot_s)
-            imbalanced = (
-                hi > Decimal("0")
-                and batch.long_leg is not None
-                and batch.short_leg is not None
-                and abs(tot_l - tot_s) > max(batch.long_leg.spec.base_step, batch.short_leg.spec.base_step)
-                and (abs(tot_l - tot_s) / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
-            )
-            if batch.fallback_submitted and imbalanced:
-                self.ledger.increment_unhedged_streak(now_s)
-                self.ledger.record_event(
-                    "dual_taker_fallback_unhedged",
-                    {"position_id": batch.position_id, "long_filled": str(tot_l), "short_filled": str(tot_s)},
-                    now_s,
+        if not suppress_fallback:
+            if batch.is_opening:
+                hi = max(tot_l, tot_s)
+                imbalanced = (
+                    hi > Decimal("0")
+                    and batch.long_leg is not None
+                    and batch.short_leg is not None
+                    and abs(tot_l - tot_s) > max(batch.long_leg.spec.base_step, batch.short_leg.spec.base_step)
+                    and (abs(tot_l - tot_s) / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
                 )
+                if batch.fallback_submitted and imbalanced:
+                    self.ledger.increment_unhedged_streak(now_s)
+                    self.ledger.record_event(
+                        "dual_taker_fallback_unhedged",
+                        {"position_id": batch.position_id, "long_filled": str(tot_l), "short_filled": str(tot_s)},
+                        now_s,
+                    )
+                else:
+                    self._slice_attempts[batch.position_id] = 0
+                    if tot_l > Decimal("0") and tot_s > Decimal("0"):
+                        self.ledger.increment_unhedged_streak(now_s, reset=True)
             else:
-                self._slice_attempts[batch.position_id] = 0
-        else:
-            shortfall = any(
-                leg.filled_base_qty + leg.fallback_filled_base_qty + leg.spec.base_step <= leg.target_base_qty
-                for leg in active_legs
-            )
-            if shortfall:
-                self.ledger.increment_unhedged_streak(now_s)
-                self.ledger.record_event(
-                    "dual_taker_close_fallback_shortfall",
-                    {"position_id": batch.position_id, "long_filled": str(tot_l), "short_filled": str(tot_s)},
-                    now_s,
+                shortfall = any(
+                    leg.filled_base_qty + leg.fallback_filled_base_qty + leg.spec.base_step <= leg.target_base_qty
+                    for leg in active_legs
                 )
-            else:
-                self._slice_attempts[batch.position_id] = 0
+                if shortfall:
+                    self.ledger.increment_unhedged_streak(now_s)
+                    self.ledger.record_event(
+                        "dual_taker_close_fallback_shortfall",
+                        {"position_id": batch.position_id, "long_filled": str(tot_l), "short_filled": str(tot_s)},
+                        now_s,
+                    )
+                else:
+                    self._slice_attempts[batch.position_id] = 0
+                    if tot_l > Decimal("0") or tot_s > Decimal("0"):
+                        self.ledger.increment_unhedged_streak(now_s, reset=True)
 
-        self._maybe_finalize_position(batch.position_id, now_s=now_s)
+        if batch.position_id in self._active_emergency_closes:
+            self._reconcile_emergency_close(self._active_emergency_closes[batch.position_id], now_s=now_s)
+        else:
+            self._maybe_finalize_position(batch.position_id, now_s=now_s)
         return "FILLED" if (tot_l > 0 or tot_s > 0) else "UNFILLED"
 
     def on_maker_progress(
@@ -1068,35 +1188,87 @@ class CarryExecutionController:
         ctx = self._active_makers.get(client_order_id)
         if ctx is None:
             return None
-        delta_base = filled_base_qty - ctx.hedged_base_qty
-        if delta_base <= 0:
-            if terminal:
-                self._active_makers.pop(client_order_id, None)
-                self._maybe_finalize_position(ctx.position_id, now_s=now_s)
-            return None
-        self._slice_attempts[ctx.position_id] = 0
-
-        # Convert delta_base into nearest aligned hedge contracts
-        step_h = ctx.spec_hedge.base_step
-        n_h = max(Decimal("1"), (delta_base / step_h).to_integral_value())
-        qty_h_contracts = n_h * ctx.spec_hedge.size_increment
-        base_h = n_h * step_h
-
-        if self.ledger.active_positions().get(ctx.position_id) is None:
+        pos = self.ledger.active_positions().get(ctx.position_id)
+        if pos is None:
             if terminal:
                 self._active_makers.pop(client_order_id, None)
             return None
 
-        self._apply_leg_fill_delta(
-            ctx.position_id,
-            is_long=ctx.maker_side_is_long,
-            is_opening=ctx.is_opening,
-            delta_base=delta_base,
-            now_s=now_s,
-        )
-        ctx.hedged_base_qty += delta_base
+        delta_maker = filled_base_qty - ctx.accounted_maker_base_qty
+        if delta_maker > Decimal("0"):
+            self._slice_attempts[ctx.position_id] = 0
+            self._apply_leg_fill_delta(
+                ctx.position_id,
+                is_long=ctx.maker_side_is_long,
+                is_opening=ctx.is_opening,
+                delta_base=delta_maker,
+                now_s=now_s,
+            )
+            ctx.accounted_maker_base_qty += delta_maker
+            pos = self.ledger.active_positions().get(ctx.position_id)
+
         if terminal:
             self._active_makers.pop(client_order_id, None)
+
+        if (ctx.is_opening and self._is_position_closing(ctx.position_id, pos)) or (
+            ctx.position_id in self._active_emergency_closes
+        ):
+            if ctx.position_id in self._active_emergency_closes:
+                self._reconcile_emergency_close(
+                    self._active_emergency_closes[ctx.position_id],
+                    now_s=now_s,
+                    live_mids={ctx.spec_hedge.instrument_id: float(hedge_mid)} if hedge_mid > 0 else None,
+                )
+            elif terminal:
+                self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+            return None
+
+        unhedged = self._maker_unhedged_qty(ctx)
+        if unhedged <= Decimal("0") or pos is None:
+            if terminal:
+                self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+            return None
+
+        step_h = ctx.spec_hedge.base_step
+        n_floor = (unhedged / step_h).to_integral_value(rounding=ROUND_DOWN)
+        n_h = n_floor
+        if terminal and (unhedged - n_floor * step_h) > Decimal("0"):
+            cur_l = Decimal(str(pos["long_base_qty"]))
+            cur_s = Decimal(str(pos["short_base_qty"]))
+            cur_m, cur_h = (cur_l, cur_s) if ctx.maker_side_is_long else (cur_s, cur_l)
+            hedge_is_long = not ctx.maker_side_is_long
+            in_flight_pos_h_rem = sum(
+                (
+                    max(Decimal("0"), h.target_base_qty - (h.accounted_base_qty + h.fallback_accounted_base_qty))
+                    for h in self._active_hedges.values()
+                    if h.position_id == ctx.position_id
+                    and h.hedge_is_long == hedge_is_long
+                    and h.is_opening == ctx.is_opening
+                ),
+                Decimal("0"),
+            )
+            if ctx.is_opening:
+                proj_h = cur_h + in_flight_pos_h_rem
+                pos_gap = cur_m - proj_h
+            else:
+                proj_h = max(Decimal("0"), cur_h - in_flight_pos_h_rem)
+                pos_gap = proj_h - cur_m
+            base_floor = n_floor * step_h
+            base_ceil = (n_floor + Decimal("1")) * step_h
+            if (
+                abs(unhedged - base_ceil) < abs(unhedged - base_floor)
+                and abs(pos_gap - base_ceil) < abs(pos_gap - base_floor)
+                and (ctx.is_opening or base_ceil <= proj_h)
+            ):
+                n_h = n_floor + Decimal("1")
+
+        if n_h <= Decimal("0"):
+            if terminal:
+                self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+            return None
+
+        qty_h_contracts = n_h * ctx.spec_hedge.size_increment
+        base_h = n_h * step_h
 
         # Determine hedge side: opposite directional exposure from maker
         if ctx.is_opening:
@@ -1107,7 +1279,7 @@ class CarryExecutionController:
         slip = self.runtime.hedge_ioc_slippage_bps / Decimal("10000")
         ref_px = (hedge_bbo[1] if hedge_side == "BUY" else hedge_bbo[0]) if hedge_bbo is not None else hedge_mid
         ioc_px = ctx.spec_hedge.round_price(ref_px * (Decimal("1") + slip if hedge_side == "BUY" else Decimal("1") - slip))
-        h_coid = f"hg-{ctx.position_id[:12]}-{uuid.uuid4().hex[:8]}"
+        h_coid = make_client_order_id("hg", ctx.position_id)
         self.ledger.register_order_intent(
             client_order_id=h_coid,
             position_id=ctx.position_id,
@@ -1147,6 +1319,7 @@ class CarryExecutionController:
             submitted_ts=now_s,
             status=ack.status,
             filled_base_qty=ack.filled_base_qty,
+            maker_coid=client_order_id,
         )
         self._active_hedges[h_coid] = task
         return self._reconcile_hedge_order(task, now_s=now_s)
@@ -1176,11 +1349,14 @@ class CarryExecutionController:
         if task.status not in TERMINAL_ORDER_STATUSES:
             return OrderAck(task.client_order_id, "", task.status, task.filled_base_qty, None)
 
+        suppress_fallback = (task.is_opening and self._is_position_closing(task.position_id)) or (
+            task.position_id in self._active_emergency_closes
+        )
         unfilled_h = task.target_base_qty - task.filled_base_qty
-        if unfilled_h > Decimal("0") and task.fallback_coid is None:
+        if unfilled_h > Decimal("0") and task.fallback_coid is None and not suppress_fallback:
             step_h = task.spec.base_step
             rem_contracts = max(task.spec.size_increment, (unfilled_h / step_h).to_integral_value() * task.spec.size_increment)
-            m_coid = f"hm-{task.position_id[:12]}-{uuid.uuid4().hex[:8]}"
+            m_coid = make_client_order_id("hm", task.position_id)
             self.ledger.register_order_intent(
                 client_order_id=m_coid,
                 position_id=task.position_id,
@@ -1221,14 +1397,24 @@ class CarryExecutionController:
             return OrderAck(task.fallback_coid, "", task.fallback_status or "OPEN", total_hedged, None)
 
         self._active_hedges.pop(task.client_order_id, None)
-        if total_hedged + task.spec.base_step <= task.target_base_qty:
-            self.ledger.increment_unhedged_streak(now_s)
-            self.ledger.record_event(
-                "hedge_fallback_unhedged",
-                {"position_id": task.position_id, "target": str(task.target_base_qty), "filled": str(total_hedged)},
-                now_s,
-            )
-        self._maybe_finalize_position(task.position_id, now_s=now_s)
+        if task.maker_coid is not None:
+            maker_ctx = self._active_makers.get(task.maker_coid)
+            if maker_ctx is not None:
+                maker_ctx.settled_hedged_base_qty += total_hedged
+        if not suppress_fallback:
+            if total_hedged + task.spec.base_step <= task.target_base_qty:
+                self.ledger.increment_unhedged_streak(now_s)
+                self.ledger.record_event(
+                    "hedge_fallback_unhedged",
+                    {"position_id": task.position_id, "target": str(task.target_base_qty), "filled": str(total_hedged)},
+                    now_s,
+                )
+            elif total_hedged > Decimal("0"):
+                self.ledger.increment_unhedged_streak(now_s, reset=True)
+        if task.position_id in self._active_emergency_closes:
+            self._reconcile_emergency_close(self._active_emergency_closes[task.position_id], now_s=now_s)
+        else:
+            self._maybe_finalize_position(task.position_id, now_s=now_s)
         if task.fallback_coid is not None:
             return OrderAck(task.fallback_coid, "", task.fallback_status or "FILLED", total_hedged, None)
         return OrderAck(task.client_order_id, "", task.status, task.filled_base_qty, None)
@@ -1242,6 +1428,8 @@ class CarryExecutionController:
         now_s: int,
     ) -> list[str]:
         """Submit the next $50 slice for OPENING or CLOSING positions that have no in-flight orders."""
+        if self._stopping:
+            return []
         submitted: list[str] = []
         for pid, pos in sorted(self.ledger.active_positions().items()):
             if self.has_in_flight_orders(pid):
@@ -1408,7 +1596,9 @@ class CarryExecutionController:
                 instrument_id=ctx.spec_maker.instrument_id,
                 now_s=now_s,
             )
-            if ack.filled_base_qty > ctx.hedged_base_qty:
+            if ack.filled_base_qty > ctx.accounted_maker_base_qty or (
+                ack.status in TERMINAL_ORDER_STATUSES and self._maker_unhedged_qty(ctx) > Decimal("0")
+            ):
                 h_mid, h_bbo = self._hedge_quote_ctx(ctx, live_mids, live_quotes)
                 self.on_maker_progress(
                     coid,
@@ -1438,7 +1628,9 @@ class CarryExecutionController:
                 )
                 ctx.cancel_requested = True
                 self._update_order_from_ack(coid, c_ack, now_s=now_s)
-                if c_ack.filled_base_qty > ctx.hedged_base_qty:
+                if c_ack.filled_base_qty > ctx.accounted_maker_base_qty or (
+                    c_ack.status in TERMINAL_ORDER_STATUSES and self._maker_unhedged_qty(ctx) > Decimal("0")
+                ):
                     h_mid, h_bbo = self._hedge_quote_ctx(ctx, live_mids, live_quotes)
                     self.on_maker_progress(
                         coid,
@@ -1515,7 +1707,7 @@ class CarryExecutionController:
                     )
                     leg.status = ack.status
                     leg.filled_base_qty = ack.filled_base_qty
-            self._reconcile_emergency_close(close_task, now_s=now_s)
+            self._reconcile_emergency_close(close_task, now_s=now_s, live_mids=live_mids)
 
         return timed_out
 
@@ -1528,22 +1720,152 @@ class CarryExecutionController:
     ) -> list[str]:
         return self.poll_active_orders(live_mids=live_mids, now_s=now_s, live_quotes=live_quotes)
 
-    def _reconcile_emergency_close(self, close_task: ActiveEmergencyClose, *, now_s: int) -> None:
-        for leg in close_task.legs:
-            delta = leg.filled_base_qty - leg.accounted_base_qty
-            if delta > 0:
-                self._apply_leg_fill_delta(
-                    close_task.position_id,
-                    is_long=leg.is_long,
-                    is_opening=False,
-                    delta_base=delta,
-                    now_s=now_s,
-                    clamp_dust_step=leg.spec.base_step if leg.status == "FILLED" else None,
+    def _submit_emergency_close_leg(
+        self,
+        *,
+        position_id: str,
+        is_long: bool,
+        base_qty: Decimal,
+        spec: InstrumentSpec,
+        venue: str,
+        fb_px: Decimal | None,
+        now_s: int,
+    ) -> ActiveCloseLeg:
+        side = "SELL" if is_long else "BUY"
+        role = "EMERGENCY_CLOSE_LONG" if is_long else "EMERGENCY_CLOSE_SHORT"
+        prefix = "eml" if is_long else "ems"
+        qty_c = max(spec.size_increment, (base_qty / spec.base_step).to_integral_value() * spec.size_increment)
+        target_base = qty_c * spec.contract_multiplier
+        coid = make_client_order_id(prefix, position_id)
+        self.ledger.register_order_intent(
+            client_order_id=coid,
+            position_id=position_id,
+            venue=venue,
+            instrument_id=spec.instrument_id,
+            side=side,
+            role=role,
+            order_type="MARKET",
+            qty_contracts=qty_c,
+            base_qty=base_qty,
+            price=None,
+            ts_s=now_s,
+        )
+        ack = self.gateway.submit_market(
+            client_order_id=coid,
+            venue=venue,
+            instrument_id=spec.instrument_id,
+            side=side,
+            qty_contracts=qty_c,
+            reduce_only=True,
+        )
+        self._update_order_from_ack(coid, ack, now_s=now_s, fallback_price=fb_px)
+        return ActiveCloseLeg(
+            client_order_id=coid,
+            is_long=is_long,
+            venue=venue,
+            spec=spec,
+            ref_price=fb_px,
+            target_base_qty=target_base,
+            status=ack.status,
+            filled_base_qty=ack.filled_base_qty,
+        )
+
+    def _reconcile_emergency_close(
+        self,
+        close_task: ActiveEmergencyClose,
+        *,
+        now_s: int,
+        live_mids: Mapping[str, float] | None = None,
+    ) -> None:
+        if live_mids is not None:
+            if close_task.spec_l is not None and close_task.spec_l.instrument_id in live_mids:
+                close_task.ref_price_l = Decimal(str(live_mids[close_task.spec_l.instrument_id]))
+            if close_task.spec_s is not None and close_task.spec_s.instrument_id in live_mids:
+                close_task.ref_price_s = Decimal(str(live_mids[close_task.spec_s.instrument_id]))
+
+        for _ in range(4):
+            for leg in close_task.legs:
+                delta = leg.filled_base_qty - leg.accounted_base_qty
+                if delta > 0:
+                    self._apply_leg_fill_delta(
+                        close_task.position_id,
+                        is_long=leg.is_long,
+                        is_opening=False,
+                        delta_base=delta,
+                        now_s=now_s,
+                        clamp_dust_step=leg.spec.base_step if leg.status == "FILLED" else None,
+                    )
+                    leg.accounted_base_qty += delta
+
+            pos = self.ledger.active_positions().get(close_task.position_id)
+            if pos is None:
+                self._active_emergency_closes.pop(close_task.position_id, None)
+                return
+
+            cur_l = Decimal(str(pos["long_base_qty"]))
+            cur_s = Decimal(str(pos["short_base_qty"]))
+            for leg in close_task.legs:
+                if leg.status == "REJECTED" or (leg.status == "CANCELED" and leg.filled_base_qty < leg.target_base_qty):
+                    if leg.is_long and cur_l > Decimal("0"):
+                        close_task.failed_long = True
+                    elif (not leg.is_long) and cur_s > Decimal("0"):
+                        close_task.failed_short = True
+
+            in_flight_l = sum(
+                (
+                    max(Decimal("0"), leg.target_base_qty - leg.accounted_base_qty)
+                    for leg in close_task.legs
+                    if leg.is_long and leg.status not in TERMINAL_ORDER_STATUSES
+                ),
+                Decimal("0"),
+            )
+            in_flight_s = sum(
+                (
+                    max(Decimal("0"), leg.target_base_qty - leg.accounted_base_qty)
+                    for leg in close_task.legs
+                    if (not leg.is_long) and leg.status not in TERMINAL_ORDER_STATUSES
+                ),
+                Decimal("0"),
+            )
+            uncovered_l = cur_l - in_flight_l
+            uncovered_s = cur_s - in_flight_s
+
+            submitted_any = False
+            if uncovered_l > Decimal("0") and not close_task.failed_long and close_task.spec_l is not None:
+                close_task.legs.append(
+                    self._submit_emergency_close_leg(
+                        position_id=close_task.position_id,
+                        is_long=True,
+                        base_qty=uncovered_l,
+                        spec=close_task.spec_l,
+                        venue=close_task.long_venue,
+                        fb_px=close_task.ref_price_l,
+                        now_s=now_s,
+                    )
                 )
-                leg.accounted_base_qty += delta
-        if all(leg.status in TERMINAL_ORDER_STATUSES for leg in close_task.legs):
-            self._active_emergency_closes.pop(close_task.position_id, None)
-            self._maybe_finalize_position(close_task.position_id, now_s=now_s, close_reason=close_task.reason)
+                submitted_any = True
+            if uncovered_s > Decimal("0") and not close_task.failed_short and close_task.spec_s is not None:
+                close_task.legs.append(
+                    self._submit_emergency_close_leg(
+                        position_id=close_task.position_id,
+                        is_long=False,
+                        base_qty=uncovered_s,
+                        spec=close_task.spec_s,
+                        venue=close_task.short_venue,
+                        fb_px=close_task.ref_price_s,
+                        now_s=now_s,
+                    )
+                )
+                submitted_any = True
+            if not submitted_any:
+                break
+
+        if any(leg.status not in TERMINAL_ORDER_STATUSES for leg in close_task.legs):
+            return
+        if self._has_in_flight_opening_orders(close_task.position_id):
+            return
+        self._active_emergency_closes.pop(close_task.position_id, None)
+        self._maybe_finalize_position(close_task.position_id, now_s=now_s, close_reason=close_task.reason)
 
     def emergency_close_position(
         self,
@@ -1570,8 +1892,8 @@ class CarryExecutionController:
             )
             ctx.cancel_requested = True
             self._update_order_from_ack(coid, c_ack, now_s=now_s)
-            if c_ack.filled_base_qty > ctx.hedged_base_qty:
-                delta_base = c_ack.filled_base_qty - ctx.hedged_base_qty
+            if c_ack.filled_base_qty > ctx.accounted_maker_base_qty:
+                delta_base = c_ack.filled_base_qty - ctx.accounted_maker_base_qty
                 self._apply_leg_fill_delta(
                     position_id,
                     is_long=ctx.maker_side_is_long,
@@ -1579,7 +1901,7 @@ class CarryExecutionController:
                     delta_base=delta_base,
                     now_s=now_s,
                 )
-                ctx.hedged_base_qty += delta_base
+                ctx.accounted_maker_base_qty += delta_base
             if c_ack.status in TERMINAL_ORDER_STATUSES:
                 self._active_makers.pop(coid, None)
 
@@ -1587,62 +1909,22 @@ class CarryExecutionController:
         if pos is None:
             return
         self.ledger.update_position_status(position_id, status="CLOSING", ts_s=now_s, close_reason=reason)
-        l_base = Decimal(str(pos["long_base_qty"]))
-        s_base = Decimal(str(pos["short_base_qty"]))
         spec_l = specs[str(pos["iid_long"])]
         spec_s = specs[str(pos["iid_short"])]
         fb_l = Decimal(str(live_mids[spec_l.instrument_id])) if (live_mids and spec_l.instrument_id in live_mids) else None
         fb_s = Decimal(str(live_mids[spec_s.instrument_id])) if (live_mids and spec_s.instrument_id in live_mids) else None
 
-        legs: list[ActiveCloseLeg] = []
-        close_specs = (
-            (True, l_base, spec_l, str(pos["long_venue"]), "SELL", "EMERGENCY_CLOSE_LONG", "em-l", fb_l),
-            (False, s_base, spec_s, str(pos["short_venue"]), "BUY", "EMERGENCY_CLOSE_SHORT", "em-s", fb_s),
-        )
-        for is_long, base_qty, spec, venue, side, role, prefix, fb_px in close_specs:
-            if base_qty <= 0:
-                continue
-            qty_c = max(spec.size_increment, (base_qty / spec.base_step).to_integral_value() * spec.size_increment)
-            coid = f"{prefix}-{position_id[:10]}-{uuid.uuid4().hex[:6]}"
-            self.ledger.register_order_intent(
-                client_order_id=coid,
-                position_id=position_id,
-                venue=venue,
-                instrument_id=spec.instrument_id,
-                side=side,
-                role=role,
-                order_type="MARKET",
-                qty_contracts=qty_c,
-                base_qty=base_qty,
-                price=None,
-                ts_s=now_s,
-            )
-            ack = self.gateway.submit_market(
-                client_order_id=coid,
-                venue=venue,
-                instrument_id=spec.instrument_id,
-                side=side,
-                qty_contracts=qty_c,
-                reduce_only=True,
-            )
-            self._update_order_from_ack(coid, ack, now_s=now_s, fallback_price=fb_px)
-            legs.append(
-                ActiveCloseLeg(
-                    client_order_id=coid,
-                    is_long=is_long,
-                    venue=venue,
-                    spec=spec,
-                    ref_price=fb_px,
-                    status=ack.status,
-                    filled_base_qty=ack.filled_base_qty,
-                )
-            )
-
         close_task = ActiveEmergencyClose(
             position_id=position_id,
             reason=reason,
-            legs=legs,
+            legs=[],
             submitted_ts=now_s,
+            spec_l=spec_l,
+            spec_s=spec_s,
+            long_venue=str(pos["long_venue"]),
+            short_venue=str(pos["short_venue"]),
+            ref_price_l=fb_l,
+            ref_price_s=fb_s,
         )
         self._active_emergency_closes[position_id] = close_task
-        self._reconcile_emergency_close(close_task, now_s=now_s)
+        self._reconcile_emergency_close(close_task, now_s=now_s, live_mids=live_mids)

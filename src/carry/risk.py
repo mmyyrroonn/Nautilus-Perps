@@ -95,6 +95,9 @@ class FastRiskEvaluator:
         halt = False
         halt_reason: str | None = None
         mg_ratio = float(self.policy.margin_guard_pct) / 100.0
+        for stale_pid in list(self._unhedged_since):
+            if stale_pid not in positions:
+                self._unhedged_since.pop(stale_pid, None)
 
         for pid, pos in sorted(positions.items()):
             entry_l = float(pos["entry_l"])
@@ -110,12 +113,19 @@ class FastRiskEvaluator:
                     to_close.append((pid, f"margin_guard_{int(self.policy.margin_guard_pct)}pct"))
                     continue
 
-            # Unhedged delta check: difference in USD value between long and short filled base quantities
+            # Unhedged delta check: USD exposure cap or significant percentage leg imbalance
             long_base = Decimal(str(pos.get("long_base_qty", "0")))
             short_base = Decimal(str(pos.get("short_base_qty", "0")))
             ref_px = Decimal(str(mid_l or mid_s or entry_l or entry_s or 0))
-            unhedged_usd = abs(long_base - short_base) * ref_px
-            if unhedged_usd > self.policy.max_unhedged_usd:
+            diff_base = abs(long_base - short_base)
+            unhedged_usd = diff_base * ref_px
+            hi_base = max(long_base, short_base)
+            qty_imbalanced = (
+                hi_base > Decimal("0")
+                and unhedged_usd > Decimal("0")
+                and (diff_base / hi_base * Decimal("100")) > self.policy.max_qty_mismatch_pct
+            )
+            if unhedged_usd > self.policy.max_unhedged_usd or qty_imbalanced:
                 since = self._unhedged_since.setdefault(pid, now_s)
                 if now_s - since >= self.policy.max_unhedged_secs:
                     to_close.append((pid, "unhedged_timeout_kill"))
