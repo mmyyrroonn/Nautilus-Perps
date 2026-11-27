@@ -520,6 +520,75 @@ class CarryLedger:
                     (val, client_order_id),
                 )
 
+    def reconcile_closed_position_fee_for_order(
+        self,
+        client_order_id: str,
+        *,
+        maker_fee_bps_by_venue: Mapping[str, Decimal] | Sequence[tuple[str, Decimal]],
+        taker_fee_bps_by_venue: Mapping[str, Decimal] | Sequence[tuple[str, Decimal]],
+        ts_s: int | None = None,
+    ) -> bool:
+        """Idempotently recompute fee, realized PnL, and UTC daily_stats for a CLOSED position."""
+        with self.conn:
+            ord_row = self.conn.execute(
+                "SELECT position_id FROM orders WHERE client_order_id=?",
+                (client_order_id,),
+            ).fetchone()
+            if ord_row is None:
+                return False
+            pid = str(ord_row["position_id"])
+            pos = self.conn.execute(
+                "SELECT status, closed_ts, fee_usd, realized_pnl_usd FROM positions WHERE position_id=?",
+                (pid,),
+            ).fetchone()
+            if pos is None or str(pos["status"]) != "CLOSED" or pos["closed_ts"] is None:
+                return False
+            closed_ts = int(pos["closed_ts"])
+            new_fee = self.compute_position_fee_usd(
+                pid,
+                maker_fee_bps_by_venue=maker_fee_bps_by_venue,
+                taker_fee_bps_by_venue=taker_fee_bps_by_venue,
+            ).quantize(_PNL_QUANT)
+            old_fee = Decimal(str(pos["fee_usd"])).quantize(_PNL_QUANT)
+            delta = (new_fee - old_fee).quantize(_PNL_QUANT)
+            if delta == Decimal("0"):
+                return False
+            old_net = Decimal(str(pos["realized_pnl_usd"])).quantize(_PNL_QUANT)
+            new_net = (old_net - delta).quantize(_PNL_QUANT)
+            self.conn.execute(
+                "UPDATE positions SET fee_usd=?, realized_pnl_usd=? WHERE position_id=?",
+                (str(new_fee), str(new_net), pid),
+            )
+            day = _utc_day(closed_ts)
+            cur = self.conn.execute(
+                "SELECT realized_pnl_usd, consecutive_unhedged FROM daily_stats WHERE utc_day=?",
+                (day,),
+            ).fetchone()
+            prev_pnl = Decimal(str(cur["realized_pnl_usd"])) if cur else Decimal("0")
+            prev_unhedged = int(cur["consecutive_unhedged"]) if cur else 0
+            new_day_pnl = (prev_pnl - delta).quantize(_PNL_QUANT)
+            self.conn.execute(
+                "INSERT OR REPLACE INTO daily_stats(utc_day, realized_pnl_usd, consecutive_unhedged) VALUES (?, ?, ?)",
+                (day, str(new_day_pnl), prev_unhedged),
+            )
+            evt_ts = closed_ts if ts_s is None else int(ts_s)
+            self.conn.execute(
+                "INSERT INTO events(ts, kind, payload) VALUES (?, 'position_fee_reconciled', ?)",
+                (
+                    evt_ts,
+                    json.dumps(
+                        {
+                            "position_id": pid,
+                            "client_order_id": client_order_id,
+                            "old_fee_usd": str(old_fee),
+                            "new_fee_usd": str(new_fee),
+                            "delta_usd": str(delta),
+                        }
+                    ),
+                ),
+            )
+            return True
+
     def stop_loss_cooldown_symbols(self, *, now_s: int, cooldown_hours: int) -> set[str]:
         """Return symbols closed by basis_stop, margin_guard, or unhedged within the cooldown window."""
         if cooldown_hours <= 0:

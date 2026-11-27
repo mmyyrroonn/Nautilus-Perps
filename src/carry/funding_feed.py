@@ -363,12 +363,24 @@ def parse_okx_tickers(
     return out
 
 
+def _validate_bitget_public_list_resp(resp: Any, endpoint: str) -> dict[str, Any]:
+    """Validate Bitget v2 public REST envelope returns a list payload (and code==00000 when present)."""
+    if not isinstance(resp, dict):
+        raise ValueError(f"bitget {endpoint} non-object response")
+    if "code" in resp and str(resp.get("code") or "") != "00000":
+        raise ValueError(f"bitget {endpoint} error code={resp.get('code')!r}")
+    if not isinstance(resp.get("data"), list):
+        raise ValueError(f"bitget {endpoint} missing list data")
+    return resp
+
+
 def parse_bitget_tickers(
     contracts_payload: Any,
     tickers_payload: Any,
     current_fund_payload: Any = None,
     *,
     now_s: int = 0,
+    close_only_symbols: set[str] | frozenset[str] = frozenset(),
 ) -> dict[str, LegMarketInfo]:
     """Normalize Bitget USDT-FUTURES contracts + tickers + current-fund-rate."""
     from .bitget_gateway import bitget_instrument_id, parse_bitget_contracts
@@ -376,6 +388,7 @@ def parse_bitget_tickers(
     contracts_map = parse_bitget_contracts(contracts_payload)
     if not contracts_map:
         return {}
+    close_only_allow = {str(s).strip().upper() for s in close_only_symbols}
 
     fund_by_raw: dict[str, tuple[float | None, int | None, int | None]] = {}
     if isinstance(current_fund_payload, dict):
@@ -427,6 +440,8 @@ def parse_bitget_tickers(
             continue
         _spec, meta = contracts_map[raw_sym]
         sym = str(meta["symbol"])
+        if meta.get("close_only") and sym.upper() not in close_only_allow and raw_sym not in close_only_allow:
+            continue
         try:
             mark = float(r.get("markPrice") or r.get("lastPr") or 0.0)
             bid = float(r.get("bidPr") or mark or 0.0)
@@ -592,17 +607,19 @@ class PublicCarryFeed:
                 try:
                     from .bitget_gateway import parse_bitget_contracts
 
-                    contracts_payload = self._request(
-                        f"{self._bitget_base}/api/v2/mix/market/contracts?productType=USDT-FUTURES",
-                        None,
-                        headers=self._bitget_headers,
+                    contracts_payload = _validate_bitget_public_list_resp(
+                        self._request(
+                            f"{self._bitget_base}/api/v2/mix/market/contracts?productType=USDT-FUTURES",
+                            None,
+                            headers=self._bitget_headers,
+                        ),
+                        "contracts",
                     )
                     parsed = parse_bitget_contracts(contracts_payload)
-                    if parsed or (isinstance(contracts_payload, dict) and isinstance(contracts_payload.get("data"), list)):
-                        with self._bitget_meta_lock:
-                            self._bitget_contracts_cache = contracts_payload
-                            self._bitget_contracts_ts = now_s
-                            self._bitget_specs = {spec.instrument_id: spec for spec, _ in parsed.values()}
+                    with self._bitget_meta_lock:
+                        self._bitget_contracts_cache = contracts_payload
+                        self._bitget_contracts_ts = now_s
+                        self._bitget_specs = {spec.instrument_id: spec for spec, _ in parsed.values()}
                 except Exception:
                     pass
 
@@ -628,6 +645,11 @@ class PublicCarryFeed:
                 nxt = b_nxt
             if b_raw_fr is not None:
                 cur_rate = b_raw_fr * 1e4 / max(1, iv)
+        elif leg.venue == "BITGET":
+            if leg.interval_h > 0:
+                iv = leg.interval_h
+            if leg.next_settle_ts > 0:
+                nxt = leg.next_settle_ts
         return LegMarketInfo(
             **{
                 **leg.__dict__,
@@ -772,23 +794,29 @@ class PublicCarryFeed:
                     prev_1h = float(cd[-2][4])
 
         elif leg.venue == "BITGET":
+            live_iv = leg.interval_h
             q = urllib.parse.quote(leg.raw_symbol)
-            fh_resp = self._request(
-                f"{self._bitget_base}/api/v2/mix/market/history-fund-rate?productType=USDT-FUTURES&symbol={q}&pageSize=30",
-                None,
-                headers=self._bitget_headers,
+            fh_resp = _validate_bitget_public_list_resp(
+                self._request(
+                    f"{self._bitget_base}/api/v2/mix/market/history-fund-rate?productType=USDT-FUTURES&symbol={q}&pageSize=30",
+                    None,
+                    headers=self._bitget_headers,
+                ),
+                "history-fund-rate",
             )
-            fh = fh_resp.get("data", []) if isinstance(fh_resp, dict) else []
-            for r in (fh if isinstance(fh, list) else []):
+            for r in fh_resp["data"]:
                 ts = ((int(r["fundingTime"]) + 60_000) // HOUR_MS) * HOUR
                 settle_events.append((ts, float(r["fundingRate"]) * 1e4))
-            cd_resp = self._request(
-                f"{self._bitget_base}/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol={q}&granularity=1H&limit=3",
-                None,
-                headers=self._bitget_headers,
+            cd_resp = _validate_bitget_public_list_resp(
+                self._request(
+                    f"{self._bitget_base}/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol={q}&granularity=1H&limit=3",
+                    None,
+                    headers=self._bitget_headers,
+                ),
+                "candles",
             )
-            cd = cd_resp.get("data", []) if isinstance(cd_resp, dict) else []
-            if isinstance(cd, list) and cd:
+            cd = cd_resp["data"]
+            if cd:
                 cd = sorted(cd, key=lambda r: int(r[0]))
                 vol1h = float(cd[-1][6]) if len(cd[-1]) > 6 else float(cd[-1][5]) * float(cd[-1][4])
                 if len(cd) >= 2:
@@ -858,6 +886,7 @@ class PublicCarryFeed:
         """Poll bulk snapshots across all configured venues and enrich active overlapping legs."""
         ts = int(time.time()) if now_s is None else now_s
         self._refresh_venue_metadata(ts)
+        prio = {s.upper() for s in (priority_symbols or set())}
 
         by_sym: dict[str, dict[str, LegMarketInfo]] = {}
         succeeded_venues: list[str] = []
@@ -940,31 +969,44 @@ class PublicCarryFeed:
                 if contracts_payload is None:
                     from .bitget_gateway import parse_bitget_contracts
 
-                    contracts_payload = self._request(
-                        f"{self._bitget_base}/api/v2/mix/market/contracts?productType=USDT-FUTURES",
-                        None,
-                        headers=self._bitget_headers,
+                    contracts_payload = _validate_bitget_public_list_resp(
+                        self._request(
+                            f"{self._bitget_base}/api/v2/mix/market/contracts?productType=USDT-FUTURES",
+                            None,
+                            headers=self._bitget_headers,
+                        ),
+                        "contracts",
                     )
                     parsed = parse_bitget_contracts(contracts_payload)
                     with self._bitget_meta_lock:
                         self._bitget_contracts_cache = contracts_payload
                         self._bitget_contracts_ts = ts
                         self._bitget_specs = {spec.instrument_id: spec for spec, _ in parsed.values()}
-                tk = self._request(
-                    f"{self._bitget_base}/api/v2/mix/market/tickers?productType=USDT-FUTURES",
-                    None,
-                    headers=self._bitget_headers,
+                tk = _validate_bitget_public_list_resp(
+                    self._request(
+                        f"{self._bitget_base}/api/v2/mix/market/tickers?productType=USDT-FUTURES",
+                        None,
+                        headers=self._bitget_headers,
+                    ),
+                    "tickers",
                 )
-                fr_payload = None
-                try:
-                    fr_payload = self._request(
+                fr_payload = _validate_bitget_public_list_resp(
+                    self._request(
                         f"{self._bitget_base}/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES",
                         None,
                         headers=self._bitget_headers,
+                    ),
+                    "current-fund-rate",
+                )
+                _merge(
+                    parse_bitget_tickers(
+                        contracts_payload,
+                        tk,
+                        fr_payload,
+                        now_s=ts,
+                        close_only_symbols=prio,
                     )
-                except Exception:
-                    fr_payload = None
-                _merge(parse_bitget_tickers(contracts_payload, tk, fr_payload, now_s=ts))
+                )
                 succeeded_venues.append("BITGET")
             except Exception as exc:
                 venue_errors["BITGET"] = f"{type(exc).__name__}: {exc}"
@@ -978,7 +1020,6 @@ class PublicCarryFeed:
             return by_sym
 
         # Filter to overlapping multi-venue symbols that meet base liquidity (or are priority/open)
-        prio = {s.upper() for s in (priority_symbols or set())}
         fresh_syms: list[str] = []
         refresh_cands: list[tuple[bool, int, float, str]] = []
         for sym, vmap in by_sym.items():

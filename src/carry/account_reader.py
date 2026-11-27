@@ -22,6 +22,7 @@ import urllib.request
 
 from .bitget_gateway import (
     BITGET_MARGIN_COIN,
+    BITGET_MARGIN_MODE,
     BITGET_PRODUCT_TYPE,
     BITGET_REST_BASE,
     bitget_instrument_id,
@@ -661,30 +662,40 @@ class CarryStartupAccountReader:
                 )
             if code != "00000":
                 raise StartupSnapshotError(f"BITGET API error code={code}")
-            return resp.get("data")
+            if "data" not in resp:
+                raise StartupSnapshotError("BITGET response missing data")
+            return resp["data"]
 
         acct_data = _signed_get(
             f"/api/v2/mix/account/account?symbol=BTCUSDT&productType={BITGET_PRODUCT_TYPE}&marginCoin={BITGET_MARGIN_COIN}"
         )
         if isinstance(acct_data, list):
-            acct_data = acct_data[0] if acct_data and isinstance(acct_data[0], dict) else {}
+            if not acct_data or not isinstance(acct_data[0], dict):
+                raise StartupSnapshotError("BITGET invalid account mode payload")
+            acct_data = acct_data[0]
         if not isinstance(acct_data, dict):
             raise StartupSnapshotError("BITGET invalid account mode payload")
         pos_mode = str(acct_data.get("posMode") or "").strip().lower()
         if pos_mode != "one_way_mode":
             raise StartupSnapshotError(f"BITGET posMode must be one_way_mode, got {pos_mode or 'unknown'}")
-        margin_mode = acct_data.get("marginMode")
-        if margin_mode is not None and str(margin_mode).strip() != "":
-            mm_norm = str(margin_mode).strip().lower()
-            if mm_norm != "crossed":
-                raise StartupSnapshotError(f"BITGET marginMode must be crossed, got {mm_norm}")
+        margin_mode = str(acct_data.get("marginMode") or "").strip().lower()
+        if margin_mode != BITGET_MARGIN_MODE:
+            raise StartupSnapshotError(f"BITGET marginMode must be crossed, got {margin_mode or 'missing'}")
+
+        iso_rows = _signed_get(
+            f"/api/v2/mix/account/isolated-symbols?productType={BITGET_PRODUCT_TYPE}"
+        )
+        if not isinstance(iso_rows, list):
+            raise StartupSnapshotError("BITGET isolated-symbols response missing list")
+        if iso_rows:
+            raise StartupSnapshotError(
+                f"BITGET account has {len(iso_rows)} isolated-margin symbols configured; all symbols must be crossed"
+            )
 
         def _read_bitget_positions() -> dict[tuple[str, str], Decimal]:
             rows = _signed_get(
                 f"/api/v2/mix/position/all-position?productType={BITGET_PRODUCT_TYPE}&marginCoin={BITGET_MARGIN_COIN}"
             )
-            if rows is None:
-                rows = []
             if not isinstance(rows, list):
                 raise StartupSnapshotError("BITGET all-position response missing list")
             out: dict[tuple[str, str], Decimal] = {}
@@ -706,13 +717,18 @@ class CarryStartupAccountReader:
                         raise StartupSnapshotError("BITGET negative position available")
                 if total == 0:
                     continue
+                row_mm = row.get("marginMode")
+                if row_mm is not None and str(row_mm).strip() != "":
+                    row_mm_norm = str(row_mm).strip().lower()
+                    if row_mm_norm != BITGET_MARGIN_MODE:
+                        raise StartupSnapshotError(
+                            f"BITGET position marginMode must be crossed, got {row_mm_norm!r}"
+                        )
                 hold_side = str(row.get("holdSide") or "").strip().lower()
                 if hold_side == "long":
                     signed_qty = total
                 elif hold_side == "short":
                     signed_qty = -total
-                elif hold_side in ("net", ""):
-                    signed_qty = total
                 else:
                     raise StartupSnapshotError(f"BITGET unsupported holdSide {hold_side!r}")
                 try:
@@ -726,19 +742,15 @@ class CarryStartupAccountReader:
             return out
 
         def _unpack_order_page(data: Any, endpoint_name: str) -> tuple[list[Any], str]:
-            if data is None:
-                return [], ""
-            if isinstance(data, list):
-                return data, ""
-            if isinstance(data, dict):
-                rows = data.get("entrustedList")
-                if rows is None:
-                    rows = []
-                if not isinstance(rows, list):
-                    raise StartupSnapshotError(f"BITGET {endpoint_name} invalid entrustedList")
-                end_id = str(data.get("endId") or "")
-                return rows, end_id
-            raise StartupSnapshotError(f"BITGET {endpoint_name} invalid payload")
+            if not isinstance(data, dict) or "entrustedList" not in data:
+                raise StartupSnapshotError(f"BITGET {endpoint_name} invalid payload")
+            rows = data["entrustedList"]
+            if rows is None:
+                rows = []
+            elif not isinstance(rows, list):
+                raise StartupSnapshotError(f"BITGET {endpoint_name} invalid entrustedList")
+            end_id = str(data.get("endId") or "")
+            return rows, end_id
 
         pos_before = _read_bitget_positions()
 
