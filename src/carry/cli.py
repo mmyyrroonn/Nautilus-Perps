@@ -8,7 +8,8 @@ import json
 from pathlib import Path
 import sys
 
-from .config import CarryConfigError, load_carry_plan
+from .config import CarryConfigError, ledger_domain_for_mode, load_carry_plan
+from .ledger import LedgerOwnershipError
 
 
 def _serialize(obj: object) -> object:
@@ -40,6 +41,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     mode = args.mode or plan.mode
+    if ledger_domain_for_mode(plan.mode) != ledger_domain_for_mode(mode):
+        print(
+            f"[carry] Refusing cross-domain mode override ({plan.mode} -> {mode}) "
+            f"on state_path {plan.state_path}; use the matching mode config file.",
+            file=sys.stderr,
+        )
+        return 2
+
     if mode == "live" and not args.execute_live and not args.dry_run:
         if args.run:
             print("[carry] Refusing --mode live without explicit --execute-live", file=sys.stderr)
@@ -59,7 +68,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from .runtime import run_node
 
-    return run_node(plan, mode=mode, execute_live=args.execute_live, duration_secs=args.duration_secs)
+    try:
+        return run_node(plan, mode=mode, execute_live=args.execute_live, duration_secs=args.duration_secs)
+    except LedgerOwnershipError as exc:
+        print(f"[carry] LedgerOwnershipError: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

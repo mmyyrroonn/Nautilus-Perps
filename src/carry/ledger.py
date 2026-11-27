@@ -69,7 +69,9 @@ def _utc_day(ts_s: int) -> str:
 class CarryLedger:
     """SQLite WAL + synchronous=FULL state store with crash recovery and reconciliation."""
 
-    def __init__(self, path: Path, fingerprint: str) -> None:
+    def __init__(self, path: Path, fingerprint: str, *, ledger_domain: str | None = None) -> None:
+        if ledger_domain is not None and ledger_domain not in ("paper", "live"):
+            raise ValueError(f"invalid ledger_domain: {ledger_domain!r}")
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -77,20 +79,57 @@ class CarryLedger:
         except OSError as exc:
             raise LedgerOwnershipError(f"state file locked by another process: {self.path}") from exc
         self.fingerprint = fingerprint
-        self.conn = sqlite3.connect(self.path)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=FULL")
-        self._init_schema()
+        self.ledger_domain = ledger_domain
+        self.conn: sqlite3.Connection | None = None
+        try:
+            self.conn = sqlite3.connect(self.path)
+            self.conn.row_factory = sqlite3.Row
+            self._init_schema()
+        except BaseException:
+            self.close()
+            raise
 
     def _init_schema(self) -> None:
+        assert self.conn is not None
+        # Validate domain ownership read-only BEFORE any write pragma, DDL, or flag mutation.
+        has_meta = (
+            self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
+            is not None
+        )
+        if has_meta:
+            cols = {str(r["name"]) for r in self.conn.execute("PRAGMA table_info(meta)").fetchall()}
+            select_sql = (
+                "SELECT fingerprint, ledger_domain FROM meta WHERE id=1"
+                if "ledger_domain" in cols
+                else "SELECT fingerprint FROM meta WHERE id=1"
+            )
+            existing = self.conn.execute(select_sql).fetchone()
+            if existing is not None:
+                existing_fp = str(existing["fingerprint"])
+                existing_domain = existing["ledger_domain"] if "ledger_domain" in cols else None
+                if (
+                    existing_domain is not None
+                    and self.ledger_domain is not None
+                    and existing_domain != self.ledger_domain
+                ):
+                    raise LedgerOwnershipError(
+                        f"ledger domain mismatch: {self.path} belongs to '{existing_domain}', refused '{self.ledger_domain}'"
+                    )
+                if existing_domain is None and self.ledger_domain == "paper" and existing_fp != self.fingerprint:
+                    raise LedgerOwnershipError(
+                        f"ledger domain mismatch: {self.path} belongs to an existing non-paper fingerprint, refused 'paper'"
+                    )
+
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=FULL")
         with self.conn:
             self.conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS meta (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     fingerprint TEXT NOT NULL,
-                    created_ts INTEGER NOT NULL
+                    created_ts INTEGER NOT NULL,
+                    ledger_domain TEXT
                 );
                 CREATE TABLE IF NOT EXISTS positions (
                     position_id TEXT PRIMARY KEY,
@@ -145,29 +184,49 @@ class CarryLedger:
                 );
                 """
             )
-            row = self.conn.execute("SELECT fingerprint FROM meta WHERE id=1").fetchone()
+            cols_after = {str(r["name"]) for r in self.conn.execute("PRAGMA table_info(meta)").fetchall()}
+            if "ledger_domain" not in cols_after:
+                self.conn.execute("ALTER TABLE meta ADD COLUMN ledger_domain TEXT")
+            row = self.conn.execute("SELECT fingerprint, ledger_domain FROM meta WHERE id=1").fetchone()
             if row is None:
-                self.conn.execute("INSERT INTO meta(id, fingerprint, created_ts) VALUES (1, ?, strftime('%s','now'))", (self.fingerprint,))
-            elif row["fingerprint"] != self.fingerprint:
-                # Preserve existing positions but halt trading if risk/venue fingerprint changed unexpectedly
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO runtime_flags(key, value) VALUES ('HALTED_RECONCILE', 'fingerprint_mismatch')"
+                    "INSERT INTO meta(id, fingerprint, created_ts, ledger_domain) VALUES (1, ?, strftime('%s','now'), ?)",
+                    (self.fingerprint, self.ledger_domain),
                 )
+            else:
+                if row["ledger_domain"] is None and self.ledger_domain is not None and row["fingerprint"] == self.fingerprint:
+                    self.conn.execute("UPDATE meta SET ledger_domain=? WHERE id=1", (self.ledger_domain,))
+                if row["fingerprint"] != self.fingerprint:
+                    # Preserve existing positions but halt trading if risk/venue fingerprint changed unexpectedly
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO runtime_flags(key, value) VALUES ('HALTED_RECONCILE', 'fingerprint_mismatch')"
+                    )
 
     def close(self) -> None:
         try:
-            self.conn.close()
+            if self.conn is not None:
+                self.conn.close()
+                self.conn = None
         finally:
             self._lock.close()
 
-    def is_halted(self) -> tuple[bool, str | None]:
+    def is_reconcile_halted(self) -> tuple[bool, str | None]:
         row = self.conn.execute("SELECT value FROM runtime_flags WHERE key='HALTED_RECONCILE'").fetchone()
         if row is not None:
             return True, str(row["value"])
-        row2 = self.conn.execute("SELECT value FROM runtime_flags WHERE key='HALTED_KILL'").fetchone()
-        if row2 is not None:
-            return True, str(row2["value"])
         return False, None
+
+    def is_kill_halted(self) -> tuple[bool, str | None]:
+        row = self.conn.execute("SELECT value FROM runtime_flags WHERE key='HALTED_KILL'").fetchone()
+        if row is not None:
+            return True, str(row["value"])
+        return False, None
+
+    def is_halted(self) -> tuple[bool, str | None]:
+        halted, reason = self.is_reconcile_halted()
+        if halted:
+            return True, reason
+        return self.is_kill_halted()
 
     def set_halt(self, key: str, reason: str, ts_s: int) -> None:
         with self.conn:
@@ -344,7 +403,7 @@ class CarryLedger:
         return {str(r["symbol"]).upper() for r in rows}
 
     def compute_position_price_pnl(self, position_id: str) -> Decimal:
-        """Compute realized price PnL in USD from persisted closing fills against entry prices."""
+        """Compute realized price PnL in USD from persisted closing fills against actual opening fill VWAP."""
         pos = self.conn.execute(
             "SELECT entry_l, entry_s, iid_long, iid_short FROM positions WHERE position_id=?",
             (position_id,),
@@ -355,6 +414,37 @@ class CarryLedger:
         entry_s = Decimal(str(pos["entry_s"]))
         iid_long = str(pos["iid_long"])
         iid_short = str(pos["iid_short"])
+
+        open_rows = self.conn.execute(
+            """
+            SELECT instrument_id, side, filled_base_qty, price FROM orders
+            WHERE position_id=? AND price IS NOT NULL
+              AND role IN (
+                  'MAKER_OPEN', 'HEDGE_OPEN', 'HEDGE_OPEN_MARKET_FALLBACK',
+                  'TAKER_OPEN', 'TAKER_OPEN_MARKET_FALLBACK'
+              )
+            """,
+            (position_id,),
+        ).fetchall()
+        open_l_qty = Decimal("0")
+        open_l_notional = Decimal("0")
+        open_s_qty = Decimal("0")
+        open_s_notional = Decimal("0")
+        for row in open_rows:
+            filled = Decimal(str(row["filled_base_qty"]))
+            if filled <= 0:
+                continue
+            px = Decimal(str(row["price"]))
+            if str(row["instrument_id"]) == iid_long and str(row["side"]) == "BUY":
+                open_l_qty += filled
+                open_l_notional += filled * px
+            elif str(row["instrument_id"]) == iid_short and str(row["side"]) == "SELL":
+                open_s_qty += filled
+                open_s_notional += filled * px
+
+        cost_l = (open_l_notional / open_l_qty) if open_l_qty > 0 else entry_l
+        cost_s = (open_s_notional / open_s_qty) if open_s_qty > 0 else entry_s
+
         rows = self.conn.execute(
             """
             SELECT instrument_id, side, filled_base_qty, price FROM orders
@@ -374,9 +464,9 @@ class CarryLedger:
                 continue
             px = Decimal(str(row["price"]))
             if str(row["instrument_id"]) == iid_long and str(row["side"]) == "SELL":
-                pnl += filled * (px - entry_l)
+                pnl += filled * (px - cost_l)
             elif str(row["instrument_id"]) == iid_short and str(row["side"]) == "BUY":
-                pnl += filled * (entry_s - px)
+                pnl += filled * (cost_s - px)
         return pnl.quantize(Decimal("0.0001"))
 
     def active_positions(self) -> dict[str, dict[str, Any]]:
@@ -406,6 +496,10 @@ class CarryLedger:
     ) -> ReconcileResult:
         """Verify persisted active positions & orders match exchange ground truth before trading."""
         discrepancies: list[str] = []
+        rec_halted, rec_reason = self.is_reconcile_halted()
+        if rec_halted:
+            discrepancies.append(f"existing_reconcile_halt:{rec_reason}")
+
         expected_signed: dict[tuple[str, str], Decimal] = {}
 
         for pid, pos in self.active_positions().items():
@@ -437,6 +531,7 @@ class CarryLedger:
                 discrepancies.append(f"orphaned_open_orders:{v}:{iid}:count={cnt}")
 
         if discrepancies:
-            self.set_halt("HALTED_RECONCILE", ";".join(discrepancies[:5]), ts_s)
+            if not (rec_halted and len(discrepancies) == 1 and rec_reason is not None):
+                self.set_halt("HALTED_RECONCILE", ";".join(discrepancies[:5]), ts_s)
             return ReconcileResult(ok=False, halted=True, discrepancies=tuple(discrepancies))
         return ReconcileResult(ok=True, halted=False, discrepancies=())

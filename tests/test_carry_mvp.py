@@ -769,7 +769,7 @@ def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
     assert pos["status"] == "OPEN"
     q = D(pos["long_base_qty"])
 
-    # Move short leg up adversely by +3.00 -> unrealized price loss == -3.00 * q
+    # Move short leg up adversely by +3.00 -> actual open VWAPs (99.99 long, 100.04 short) vs close (100.00, 103.20) == -3.15 * q
     gw.register_spec(spec_l, D("100.0"))
     gw.register_spec(spec_s, D("103.2"))
     ctrl.emergency_close_position(
@@ -781,14 +781,14 @@ def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
     )
     row = dict(led.conn.execute("SELECT realized_pnl_usd, close_reason FROM positions WHERE position_id=?", (pid,)).fetchone())
     assert row["close_reason"] == "basis_stop_30m"
-    assert D(row["realized_pnl_usd"]) == pytest.approx(D("-3.0") * q)
+    assert D(row["realized_pnl_usd"]) == pytest.approx(D("-3.15") * q)
     daily_pnl, _ = led.daily_stats(now_s + 100)
-    assert daily_pnl == pytest.approx(D("-3.0") * q)
+    assert daily_pnl == pytest.approx(D("-3.15") * q)
 
     assert "SOL" in led.stop_loss_cooldown_symbols(now_s=now_s + 3600, cooldown_hours=24)
     assert "SOL" not in led.stop_loss_cooldown_symbols(now_s=now_s + 25 * 3600, cooldown_hours=24)
 
-    # Normal carry_decay close also settles non-zero positive PnL and triggers no stop cooldown
+    # Normal carry_decay close settles against actual open VWAPs (99.99 / 100.04) and triggers no stop cooldown
     gw.register_spec(spec_l, D("100.0"))
     gw.register_spec(spec_s, D("100.2"))
     pid2, _ = ctrl.start_entry(cand, specs={spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}, now_s=now_s + 26 * 3600)
@@ -798,7 +798,7 @@ def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
         mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.2},
         now_s=now_s + 26 * 3600 + 2,
     )
-    # Basis converges to 0 (both at 100.0) -> profit == +0.20 * q
+    # Maker SELL at 100.01 (+0.02 vs 99.99 open) + IOC BUY at 100.15 (-0.11 vs 100.04 open) -> -0.09 * q
     gw.register_spec(spec_l, D("100.0"))
     gw.register_spec(spec_s, D("100.0"))
     ctrl.start_sliced_close(
@@ -815,10 +815,9 @@ def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
         mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.0},
         now_s=now_s + 26 * 3600 + 12,
     )
-    # Maker SELL at 100.01 (+0.01 vs 100.00) + IOC BUY at 100.15 (15 bps slippage cap vs 100.20) -> +0.06 * q
     row2 = dict(led.conn.execute("SELECT status, realized_pnl_usd FROM positions WHERE position_id=?", (pid2,)).fetchone())
     assert row2["status"] == "CLOSED"
-    assert D(row2["realized_pnl_usd"]) == pytest.approx(D("0.06") * q)
+    assert D(row2["realized_pnl_usd"]) == pytest.approx(D("-0.09") * q)
     assert "SOL" not in led.stop_loss_cooldown_symbols(now_s=now_s + 26 * 3600 + 20, cooldown_hours=24)
     led.close()
 
@@ -1284,8 +1283,11 @@ def test_async_in_flight_restart_halts_reconcile_and_blocks_duplicate_resubmissi
 
     assert _live_exec_engine_config("live").reconciliation is True
     assert _live_exec_engine_config("live").reconciliation_lookback_mins == 60
+    assert _live_exec_engine_config("live").generate_missing_orders is True
     assert _live_exec_engine_config("readonly").reconciliation is True
+    assert _live_exec_engine_config("readonly").generate_missing_orders is True
     assert _live_exec_engine_config("paper").reconciliation is False
+    assert _live_exec_engine_config("paper").generate_missing_orders is False
 
     plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
     db_path = tmp_path / "restart.sqlite3"
@@ -2659,3 +2661,792 @@ def test_unhedged_streak_resets_on_successful_hedge_and_dual_taker(tmp_path: Pat
     ctrl.poll_active_orders(live_mids=t_mids, now_s=now_s + 76, live_quotes=t_quotes)
     assert led.daily_stats(now_s + 76)[1] == 0
     led.close()
+
+
+def test_cold_start_reconciliation_reads_exchange_ground_truth_and_fails_closed(tmp_path: Path) -> None:
+    from src.carry.account_reader import CarryStartupAccountReader, StartupSnapshotError, VenueAccountSnapshot
+    from src.carry.runtime import _create_carry_strategy, _live_exec_engine_config
+
+    assert _live_exec_engine_config("live").generate_missing_orders is True
+    assert _live_exec_engine_config("readonly").generate_missing_orders is True
+    assert _live_exec_engine_config("paper").generate_missing_orders is False
+
+    env = {
+        "HYPERLIQUID_ACCOUNT_ADDRESS": "0x" + "11" * 20,
+        "LIGHTER_ACCOUNT_INDEX": "42",
+        "OKX_API_KEY": "okx-secret-key",
+        "OKX_API_SECRET": "okx-secret-val",
+        "OKX_API_PASSPHRASE": "okx-secret-pass",
+        "BYBIT_API_KEY": "bybit-secret-key",
+        "BYBIT_API_SECRET": "bybit-secret-val",
+    }
+
+    def fake_http(method: str, url: str, *, headers=None, body=None, timeout=10.0):
+        if "hyperliquid.xyz" in url:
+            if body["type"] == "clearinghouseState":
+                if body.get("dex") == "xyz":
+                    return {"assetPositions": [{"position": {"coin": "xyz:NVDA", "szi": "-0.5"}}]}
+                return {"assetPositions": [{"position": {"coin": "SOL", "szi": "0.49"}}]}
+            if body["type"] == "openOrders":
+                if body.get("dex") == "xyz":
+                    return []
+                return [{"coin": "SOL", "oid": 101}]
+        if "zklighter.elliot.ai" in url:
+            return {
+                "code": 200,
+                "accounts": [
+                    {
+                        "account_index": 42,
+                        "index": 42,
+                        "total_order_count": 2,
+                        "total_isolated_order_count": 0,
+                        "pending_order_count": 0,
+                        "positions": [
+                            {
+                                "symbol": "ETH",
+                                "position": "0.25",
+                                "sign": -1,
+                                "open_order_count": 1,
+                                "pending_order_count": 0,
+                                "position_tied_order_count": 0,
+                            }
+                        ],
+                    }
+                ],
+            }
+        if "okx.com/api/v5/account/positions" in url:
+            return {"code": "0", "data": [{"instId": "SOL-USDT-SWAP", "pos": "-4.9", "posSide": "net"}]}
+        if "okx.com/api/v5/public/instruments" in url:
+            return {"code": "0", "data": [{"instId": "SOL-USDT-SWAP", "ctVal": "0.1"}]}
+        if "okx.com/api/v5/trade/orders-pending" in url:
+            if "after=" not in url:
+                return {
+                    "code": "0",
+                    "data": [{"instId": "SOL-USDT-SWAP", "ordId": f"okx-{i}"} for i in range(100)],
+                }
+            return {"code": "0", "data": [{"instId": "SOL-USDT-SWAP", "ordId": "okx-100"}]}
+        if "bybit.com/v5/position/list" in url:
+            if "settleCoin=USDT" in url and "cursor=" not in url:
+                return {
+                    "retCode": 0,
+                    "result": {
+                        "list": [{"symbol": "BTCUSDT", "size": "0.01", "side": "Buy"}],
+                        "nextPageCursor": "p2",
+                    },
+                }
+            if "settleCoin=USDT" in url and "cursor=p2" in url:
+                return {
+                    "retCode": 0,
+                    "result": {
+                        "list": [{"symbol": "ETHUSDT", "size": "0.2", "side": "Sell"}],
+                        "nextPageCursor": "",
+                    },
+                }
+            return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
+        if "bybit.com/v5/order/realtime" in url:
+            if "settleCoin=USDC" in url:
+                return {
+                    "retCode": 0,
+                    "result": {
+                        "list": [{"symbol": "BTCUSDT", "orderId": "byb-1"}],
+                        "nextPageCursor": "",
+                    },
+                }
+            return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
+        raise AssertionError(f"unexpected request {method} {url}")
+
+    reader = CarryStartupAccountReader(environment="mainnet", environ=env, http_request=fake_http)
+    snap = reader.fetch_startup_snapshot(("HL", "LIGHTER", "OKX", "BYBIT"))
+    assert snap.positions == {
+        ("HL", "SOL-USD-PERP.HYPERLIQUID"): D("0.49"),
+        ("HL", "xyz:NVDA-USD-PERP.HYPERLIQUID"): D("-0.5"),
+        ("LIGHTER", "ETH-PERP.LIGHTER"): D("-0.25"),
+        ("OKX", "SOL-USDT-SWAP.OKX"): D("-0.49"),
+        ("BYBIT", "BTCUSDT-LINEAR.BYBIT"): D("0.01"),
+        ("BYBIT", "ETHUSDT-LINEAR.BYBIT"): D("-0.2"),
+    }
+    assert snap.open_orders == {
+        ("HL", "SOL-USD-PERP.HYPERLIQUID"): 1,
+        ("LIGHTER", "ETH-PERP.LIGHTER"): 1,
+        ("LIGHTER", "account.LIGHTER"): 1,
+        ("OKX", "SOL-USDT-SWAP.OKX"): 101,
+        ("BYBIT", "BTCUSDT-LINEAR.BYBIT"): 1,
+    }
+
+    # Any single configured venue failure raises StartupSnapshotError without exposing secrets
+    def failing_http(_method: str, url: str, **_kw):
+        if "bybit.com" in url:
+            raise RuntimeError("bybit-secret-val should not leak")
+        return fake_http("GET", url, **_kw) if "zklighter" in url or "okx" in url else fake_http("POST", url, **_kw)
+
+    bad_reader = CarryStartupAccountReader(environment="mainnet", environ=env, http_request=failing_http)
+    with pytest.raises(StartupSnapshotError) as exc_info:
+        bad_reader.fetch_startup_snapshot(("HL", "BYBIT"))
+    assert "bybit-secret" not in str(exc_info.value)
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+
+    # 1) Cold cache + empty ledger + old open position on exchange -> MUST HALT_RECONCILE
+    class _StaticReader:
+        def __init__(self, result: VenueAccountSnapshot | Exception) -> None:
+            self._result = result
+
+        def fetch_startup_snapshot(self, _venues, *, okx_multipliers=None):
+            if isinstance(self._result, Exception):
+                raise self._result
+            return self._result
+
+    from types import SimpleNamespace
+
+    led_empty = CarryLedger(tmp_path / "cold_empty.sqlite3", plan.fingerprint(), ledger_domain="live")
+    strat_empty = _create_carry_strategy(
+        plan,
+        led_empty,
+        mode="live",
+        account_reader=_StaticReader(
+            VenueAccountSnapshot(
+                positions={("HL", "SOL-USD-PERP.HYPERLIQUID"): D("0.49"), ("OKX", "SOL-USDT-SWAP.OKX"): D("-0.49")},
+                open_orders={},
+            )
+        ),
+    )
+    strat_empty._reconcile_on_start()
+    assert strat_empty.reconciled is False
+    assert led_empty.is_reconcile_halted()[0] is True
+    led_empty.close()
+
+    # 2) Cold cache (cache.positions_open() == []) + multi-day OPEN ledger + matching exchange position -> succeeds cleanly
+    led_open = CarryLedger(tmp_path / "cold_match.sqlite3", plan.fingerprint(), ledger_domain="live")
+    led_open.create_position(
+        position_id="SOL-MULTIDAY",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long="SOL-USD-PERP.HYPERLIQUID",
+        iid_short="SOL-USDT-SWAP.OKX",
+        opened_ts=1_799_000_000,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.49"),
+    )
+    led_open.update_position_status(
+        "SOL-MULTIDAY", status="OPEN", ts_s=1_799_000_005, long_base_qty=D("0.49"), short_base_qty=D("0.49")
+    )
+    strat_open = _create_carry_strategy(
+        plan,
+        led_open,
+        mode="live",
+        account_reader=_StaticReader(
+            VenueAccountSnapshot(
+                positions={("HL", "SOL-USD-PERP.HYPERLIQUID"): D("0.49"), ("OKX", "SOL-USDT-SWAP.OKX"): D("-0.49")},
+                open_orders={},
+            )
+        ),
+    )
+    fake_cold_strat = SimpleNamespace(
+        plan=strat_open.plan,
+        ledger=strat_open.ledger,
+        account_reader=strat_open.account_reader,
+        cache=SimpleNamespace(positions_open=lambda: [], orders_open=lambda: [], instruments=lambda: []),
+        reconciled=False,
+        log=strat_open.log,
+    )
+    type(strat_open)._reconcile_on_start(fake_cold_strat)
+    assert fake_cold_strat.reconciled is True
+    assert led_open.is_halted() == (False, None)
+    led_open.close()
+
+    # 3) Venue snapshot failure during startup reconcile -> fail-closed HALTED_RECONCILE
+    led_err = CarryLedger(tmp_path / "cold_err.sqlite3", plan.fingerprint(), ledger_domain="live")
+    strat_err = _create_carry_strategy(
+        plan,
+        led_err,
+        mode="readonly",
+        account_reader=_StaticReader(StartupSnapshotError("OKX credentials missing")),
+    )
+    strat_err._reconcile_on_start()
+    assert strat_err.reconciled is False
+    assert led_err.is_reconcile_halted()[0] is True
+    led_err.close()
+
+
+def test_halted_reconcile_blocks_emergency_and_basis_close_orders_while_kill_allows_flatten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.carry.account_reader import VenueAccountSnapshot
+    from src.carry.runtime import _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+
+    class _EmptyExchangeReader:
+        def fetch_startup_snapshot(self, _venues, *, okx_multipliers=None):
+            return VenueAccountSnapshot(positions={}, open_orders={})
+
+    # Reconcile failure: ledger thinks 0.49 is OPEN, exchange is flat -> ZERO orders allowed on risk/basis triggers
+    led = CarryLedger(tmp_path / "halt_rec.sqlite3", plan.fingerprint(), ledger_domain="live")
+    led.create_position(
+        position_id="SOL-PHANTOM",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=1_800_000_000,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.49"),
+    )
+    led.update_position_status(
+        "SOL-PHANTOM", status="OPEN", ts_s=1_800_000_001, long_base_qty=D("0.49"), short_base_qty=D("0.49")
+    )
+
+    strat = _create_carry_strategy(plan, led, mode="live", account_reader=_EmptyExchangeReader())
+    gw = DelayedAsyncVenueGateway()
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    strat.gateway = gw
+    strat.controller.gateway = gw
+    strat._specs_from_cache = lambda: specs
+    strat._reconcile_on_start()
+    assert strat.reconciled is False
+    assert led.is_reconcile_halted()[0] is True
+
+    # Trigger margin_guard (>25% adverse drop on long leg)
+    strat.live_mids = {spec_l.instrument_id: 50.0, spec_s.instrument_id: 100.2}
+    strat._on_fast_risk_timer(None)
+    assert len(gw.submitted) == 0
+
+    # Trigger basis_stop_30m (250 bps adverse basis sustained over 30m)
+    t_base = 1_800_010_000
+    monkeypatch.setattr(time, "time", lambda: float(t_base))
+    strat.live_mids = {spec_l.instrument_id: 100.0, spec_s.instrument_id: 102.5}
+    strat._on_basis_timer(None)
+    monkeypatch.setattr(time, "time", lambda: float(t_base + 1805))
+    strat._on_basis_timer(None)
+    assert len(gw.submitted) == 0
+
+    # Even direct controller close or on_stop must emit zero orders when HALTED_RECONCILE
+    strat.controller.emergency_close_position(
+        "SOL-PHANTOM", specs=specs, reason="margin_guard_25pct", now_s=t_base + 1810, live_mids=strat.live_mids
+    )
+    assert strat.controller.start_sliced_close(
+        "SOL-PHANTOM",
+        specs=specs,
+        quotes={spec_l.instrument_id: (99.9, 100.1), spec_s.instrument_id: (102.4, 102.6)},
+        mids=strat.live_mids,
+        reason="carry_decay",
+        now_s=t_base + 1811,
+    ) is False
+    strat.on_stop()
+    assert len(gw.submitted) == 0
+    assert led.active_positions()["SOL-PHANTOM"]["status"] == "OPEN"
+    led.close()
+
+    # Contrast: HALTED_KILL (reconciled ledger) still permits flattening known OPEN positions
+    led_kill = CarryLedger(tmp_path / "halt_kill.sqlite3", plan.fingerprint(), ledger_domain="live")
+    led_kill.create_position(
+        position_id="SOL-REAL",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=1_800_000_000,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.49"),
+    )
+    led_kill.update_position_status(
+        "SOL-REAL", status="OPEN", ts_s=1_800_000_001, long_base_qty=D("0.49"), short_base_qty=D("0.49")
+    )
+    strat_kill = _create_carry_strategy(
+        plan,
+        led_kill,
+        mode="live",
+        account_reader=type(
+            "_MatchReader",
+            (),
+            {
+                "fetch_startup_snapshot": lambda _s, _v, okx_multipliers=None: VenueAccountSnapshot(
+                    positions={("HL", spec_l.instrument_id): D("0.49"), ("OKX", spec_s.instrument_id): D("-0.49")},
+                    open_orders={},
+                )
+            },
+        )(),
+    )
+    gw_kill = DelayedAsyncVenueGateway()
+    gw_kill.register_spec(spec_l)
+    gw_kill.register_spec(spec_s)
+    strat_kill.gateway = gw_kill
+    strat_kill.controller.gateway = gw_kill
+    strat_kill._specs_from_cache = lambda: specs
+    strat_kill._reconcile_on_start()
+    assert strat_kill.reconciled is True
+
+    led_kill.update_position_status("SOL-REAL", status="OPEN", ts_s=1_800_000_002)
+    with led_kill.conn:
+        led_kill.conn.execute(
+            "INSERT OR REPLACE INTO daily_stats(utc_day, realized_pnl_usd, consecutive_unhedged) VALUES ('2027-01-15', '-45.0', 0)"
+        )
+    monkeypatch.setattr(time, "time", lambda: 1_800_000_100.0)
+    strat_kill.live_mids = {spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.2}
+    strat_kill._on_fast_risk_timer(None)
+    assert led_kill.is_kill_halted() == (True, "daily_loss_kill")
+    assert len(gw_kill.submitted) == 2
+    assert all(o["reduce_only"] is True for o in gw_kill.submitted)
+    led_kill.close()
+
+
+def test_subsequent_opening_slices_enforce_fresh_bbo_and_basis_spread_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.carry.runtime import _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    now_s = 1_800_000_000
+
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.23, ask=100.27),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+
+    # (a) & (c): Empty quotes/mids AND ~198 bps blowout block slice 2 on both Maker and Dual-Taker
+    led = CarryLedger(tmp_path / "slice_gates.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw = DelayedAsyncVenueGateway()
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    rt_two = plan.runtime.__class__(**{**plan.runtime.__dict__, "maker_max_attempts": 2})
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=rt_two, policy=plan.policy)
+    pid, err = ctrl.start_entry(cand, specs=specs, now_s=now_s)
+    assert err is None and pid is not None
+    assert len(gw.submitted) == 2
+    for rec in gw.submitted:
+        px = D("100.02") if rec["side"] == "BUY" else D("100.23")
+        gw.deliver_fill(rec["client_order_id"], filled_base_qty=D("0.49"), avg_fill_price=px)
+    ctrl.poll_active_orders(live_mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.25}, now_s=now_s + 1)
+    assert led.active_positions()[pid]["status"] == "OPENING"
+
+    # (a) Empty quotes AND empty mids -> MUST NOT fall back to entry_l / entry_s
+    assert ctrl.advance_pending_slices(specs=specs, quotes={}, mids={}, now_s=now_s + 2) == []
+    assert len(gw.submitted) == 2
+    # Also mids-only without real BBO -> MUST NOT submit OPENING slice
+    assert ctrl.advance_pending_slices(
+        specs=specs,
+        quotes={},
+        mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.25},
+        now_s=now_s + 3,
+    ) == []
+    assert len(gw.submitted) == 2
+
+    # (c) ~198 bps wide basis -> neither Dual-Taker nor Maker submits; 2 attempts finalize partial OPENING -> OPEN
+    wide_quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (101.98, 102.02)}
+    assert ctrl.advance_pending_slices(specs=specs, quotes=wide_quotes, mids={}, now_s=now_s + 4) == []
+    assert len(gw.submitted) == 2
+    assert ctrl._slice_attempts[pid] == 1
+    assert ctrl.advance_pending_slices(specs=specs, quotes=wide_quotes, mids={}, now_s=now_s + 5) == []
+    assert len(gw.submitted) == 2
+    assert led.active_positions()[pid]["status"] == "OPEN"
+
+    # Wide spread (>25 bps) and price ratio deviation (>5%) also blocked on subsequent OPENING slices
+    led.create_position(
+        position_id="SOL-SP-GATE",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s + 6,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.98"),
+    )
+    assert ctrl.advance_pending_slices(
+        specs=specs,
+        quotes={spec_l.instrument_id: (99.50, 100.50), spec_s.instrument_id: (100.23, 100.27)},
+        mids={},
+        now_s=now_s + 6,
+    ) == []
+    assert len(gw.submitted) == 2
+    assert ctrl._slice_attempts["SOL-SP-GATE"] == 1
+    assert ctrl.advance_pending_slices(
+        specs=specs,
+        quotes={spec_l.instrument_id: (100.00, 100.02), spec_s.instrument_id: (106.00, 106.02)},
+        mids={},
+        now_s=now_s + 7,
+    ) == []
+    assert len(gw.submitted) == 2
+    row_sp = dict(led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id='SOL-SP-GATE'").fetchone())
+    assert row_sp["status"] == "CLOSED" and row_sp["close_reason"] == "entry_maker_timeout"
+
+    # Also verify maker_exec_basis > max_entry_basis_bps when taker_fast_entry_basis_bps=0
+    pol_mk_only = plan.policy.__class__(**{**plan.policy.__dict__, "taker_fast_entry_basis_bps": D("0")})
+    ctrl_mk = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=rt_two, policy=pol_mk_only)
+    led.create_position(
+        position_id="SOL-MK-CAP",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s + 8,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.98"),
+    )
+    ok_mk, err_mk = ctrl_mk._submit_next_slice(
+        position_id="SOL-MK-CAP",
+        is_opening=True,
+        spec_l=spec_l,
+        spec_s=spec_s,
+        leg_l_bid=D("99.91"),
+        leg_l_ask=D("100.09"),
+        leg_l_mid=D("100.00"),
+        leg_s_bid=D("100.55"),
+        leg_s_ask=D("100.61"),
+        leg_s_mid=D("100.58"),
+        remaining_base=D("0.98"),
+        sp_l=18.0,
+        sp_s=6.0,
+        now_s=now_s + 9,
+    )
+    assert not ok_mk and err_mk == "exec_basis_above_max"
+    assert len(gw.submitted) == 2
+
+    # Zero-fill OPENING position hitting max attempts closes as entry_maker_timeout
+    pid_zero, _ = ctrl.start_entry(cand, specs=specs, now_s=now_s + 10)
+    assert pid_zero is not None
+    assert len(gw.submitted) == 4
+    for rec in gw.submitted[2:]:
+        gw.deliver_cancel(rec["client_order_id"], filled_base_qty=D("0"))
+    ctrl.poll_active_orders(live_mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.25}, now_s=now_s + 11)
+    assert ctrl.advance_pending_slices(specs=specs, quotes=wide_quotes, mids={}, now_s=now_s + 12) == []
+    assert len(gw.submitted) == 4
+    row_z = dict(led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id=?", (pid_zero,)).fetchone())
+    assert row_z["status"] == "CLOSED" and row_z["close_reason"] == "entry_maker_timeout"
+
+    # (b) Strategy _on_fast_risk_timer evicts stale quotes (> quote_stale_secs) BEFORE advance_pending_slices
+    led_st = CarryLedger(tmp_path / "stale_fast.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    strat = _create_carry_strategy(plan, led_st, mode="paper")
+    gw_st = DelayedAsyncVenueGateway()
+    gw_st.register_spec(spec_l)
+    gw_st.register_spec(spec_s)
+    strat.gateway = gw_st
+    strat.controller.gateway = gw_st
+    strat._specs_from_cache = lambda: specs
+    strat.reconciled = True
+    pid_st, _ = strat.controller.start_entry(cand, specs=specs, now_s=now_s + 20)
+    assert pid_st is not None and len(gw_st.submitted) == 2
+    for rec in gw_st.submitted:
+        px = D("100.02") if rec["side"] == "BUY" else D("100.23")
+        gw_st.deliver_fill(rec["client_order_id"], filled_base_qty=D("0.49"), avg_fill_price=px)
+    strat.controller.poll_active_orders(live_mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.25}, now_s=now_s + 21)
+
+    strat.live_quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.23, 100.27)}
+    strat.live_quote_ts = {spec_l.instrument_id: float(now_s + 1), spec_s.instrument_id: float(now_s + 20)}
+    strat.live_mids = {spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.25}
+    monkeypatch.setattr(time, "time", lambda: float(now_s + 25))
+    strat._on_fast_risk_timer(None)
+    assert spec_l.instrument_id not in strat.live_quotes
+    assert spec_s.instrument_id in strat.live_quotes
+    assert len(gw_st.submitted) == 2
+
+    led.close()
+    led_st.close()
+
+
+def test_daily_loss_and_unhedged_streak_halt_even_when_flat_and_block_new_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.carry.runtime import _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.23, ask=100.27),
+        }
+    }
+
+    def _run_flat_kill_scenario(name: str, *, pnl_usd: str, streak: int, expected_reason: str) -> None:
+        led = CarryLedger(tmp_path / f"{name}.sqlite3", plan.fingerprint(), ledger_domain="paper")
+        led.create_position(
+            position_id=f"P-{name}",
+            symbol="SOL",
+            long_venue="HL",
+            short_venue="OKX",
+            iid_long=spec_l.instrument_id,
+            iid_short=spec_s.instrument_id,
+            opened_ts=now_s - 100,
+            entry_l=100.0,
+            entry_s=100.2,
+            entry_basis_bps=20.0,
+            target_base_qty=D("1"),
+        )
+        led.update_position_status(
+            f"P-{name}", status="CLOSED", ts_s=now_s - 10, realized_pnl_usd=D(pnl_usd), close_reason="basis_stop_30m"
+        )
+        for _ in range(streak):
+            led.increment_unhedged_streak(now_s - 5)
+        assert led.active_positions() == {}
+        assert led.open_orders() == []
+        assert led.is_halted() == (False, None)
+
+        strat = _create_carry_strategy(plan, led, mode="paper")
+        gw = DelayedAsyncVenueGateway()
+        gw.register_spec(spec_l)
+        gw.register_spec(spec_s)
+        strat.gateway = gw
+        strat.controller.gateway = gw
+        strat._specs_from_cache = lambda: specs
+        strat.feed = type("_StaticFeed", (), {"poll_snapshot": lambda *_a, **_kw: snap})()
+        strat.live_quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.23, 100.27)}
+        strat.live_quote_ts = {spec_l.instrument_id: float(now_s), spec_s.instrument_id: float(now_s)}
+        strat.live_mids = {spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.25}
+        monkeypatch.setattr(time, "time", lambda: float(now_s))
+
+        strat._on_fast_risk_timer(None)
+        assert led.is_kill_halted() == (True, expected_reason)
+        strat._on_slow_timer(None)
+        assert led.active_positions() == {}
+        assert gw.submitted == []
+        led.close()
+
+    _run_flat_kill_scenario("daily_loss", pnl_usd="-41.65", streak=0, expected_reason="daily_loss_kill")
+    _run_flat_kill_scenario("streak_kill", pnl_usd="0", streak=3, expected_reason="consecutive_unhedged_kill")
+
+    # Defense-in-depth: _on_slow_timer and controller.start_entry also enforce daily limits directly
+    led_slow = CarryLedger(tmp_path / "slow_defense.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    with led_slow.conn:
+        led_slow.conn.execute(
+            "INSERT INTO daily_stats(utc_day, realized_pnl_usd, consecutive_unhedged) VALUES ('2027-01-15', '-41.65', 0)"
+        )
+    strat_slow = _create_carry_strategy(plan, led_slow, mode="paper")
+    gw_slow = DelayedAsyncVenueGateway()
+    gw_slow.register_spec(spec_l)
+    gw_slow.register_spec(spec_s)
+    strat_slow.gateway = gw_slow
+    strat_slow.controller.gateway = gw_slow
+    strat_slow._specs_from_cache = lambda: specs
+    strat_slow.feed = type("_StaticFeed2", (), {"poll_snapshot": lambda *_a, **_kw: snap})()
+    strat_slow.live_quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.23, 100.27)}
+    strat_slow.live_quote_ts = {spec_l.instrument_id: float(now_s), spec_s.instrument_id: float(now_s)}
+    monkeypatch.setattr(time, "time", lambda: float(now_s))
+    strat_slow._on_slow_timer(None)
+    assert led_slow.is_kill_halted() == (True, "daily_loss_kill")
+    assert led_slow.active_positions() == {}
+    assert gw_slow.submitted == []
+
+    led_slow.clear_halt("HALTED_KILL", now_s + 1)
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+    pid_rej, err_rej = strat_slow.controller.start_entry(cand, specs=specs, now_s=now_s + 2)
+    assert pid_rej is None and err_rej == "halted:daily_loss_kill"
+    assert led_slow.is_kill_halted() == (True, "daily_loss_kill")
+    led_slow.close()
+
+
+def test_realized_price_pnl_uses_actual_opening_fill_vwap_not_signal_mid(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    led = CarryLedger(tmp_path / "vwap_pnl.sqlite3", plan.fingerprint(), ledger_domain="live")
+    now_s = 1_800_000_000
+    iid_l = "SOL-USD-PERP.HYPERLIQUID"
+    iid_s = "SOL-USDT-SWAP.OKX"
+
+    # Signal mids (100.00 / 100.20) diverge significantly from actual opening VWAPs (99.90 / 100.60)
+    led.create_position(
+        position_id="VWAP-1",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=iid_l,
+        iid_short=iid_s,
+        opened_ts=now_s,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.50"),
+    )
+    open_orders = [
+        ("mk1", "HL", iid_l, "BUY", "MAKER_OPEN", "POST_ONLY", D("0.30"), D("99.50")),
+        ("hg1", "OKX", iid_s, "SELL", "HEDGE_OPEN", "IOC", D("0.30"), D("100.80")),
+        ("tk2", "HL", iid_l, "BUY", "TAKER_OPEN", "IOC", D("0.20"), D("100.50")),
+        ("tm2", "OKX", iid_s, "SELL", "TAKER_OPEN_MARKET_FALLBACK", "MARKET", D("0.20"), D("100.30")),
+    ]
+    for coid, v, iid, side, role, otype, qty, px in open_orders:
+        led.register_order_intent(
+            client_order_id=coid,
+            position_id="VWAP-1",
+            venue=v,
+            instrument_id=iid,
+            side=side,
+            role=role,
+            order_type=otype,
+            qty_contracts=qty,
+            base_qty=qty,
+            price=px,
+            ts_s=now_s + 1,
+        )
+        led.update_order_state(coid, status="FILLED", filled_base_qty=qty, fill_price=px, ts_s=now_s + 2)
+
+    # Close both legs at exact opening VWAPs -> realized PnL MUST be 0.0000 USD
+    close_orders = [
+        ("cl1", "HL", iid_l, "SELL", "MAKER_CLOSE", "POST_ONLY", D("0.50"), D("99.90")),
+        ("cs1", "OKX", iid_s, "BUY", "HEDGE_CLOSE", "IOC", D("0.50"), D("100.60")),
+    ]
+    for coid, v, iid, side, role, otype, qty, px in close_orders:
+        led.register_order_intent(
+            client_order_id=coid,
+            position_id="VWAP-1",
+            venue=v,
+            instrument_id=iid,
+            side=side,
+            role=role,
+            order_type=otype,
+            qty_contracts=qty,
+            base_qty=qty,
+            price=px,
+            ts_s=now_s + 10,
+        )
+        led.update_order_state(coid, status="FILLED", filled_base_qty=qty, fill_price=px, ts_s=now_s + 11)
+
+    rpnl = led.compute_position_price_pnl("VWAP-1")
+    assert rpnl == D("0.0000")
+    led.update_position_status(
+        "VWAP-1", status="CLOSED", ts_s=now_s + 12, long_base_qty=D("0"), short_base_qty=D("0"), realized_pnl_usd=rpnl
+    )
+    assert led.daily_stats(now_s + 12)[0] == D("0.0000")
+
+    # Fallback compatibility when no opening fill rows exist in orders
+    led.create_position(
+        position_id="VWAP-FB",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=iid_l,
+        iid_short=iid_s,
+        opened_ts=now_s + 20,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.50"),
+    )
+    led.register_order_intent(
+        client_order_id="fbcl",
+        position_id="VWAP-FB",
+        venue="HL",
+        instrument_id=iid_l,
+        side="SELL",
+        role="EMERGENCY_CLOSE_LONG",
+        order_type="MARKET",
+        qty_contracts=D("0.50"),
+        base_qty=D("0.50"),
+        price=None,
+        ts_s=now_s + 21,
+    )
+    led.update_order_state("fbcl", status="FILLED", filled_base_qty=D("0.50"), fill_price=D("101.00"), ts_s=now_s + 22)
+    assert led.compute_position_price_pnl("VWAP-FB") == D("0.5000")
+    led.close()
+
+
+def test_cli_mode_override_and_ledger_domain_isolation_protect_live_db(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from src.carry.runtime import build_live_node, run_node
+
+    live_db = tmp_path / "live.sqlite3"
+    paper_db = tmp_path / "paper.sqlite3"
+
+    live_cfg = tmp_path / "carry-live.toml"
+    live_text = (REPO_ROOT / "config" / "carry-live.toml").read_text(encoding="utf-8")
+    live_text = live_text.replace('state_path = "../reports/carry/live.sqlite3"', f'state_path = "{live_db}"')
+    live_text = live_text.replace('record_dir = "../reports/carry/tape-live"', 'record_dir = ""')
+    live_cfg.write_text(live_text, encoding="utf-8")
+
+    paper_cfg = tmp_path / "carry-paper.toml"
+    paper_text = (REPO_ROOT / "config" / "carry-paper.toml").read_text(encoding="utf-8")
+    paper_text = paper_text.replace('state_path = "../reports/carry/paper.sqlite3"', f'state_path = "{paper_db}"')
+    paper_text = paper_text.replace('record_dir = "../reports/carry/tape-paper"', 'record_dir = ""')
+    paper_cfg.write_text(paper_text, encoding="utf-8")
+
+    live_plan = load_carry_plan(live_cfg)
+    paper_plan = load_carry_plan(paper_cfg)
+    assert live_plan.fingerprint() != paper_plan.fingerprint()
+
+    # Seed live DB with an OPEN position
+    led_live = CarryLedger(live_db, live_plan.fingerprint(), ledger_domain="live")
+    led_live.create_position(
+        position_id="SOL-LIVE-1",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long="SOL-USD-PERP.HYPERLIQUID",
+        iid_short="SOL-USDT-SWAP.OKX",
+        opened_ts=1_800_000_000,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("1.0"),
+    )
+    led_live.update_position_status(
+        "SOL-LIVE-1", status="OPEN", ts_s=1_800_000_001, long_base_qty=D("1.0"), short_base_qty=D("1.0")
+    )
+    led_live.close()
+
+    # Direct cross-domain CarryLedger access is hard-rejected without altering the DB
+    with pytest.raises(LedgerOwnershipError):
+        CarryLedger(live_db, paper_plan.fingerprint(), ledger_domain="paper")
+
+    # runtime APIs reject cross-domain execution
+    with pytest.raises(LedgerOwnershipError):
+        run_node(live_plan, mode="paper")
+    with pytest.raises(LedgerOwnershipError):
+        build_live_node(live_plan, mode="paper")
+
+    # CLI `--config carry-live.toml --mode paper --run` MUST refuse with exit code 2
+    rc_cross = carry_cli_main(["--config", str(live_cfg), "--mode", "paper", "--run"])
+    assert rc_cross == 2
+    assert "cross-domain" in capsys.readouterr().err
+
+    # CLI paper config -> live/readonly MUST refuse with exit code 2
+    assert carry_cli_main(["--config", str(paper_cfg), "--mode", "live", "--execute-live"]) == 2
+    assert carry_cli_main(["--config", str(paper_cfg), "--mode", "readonly", "--run"]) == 2
+    capsys.readouterr()
+
+    # live <-> readonly share the "live" domain cleanly
+    assert carry_cli_main(["--config", str(live_cfg), "--mode", "readonly", "--dry-run"]) == 0
+    capsys.readouterr()
+
+    # Verify live DB OPEN position & runtime_flags remained completely untouched
+    led_check = CarryLedger(live_db, live_plan.fingerprint(), ledger_domain="live")
+    pos = led_check.active_positions()["SOL-LIVE-1"]
+    assert pos["status"] == "OPEN"
+    assert D(pos["long_base_qty"]) == D("1.0") and D(pos["short_base_qty"]) == D("1.0")
+    assert led_check.is_halted() == (False, None)
+    led_check.close()
+
+    # Paper DB rejects live domain open
+    led_paper = CarryLedger(paper_db, paper_plan.fingerprint(), ledger_domain="paper")
+    led_paper.close()
+    with pytest.raises(LedgerOwnershipError):
+        CarryLedger(paper_db, live_plan.fingerprint(), ledger_domain="live")

@@ -214,6 +214,16 @@ class PaperVenueGateway:
 
 
 TERMINAL_ORDER_STATUSES = frozenset({"FILLED", "CANCELED", "REJECTED"})
+_OPENING_SLICE_GATE_ERRORS = frozenset(
+    {
+        "exec_basis_below_min",
+        "exec_basis_above_max",
+        "entry_basis_above_max",
+        "spread_too_wide",
+        "price_ratio_mismatch",
+        "dual_taker_ioc_unfilled",
+    }
+)
 
 
 def make_client_order_id(prefix: str, position_id: str, *, rand_len: int = 8) -> str:
@@ -362,6 +372,36 @@ class CarryExecutionController:
             return Decimal("0")
         mid = Decimal("0.5") * (long_px + short_px)
         return ((short_px - long_px) / mid * Decimal("10000")) if mid > 0 else Decimal("0")
+
+    @staticmethod
+    def _valid_bbo(
+        quotes: Mapping[str, tuple[float, float]], iid: str
+    ) -> tuple[Decimal, Decimal, Decimal, float] | None:
+        q = quotes.get(iid)
+        if q is None:
+            return None
+        bid_f, ask_f = q
+        if bid_f <= 0 or ask_f < bid_f:
+            return None
+        bid = Decimal(str(bid_f))
+        ask = Decimal(str(ask_f))
+        mid = Decimal("0.5") * (bid + ask)
+        if mid <= 0:
+            return None
+        sp = float((ask - bid) / mid * Decimal("10000"))
+        return bid, ask, mid, sp
+
+    def _check_daily_kill_guards(self, ts_s: int) -> str | None:
+        daily_pnl, streak = self.ledger.daily_stats(ts_s)
+        if daily_pnl <= -self.risk.max_daily_loss_usd:
+            if not self.ledger.is_kill_halted()[0]:
+                self.ledger.set_halt("HALTED_KILL", "daily_loss_kill", ts_s)
+            return "daily_loss_kill"
+        if streak >= self.risk.max_consecutive_unhedged:
+            if not self.ledger.is_kill_halted()[0]:
+                self.ledger.set_halt("HALTED_KILL", "consecutive_unhedged_kill", ts_s)
+            return "consecutive_unhedged_kill"
+        return None
 
     def _choose_maker_side(self, v_long: str, v_short: str, sp_l: float, sp_s: float) -> bool:
         """Return True if long leg should be Maker (prefer DEX leg, else wider-spread leg)."""
@@ -638,6 +678,9 @@ class CarryExecutionController:
         halted, halt_reason = self.ledger.is_halted()
         if halted:
             return None, f"halted:{halt_reason}"
+        kill_reason = self._check_daily_kill_guards(ts)
+        if kill_reason is not None:
+            return None, f"halted:{kill_reason}"
 
         spec_l = specs.get(candidate.long_leg.instrument_id)
         spec_s = specs.get(candidate.short_leg.instrument_id)
@@ -740,6 +783,29 @@ class CarryExecutionController:
         if is_opening and self._is_position_closing(position_id, pos):
             return False, "position_closing"
 
+        if is_opening:
+            if (
+                leg_l_bid <= 0
+                or leg_l_ask < leg_l_bid
+                or leg_s_bid <= 0
+                or leg_s_ask < leg_s_bid
+                or leg_l_mid <= 0
+                or leg_s_mid <= 0
+            ):
+                return False, "invalid_quote_bbo"
+            ratio = leg_s_mid / leg_l_mid
+            dev = self.policy.max_price_ratio_deviation
+            if ratio < Decimal("1") - dev or ratio > Decimal("1") + dev:
+                return False, "price_ratio_mismatch"
+            leg_sp_l = (leg_l_ask - leg_l_bid) / leg_l_mid * Decimal("10000")
+            leg_sp_s = (leg_s_ask - leg_s_bid) / leg_s_mid * Decimal("10000")
+            if leg_sp_l > self.policy.max_leg_spread_bps or leg_sp_s > self.policy.max_leg_spread_bps:
+                return False, "spread_too_wide"
+            sp_l = float(leg_sp_l)
+            sp_s = float(leg_sp_s)
+            if self._exec_basis_bps(leg_l_mid, leg_s_mid) > self.policy.max_entry_basis_bps:
+                return False, "entry_basis_above_max"
+
         mid = Decimal("0.5") * (leg_l_mid + leg_s_mid)
         rem_usd = remaining_base * mid
         slice_target_usd = (
@@ -761,6 +827,8 @@ class CarryExecutionController:
 
         if is_opening and self.policy.taker_fast_entry_basis_bps > 0 and leg_l_ask > 0 and leg_s_bid > 0:
             taker_b = self._exec_basis_bps(leg_l_ask, leg_s_bid)
+            if taker_b > self.policy.max_entry_basis_bps:
+                return False, "exec_basis_above_max"
             if self.policy.taker_fast_entry_basis_bps <= taker_b <= self.policy.max_entry_basis_bps:
                 return self._submit_dual_taker_slice(
                     position_id=position_id,
@@ -791,8 +859,12 @@ class CarryExecutionController:
             px = self._anchored_maker_price(hedge_mid=leg_l_mid, maker_bid=leg_s_bid, maker_ask=leg_s_ask, side=maker_side, spec_maker=spec_m)
             est_l, est_s = leg_l_ask, px
 
-        if is_opening and self._exec_basis_bps(est_l, est_s) < self.policy.min_exec_basis_bps:
-            return False, "exec_basis_below_min"
+        if is_opening:
+            maker_exec_b = self._exec_basis_bps(est_l, est_s)
+            if maker_exec_b < self.policy.min_exec_basis_bps:
+                return False, "exec_basis_below_min"
+            if maker_exec_b > self.policy.max_entry_basis_bps:
+                return False, "exec_basis_above_max"
 
         coid = make_client_order_id("mk", position_id)
         self.ledger.register_order_intent(
@@ -1428,7 +1500,7 @@ class CarryExecutionController:
         now_s: int,
     ) -> list[str]:
         """Submit the next $50 slice for OPENING or CLOSING positions that have no in-flight orders."""
-        if self._stopping:
+        if self._stopping or self.ledger.is_reconcile_halted()[0]:
             return []
         submitted: list[str] = []
         for pid, pos in sorted(self.ledger.active_positions().items()):
@@ -1441,19 +1513,12 @@ class CarryExecutionController:
             spec_l, spec_s = specs.get(iid_l), specs.get(iid_s)
             if spec_l is None or spec_s is None:
                 continue
-            ql = quotes.get(iid_l) or (mids.get(iid_l, 0.0), mids.get(iid_l, 0.0))
-            qs = quotes.get(iid_s) or (mids.get(iid_s, 0.0), mids.get(iid_s, 0.0))
-            mid_l = Decimal(str(mids.get(iid_l) or pos["entry_l"]))
-            mid_s = Decimal(str(mids.get(iid_s) or pos["entry_s"]))
-            if mid_l <= 0 or mid_s <= 0:
-                continue
-            bid_l, ask_l = Decimal(str(ql[0] or mid_l)), Decimal(str(ql[1] or mid_l))
-            bid_s, ask_s = Decimal(str(qs[0] or mid_s)), Decimal(str(qs[1] or mid_s))
-            sp_l = float((ask_l - bid_l) / mid_l * Decimal("10000")) if ask_l >= bid_l else 0.0
-            sp_s = float((ask_s - bid_s) / mid_s * Decimal("10000")) if ask_s >= bid_s else 0.0
 
             cur_l = Decimal(str(pos["long_base_qty"]))
             cur_s = Decimal(str(pos["short_base_qty"]))
+            bbo_l = self._valid_bbo(quotes, iid_l)
+            bbo_s = self._valid_bbo(quotes, iid_s)
+
             if status == "OPENING":
                 rem = Decimal(str(pos["target_base_qty"])) - min(cur_l, cur_s)
                 if rem <= Decimal("0"):
@@ -1473,6 +1538,10 @@ class CarryExecutionController:
                     continue
                 if self._is_position_imbalanced(pos, spec_l, spec_s):
                     continue
+                if bbo_l is None or bbo_s is None:
+                    continue
+                bid_l, ask_l, mid_l, sp_l = bbo_l
+                bid_s, ask_s, mid_s, sp_s = bbo_s
                 ok, err = self._submit_next_slice(
                     position_id=pid, is_opening=True, spec_l=spec_l, spec_s=spec_s,
                     leg_l_bid=bid_l, leg_l_ask=ask_l, leg_l_mid=mid_l,
@@ -1481,7 +1550,7 @@ class CarryExecutionController:
                 )
                 if ok:
                     submitted.append(pid)
-                elif err in ("exec_basis_below_min", "dual_taker_ioc_unfilled"):
+                elif err in _OPENING_SLICE_GATE_ERRORS:
                     cnt = self._slice_attempts.get(pid, 0) + 1
                     self._slice_attempts[pid] = cnt
                     if cnt >= self.runtime.maker_max_attempts:
@@ -1506,6 +1575,20 @@ class CarryExecutionController:
                     self._slice_attempts.pop(pid, None)
                     continue
                 if self._slice_attempts.get(pid, 0) >= self.runtime.maker_max_attempts:
+                    raw_ml = mids.get(iid_l)
+                    raw_ms = mids.get(iid_s)
+                    if bbo_l is not None:
+                        bid_l, mid_l = bbo_l[0], bbo_l[2]
+                    elif raw_ml is not None and raw_ml > 0:
+                        bid_l = mid_l = Decimal(str(raw_ml))
+                    else:
+                        continue
+                    if bbo_s is not None:
+                        ask_s, mid_s = bbo_s[1], bbo_s[2]
+                    elif raw_ms is not None and raw_ms > 0:
+                        ask_s = mid_s = Decimal(str(raw_ms))
+                    else:
+                        continue
                     mid = Decimal("0.5") * (mid_l + mid_s)
                     slice_usd = self._closing_slice_target_usd(
                         rem_usd=rem * mid, spec_l=spec_l, spec_s=spec_s, mid=mid
@@ -1536,6 +1619,10 @@ class CarryExecutionController:
                     if ok:
                         submitted.append(pid)
                     continue
+                if bbo_l is None or bbo_s is None:
+                    continue
+                bid_l, ask_l, mid_l, sp_l = bbo_l
+                bid_s, ask_s, mid_s, sp_s = bbo_s
                 ok, err = self._submit_next_slice(
                     position_id=pid, is_opening=False, spec_l=spec_l, spec_s=spec_s,
                     leg_l_bid=bid_l, leg_l_ask=ask_l, leg_l_mid=mid_l,
@@ -1571,6 +1658,8 @@ class CarryExecutionController:
         now_s: int,
     ) -> bool:
         """Initiate normal Maker-First + IOC-Hedge sliced exit for carry_decay."""
+        if self.ledger.is_reconcile_halted()[0]:
+            return False
         pos = self.ledger.active_positions().get(position_id)
         if pos is None:
             return False
@@ -1877,7 +1966,7 @@ class CarryExecutionController:
         live_mids: Mapping[str, float] | None = None,
     ) -> None:
         """Immediately flatten both legs with reduce-only market orders and settle when filled."""
-        if position_id in self._active_emergency_closes:
+        if self.ledger.is_reconcile_halted()[0] or position_id in self._active_emergency_closes:
             return
         pos = self.ledger.active_positions().get(position_id)
         if pos is None:
