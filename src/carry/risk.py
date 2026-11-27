@@ -143,12 +143,21 @@ class FastRiskEvaluator:
             iid_s = str(pos["iid_short"])
             mid_l = live_mids.get(iid_l)
             mid_s = live_mids.get(iid_s)
-            if mid_l and mid_s and entry_l > 0 and entry_s > 0:
-                adv_l = (entry_l - mid_l) / entry_l
-                adv_s = (mid_s - entry_s) / entry_s
-                if max(adv_l, adv_s) >= mg_ratio:
-                    to_close.append((pid, f"margin_guard_{int(self.policy.margin_guard_pct)}pct"))
-                    continue
+            long_breach = (
+                mid_l is not None
+                and mid_l > 0
+                and entry_l > 0
+                and ((entry_l - mid_l) / entry_l) >= mg_ratio
+            )
+            short_breach = (
+                mid_s is not None
+                and mid_s > 0
+                and entry_s > 0
+                and ((mid_s - entry_s) / entry_s) >= mg_ratio
+            )
+            if long_breach or short_breach:
+                to_close.append((pid, f"margin_guard_{int(self.policy.margin_guard_pct)}pct"))
+                continue
 
             # Unhedged delta check: USD exposure cap or significant percentage leg imbalance
             long_base = Decimal(str(pos.get("long_base_qty", "0")))
