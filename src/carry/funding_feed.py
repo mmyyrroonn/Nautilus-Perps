@@ -281,7 +281,7 @@ def compute_trailing_rates(settle_events: list[tuple[int, float]], now_s: int, d
         return None, None, default_iv
     iv = default_iv
     if len(past) >= 2:
-        diffs = sorted((past[i][0] - past[i - 1][0]) // HOUR for i in range(1, len(past)) if past[i][0] > past[i - 1][0])
+        diffs = [(past[i][0] - past[i - 1][0]) // HOUR for i in range(1, len(past)) if past[i][0] > past[i - 1][0]]
         valid_diffs = [d for d in diffs if d in (1, 2, 4, 8)]
         if valid_diffs:
             iv = valid_diffs[-1]
@@ -358,6 +358,7 @@ class PublicCarryFeed:
         vol1h: float | None = leg.vol1h_usd
         nxt_settle = leg.next_settle_ts
         cur_rate_bps_h: float | None = leg.current_rate_bps_h
+        live_iv: int | None = None
 
         if leg.venue == "HL":
             rows = self._http(HL_INFO_URL, {"type": "fundingHistory", "coin": leg.raw_symbol, "startTime": start_s * 1000, "endTime": now_s * 1000})
@@ -394,7 +395,10 @@ class PublicCarryFeed:
                     nxt_settle = nxt_ms // 1000
                 prev_ms = int(cur_row.get("prevFundingTime") or 0)
                 if nxt_ms > prev_ms > 0:
-                    leg_iv = max(1, round((nxt_ms - prev_ms) / HOUR_MS))
+                    cand_iv = max(1, round((nxt_ms - prev_ms) / HOUR_MS))
+                    leg_iv = cand_iv
+                    if cand_iv in (1, 2, 4, 8):
+                        live_iv = cand_iv
                 else:
                     leg_iv = leg.interval_h
             else:
@@ -403,7 +407,7 @@ class PublicCarryFeed:
                 fr_val = fr_cur[0].get("fundingRate")
                 if fr_val not in (None, ""):
                     cur_rate_bps_h = float(fr_val) * 1e4 / max(1, leg_iv)
-            fh = self._http(f"{OKX_BASE}/api/v5/public/funding-rate-history?instId={q}&limit=10", None).get("data", [])
+            fh = self._http(f"{OKX_BASE}/api/v5/public/funding-rate-history?instId={q}&limit=30", None).get("data", [])
             for r in fh:
                 ts = ((int(r["fundingTime"]) + 60_000) // HOUR_MS) * HOUR
                 val = float(r.get("realizedRate") or r["fundingRate"]) * 1e4
@@ -417,7 +421,7 @@ class PublicCarryFeed:
 
         elif leg.venue == "BYBIT":
             q = urllib.parse.quote(leg.raw_symbol)
-            fh = self._http(f"{BYBIT_BASE}/v5/market/funding/history?category=linear&symbol={q}&limit=10", None).get("result", {}).get("list", [])
+            fh = self._http(f"{BYBIT_BASE}/v5/market/funding/history?category=linear&symbol={q}&limit=30", None).get("result", {}).get("list", [])
             for r in fh:
                 ts = ((int(r["fundingRateTimestamp"]) + 60_000) // HOUR_MS) * HOUR
                 settle_events.append((ts, float(r["fundingRate"]) * 1e4))
@@ -428,9 +432,9 @@ class PublicCarryFeed:
                 if len(cd) >= 2:
                     prev_1h = float(cd[-2][4])
 
-        r8, r24, iv = compute_trailing_rates(settle_events, now_s, leg.interval_h)
-        if leg.venue == "OKX" and settle_events:
-            pass  # iv inferred accurately from funding-rate-history diffs
+        r8, r24, iv = compute_trailing_rates(settle_events, now_s, live_iv or leg.interval_h)
+        if live_iv is not None:
+            iv = live_iv
         self._detail_cache[key] = {
             "fetched_ts": now_s,
             "r8": r8,

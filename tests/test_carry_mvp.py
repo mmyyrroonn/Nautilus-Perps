@@ -1506,3 +1506,254 @@ def test_async_maker_hedge_cancel_race_emergency_close_and_strategy_callbacks(tm
     assert nt_ack.filled_base_qty == D("0.50")
     assert nt_ack.avg_fill_price == D("100.25")
     led.close()
+
+
+def test_funding_history_limit_30_and_latest_interval_inference() -> None:
+    now_s = 1_800_000_000
+    # Dynamic shift 4h -> 2h: chronological intervals [4, 4, 2, 2, 2] must infer iv=2, not max=4
+    shifted_events = [
+        (now_s - 14 * HOUR, -10.0),
+        (now_s - 10 * HOUR, -10.0),
+        (now_s - 6 * HOUR, -10.0),
+        (now_s - 4 * HOUR, -10.0),
+        (now_s - 2 * HOUR, -10.0),
+        (now_s, -10.0),
+    ]
+    r8, r24, iv = compute_trailing_rates(shifted_events, now_s, 8)
+    assert iv == 2
+    assert r8 == pytest.approx(-40.0 / 8.0)
+    assert r24 == pytest.approx(-60.0 / 24.0)
+
+    seen_urls: list[str] = []
+
+    def fake_http(url: str, _body: dict | None = None):
+        seen_urls.append(url)
+        if "public/funding-rate?" in url:
+            return {
+                "data": [
+                    {
+                        "fundingRate": "-0.0020",
+                        "fundingTime": str((now_s + 2 * HOUR) * 1000),
+                        "prevFundingTime": str(now_s * 1000),
+                    }
+                ]
+            }
+        if "funding-rate-history" in url:
+            return {
+                "data": [
+                    {"fundingTime": str((now_s - h * HOUR) * 1000), "realizedRate": "-0.001"}
+                    for h in range(24)
+                ]
+            }
+        if "market/candles" in url:
+            return {
+                "data": [
+                    [str((now_s - 7200) * 1000), "1", "1", "1", "10.0", "100", "0", "10000"],
+                    [str((now_s - 3600) * 1000), "1", "1", "1", "10.1", "100", "0", "10000"],
+                ]
+            }
+        if "funding/history" in url:
+            return {
+                "result": {
+                    "list": [
+                        {"fundingRateTimestamp": str((now_s - h * HOUR) * 1000), "fundingRate": "-0.001"}
+                        for h in range(24)
+                    ]
+                }
+            }
+        if "market/kline" in url:
+            return {
+                "result": {
+                    "list": [
+                        [str((now_s - 7200) * 1000), "1", "1", "1", "10.0", "100", "10000"],
+                        [str((now_s - 3600) * 1000), "1", "1", "1", "10.1", "100", "10000"],
+                    ]
+                }
+            }
+        return {}
+
+    feed = PublicCarryFeed(venues=("OKX", "BYBIT"), http_get=fake_http)
+    okx_leg = LegMarketInfo(**{**_make_leg("OKX", "ME", interval_h=8).__dict__, "current_rate_bps_h": None})
+    okx_out = feed._fetch_leg_detail(okx_leg, now_s)
+    assert okx_out.interval_h == 2
+    assert okx_out.r8_bps_h == pytest.approx(-10.0)
+    assert okx_out.r24_bps_h == pytest.approx(-10.0)
+
+    byb_leg = _make_leg("BYBIT", "MOVE", interval_h=1)
+    byb_out = feed._fetch_leg_detail(byb_leg, now_s)
+    assert byb_out.interval_h == 1
+    assert byb_out.r8_bps_h == pytest.approx(-10.0)
+    assert byb_out.r24_bps_h == pytest.approx(-10.0)
+
+    hist_urls = [u for u in seen_urls if "funding-rate-history" in u or "funding/history" in u]
+    assert len(hist_urls) == 2
+    assert all("limit=30" in u for u in hist_urls)
+
+
+def test_closing_absorbs_dust_tail_and_falls_back_to_dual_taker_after_maker_timeout(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    led = CarryLedger(tmp_path / "close_fix.sqlite3", plan.fingerprint())
+
+    # Part A: 2487 @ $0.0416 (~$103.46) closes cleanly in 2 Maker+IOC slices without leaving a $3.31 dust tail
+    gw_a = PaperVenueGateway(fill_maker_immediately=True)
+    spec_l_me = InstrumentSpec("ME-USD-PERP.HYPERLIQUID", "HL", size_increment=D("1"), price_increment=D("0.00001"))
+    spec_s_me = InstrumentSpec("ME-USDT-SWAP.OKX", "OKX", size_increment=D("1"), price_increment=D("0.00001"))
+    gw_a.register_spec(spec_l_me, D("0.04010"))
+    gw_a.register_spec(spec_s_me, D("0.04020"))
+    ctrl_a = CarryExecutionController(ledger=led, gateway=gw_a, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    now_s = 1_800_000_000
+    led.create_position(
+        position_id="ME-TAIL-1",
+        symbol="ME",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l_me.instrument_id,
+        iid_short=spec_s_me.instrument_id,
+        opened_ts=now_s,
+        entry_l=0.04010,
+        entry_s=0.04020,
+        entry_basis_bps=24.9,
+        target_base_qty=D("2487"),
+    )
+    led.update_position_status("ME-TAIL-1", status="OPEN", ts_s=now_s + 1, long_base_qty=D("2487"), short_base_qty=D("2487"))
+    gw_a.register_spec(spec_l_me, D("0.04160"))
+    gw_a.register_spec(spec_s_me, D("0.04160"))
+    specs_me = {spec_l_me.instrument_id: spec_l_me, spec_s_me.instrument_id: spec_s_me}
+    quotes_me = {spec_l_me.instrument_id: (0.04159, 0.04161), spec_s_me.instrument_id: (0.04159, 0.04161)}
+    mids_me = {spec_l_me.instrument_id: 0.04160, spec_s_me.instrument_id: 0.04160}
+    ctrl_a.start_sliced_close("ME-TAIL-1", specs=specs_me, quotes=quotes_me, mids=mids_me, reason="carry_decay", now_s=now_s + 10)
+    ctrl_a.advance_pending_slices(specs=specs_me, quotes=quotes_me, mids=mids_me, now_s=now_s + 11)
+    assert "ME-TAIL-1" not in led.active_positions()
+    mk_close_rows = led.conn.execute("SELECT base_qty FROM orders WHERE position_id='ME-TAIL-1' AND role='MAKER_CLOSE'").fetchall()
+    assert len(mk_close_rows) == 2
+    assert all(D(r["base_qty"]) >= D("1200") for r in mk_close_rows)
+
+    spec_l_min = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"), min_notional_usd=D("15"))
+    spec_s_min = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"), min_notional_usd=D("15"))
+    split_usd = ctrl_a._closing_slice_target_usd(rem_usd=D("62"), spec_l=spec_l_min, spec_s=spec_s_min, mid=D("100"))
+    assert split_usd == D("31")
+
+    # Part B: CLOSING maker timeout -> Dual-Taker IOC fallback + repeated start_sliced_close does not reset attempts
+    gw_b = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True)
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw_b.register_spec(spec_l, D("100.00"))
+    gw_b.register_spec(spec_s, D("100.20"))
+    gw_b.update_quote(spec_l.instrument_id, D("99.99"), D("100.01"))
+    gw_b.update_quote(spec_s.instrument_id, D("100.19"), D("100.21"))
+    rt_fast = plan.runtime.__class__(**{**plan.runtime.__dict__, "maker_requote_secs": 3, "maker_max_attempts": 2})
+    ctrl_b = CarryExecutionController(ledger=led, gateway=gw_b, risk=plan.risk, runtime=rt_fast, policy=plan.policy)
+
+    led.create_position(
+        position_id="SOL-CLOSE-FB",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s + 100,
+        entry_l=100.00,
+        entry_s=100.20,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.50"),
+    )
+    led.update_position_status("SOL-CLOSE-FB", status="OPEN", ts_s=now_s + 101, long_base_qty=D("0.50"), short_base_qty=D("0.50"))
+    gw_b.update_quote(spec_l.instrument_id, D("99.99"), D("100.01"))
+    gw_b.update_quote(spec_s.instrument_id, D("99.99"), D("100.01"))
+    specs_sol = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes_sol = {spec_l.instrument_id: (99.99, 100.01), spec_s.instrument_id: (99.99, 100.01)}
+    mids_sol = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.00}
+
+    ctrl_b.start_sliced_close("SOL-CLOSE-FB", specs=specs_sol, quotes=quotes_sol, mids=mids_sol, reason="carry_decay", now_s=now_s + 200)
+    ctrl_b.poll_active_orders(live_mids=mids_sol, now_s=now_s + 204, live_quotes=quotes_sol)
+    ctrl_b.start_sliced_close("SOL-CLOSE-FB", specs=specs_sol, quotes=quotes_sol, mids=mids_sol, reason="carry_decay", now_s=now_s + 204)
+    ctrl_b.poll_active_orders(live_mids=mids_sol, now_s=now_s + 208, live_quotes=quotes_sol)
+    assert ctrl_b._slice_attempts.get("SOL-CLOSE-FB") == 2
+
+    ctrl_b.advance_pending_slices(specs=specs_sol, quotes=quotes_sol, mids=mids_sol, now_s=now_s + 208)
+    row_b = dict(led.conn.execute("SELECT status, realized_pnl_usd, close_reason FROM positions WHERE position_id='SOL-CLOSE-FB'").fetchone())
+    assert row_b["status"] == "CLOSED" and row_b["close_reason"] == "carry_decay"
+    assert D(row_b["realized_pnl_usd"]) == D("0.0900")
+    tc_rows = led.conn.execute("SELECT role, order_type, status FROM orders WHERE position_id='SOL-CLOSE-FB' AND role='TAKER_CLOSE'").fetchall()
+    assert len(tc_rows) == 2 and all(r["order_type"] == "IOC" and r["status"] == "FILLED" for r in tc_rows)
+
+    # Part C: Unalignable dust remainder below min_notional_usd ($3 < $10) closes via Dual-Taker fallback
+    gw_c = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True)
+    spec_l_d = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"), min_notional_usd=D("10"))
+    spec_s_d = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"), min_notional_usd=D("10"))
+    gw_c.register_spec(spec_l_d, D("100.00"))
+    gw_c.register_spec(spec_s_d, D("100.00"))
+    gw_c.update_quote(spec_l_d.instrument_id, D("99.99"), D("100.01"))
+    gw_c.update_quote(spec_s_d.instrument_id, D("99.99"), D("100.01"))
+    ctrl_c = CarryExecutionController(ledger=led, gateway=gw_c, risk=plan.risk, runtime=rt_fast, policy=plan.policy)
+    led.create_position(
+        position_id="SOL-DUST-3",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l_d.instrument_id,
+        iid_short=spec_s_d.instrument_id,
+        opened_ts=now_s + 300,
+        entry_l=100.00,
+        entry_s=100.00,
+        entry_basis_bps=0.0,
+        target_base_qty=D("0.03"),
+    )
+    led.update_position_status("SOL-DUST-3", status="OPEN", ts_s=now_s + 301, long_base_qty=D("0.03"), short_base_qty=D("0.03"))
+    ctrl_c.start_sliced_close(
+        "SOL-DUST-3",
+        specs={spec_l_d.instrument_id: spec_l_d, spec_s_d.instrument_id: spec_s_d},
+        quotes=quotes_sol,
+        mids=mids_sol,
+        reason="carry_decay",
+        now_s=now_s + 302,
+    )
+    row_c = dict(led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id='SOL-DUST-3'").fetchone())
+    assert row_c["status"] == "CLOSED" and row_c["close_reason"] == "carry_decay"
+
+    # Part D: Async gateway TAKER_CLOSE IOC blocks duplicates and triggers reduce-only TAKER_CLOSE_MARKET_FALLBACK
+    gw_d = DelayedAsyncVenueGateway()
+    gw_d.register_spec(spec_l)
+    gw_d.register_spec(spec_s)
+    ctrl_d = CarryExecutionController(ledger=led, gateway=gw_d, risk=plan.risk, runtime=rt_fast, policy=plan.policy)
+    led.create_position(
+        position_id="SOL-ASYNC-CLOSE",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s + 400,
+        entry_l=100.00,
+        entry_s=100.20,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.50"),
+    )
+    led.update_position_status("SOL-ASYNC-CLOSE", status="CLOSING", ts_s=now_s + 401, long_base_qty=D("0.50"), short_base_qty=D("0.50"), close_reason="carry_decay")
+    ctrl_d._slice_attempts["SOL-ASYNC-CLOSE"] = 2
+
+    assert ctrl_d.advance_pending_slices(specs=specs_sol, quotes=quotes_sol, mids=mids_sol, now_s=now_s + 402) == ["SOL-ASYNC-CLOSE"]
+    assert len(gw_d.submitted) == 2
+    assert ctrl_d.has_in_flight_orders("SOL-ASYNC-CLOSE")
+    assert ctrl_d.advance_pending_slices(specs=specs_sol, quotes=quotes_sol, mids=mids_sol, now_s=now_s + 403) == []
+    assert len(gw_d.submitted) == 2
+
+    tc_l = next(o["client_order_id"] for o in gw_d.submitted if o["side"] == "SELL")
+    tc_s = next(o["client_order_id"] for o in gw_d.submitted if o["side"] == "BUY")
+    gw_d.deliver_fill(tc_l, filled_base_qty=D("0.50"), avg_fill_price=D("99.99"))
+    gw_d.deliver_cancel(tc_s, filled_base_qty=D("0"))
+    ctrl_d.poll_active_orders(live_mids=mids_sol, now_s=now_s + 404, live_quotes=quotes_sol)
+
+    # Short leg fallback MARKET reduce-only order must have been submitted and remain in-flight until filled
+    tmc_orders = [o for o in gw_d.submitted if o["order_type"] == "MARKET"]
+    assert len(tmc_orders) == 1 and tmc_orders[0]["side"] == "BUY" and tmc_orders[0]["reduce_only"] is True
+    assert ctrl_d.has_in_flight_orders("SOL-ASYNC-CLOSE")
+    assert led.active_positions()["SOL-ASYNC-CLOSE"]["status"] == "CLOSING"
+
+    gw_d.deliver_fill(tmc_orders[0]["client_order_id"], filled_base_qty=D("0.50"), avg_fill_price=D("100.01"))
+    ctrl_d.poll_active_orders(live_mids=mids_sol, now_s=now_s + 405, live_quotes=quotes_sol)
+    assert "SOL-ASYNC-CLOSE" not in led.active_positions()
+    row_d = dict(led.conn.execute("SELECT status, realized_pnl_usd, close_reason FROM positions WHERE position_id='SOL-ASYNC-CLOSE'").fetchone())
+    assert row_d["status"] == "CLOSED" and row_d["close_reason"] == "carry_decay"
+    assert D(row_d["realized_pnl_usd"]) == D("0.0900")
+    led.close()
