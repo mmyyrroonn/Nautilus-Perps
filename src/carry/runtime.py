@@ -25,6 +25,25 @@ from .signal import (
 )
 
 
+_GRACEFUL_SHUTDOWN_DRAIN_SECS = 10.0
+
+
+def _extract_money_decimal(raw: Any) -> Decimal:
+    """Extract a non-negative Decimal from Nautilus Money or numeric/string test mocks."""
+    if raw is None:
+        return Decimal("0")
+    as_dec = getattr(raw, "as_decimal", None)
+    if callable(as_dec):
+        val = as_dec()
+        return max(Decimal("0"), val if isinstance(val, Decimal) else Decimal(str(val)))
+    if isinstance(raw, Decimal):
+        return max(Decimal("0"), raw)
+    text = str(raw).strip()
+    if not text:
+        return Decimal("0")
+    return max(Decimal("0"), Decimal(text.split()[0]))
+
+
 class _NautilusStrategyGateway:
     """Thin adapter translating CarryExecutionController calls to Nautilus Strategy order APIs."""
 
@@ -94,9 +113,13 @@ class _NautilusStrategyGateway:
         return OrderAck(client_order_id, "", "OPEN", Decimal("0"), None)
 
     def cancel_order(self, *, client_order_id: str, venue: str, instrument_id: str) -> OrderAck:
-        order = self._orders.get(client_order_id)
+        from nautilus_trader.model import ClientOrderId
+
+        coid = ClientOrderId(client_order_id)
+        cached = self.strategy.cache.order(coid)
+        order = cached if cached is not None else self._orders.get(client_order_id)
         if order is not None and not order.is_closed:
-            self.strategy.cancel_order(order)
+            self.strategy.cancel_order(coid)
         return self.poll_order(client_order_id=client_order_id, venue=venue, instrument_id=instrument_id)
 
     def poll_order(self, *, client_order_id: str, venue: str, instrument_id: str) -> OrderAck:
@@ -320,6 +343,47 @@ def _create_carry_strategy(
             self.live_quote_ts: dict[str, float] = {}
             self.snapshot: dict[str, dict[str, LegMarketInfo]] = {}
             self.reconciled = mode == "paper"
+            self._shutdown_requested = threading.Event()
+            self._shutdown_drain_started_ts: float | None = None
+            self._shutdown_drain_timeout_secs: float = _GRACEFUL_SHUTDOWN_DRAIN_SECS
+            self._stop_node_cb: Any = None
+            self._stop_node_triggered: bool = False
+
+        def request_graceful_shutdown(
+            self,
+            *,
+            stop_cb: Any = None,
+            drain_timeout_secs: float = _GRACEFUL_SHUTDOWN_DRAIN_SECS,
+        ) -> None:
+            self._stop_node_cb = stop_cb
+            self._shutdown_drain_timeout_secs = max(0.0, float(drain_timeout_secs))
+            self._shutdown_requested.set()
+
+        def _drive_graceful_shutdown(self, now_s: int) -> None:
+            if not self._shutdown_requested.is_set() or self._stop_node_triggered:
+                return
+            if self._shutdown_drain_started_ts is None:
+                self._shutdown_drain_started_ts = time.monotonic()
+                mids = self.live_mids if (self.mode in ("paper", "live") and self.reconciled) else {}
+                quotes = self.live_quotes if (self.mode in ("paper", "live") and self.reconciled) else None
+                self.controller.begin_shutdown(now_s=now_s, live_mids=mids, live_quotes=quotes)
+            elapsed = time.monotonic() - self._shutdown_drain_started_ts
+            if not self.controller.has_any_in_flight_orders() or elapsed >= self._shutdown_drain_timeout_secs:
+                self._stop_node_triggered = True
+                if self._stop_node_cb is not None:
+                    self._stop_node_cb()
+
+        def on_stop(self) -> None:
+            now_s = int(time.time())
+            mids = self.live_mids if self.mode in ("paper", "live") else {}
+            quotes = self.live_quotes if self.mode in ("paper", "live") else None
+            canceled = self.controller.begin_shutdown(now_s=now_s, live_mids=mids, live_quotes=quotes)
+            try:
+                self.log.info(
+                    f"[carry] on_stop canceled_makers={len(canceled)} open_positions={len(self.ledger.active_positions())}"
+                )
+            except Exception:
+                pass
 
         def on_start(self) -> None:
             if not self.reconciled:
@@ -393,10 +457,13 @@ def _create_carry_strategy(
             if self.mode not in ("paper", "live") or not self.reconciled:
                 return
             coid = str(getattr(event, "client_order_id", ""))
+            now_s = int(time.time())
             if coid and self.controller.is_tracked_order(coid):
                 self.controller.poll_active_orders(
-                    live_mids=self.live_mids, now_s=int(time.time()), live_quotes=self.live_quotes
+                    live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
                 )
+            if self._shutdown_requested.is_set():
+                self._drive_graceful_shutdown(now_s)
 
         def on_order_filled(self, event: Any) -> None:
             self._handle_order_event(event)
@@ -457,7 +524,7 @@ def _create_carry_strategy(
                     size_increment=Decimal(str(inst.size_increment)),
                     contract_multiplier=Decimal(str(getattr(inst, "multiplier", 1))),
                     min_quantity=Decimal(str(getattr(inst, "min_quantity", 0) or 0)),
-                    min_notional_usd=Decimal("0"),
+                    min_notional_usd=_extract_money_decimal(getattr(inst, "min_notional", None)),
                     price_increment=Decimal(str(inst.price_increment)),
                 )
                 specs[iid] = spec
@@ -467,16 +534,20 @@ def _create_carry_strategy(
 
         def _on_fast_risk_timer(self, _event: Any) -> None:
             now_s = int(time.time())
+            if self._shutdown_requested.is_set():
+                self._drive_graceful_shutdown(now_s)
             if self.mode in ("paper", "live") and self.reconciled:
                 self.controller.poll_active_orders(
                     live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
                 )
                 halted_now, _ = self.ledger.is_halted()
-                if not halted_now:
+                if not halted_now and not self._shutdown_requested.is_set() and not self.controller.is_stopping:
                     specs_now = self._specs_from_cache()
                     self.controller.advance_pending_slices(
                         specs=specs_now, quotes=self.live_quotes, mids=self.live_mids, now_s=now_s
                     )
+            if self._shutdown_requested.is_set():
+                self._drive_graceful_shutdown(now_s)
             active = self.ledger.active_positions()
             if not active:
                 return
@@ -594,7 +665,7 @@ def _create_carry_strategy(
             if self.mode not in ("paper", "live") or not self.reconciled:
                 return
             halted, _ = self.ledger.is_halted()
-            if halted:
+            if halted or self._shutdown_requested.is_set() or self.controller.is_stopping:
                 return
 
             specs = self._specs_from_cache()
@@ -702,17 +773,47 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
     node, ledger, strategy = build_live_node(plan, mode=mode)
     handle = node.handle()
     timer = None
+    hard_timer = None
+    timers_lock = threading.Lock()
+    stopped_evt = threading.Event()
+
+    def _hard_stop() -> None:
+        if not stopped_evt.is_set():
+            stopped_evt.set()
+            handle.stop()
+
+    def _trigger_graceful_stop() -> None:
+        nonlocal hard_timer
+        if stopped_evt.is_set():
+            return
+        if hasattr(strategy, "request_graceful_shutdown"):
+            strategy.request_graceful_shutdown(
+                stop_cb=_hard_stop,
+                drain_timeout_secs=_GRACEFUL_SHUTDOWN_DRAIN_SECS,
+            )
+            with timers_lock:
+                if not stopped_evt.is_set():
+                    hard_timer = threading.Timer(_GRACEFUL_SHUTDOWN_DRAIN_SECS + 2.0, _hard_stop)
+                    hard_timer.daemon = True
+                    hard_timer.start()
+        else:
+            _hard_stop()
+
     if dur > 0:
-        timer = threading.Timer(dur, handle.stop)
+        timer = threading.Timer(dur, _trigger_graceful_stop)
         timer.daemon = True
         timer.start()
     try:
         node.run()
     except KeyboardInterrupt:
-        handle.stop()
+        _hard_stop()
     finally:
+        stopped_evt.set()
         if timer is not None:
             timer.cancel()
+        with timers_lock:
+            if hard_timer is not None:
+                hard_timer.cancel()
         if getattr(strategy, "recorder", None) is not None:
             try:
                 strategy.recorder.close()
