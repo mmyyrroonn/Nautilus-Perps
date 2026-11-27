@@ -1,4 +1,4 @@
-"""Read-only public REST slow-layer aggregator for HL, Lighter, OKX, and Bybit."""
+"""Read-only public REST slow-layer aggregator for HL, Lighter, OKX, Bybit, and Bitget."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -6,11 +6,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import inspect
 import json
+import threading
 import time
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 import urllib.error
 import urllib.parse
 import urllib.request
+
+if TYPE_CHECKING:
+    from .signal import InstrumentSpec
 
 HOUR = 3600
 HOUR_MS = 3_600_000
@@ -359,6 +363,128 @@ def parse_okx_tickers(
     return out
 
 
+def parse_bitget_tickers(
+    contracts_payload: Any,
+    tickers_payload: Any,
+    current_fund_payload: Any = None,
+    *,
+    now_s: int = 0,
+) -> dict[str, LegMarketInfo]:
+    """Normalize Bitget USDT-FUTURES contracts + tickers + current-fund-rate."""
+    from .bitget_gateway import bitget_instrument_id, parse_bitget_contracts
+
+    contracts_map = parse_bitget_contracts(contracts_payload)
+    if not contracts_map:
+        return {}
+
+    fund_by_raw: dict[str, tuple[float | None, int | None, int | None]] = {}
+    if isinstance(current_fund_payload, dict):
+        frows = current_fund_payload.get("data", [])
+        if isinstance(frows, list):
+            for row in frows:
+                if not isinstance(row, dict):
+                    continue
+                raw_sym = str(row.get("symbol") or "").strip().upper()
+                if raw_sym not in contracts_map:
+                    continue
+                fr_raw = row.get("fundingRate")
+                fr_val: float | None = None
+                if fr_raw not in (None, ""):
+                    try:
+                        fr_val = float(fr_raw)
+                    except (TypeError, ValueError):
+                        fr_val = None
+                iv_raw = row.get("fundingRateInterval")
+                live_iv: int | None = None
+                if iv_raw not in (None, ""):
+                    try:
+                        cand_iv = int(iv_raw)
+                        if cand_iv > 0:
+                            live_iv = cand_iv
+                    except (TypeError, ValueError):
+                        live_iv = None
+                nxt_ms_raw = row.get("nextUpdate")
+                nxt_s: int | None = None
+                if nxt_ms_raw not in (None, ""):
+                    try:
+                        nxt_ms = int(nxt_ms_raw)
+                        if nxt_ms > 0:
+                            nxt_s = nxt_ms // 1000
+                    except (TypeError, ValueError):
+                        nxt_s = None
+                fund_by_raw[raw_sym] = (fr_val, live_iv, nxt_s)
+
+    trows = tickers_payload.get("data", []) if isinstance(tickers_payload, dict) else []
+    if not isinstance(trows, list):
+        return {}
+
+    out: dict[str, LegMarketInfo] = {}
+    for r in trows:
+        if not isinstance(r, dict):
+            continue
+        raw_sym = str(r.get("symbol") or "").strip().upper()
+        if raw_sym not in contracts_map:
+            continue
+        _spec, meta = contracts_map[raw_sym]
+        sym = str(meta["symbol"])
+        try:
+            mark = float(r.get("markPrice") or r.get("lastPr") or 0.0)
+            bid = float(r.get("bidPr") or mark or 0.0)
+            ask = float(r.get("askPr") or mark or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if mark <= 0.0 or bid <= 0.0 or ask <= 0.0:
+            continue
+
+        iv = int(meta.get("fund_interval_h") or 8)
+        fr_val: float | None = None
+        nxt_settle: int | None = None
+        if raw_sym in fund_by_raw:
+            b_fr, b_iv, b_nxt = fund_by_raw[raw_sym]
+            if b_iv is not None:
+                iv = b_iv
+            if b_fr is not None:
+                fr_val = b_fr
+            if b_nxt is not None:
+                nxt_settle = b_nxt
+        if fr_val is None and r.get("fundingRate") not in (None, ""):
+            try:
+                fr_val = float(r["fundingRate"])
+            except (TypeError, ValueError):
+                fr_val = None
+        rate_bps_h = (fr_val * 1e4 / max(1, iv)) if fr_val is not None else None
+        if nxt_settle is None:
+            nxt_settle = next_hourly_settle_ts(now_s, iv) if now_s > 0 else 0
+
+        vol_raw = r.get("usdtVolume") if r.get("usdtVolume") not in (None, "") else r.get("quoteVolume")
+        try:
+            vol24 = float(vol_raw or 0.0)
+        except (TypeError, ValueError):
+            vol24 = 0.0
+
+        asset_class = "RWA" if meta.get("is_rwa") else classify_asset(sym)
+        out[sym] = LegMarketInfo(
+            venue="BITGET",
+            symbol=sym,
+            raw_symbol=raw_sym,
+            instrument_id=bitget_instrument_id(raw_sym),
+            asset_class=asset_class,
+            interval_h=iv,
+            next_settle_ts=nxt_settle,
+            r8_bps_h=None,
+            r24_bps_h=None,
+            current_rate_bps_h=rate_bps_h,
+            mark_price=mark,
+            prev_1h_price=None,
+            bid=bid,
+            ask=ask,
+            vol24_usd=vol24,
+            vol1h_usd=None,
+            fetched_ts=now_s,
+        )
+    return out
+
+
 def compute_trailing_rates(settle_events: list[tuple[int, float]], now_s: int, default_iv: int) -> tuple[float | None, float | None, int]:
     """Compute causal trailing 8h and 24h bps/h strictly from settlements <= now_s."""
     past = sorted((ts, val) for ts, val in settle_events if ts <= now_s)
@@ -398,9 +524,13 @@ class PublicCarryFeed:
         is_main = environment == "mainnet"
         self._hl_info_url = HL_INFO_URL if is_main else HL_TESTNET_INFO_URL
         self._lighter_base = LIGHTER_BASE if is_main else LIGHTER_TESTNET_BASE
+        from .bitget_gateway import BITGET_REST_BASE
+
         self._bybit_base = BYBIT_BASE if is_main else BYBIT_TESTNET_BASE
         self._okx_base = OKX_BASE
         self._okx_headers: dict[str, str] | None = None if is_main else {"x-simulated-trading": "1"}
+        self._bitget_base = BITGET_REST_BASE
+        self._bitget_headers: dict[str, str] | None = None if is_main else {"paptrading": "1"}
         self._http = http_get
         self._http_accepts_headers = _callable_accepts_headers(http_get)
         self._max_detail_refreshes = max_detail_refreshes_per_cycle
@@ -409,9 +539,18 @@ class PublicCarryFeed:
         self._okx_inst_ts: int = 0
         self._byb_iv_cache: dict[str, int] = {}
         self._byb_iv_ts: int = 0
+        self._bitget_contracts_cache: Any = None
+        self._bitget_contracts_ts: int = 0
+        self._bitget_specs: dict[str, InstrumentSpec] = {}
+        self._bitget_meta_lock = threading.Lock()
         self._detail_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._last_detail_attempt_ts: dict[str, int] = {}
         self.last_venue_errors: dict[str, str] = {}
+
+    def bitget_instrument_specs(self) -> dict[str, InstrumentSpec]:
+        """Return cached Bitget InstrumentSpec entries keyed by instrument_id."""
+        with self._bitget_meta_lock:
+            return dict(self._bitget_specs)
 
     def _request(
         self,
@@ -446,6 +585,26 @@ class PublicCarryFeed:
                 self._byb_iv_ts = now_s
             except Exception:
                 pass
+        if "BITGET" in self.venues:
+            with self._bitget_meta_lock:
+                needs_refresh = self._bitget_contracts_cache is None or (now_s - self._bitget_contracts_ts) >= 3600
+            if needs_refresh:
+                try:
+                    from .bitget_gateway import parse_bitget_contracts
+
+                    contracts_payload = self._request(
+                        f"{self._bitget_base}/api/v2/mix/market/contracts?productType=USDT-FUTURES",
+                        None,
+                        headers=self._bitget_headers,
+                    )
+                    parsed = parse_bitget_contracts(contracts_payload)
+                    if parsed or (isinstance(contracts_payload, dict) and isinstance(contracts_payload.get("data"), list)):
+                        with self._bitget_meta_lock:
+                            self._bitget_contracts_cache = contracts_payload
+                            self._bitget_contracts_ts = now_s
+                            self._bitget_specs = {spec.instrument_id: spec for spec, _ in parsed.values()}
+                except Exception:
+                    pass
 
     def _is_detail_fresh(self, venue: str, symbol: str, now_s: int) -> bool:
         cached = self._detail_cache.get((venue, symbol))
@@ -612,6 +771,29 @@ class PublicCarryFeed:
                 if len(cd) >= 2:
                     prev_1h = float(cd[-2][4])
 
+        elif leg.venue == "BITGET":
+            q = urllib.parse.quote(leg.raw_symbol)
+            fh_resp = self._request(
+                f"{self._bitget_base}/api/v2/mix/market/history-fund-rate?productType=USDT-FUTURES&symbol={q}&pageSize=30",
+                None,
+                headers=self._bitget_headers,
+            )
+            fh = fh_resp.get("data", []) if isinstance(fh_resp, dict) else []
+            for r in (fh if isinstance(fh, list) else []):
+                ts = ((int(r["fundingTime"]) + 60_000) // HOUR_MS) * HOUR
+                settle_events.append((ts, float(r["fundingRate"]) * 1e4))
+            cd_resp = self._request(
+                f"{self._bitget_base}/api/v2/mix/market/candles?productType=USDT-FUTURES&symbol={q}&granularity=1H&limit=3",
+                None,
+                headers=self._bitget_headers,
+            )
+            cd = cd_resp.get("data", []) if isinstance(cd_resp, dict) else []
+            if isinstance(cd, list) and cd:
+                cd = sorted(cd, key=lambda r: int(r[0]))
+                vol1h = float(cd[-1][6]) if len(cd[-1]) > 6 else float(cd[-1][5]) * float(cd[-1][4])
+                if len(cd) >= 2:
+                    prev_1h = float(cd[-2][4])
+
         r8, r24, iv = compute_trailing_rates(settle_events, now_s, live_iv or leg.interval_h)
         if live_iv is not None:
             iv = live_iv
@@ -751,6 +933,41 @@ class PublicCarryFeed:
                 succeeded_venues.append("OKX")
             except Exception as exc:
                 venue_errors["OKX"] = f"{type(exc).__name__}: {exc}"
+        if "BITGET" in self.venues:
+            try:
+                with self._bitget_meta_lock:
+                    contracts_payload = self._bitget_contracts_cache
+                if contracts_payload is None:
+                    from .bitget_gateway import parse_bitget_contracts
+
+                    contracts_payload = self._request(
+                        f"{self._bitget_base}/api/v2/mix/market/contracts?productType=USDT-FUTURES",
+                        None,
+                        headers=self._bitget_headers,
+                    )
+                    parsed = parse_bitget_contracts(contracts_payload)
+                    with self._bitget_meta_lock:
+                        self._bitget_contracts_cache = contracts_payload
+                        self._bitget_contracts_ts = ts
+                        self._bitget_specs = {spec.instrument_id: spec for spec, _ in parsed.values()}
+                tk = self._request(
+                    f"{self._bitget_base}/api/v2/mix/market/tickers?productType=USDT-FUTURES",
+                    None,
+                    headers=self._bitget_headers,
+                )
+                fr_payload = None
+                try:
+                    fr_payload = self._request(
+                        f"{self._bitget_base}/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES",
+                        None,
+                        headers=self._bitget_headers,
+                    )
+                except Exception:
+                    fr_payload = None
+                _merge(parse_bitget_tickers(contracts_payload, tk, fr_payload, now_s=ts))
+                succeeded_venues.append("BITGET")
+            except Exception as exc:
+                venue_errors["BITGET"] = f"{type(exc).__name__}: {exc}"
 
         self.last_venue_errors = dict(venue_errors)
         if self.venues and not succeeded_venues:

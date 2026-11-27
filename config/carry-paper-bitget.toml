@@ -1,0 +1,72 @@
+# Route A Cross-Exchange Carry — 5-Venue Paper Trial Configuration (HL, LIGHTER, OKX, BYBIT, BITGET)
+# Defaults cleanly to zero-key public feeds + simulated Maker-First/IOC fills.
+schema_version = 1
+mode = "paper"
+environment = "mainnet"
+state_path = "../reports/carry/paper-bitget.sqlite3"
+venues = ["HL", "LIGHTER", "OKX", "BYBIT", "BITGET"]
+excluded_symbols = ["ACE", "INIT", "MEME", "SNDK"]
+
+[policy]
+route_scope = "ALL"
+asset_classes = ["CRYPTO", "RWA"]
+entry_carry_bps_h = "0.75"
+exit_carry_8h_bps_h = "0.25"
+min_hold_h = 6
+min_entry_basis_bps = "10"
+min_exec_basis_bps = "10"
+taker_fast_entry_basis_bps = "20"
+max_entry_basis_bps = "60"
+min_24h_vol_usd = "500000"
+max_leg_spread_bps = "25"
+max_price_ratio_deviation = "0.05"
+max_1h_split_divergence = "0.15"
+cex_entry_blackout_before_settle_mins = 30
+cex_exit_defer_before_settle_mins = 20
+
+[policy.maker_fee_bps_by_venue]
+HL = "1.5"
+LIGHTER = "0.0"
+OKX = "2.0"
+BYBIT = "2.0"
+BITGET = "2.0"
+
+[policy.taker_fee_bps_by_venue]
+HL = "4.5"
+LIGHTER = "0.0"
+OKX = "5.0"
+BYBIT = "5.5"
+BITGET = "6.0"
+
+[risk]
+max_slots = 6
+leg_notional_usd = "100"
+slice_usd = "50"
+max_venue_notional_usd = "400"
+max_gross_notional_usd = "1200"
+basis_stop_bps = "200"
+basis_persist_mins = 30
+margin_guard_pct = "25"
+max_unhedged_usd = "60"
+max_unhedged_secs = 10
+max_daily_loss_usd = "40"
+max_consecutive_unhedged = 3
+stop_loss_cooldown_hours = 24
+max_qty_mismatch_pct = "2.0"
+reconcile_tolerance_pct = "2.0"
+
+[runtime]
+slow_poll_secs = 60
+fast_risk_poll_secs = 1
+basis_sample_secs = 10
+quote_stale_secs = 15
+watch_top_k = 30
+watch_fill_min_carry_bps_h = "0.35"
+unsubscribe_hysteresis_secs = 600
+maker_requote_secs = 15
+maker_max_attempts = 4
+hedge_ioc_slippage_bps = "15"
+update_instruments_interval_mins = 60
+duration_secs = 0
+record_dir = "../reports/carry/tape-paper-bitget"
+bbo_record_interval_secs = 1
