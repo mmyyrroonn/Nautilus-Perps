@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from .config import CarryRiskPolicy
 
@@ -73,6 +73,25 @@ class FastRiskEvaluator:
     def reset_unhedged(self, position_id: str) -> None:
         self._unhedged_since.pop(position_id, None)
 
+    def evaluate_account_guards(
+        self,
+        *,
+        daily_realized_pnl_usd: Decimal,
+        consecutive_unhedged: int,
+        position_ids: Iterable[str] = (),
+    ) -> FastRiskDecision:
+        """Evaluate account-level daily kill switches without altering per-position timers."""
+        pids = sorted(position_ids)
+        if daily_realized_pnl_usd <= -self.policy.max_daily_loss_usd:
+            close_all = tuple((pid, "daily_loss_kill") for pid in pids)
+            return FastRiskDecision(close_positions=close_all, halt_system=True, halt_reason="daily_loss_kill")
+
+        if consecutive_unhedged >= self.policy.max_consecutive_unhedged:
+            close_all = tuple((pid, "consecutive_unhedged_kill") for pid in pids)
+            return FastRiskDecision(close_positions=close_all, halt_system=True, halt_reason="consecutive_unhedged_kill")
+
+        return FastRiskDecision(close_positions=(), halt_system=False, halt_reason=None)
+
     def evaluate(
         self,
         *,
@@ -83,13 +102,13 @@ class FastRiskEvaluator:
         now_s: int,
     ) -> FastRiskDecision:
         """Evaluate fast hard-risk triggers across all open positions and account daily PnL."""
-        if daily_realized_pnl_usd <= -self.policy.max_daily_loss_usd:
-            close_all = tuple((pid, "daily_loss_kill") for pid in sorted(positions))
-            return FastRiskDecision(close_positions=close_all, halt_system=True, halt_reason="daily_loss_kill")
-
-        if consecutive_unhedged >= self.policy.max_consecutive_unhedged:
-            close_all = tuple((pid, "consecutive_unhedged_kill") for pid in sorted(positions))
-            return FastRiskDecision(close_positions=close_all, halt_system=True, halt_reason="consecutive_unhedged_kill")
+        account_dec = self.evaluate_account_guards(
+            daily_realized_pnl_usd=daily_realized_pnl_usd,
+            consecutive_unhedged=consecutive_unhedged,
+            position_ids=positions.keys(),
+        )
+        if account_dec.halt_system:
+            return account_dec
 
         to_close: list[tuple[str, str]] = []
         halt = False

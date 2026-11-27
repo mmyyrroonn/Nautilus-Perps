@@ -2386,7 +2386,8 @@ def test_strategy_on_stop_and_graceful_drain_cancel_makers_without_closing_open_
     led_nt.close()
 
     # Graceful drain: racing maker fill during drain is hedged before stop_cb fires
-    strat_drain = carry_runtime._create_carry_strategy(plan, led, mode="paper")
+    led_drain = CarryLedger(tmp_path / "stop_drain.sqlite3", plan.fingerprint())
+    strat_drain = carry_runtime._create_carry_strategy(plan, led_drain, mode="paper")
     gw_d = DelayedAsyncVenueGateway()
     gw_d.register_spec(spec_l)
     gw_d.register_spec(spec_s)
@@ -2415,9 +2416,11 @@ def test_strategy_on_stop_and_graceful_drain_cancel_makers_without_closing_open_
     gw_d.deliver_fill(hg_d, filled_base_qty=D("0.49"), avg_fill_price=D("100.13"))
     strat_drain.on_order_filled(SimpleNamespace(client_order_id=hg_d))
     assert stop_calls == ["stopped"]
+    led_drain.close()
 
     # Bounded drain timeout fires stop_cb even if an order never confirms
-    strat_to = carry_runtime._create_carry_strategy(plan, led, mode="paper")
+    led_to = CarryLedger(tmp_path / "stop_timeout.sqlite3", plan.fingerprint())
+    strat_to = carry_runtime._create_carry_strategy(plan, led_to, mode="paper")
     gw_to = DelayedAsyncVenueGateway()
     gw_to.register_spec(spec_l)
     gw_to.register_spec(spec_s)
@@ -2432,6 +2435,8 @@ def test_strategy_on_stop_and_graceful_drain_cancel_makers_without_closing_open_
     strat_to.request_graceful_shutdown(stop_cb=lambda: to_calls.append("stopped"), drain_timeout_secs=0.0)
     strat_to._on_fast_risk_timer(None)
     assert to_calls == ["stopped"]
+    assert led_to.is_reconcile_halted()[0] is True
+    led_to.close()
 
     # run_node invokes request_graceful_shutdown before handle.stop() on duration expiry
     stopped_evt = threading.Event()
@@ -3964,3 +3969,612 @@ def test_testnet_public_carry_feed_urls_and_okx_demo_header(
         assert strat.feed.environment == "testnet"
     finally:
         led.close()
+
+
+def test_graceful_shutdown_refuses_stop_with_naked_leg_and_flattens_or_halts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.13, 100.17)}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.15}
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.13, ask=100.17),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+
+    # Case A: Maker fills 0.49 on shutdown cancel -> IOC hedge & fallback market both rejected ->
+    # MUST NOT fire stop_cb; must flatten naked leg via reduce_only emergency close, then stop cleanly.
+    clock = [float(now_s)]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    led_a = CarryLedger(tmp_path / "sd_naked_a.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw_a = DelayedAsyncVenueGateway()
+    gw_a.register_spec(spec_l)
+    gw_a.register_spec(spec_s)
+    strat_a = carry_runtime._create_carry_strategy(plan, led_a, mode="paper")
+    strat_a.gateway = gw_a
+    strat_a.controller.gateway = gw_a
+    strat_a.reconciled = True
+    strat_a.live_mids = dict(mids)
+    strat_a.live_quotes = dict(quotes)
+    strat_a._specs_from_cache = lambda: specs
+
+    pid_a, err_a = strat_a.controller.start_entry(cand, specs=specs, now_s=now_s)
+    assert err_a is None and pid_a is not None
+    mk_a = gw_a.submitted[0]["client_order_id"]
+
+    stop_calls_a: list[str] = []
+    strat_a.request_graceful_shutdown(stop_cb=lambda: stop_calls_a.append("stopped"), drain_timeout_secs=60.0)
+    strat_a._on_fast_risk_timer(None)
+    assert gw_a.cancel_requests == [mk_a]
+
+    clock[0] += 1.0
+    gw_a.deliver_cancel(mk_a, filled_base_qty=D("0.49"), avg_fill_price=D("99.98"))
+    strat_a.on_order_canceled(SimpleNamespace(client_order_id=mk_a))
+    hg_a = gw_a.submitted[1]["client_order_id"]
+    gw_a.deliver_reject(hg_a, reason="ioc_rejected")
+    strat_a.on_order_rejected(SimpleNamespace(client_order_id=hg_a))
+    hm_a = gw_a.submitted[2]["client_order_id"]
+    gw_a.deliver_reject(hm_a, reason="market_fallback_rejected")
+    strat_a.on_order_rejected(SimpleNamespace(client_order_id=hm_a))
+
+    # 1s into 60s drain: stop_cb MUST NOT fire; shutdown_unhedged_flatten MUST submit reduce-only SELL 0.49
+    assert stop_calls_a == []
+    assert len(gw_a.submitted) == 4
+    em_a = gw_a.submitted[3]
+    assert em_a["side"] == "SELL" and em_a["reduce_only"] is True and em_a["base_qty"] == D("0.49")
+
+    # Once flatten fills, position settles CLOSED, stop_cb fires, and cold-start reconcile passes
+    gw_a.deliver_fill(em_a["client_order_id"], filled_base_qty=D("0.49"), avg_fill_price=D("99.97"))
+    strat_a.on_order_filled(SimpleNamespace(client_order_id=em_a["client_order_id"]))
+    assert stop_calls_a == ["stopped"]
+    assert led_a.active_positions() == {}
+    assert led_a.reconcile_startup(venue_positions={}, venue_open_orders={}, ts_s=now_s + 5).ok is True
+    led_a.close()
+
+    # Case B: Even if flatten keeps rejecting across retries, it never exits silently with an unflagged naked leg;
+    # it escalates to HALTED_RECONCILE with manual takeover audit event.
+    clock[0] = float(now_s + 100)
+    led_b = CarryLedger(tmp_path / "sd_naked_b.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw_b = DelayedAsyncVenueGateway()
+    gw_b.register_spec(spec_l)
+    gw_b.register_spec(spec_s)
+    strat_b = carry_runtime._create_carry_strategy(plan, led_b, mode="paper")
+    strat_b.gateway = gw_b
+    strat_b.controller.gateway = gw_b
+    strat_b.reconciled = True
+    strat_b.live_mids = dict(mids)
+    strat_b.live_quotes = dict(quotes)
+    strat_b._specs_from_cache = lambda: specs
+
+    pid_b, _ = strat_b.controller.start_entry(cand, specs=specs, now_s=int(clock[0]))
+    assert pid_b is not None
+    mk_b = gw_b.submitted[0]["client_order_id"]
+    stop_calls_b: list[str] = []
+    strat_b.request_graceful_shutdown(stop_cb=lambda: stop_calls_b.append("stopped"), drain_timeout_secs=60.0)
+    strat_b._on_fast_risk_timer(None)
+    gw_b.deliver_cancel(mk_b, filled_base_qty=D("0.49"), avg_fill_price=D("99.98"))
+    strat_b.on_order_canceled(SimpleNamespace(client_order_id=mk_b))
+    gw_b.deliver_reject(gw_b.submitted[1]["client_order_id"], reason="ioc_rej")
+    strat_b.on_order_rejected(SimpleNamespace(client_order_id=gw_b.submitted[1]["client_order_id"]))
+    gw_b.deliver_reject(gw_b.submitted[2]["client_order_id"], reason="mkt_rej")
+    strat_b.on_order_rejected(SimpleNamespace(client_order_id=gw_b.submitted[2]["client_order_id"]))
+
+    # Reject initial flatten + 3 bounded backoff retries (2s, 5s, 10s)
+    for delay in (0, 2, 5, 10):
+        clock[0] += delay
+        strat_b._on_fast_risk_timer(None)
+        last_em = gw_b.submitted[-1]["client_order_id"]
+        gw_b.deliver_reject(last_em, reason="venue_reject")
+        strat_b.on_order_rejected(SimpleNamespace(client_order_id=last_em))
+    assert stop_calls_b == ["stopped"]
+    assert led_b.is_reconcile_halted() == (True, f"emergency_close_failed:{pid_b}")
+    ev_kinds = [r["kind"] for r in led_b.conn.execute("SELECT kind FROM events").fetchall()]
+    assert "emergency_close_manual_takeover" in ev_kinds
+    led_b.close()
+
+
+def test_graceful_shutdown_finalizes_zero_fill_opening_and_balanced_transitions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.13, 100.17)}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.15}
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.13, ask=100.17),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+
+    # 1) Zero-fill OPENING maker canceled during shutdown -> CLOSED (shutdown_aborted) + clean restart
+    led1 = CarryLedger(tmp_path / "sd_zero.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw1 = DelayedAsyncVenueGateway()
+    gw1.register_spec(spec_l)
+    gw1.register_spec(spec_s)
+    strat1 = carry_runtime._create_carry_strategy(plan, led1, mode="paper")
+    strat1.gateway = gw1
+    strat1.controller.gateway = gw1
+    strat1.reconciled = True
+    strat1.live_mids = dict(mids)
+    strat1.live_quotes = dict(quotes)
+    strat1._specs_from_cache = lambda: specs
+    pid1, _ = strat1.controller.start_entry(cand, specs=specs, now_s=now_s)
+    assert pid1 is not None
+    mk1 = gw1.submitted[0]["client_order_id"]
+
+    calls1: list[str] = []
+    strat1.request_graceful_shutdown(stop_cb=lambda: calls1.append("stopped"), drain_timeout_secs=60.0)
+    strat1._on_fast_risk_timer(None)
+    assert calls1 == []
+    gw1.deliver_cancel(mk1, filled_base_qty=D("0"))
+    strat1.on_order_canceled(SimpleNamespace(client_order_id=mk1))
+    assert calls1 == ["stopped"]
+    assert led1.active_positions() == {}
+    row1 = dict(led1.conn.execute("SELECT status, close_reason FROM positions WHERE position_id=?", (pid1,)).fetchone())
+    assert row1 == {"status": "CLOSED", "close_reason": "shutdown_aborted"}
+    assert led1.reconcile_startup(venue_positions={}, venue_open_orders={}, ts_s=now_s + 5).ok is True
+    led1.close()
+
+    # 2) Balanced partial OPENING (0.49/0.49) & balanced normal CLOSING (carry_decay) -> both settle to OPEN
+    led2 = CarryLedger(tmp_path / "sd_bal.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw2 = DelayedAsyncVenueGateway()
+    gw2.register_spec(spec_l)
+    gw2.register_spec(spec_s)
+    strat2 = carry_runtime._create_carry_strategy(plan, led2, mode="paper")
+    strat2.gateway = gw2
+    strat2.controller.gateway = gw2
+    strat2.reconciled = True
+    strat2.live_mids = dict(mids)
+    strat2.live_quotes = dict(quotes)
+    strat2._specs_from_cache = lambda: specs
+
+    # Balanced partial OPENING 0.49/0.49 (target 0.98)
+    led2.create_position(
+        position_id="PART-OPEN",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s,
+        entry_l=100.0,
+        entry_s=100.15,
+        entry_basis_bps=15.0,
+        target_base_qty=D("0.98"),
+    )
+    led2.update_position_status("PART-OPEN", status="OPENING", ts_s=now_s + 1, long_base_qty=D("0.49"), short_base_qty=D("0.49"))
+    # Balanced CLOSING (carry_decay) with active MAKER_CLOSE that gets 0-fill canceled during shutdown
+    led2.create_position(
+        position_id="CLOSE-PART",
+        symbol="ETH",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long="ETH-USD-PERP.HYPERLIQUID",
+        iid_short="ETH-USDT-SWAP.OKX",
+        opened_ts=now_s - 7200,
+        entry_l=2000.0,
+        entry_s=2002.0,
+        entry_basis_bps=10.0,
+        target_base_qty=D("0.05"),
+    )
+    led2.update_position_status("CLOSE-PART", status="OPEN", ts_s=now_s - 7199, long_base_qty=D("0.05"), short_base_qty=D("0.05"))
+    eth_l = InstrumentSpec("ETH-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.001"), price_increment=D("0.01"))
+    eth_s = InstrumentSpec("ETH-USDT-SWAP.OKX", "OKX", size_increment=D("0.01"), contract_multiplier=D("0.01"), price_increment=D("0.01"))
+    specs2 = {**specs, eth_l.instrument_id: eth_l, eth_s.instrument_id: eth_s}
+    gw2.register_spec(eth_l)
+    gw2.register_spec(eth_s)
+    strat2._specs_from_cache = lambda: specs2
+    strat2.live_mids[eth_l.instrument_id] = 2000.0
+    strat2.live_mids[eth_s.instrument_id] = 2002.0
+    strat2.live_quotes[eth_l.instrument_id] = (1999.8, 2000.2)
+    strat2.live_quotes[eth_s.instrument_id] = (2001.8, 2002.2)
+    assert strat2.controller.start_sliced_close(
+        "CLOSE-PART", specs=specs2, quotes=strat2.live_quotes, mids=strat2.live_mids, reason="carry_decay", now_s=now_s + 2
+    ) is True
+    submitted_coids = [rec["client_order_id"] for rec in gw2.submitted]
+
+    calls2: list[str] = []
+    strat2.request_graceful_shutdown(stop_cb=lambda: calls2.append("stopped"), drain_timeout_secs=60.0)
+    strat2._on_fast_risk_timer(None)
+    assert calls2 == []
+    for coid in submitted_coids:
+        gw2.deliver_cancel(coid, filled_base_qty=D("0"))
+        strat2.on_order_canceled(SimpleNamespace(client_order_id=coid))
+    assert calls2 == ["stopped"]
+    assert led2.active_positions()["PART-OPEN"]["status"] == "OPEN"
+    assert led2.active_positions()["CLOSE-PART"]["status"] == "OPEN"
+    assert led2.reconcile_startup(
+        venue_positions={
+            ("HL", spec_l.instrument_id): D("0.49"),
+            ("OKX", spec_s.instrument_id): D("-0.49"),
+            ("HL", eth_l.instrument_id): D("0.05"),
+            ("OKX", eth_s.instrument_id): D("-0.05"),
+        },
+        venue_open_orders={},
+        ts_s=now_s + 5,
+    ).ok is True
+    led2.close()
+
+
+def test_emergency_close_failure_retains_task_retries_with_backoff_and_escalates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.20}
+    now_s = 1_800_000_000
+
+    # Subcase A: Long 0.99 / Short 0.49 -> unhedged_timeout_kill (HALTED_KILL) ->
+    # Long fills 0.50 then CANCELED, Short REJECTED -> remaining 0.49 / 0.49 ->
+    # task MUST stay active across 10m under HALTED_KILL and succeed when backoff retries fill.
+    clock = [float(now_s)]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    led_a = CarryLedger(tmp_path / "em_retry_a.sqlite3", plan.fingerprint(), ledger_domain="live")
+    led_a.create_position(
+        position_id="SOL-KILL-A",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s - 60,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.99"),
+    )
+    led_a.update_position_status(
+        "SOL-KILL-A", status="OPENING", ts_s=now_s - 50, long_base_qty=D("0.99"), short_base_qty=D("0.49")
+    )
+    gw_a = DelayedAsyncVenueGateway()
+    gw_a.register_spec(spec_l)
+    gw_a.register_spec(spec_s)
+    strat_a = carry_runtime._create_carry_strategy(plan, led_a, mode="live")
+    strat_a.gateway = gw_a
+    strat_a.controller.gateway = gw_a
+    strat_a.reconciled = True
+    strat_a.live_mids = dict(mids)
+    strat_a._specs_from_cache = lambda: specs
+
+    # Unhedged timeout hits at t + 10s -> sets HALTED_KILL and submits initial emergency close legs
+    strat_a._on_fast_risk_timer(None)
+    clock[0] += 10.0
+    strat_a._on_fast_risk_timer(None)
+    assert led_a.is_kill_halted() == (True, "unhedged_timeout_kill")
+    assert len(gw_a.submitted) == 2
+    em_l1 = next(o["client_order_id"] for o in gw_a.submitted if o["side"] == "SELL")
+    em_s1 = next(o["client_order_id"] for o in gw_a.submitted if o["side"] == "BUY")
+
+    # Long closes 0.50 then CANCELED, Short REJECTED -> remaining 0.49 / 0.49
+    gw_a.deliver_cancel(em_l1, filled_base_qty=D("0.50"), avg_fill_price=D("100.00"))
+    gw_a.deliver_reject(em_s1, reason="okx_rejected")
+    strat_a._on_fast_risk_timer(None)
+    pos_rem = led_a.active_positions()["SOL-KILL-A"]
+    assert pos_rem["status"] == "CLOSING"
+    assert D(pos_rem["long_base_qty"]) == D("0.49") and D(pos_rem["short_base_qty"]) == D("0.49")
+    assert "SOL-KILL-A" in strat_a.controller._active_emergency_closes
+    assert "SOL-KILL-A" not in strat_a.fast_risk._unhedged_since
+
+    # 1s later (< 2s backoff): still retained, no premature retry spam
+    clock[0] += 1.0
+    strat_a._on_fast_risk_timer(None)
+    assert len(gw_a.submitted) == 2
+    assert "SOL-KILL-A" in strat_a.controller._active_emergency_closes
+
+    # At +2s backoff: controller retries both remaining 0.49 legs despite HALTED_KILL -> fills -> CLOSED!
+    clock[0] += 1.0
+    strat_a._on_fast_risk_timer(None)
+    assert len(gw_a.submitted) == 4
+    for rec in gw_a.submitted[2:]:
+        assert rec["reduce_only"] is True and rec["base_qty"] == D("0.49")
+        gw_a.deliver_fill(rec["client_order_id"], filled_base_qty=D("0.49"), avg_fill_price=D("100.10"))
+    strat_a._on_fast_risk_timer(None)
+    assert led_a.active_positions() == {}
+    assert "SOL-KILL-A" not in strat_a.controller._active_emergency_closes
+    led_a.close()
+
+    # Subcase B: Repeated rejects across all backoff attempts escalate cleanly to HALTED_RECONCILE
+    clock[0] = float(now_s + 500)
+    led_b = CarryLedger(tmp_path / "em_retry_b.sqlite3", plan.fingerprint(), ledger_domain="live")
+    led_b.create_position(
+        position_id="SOL-KILL-B",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s + 450,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.99"),
+    )
+    led_b.update_position_status(
+        "SOL-KILL-B", status="OPENING", ts_s=now_s + 460, long_base_qty=D("0.99"), short_base_qty=D("0.49")
+    )
+    gw_b = DelayedAsyncVenueGateway()
+    gw_b.register_spec(spec_l)
+    gw_b.register_spec(spec_s)
+    strat_b = carry_runtime._create_carry_strategy(plan, led_b, mode="live")
+    strat_b.gateway = gw_b
+    strat_b.controller.gateway = gw_b
+    strat_b.reconciled = True
+    strat_b.live_mids = dict(mids)
+    strat_b._specs_from_cache = lambda: specs
+
+    strat_b._on_fast_risk_timer(None)
+    clock[0] += 10.0
+    strat_b._on_fast_risk_timer(None)
+    assert len(gw_b.submitted) == 2
+    gw_b.deliver_cancel(gw_b.submitted[0]["client_order_id"], filled_base_qty=D("0.50"), avg_fill_price=D("100.00"))
+    gw_b.deliver_reject(gw_b.submitted[1]["client_order_id"], reason="reject")
+    strat_b._on_fast_risk_timer(None)
+
+    for wait_s in (2, 5, 10):
+        clock[0] += wait_s
+        strat_b._on_fast_risk_timer(None)
+        for rec in gw_b.submitted[-2:]:
+            gw_b.deliver_reject(rec["client_order_id"], reason="reject")
+        strat_b._on_fast_risk_timer(None)
+
+    assert led_b.is_reconcile_halted() == (True, "emergency_close_failed:SOL-KILL-B")
+    assert "SOL-KILL-B" not in strat_b.controller._active_emergency_closes
+    assert led_b.active_positions()["SOL-KILL-B"]["status"] == "CLOSING"
+    ev_kinds = [r["kind"] for r in led_b.conn.execute("SELECT kind FROM events").fetchall()]
+    assert "emergency_close_manual_takeover" in ev_kinds
+    count_after = len(gw_b.submitted)
+    clock[0] += 600.0
+    strat_b._on_fast_risk_timer(None)
+    assert len(gw_b.submitted) == count_after
+    led_b.close()
+
+
+def test_run_node_routes_sigint_and_sigterm_to_graceful_shutdown_via_hosted_run_async(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import os
+    import signal
+    import threading
+    from types import SimpleNamespace
+    from nautilus_trader.live import LiveNode
+    import src.carry.runtime as carry_runtime
+
+    assert hasattr(LiveNode, "run_async")
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.13, 100.17)}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.15}
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.13, ask=100.17),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        led = CarryLedger(tmp_path / f"hosted_{sig.name}.sqlite3", plan.fingerprint(), ledger_domain="paper")
+        gw = DelayedAsyncVenueGateway()
+        gw.register_spec(spec_l)
+        gw.register_spec(spec_s)
+        strat = carry_runtime._create_carry_strategy(plan, led, mode="paper")
+        strat.gateway = gw
+        strat.controller.gateway = gw
+        strat.reconciled = True
+        strat.live_mids = dict(mids)
+        strat.live_quotes = dict(quotes)
+        strat._specs_from_cache = lambda: specs
+        pid, _ = strat.controller.start_entry(cand, specs=specs, now_s=now_s)
+        assert pid is not None
+        mk_coid = gw.submitted[0]["client_order_id"]
+
+        events: list[str] = []
+
+        class FakeAsyncNode:
+            def __init__(self) -> None:
+                self._stop_evt: asyncio.Event | None = None
+                self._loop: asyncio.AbstractEventLoop | None = None
+
+            def handle(self):
+                node_ref = self
+
+                class _H:
+                    def stop(self) -> None:
+                        events.append("handle.stop")
+                        if node_ref._loop is not None and node_ref._stop_evt is not None:
+                            node_ref._loop.call_soon_threadsafe(node_ref._stop_evt.set)
+
+                return _H()
+
+            async def run_async(self) -> None:
+                self._loop = asyncio.get_running_loop()
+                self._stop_evt = asyncio.Event()
+                # Drive real signal -> drain -> racing maker fill -> IOC hedge -> clean handle.stop()
+                self._loop.call_later(0.02, lambda: os.kill(os.getpid(), sig))
+
+                async def _drive_drain() -> None:
+                    while not strat._shutdown_requested.is_set():
+                        await asyncio.sleep(0.01)
+                    events.append("graceful_requested")
+                    strat._on_fast_risk_timer(None)
+                    assert gw.cancel_requests == [mk_coid]
+                    assert "handle.stop" not in events
+                    # Strategy is still running inside run_async so order events still dispatch
+                    gw.deliver_cancel(mk_coid, filled_base_qty=D("0.49"), avg_fill_price=D("99.98"))
+                    strat.on_order_canceled(SimpleNamespace(client_order_id=mk_coid))
+                    hg_coid = gw.submitted[1]["client_order_id"]
+                    assert "handle.stop" not in events
+                    gw.deliver_fill(hg_coid, filled_base_qty=D("0.49"), avg_fill_price=D("100.13"))
+                    strat.on_order_filled(SimpleNamespace(client_order_id=hg_coid))
+
+                driver = asyncio.create_task(_drive_drain())
+                await asyncio.wait_for(self._stop_evt.wait(), timeout=5.0)
+                await driver
+
+        node = FakeAsyncNode()
+        db_path = tmp_path / f"hosted_{sig.name}.sqlite3"
+        monkeypatch.setattr(carry_runtime, "build_live_node", lambda _plan, mode: (node, led, strat))
+        rc = carry_runtime.run_node(plan, mode="paper", duration_secs=0)
+        assert rc == 0
+        assert events == ["graceful_requested", "handle.stop"]
+        led_verify = CarryLedger(db_path, plan.fingerprint(), ledger_domain="paper")
+        pos = led_verify.active_positions()[pid]
+        assert pos["status"] == "OPEN"
+        assert D(pos["long_base_qty"]) == D("0.49") and D(pos["short_base_qty"]) == D("0.49")
+        assert led_verify.reconcile_startup(
+            venue_positions={
+                ("HL", spec_l.instrument_id): D("0.49"),
+                ("OKX", spec_s.instrument_id): D("-0.49"),
+            },
+            venue_open_orders={},
+            ts_s=now_s + 5,
+        ).ok is True
+        led_verify.close()
+
+    # Second SIGINT during an active drain escalates immediately to handle.stop()
+    led2 = CarryLedger(tmp_path / "hosted_double_sigint.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw2 = DelayedAsyncVenueGateway()
+    gw2.register_spec(spec_l)
+    gw2.register_spec(spec_s)
+    strat2 = carry_runtime._create_carry_strategy(plan, led2, mode="paper")
+    strat2.gateway = gw2
+    strat2.controller.gateway = gw2
+    strat2.reconciled = True
+    strat2.live_mids = dict(mids)
+    strat2.live_quotes = dict(quotes)
+    strat2._specs_from_cache = lambda: specs
+    strat2.controller.start_entry(cand, specs=specs, now_s=now_s)
+
+    stop_log: list[str] = []
+
+    class DoubleSigNode:
+        def __init__(self) -> None:
+            self._stop_evt: asyncio.Event | None = None
+            self._loop: asyncio.AbstractEventLoop | None = None
+
+        def handle(self):
+            node_ref = self
+
+            class _H:
+                def stop(self) -> None:
+                    stop_log.append("handle.stop")
+                    if node_ref._loop is not None and node_ref._stop_evt is not None:
+                        node_ref._loop.call_soon_threadsafe(node_ref._stop_evt.set)
+
+            return _H()
+
+        async def run_async(self) -> None:
+            self._loop = asyncio.get_running_loop()
+            self._stop_evt = asyncio.Event()
+            self._loop.call_later(0.02, lambda: os.kill(os.getpid(), signal.SIGINT))
+            self._loop.call_later(0.06, lambda: os.kill(os.getpid(), signal.SIGINT))
+            await asyncio.wait_for(self._stop_evt.wait(), timeout=5.0)
+
+    monkeypatch.setattr(carry_runtime, "build_live_node", lambda _plan, mode: (DoubleSigNode(), led2, strat2))
+    rc2 = carry_runtime.run_node(plan, mode="paper", duration_secs=0)
+    assert rc2 == 0
+    assert strat2._shutdown_requested.is_set()
+    assert stop_log == ["handle.stop"]
+    led2.close()
+
+
+def test_slow_poll_account_guards_do_not_reset_unhedged_risk_timer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    assert plan.risk.max_unhedged_secs == 10
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    now_s = 1_800_000_000
+    clock = [float(now_s)]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+
+    led = CarryLedger(tmp_path / "slow_timer_preserve.sqlite3", plan.fingerprint(), ledger_domain="live")
+    led.create_position(
+        position_id="SOL-NAKED-49",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.98"),
+    )
+    led.update_position_status(
+        "SOL-NAKED-49", status="OPENING", ts_s=now_s, long_base_qty=D("0.49"), short_base_qty=D("0")
+    )
+
+    gw = DelayedAsyncVenueGateway()
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    strat = carry_runtime._create_carry_strategy(plan, led, mode="live")
+    strat.gateway = gw
+    strat.controller.gateway = gw
+    strat.reconciled = True
+    strat.live_mids = {spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.2}
+    strat.live_quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.18, 100.22)}
+    strat._specs_from_cache = lambda: specs
+
+    # t = 0: start 10s unhedged exposure timer (~$49 naked leg)
+    strat._on_fast_risk_timer(None)
+    assert strat.fast_risk._unhedged_since.get("SOL-NAKED-49") == now_s
+    assert gw.submitted == []
+
+    # t = 9s: slow snapshot runs account-level daily guards -> MUST NOT clear _unhedged_since
+    clock[0] = float(now_s + 9)
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.18, ask=100.22),
+        }
+    }
+    strat._apply_slow_snapshot(snap)
+    assert strat.fast_risk._unhedged_since.get("SOL-NAKED-49") == now_s
+    assert not led.is_kill_halted()[0]
+
+    # t = 10s: fast risk timer MUST trigger unhedged_timeout_kill immediately (not delayed to t = 20s)
+    clock[0] = float(now_s + 10)
+    strat._on_fast_risk_timer(None)
+    assert led.is_kill_halted() == (True, "unhedged_timeout_kill")
+    assert len(gw.submitted) == 1
+    assert gw.submitted[0]["side"] == "SELL" and gw.submitted[0]["reduce_only"] is True and gw.submitted[0]["base_qty"] == D("0.49")
+    led.close()

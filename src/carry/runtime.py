@@ -1,6 +1,7 @@
 """NautilusTrader LiveNode assembly and dynamic Strategy lifecycle for Route A Carry."""
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
@@ -8,6 +9,7 @@ from decimal import Decimal
 import math
 import os
 from pathlib import Path
+import signal
 import threading
 import time
 from types import MappingProxyType
@@ -30,7 +32,7 @@ from .signal import (
 )
 
 
-_GRACEFUL_SHUTDOWN_DRAIN_SECS = 10.0
+_GRACEFUL_SHUTDOWN_DRAIN_SECS = 30.0
 
 
 @dataclass(frozen=True)
@@ -413,17 +415,43 @@ def _create_carry_strategy(
             self._shutdown_drain_timeout_secs = max(0.0, float(drain_timeout_secs))
             self._shutdown_requested.set()
 
+        def _start_graceful_shutdown_drain(self, now_s: int) -> None:
+            if self._shutdown_drain_started_ts is None:
+                self._shutdown_drain_started_ts = time.monotonic()
+            if self._can_trade():
+                self.controller.begin_shutdown(now_s=now_s, live_mids=self.live_mids, live_quotes=self.live_quotes)
+            else:
+                self.controller._stopping = True
+
         def _drive_graceful_shutdown(self, now_s: int) -> None:
             if not self._shutdown_requested.is_set() or self._stop_node_triggered:
                 return
-            if self._shutdown_drain_started_ts is None:
-                self._shutdown_drain_started_ts = time.monotonic()
-                if self._can_trade():
-                    self.controller.begin_shutdown(now_s=now_s, live_mids=self.live_mids, live_quotes=self.live_quotes)
-                else:
-                    self.controller._stopping = True
-            elapsed = time.monotonic() - self._shutdown_drain_started_ts
-            if not self.controller.has_any_in_flight_orders() or elapsed >= self._shutdown_drain_timeout_secs:
+            self._start_graceful_shutdown_drain(now_s)
+            if self._can_trade() and self.ledger.active_positions():
+                try:
+                    specs = self._specs_from_cache()
+                except RuntimeError:
+                    specs = {}
+                self.controller.reconcile_shutdown_positions(specs=specs, now_s=now_s, live_mids=self.live_mids)
+            else:
+                specs = {}
+            ready, blockers = self.controller.is_shutdown_ready(specs=specs, live_mids=self.live_mids)
+            elapsed = time.monotonic() - (self._shutdown_drain_started_ts or time.monotonic())
+            reconcile_halted = self.ledger.is_reconcile_halted()[0]
+            if ready or (reconcile_halted and not self.controller.has_any_in_flight_orders()):
+                self._stop_node_triggered = True
+                if self._stop_node_cb is not None:
+                    self._stop_node_cb()
+                return
+            if elapsed >= self._shutdown_drain_timeout_secs:
+                if not reconcile_halted:
+                    reason = f"shutdown_timeout:{';'.join(blockers[:3])}"[:240]
+                    self.ledger.set_halt("HALTED_RECONCILE", reason, now_s)
+                    self.ledger.record_event(
+                        "graceful_shutdown_timeout",
+                        {"blockers": blockers, "elapsed_secs": round(elapsed, 2)},
+                        now_s,
+                    )
                 self._stop_node_triggered = True
                 if self._stop_node_cb is not None:
                     self._stop_node_cb()
@@ -623,8 +651,8 @@ def _create_carry_strategy(
 
         def _on_fast_risk_timer(self, _event: Any) -> None:
             now_s = int(time.time())
-            if self._shutdown_requested.is_set():
-                self._drive_graceful_shutdown(now_s)
+            if self._shutdown_requested.is_set() and self._shutdown_drain_started_ts is None:
+                self._start_graceful_shutdown_drain(now_s)
             if self._can_trade():
                 self.controller.poll_active_orders(
                     live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
@@ -824,12 +852,9 @@ def _create_carry_strategy(
                         )
 
             daily_pnl_now, streak_now = self.ledger.daily_stats(now_s)
-            kill_dec = self.fast_risk.evaluate(
-                positions={},
-                live_mids={},
+            kill_dec = self.fast_risk.evaluate_account_guards(
                 daily_realized_pnl_usd=daily_pnl_now,
                 consecutive_unhedged=streak_now,
-                now_s=now_s,
             )
             if kill_dec.halt_system and kill_dec.halt_reason:
                 if not self.ledger.is_kill_halted()[0]:
@@ -958,8 +983,9 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
     handle = node.handle()
     timer = None
     hard_timer = None
-    timers_lock = threading.Lock()
+    timers_lock = threading.RLock()
     stopped_evt = threading.Event()
+    graceful_started = False
 
     def _hard_stop() -> None:
         if not stopped_evt.is_set():
@@ -967,19 +993,29 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
             handle.stop()
 
     def _trigger_graceful_stop() -> None:
-        nonlocal hard_timer
-        if stopped_evt.is_set():
-            return
+        nonlocal hard_timer, graceful_started
+        with timers_lock:
+            if stopped_evt.is_set() or graceful_started:
+                return
+            graceful_started = True
         if hasattr(strategy, "request_graceful_shutdown"):
             strategy.request_graceful_shutdown(
                 stop_cb=_hard_stop,
                 drain_timeout_secs=_GRACEFUL_SHUTDOWN_DRAIN_SECS,
             )
             with timers_lock:
-                if not stopped_evt.is_set():
-                    hard_timer = threading.Timer(_GRACEFUL_SHUTDOWN_DRAIN_SECS + 2.0, _hard_stop)
+                if not stopped_evt.is_set() and hard_timer is None:
+                    hard_timer = threading.Timer(_GRACEFUL_SHUTDOWN_DRAIN_SECS + 5.0, _hard_stop)
                     hard_timer.daemon = True
                     hard_timer.start()
+        else:
+            _hard_stop()
+
+    def _on_stop_signal(_signum: int = 0, _frame: Any = None) -> None:
+        with timers_lock:
+            already_graceful = graceful_started
+        if not already_graceful:
+            _trigger_graceful_stop()
         else:
             _hard_stop()
 
@@ -988,9 +1024,54 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
         timer.daemon = True
         timer.start()
     try:
-        node.run()
-    except KeyboardInterrupt:
-        _hard_stop()
+        if callable(getattr(node, "run_async", None)):
+            async def _run_hosted() -> None:
+                loop = asyncio.get_running_loop()
+                installed_sigs: list[signal.Signals] = []
+                sigs = [signal.SIGINT]
+                if hasattr(signal, "SIGTERM"):
+                    sigs.append(signal.SIGTERM)
+                for sig in sigs:
+                    try:
+                        loop.add_signal_handler(sig, _on_stop_signal)
+                        installed_sigs.append(sig)
+                    except (NotImplementedError, RuntimeError, ValueError):
+                        pass
+                try:
+                    await node.run_async()
+                finally:
+                    for sig in installed_sigs:
+                        try:
+                            loop.remove_signal_handler(sig)
+                        except (NotImplementedError, RuntimeError, ValueError):
+                            pass
+
+            try:
+                asyncio.run(_run_hosted())
+            except KeyboardInterrupt:
+                _hard_stop()
+        else:
+            prev_handlers: dict[signal.Signals, Any] = {}
+            if threading.current_thread() is threading.main_thread():
+                sigs = [signal.SIGINT]
+                if hasattr(signal, "SIGTERM"):
+                    sigs.append(signal.SIGTERM)
+                for sig in sigs:
+                    try:
+                        prev_handlers[sig] = signal.getsignal(sig)
+                        signal.signal(sig, _on_stop_signal)
+                    except (ValueError, OSError, RuntimeError):
+                        pass
+            try:
+                node.run()
+            except KeyboardInterrupt:
+                _hard_stop()
+            finally:
+                for sig, prev in prev_handlers.items():
+                    try:
+                        signal.signal(sig, prev)
+                    except (ValueError, OSError, RuntimeError):
+                        pass
     finally:
         stopped_evt.set()
         if timer is not None:
