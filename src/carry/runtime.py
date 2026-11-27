@@ -72,6 +72,35 @@ def _extract_money_decimal(raw: Any) -> Decimal:
     return max(Decimal("0"), Decimal(text.split()[0]))
 
 
+_STABLECOIN_FEE_CCYS = frozenset({"USD", "USDT", "USDC"})
+
+
+def _extract_usd_commission(raw: Any) -> Decimal | None:
+    """Extract a non-negative USD/USDT/USDC commission amount, else None for fee-map fallback."""
+    if raw is None:
+        return None
+    if hasattr(raw, "currency"):
+        code = str(getattr(raw.currency, "code", raw.currency)).upper()
+        if code not in _STABLECOIN_FEE_CCYS:
+            return None
+        as_dec = getattr(raw, "as_decimal", None)
+        try:
+            val = as_dec() if callable(as_dec) else Decimal(str(raw).split()[0])
+        except Exception:
+            return None
+        val_dec = val if isinstance(val, Decimal) else Decimal(str(val))
+        return max(Decimal("0"), val_dec)
+    if isinstance(raw, str):
+        parts = raw.strip().split()
+        if len(parts) != 2 or parts[1].upper() not in _STABLECOIN_FEE_CCYS:
+            return None
+        try:
+            return max(Decimal("0"), Decimal(parts[0]))
+        except Exception:
+            return None
+    return None
+
+
 class _NautilusStrategyGateway:
     """Thin adapter translating CarryExecutionController calls to Nautilus Strategy order APIs."""
 
@@ -172,7 +201,24 @@ class _NautilusStrategyGateway:
             st = "REJECTED"
         else:
             st = "OPEN"
-        return OrderAck(client_order_id, str(order.venue_order_id or ""), st, filled, avg_px)
+        fee_usd: Decimal | None = None
+        invalid_set = getattr(self.strategy, "_order_fee_invalid", ())
+        fee_map = getattr(self.strategy, "_order_fill_fees_usd", None)
+        if client_order_id not in invalid_set and isinstance(fee_map, Mapping) and client_order_id in fee_map:
+            fee_usd = fee_map[client_order_id]
+        elif filled > 0 and callable(getattr(order, "commissions", None)):
+            comms_raw = order.commissions()
+            if isinstance(comms_raw, Mapping):
+                items = list(comms_raw.values())
+            elif isinstance(comms_raw, (list, tuple, set)):
+                items = list(comms_raw)
+            else:
+                items = []
+            if items:
+                parsed = [_extract_usd_commission(item) for item in items]
+                if all(val is not None for val in parsed):
+                    fee_usd = sum((val for val in parsed if val is not None), Decimal("0"))
+        return OrderAck(client_order_id, str(order.venue_order_id or ""), st, filled, avg_px, fee_usd=fee_usd)
 
 
 def build_data_clients(plan: CarryPlan) -> list[tuple[str, Any, Any]]:
@@ -391,6 +437,9 @@ def _create_carry_strategy(
             self._slow_poll_stopped: bool = False
             self._pending_slow_result: _SlowPollResult | None = None
             self._last_slow_poll_error: str | None = None
+            self._order_fill_fees_usd: dict[str, Decimal] = {}
+            self._order_fee_invalid: set[str] = set()
+            self._seen_fill_keys: set[tuple[str, str]] = set()
 
         def close_slow_poller(self, *, wait: bool = False) -> None:
             with self._slow_poll_lock:
@@ -582,7 +631,32 @@ def _create_carry_strategy(
             if self._shutdown_requested.is_set():
                 self._drive_graceful_shutdown(now_s)
 
+        def _record_fill_commission(self, event: Any) -> None:
+            if not self._can_book_in_flight_orders():
+                return
+            coid = str(getattr(event, "client_order_id", ""))
+            if not coid:
+                return
+            trade_key = getattr(event, "trade_id", None) or getattr(event, "event_id", None)
+            if trade_key is not None:
+                dedup_key = (coid, str(trade_key))
+                if dedup_key in self._seen_fill_keys:
+                    return
+                self._seen_fill_keys.add(dedup_key)
+            comm_usd = _extract_usd_commission(getattr(event, "commission", None))
+            if comm_usd is None:
+                self._order_fee_invalid.add(coid)
+                self._order_fill_fees_usd.pop(coid, None)
+                self.ledger.set_order_fee_usd(coid, None)
+                return
+            if coid in self._order_fee_invalid:
+                return
+            new_total = self._order_fill_fees_usd.get(coid, Decimal("0")) + comm_usd
+            self._order_fill_fees_usd[coid] = new_total
+            self.ledger.set_order_fee_usd(coid, new_total)
+
         def on_order_filled(self, event: Any) -> None:
+            self._record_fill_commission(event)
             self._handle_order_event(event)
 
         def on_order_canceled(self, event: Any) -> None:
@@ -818,6 +892,55 @@ def _create_carry_strategy(
             self._apply_slow_snapshot(res.snapshot, poll_ts_s=res.poll_ts_s)
             return True
 
+        def _record_active_funding_settlements(
+            self,
+            active: Mapping[str, Mapping[str, Any]],
+            now_s: int,
+        ) -> int:
+            if not self._can_book_in_flight_orders():
+                return 0
+            recent_fn = getattr(self.feed, "recent_settlements", None)
+            if not callable(recent_fn):
+                return 0
+            booked = 0
+            for pid, pos in sorted(active.items()):
+                if str(pos["status"]) not in ("OPENING", "OPEN", "CLOSING"):
+                    continue
+                sym = str(pos["symbol"])
+                opened_ts = int(pos["opened_ts"])
+                legs = (
+                    ("LONG", str(pos["long_venue"]), Decimal(str(pos["long_base_qty"])), str(pos["iid_long"]), float(pos["entry_l"])),
+                    ("SHORT", str(pos["short_venue"]), Decimal(str(pos["short_base_qty"])), str(pos["iid_short"]), float(pos["entry_s"])),
+                )
+                for side, venue, qty, iid, entry_px in legs:
+                    if qty <= Decimal("0"):
+                        continue
+                    snap_leg = self.snapshot.get(sym, {}).get(venue)
+                    mark_px = float(snap_leg.mark_price) if (snap_leg is not None and snap_leg.mark_price > 0) else 0.0
+                    if mark_px <= 0.0:
+                        mark_px = float(self.live_mids.get(iid) or 0.0)
+                    if mark_px <= 0.0:
+                        mark_px = float(entry_px or 0.0)
+                    if mark_px <= 0.0:
+                        continue
+                    for settle_ts, rate_bps in recent_fn(venue, sym):
+                        if opened_ts < int(settle_ts) <= now_s:
+                            inserted = self.ledger.record_funding_settlement(
+                                position_id=pid,
+                                symbol=sym,
+                                venue=venue,
+                                side=side,
+                                settle_ts=int(settle_ts),
+                                rate_bps=float(rate_bps),
+                                base_qty=qty,
+                                mark_price=mark_px,
+                                source=f"{venue.lower()}_public_history",
+                                recorded_ts=now_s,
+                            )
+                            if inserted:
+                                booked += 1
+            return booked
+
         def _apply_slow_snapshot(
             self,
             frozen_snapshot: Mapping[str, Mapping[str, LegMarketInfo]],
@@ -834,6 +957,7 @@ def _create_carry_strategy(
 
             # Overlay only fresh WS BBO quotes onto slow snapshot; stale quotes are evicted to REST
             self._overlay_fresh_quotes(time.time())
+            self._record_active_funding_settlements(active, now_s)
 
             entry_snapshot = {
                 sym: {

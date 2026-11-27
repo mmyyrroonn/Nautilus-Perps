@@ -780,11 +780,24 @@ def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
         now_s=now_s + 100,
         live_mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 103.2},
     )
-    row = dict(led.conn.execute("SELECT realized_pnl_usd, close_reason FROM positions WHERE position_id=?", (pid,)).fetchone())
+    row = dict(
+        led.conn.execute(
+            "SELECT price_pnl_usd, funding_pnl_usd, fee_usd, realized_pnl_usd, close_reason FROM positions WHERE position_id=?",
+            (pid,),
+        ).fetchone()
+    )
     assert row["close_reason"] == "basis_stop_30m"
-    assert D(row["realized_pnl_usd"]) == pytest.approx(D("-3.15") * q)
+    assert D(row["price_pnl_usd"]) == (D("-3.15") * q).quantize(D("0.0001"))
+    assert D(row["funding_pnl_usd"]) == D("0.0000")
+    expected_fee1 = led.compute_position_fee_usd(
+        pid,
+        maker_fee_bps_by_venue=plan.policy.maker_fee_bps_by_venue,
+        taker_fee_bps_by_venue=plan.policy.taker_fee_bps_by_venue,
+    )
+    assert D(row["fee_usd"]) == expected_fee1
+    assert D(row["realized_pnl_usd"]) == D(row["price_pnl_usd"]) + D(row["funding_pnl_usd"]) - expected_fee1
     daily_pnl, _ = led.daily_stats(now_s + 100)
-    assert daily_pnl == pytest.approx(D("-3.15") * q)
+    assert daily_pnl == D(row["realized_pnl_usd"])
 
     assert "SOL" in led.stop_loss_cooldown_symbols(now_s=now_s + 3600, cooldown_hours=24)
     assert "SOL" not in led.stop_loss_cooldown_symbols(now_s=now_s + 25 * 3600, cooldown_hours=24)
@@ -816,9 +829,23 @@ def test_stop_loss_cooldown_and_realized_pnl_accounting(tmp_path: Path) -> None:
         mids={spec_l.instrument_id: 100.0, spec_s.instrument_id: 100.0},
         now_s=now_s + 26 * 3600 + 12,
     )
-    row2 = dict(led.conn.execute("SELECT status, realized_pnl_usd FROM positions WHERE position_id=?", (pid2,)).fetchone())
+    row2 = dict(
+        led.conn.execute(
+            "SELECT status, price_pnl_usd, funding_pnl_usd, fee_usd, realized_pnl_usd FROM positions WHERE position_id=?",
+            (pid2,),
+        ).fetchone()
+    )
     assert row2["status"] == "CLOSED"
-    assert D(row2["realized_pnl_usd"]) == pytest.approx(D("-0.09") * q)
+    assert D(row2["price_pnl_usd"]) == (D("-0.09") * q).quantize(D("0.0001"))
+    assert D(row2["funding_pnl_usd"]) == D("0.0000")
+    expected_fee2 = led.compute_position_fee_usd(
+        pid2,
+        maker_fee_bps_by_venue=plan.policy.maker_fee_bps_by_venue,
+        taker_fee_bps_by_venue=plan.policy.taker_fee_bps_by_venue,
+    )
+    assert D(row2["fee_usd"]) == expected_fee2
+    assert D(row2["realized_pnl_usd"]) == D(row2["price_pnl_usd"]) + D(row2["funding_pnl_usd"]) - expected_fee2
+    assert led.daily_stats(now_s + 26 * 3600 + 12)[0] == D(row2["realized_pnl_usd"])
     assert "SOL" not in led.stop_loss_cooldown_symbols(now_s=now_s + 26 * 3600 + 20, cooldown_hours=24)
     led.close()
 
@@ -1674,9 +1701,15 @@ def test_closing_absorbs_dust_tail_and_falls_back_to_dual_taker_after_maker_time
     assert ctrl_b._slice_attempts.get("SOL-CLOSE-FB") == 2
 
     ctrl_b.advance_pending_slices(specs=specs_sol, quotes=quotes_sol, mids=mids_sol, now_s=now_s + 208)
-    row_b = dict(led.conn.execute("SELECT status, realized_pnl_usd, close_reason FROM positions WHERE position_id='SOL-CLOSE-FB'").fetchone())
+    row_b = dict(
+        led.conn.execute(
+            "SELECT status, price_pnl_usd, fee_usd, realized_pnl_usd, close_reason FROM positions WHERE position_id='SOL-CLOSE-FB'"
+        ).fetchone()
+    )
     assert row_b["status"] == "CLOSED" and row_b["close_reason"] == "carry_decay"
-    assert D(row_b["realized_pnl_usd"]) == D("0.0900")
+    assert D(row_b["price_pnl_usd"]) == D("0.0900")
+    assert D(row_b["fee_usd"]) == D("0.0475")
+    assert D(row_b["realized_pnl_usd"]) == D("0.0425")
     tc_rows = led.conn.execute("SELECT role, order_type, status FROM orders WHERE position_id='SOL-CLOSE-FB' AND role='TAKER_CLOSE'").fetchall()
     assert len(tc_rows) == 2 and all(r["order_type"] == "IOC" and r["status"] == "FILLED" for r in tc_rows)
 
@@ -1756,9 +1789,15 @@ def test_closing_absorbs_dust_tail_and_falls_back_to_dual_taker_after_maker_time
     gw_d.deliver_fill(tmc_orders[0]["client_order_id"], filled_base_qty=D("0.50"), avg_fill_price=D("100.01"))
     ctrl_d.poll_active_orders(live_mids=mids_sol, now_s=now_s + 405, live_quotes=quotes_sol)
     assert "SOL-ASYNC-CLOSE" not in led.active_positions()
-    row_d = dict(led.conn.execute("SELECT status, realized_pnl_usd, close_reason FROM positions WHERE position_id='SOL-ASYNC-CLOSE'").fetchone())
+    row_d = dict(
+        led.conn.execute(
+            "SELECT status, price_pnl_usd, fee_usd, realized_pnl_usd, close_reason FROM positions WHERE position_id='SOL-ASYNC-CLOSE'"
+        ).fetchone()
+    )
     assert row_d["status"] == "CLOSED" and row_d["close_reason"] == "carry_decay"
-    assert D(row_d["realized_pnl_usd"]) == D("0.0900")
+    assert D(row_d["price_pnl_usd"]) == D("0.0900")
+    assert D(row_d["fee_usd"]) == D("0.0475")
+    assert D(row_d["realized_pnl_usd"]) == D("0.0425")
     led.close()
 
 
