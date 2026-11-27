@@ -108,18 +108,20 @@ class _NautilusStrategyGateway:
         inst = self.strategy.cache.instrument(order.instrument_id)
         mult = Decimal(str(getattr(inst, "multiplier", 1))) if inst is not None else Decimal("1")
         filled = Decimal(str(order.filled_qty)) * mult
+        avg_px_raw = getattr(order, "avg_px", None)
+        avg_px = Decimal(str(avg_px_raw)) if avg_px_raw is not None and float(avg_px_raw) > 0 else None
         status_str = str(order.status).upper()
         if "FILLED" in status_str and "PARTIAL" not in status_str:
             st = "FILLED"
         elif "PARTIAL" in status_str:
             st = "PARTIAL"
-        elif "CANCELED" in status_str or "EXPIRED" in status_str:
+        elif "CANCELED" in status_str or "CANCELLED" in status_str or "EXPIRED" in status_str:
             st = "CANCELED"
         elif "REJECTED" in status_str or "DENIED" in status_str:
             st = "REJECTED"
         else:
             st = "OPEN"
-        return OrderAck(client_order_id, str(order.venue_order_id or ""), st, filled)
+        return OrderAck(client_order_id, str(order.venue_order_id or ""), st, filled, avg_px)
 
 
 def build_data_clients(plan: CarryPlan) -> list[tuple[str, Any, Any]]:
@@ -353,7 +355,7 @@ def _create_carry_strategy(
                 if self.paper_gateway is not None:
                     filled_coids = self.paper_gateway.update_quote(iid, Decimal(str(bid)), Decimal(str(ask)))
                     if filled_coids and self.reconciled:
-                        self.controller.poll_active_makers(
+                        self.controller.poll_active_orders(
                             live_mids=self.live_mids, now_s=int(ts_now), live_quotes=self.live_quotes
                         )
                 if self.recorder is not None:
@@ -387,16 +389,35 @@ def _create_carry_strategy(
                         if self.paper_gateway is not None:
                             self.paper_gateway.seed_quote(leg.instrument_id, Decimal(str(leg.bid)), Decimal(str(leg.ask)))
 
-        def on_order_filled(self, event: Any) -> None:
-            coid = str(event.client_order_id)
-            if coid in self.controller._active_makers:
-                now_s = int(time.time())
-                ctx = self.controller._active_makers[coid]
-                h_mid = Decimal(str(self.live_mids.get(ctx.spec_hedge.instrument_id, 1.0)))
-                self.controller.poll_active_makers(
-                    live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
+        def _handle_order_event(self, event: Any) -> None:
+            if self.mode not in ("paper", "live") or not self.reconciled:
+                return
+            coid = str(getattr(event, "client_order_id", ""))
+            if coid and self.controller.is_tracked_order(coid):
+                self.controller.poll_active_orders(
+                    live_mids=self.live_mids, now_s=int(time.time()), live_quotes=self.live_quotes
                 )
-                _ = h_mid
+
+        def on_order_filled(self, event: Any) -> None:
+            self._handle_order_event(event)
+
+        def on_order_canceled(self, event: Any) -> None:
+            self._handle_order_event(event)
+
+        def on_order_expired(self, event: Any) -> None:
+            self._handle_order_event(event)
+
+        def on_order_rejected(self, event: Any) -> None:
+            self._handle_order_event(event)
+
+        def on_order_denied(self, event: Any) -> None:
+            self._handle_order_event(event)
+
+        def on_order_cancel_rejected(self, event: Any) -> None:
+            coid = str(getattr(event, "client_order_id", ""))
+            if coid:
+                self.controller.on_cancel_rejected(coid)
+            self._handle_order_event(event)
 
         def _reconcile_on_start(self) -> None:
             now_s = int(time.time())
@@ -447,7 +468,7 @@ def _create_carry_strategy(
         def _on_fast_risk_timer(self, _event: Any) -> None:
             now_s = int(time.time())
             if self.mode in ("paper", "live") and self.reconciled:
-                self.controller.poll_active_makers(
+                self.controller.poll_active_orders(
                     live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
                 )
                 halted_now, _ = self.ledger.is_halted()
@@ -627,10 +648,22 @@ def _create_carry_strategy(
     return CarryStrategy()
 
 
+def _live_exec_engine_config(mode: str):
+    from nautilus_trader.live import LiveExecutionEngineConfig
+
+    enable_reconcile = mode in ("readonly", "live")
+    return LiveExecutionEngineConfig(
+        reconciliation=enable_reconcile,
+        reconciliation_lookback_mins=60 if enable_reconcile else None,
+        generate_missing_orders=False,
+        inflight_check_interval_ms=0,
+    )
+
+
 def build_live_node(plan: CarryPlan, *, mode: str, environ: Mapping[str, str] | None = None):
     """Build Nautilus LiveNode for paper (no exec clients) or readonly/live (with exec clients)."""
     from nautilus_trader.common import CacheConfig, Environment, LoggerConfig, LogLevel
-    from nautilus_trader.live import LiveDataEngineConfig, LiveExecutionEngineConfig, LiveNode
+    from nautilus_trader.live import LiveDataEngineConfig, LiveNode
     from nautilus_trader.model import TraderId
 
     ledger = CarryLedger(plan.state_path, plan.fingerprint())
@@ -639,8 +672,8 @@ def build_live_node(plan: CarryPlan, *, mode: str, environ: Mapping[str, str] | 
         .with_logging(LoggerConfig(stdout_level=LogLevel.INFO, fileout_level=LogLevel.OFF, print_config=False))
         .with_cache_config(CacheConfig(tick_capacity=1, bar_capacity=1, save_market_data=False, persist_account_events=False))
         .with_data_engine_config(LiveDataEngineConfig(emit_quotes_from_book=False, emit_quotes_from_book_depths=False))
-        .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=False, generate_missing_orders=False, inflight_check_interval_ms=0))
-        .with_reconciliation(False)
+        .with_exec_engine_config(_live_exec_engine_config(mode))
+        .with_reconciliation(mode in ("readonly", "live"))
         .with_load_state(False)
         .with_save_state(False)
         .with_timeout_connection(60)
