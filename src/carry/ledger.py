@@ -359,7 +359,11 @@ class CarryLedger:
             """
             SELECT instrument_id, side, filled_base_qty, price FROM orders
             WHERE position_id=? AND price IS NOT NULL
-              AND role IN ('MAKER_CLOSE', 'HEDGE_CLOSE', 'HEDGE_CLOSE_MARKET_FALLBACK', 'EMERGENCY_CLOSE_LONG', 'EMERGENCY_CLOSE_SHORT')
+              AND role IN (
+                  'MAKER_CLOSE', 'HEDGE_CLOSE', 'HEDGE_CLOSE_MARKET_FALLBACK',
+                  'TAKER_CLOSE', 'TAKER_CLOSE_MARKET_FALLBACK',
+                  'EMERGENCY_CLOSE_LONG', 'EMERGENCY_CLOSE_SHORT'
+              )
             """,
             (position_id,),
         ).fetchall()

@@ -253,10 +253,14 @@ class ActiveDualTakerLeg:
 @dataclass
 class ActiveDualTakerBatch:
     position_id: str
-    long_leg: ActiveDualTakerLeg
-    short_leg: ActiveDualTakerLeg
+    long_leg: ActiveDualTakerLeg | None
+    short_leg: ActiveDualTakerLeg | None
     submitted_ts: int
+    is_opening: bool = True
     fallback_submitted: bool = False
+
+    def active_legs(self) -> tuple[ActiveDualTakerLeg, ...]:
+        return tuple(leg for leg in (self.long_leg, self.short_leg) if leg is not None)
 
 
 @dataclass
@@ -372,7 +376,7 @@ class CarryExecutionController:
         if client_order_id in self._active_makers:
             return True
         for batch in self._active_dual_takers.values():
-            for leg in (batch.long_leg, batch.short_leg):
+            for leg in batch.active_legs():
                 if client_order_id in (leg.client_order_id, leg.fallback_coid):
                     return True
         for task in self._active_hedges.values():
@@ -582,6 +586,32 @@ class CarryExecutionController:
             return None, slice_err
         return pos_id, None
 
+    def _closing_slice_target_usd(
+        self,
+        *,
+        rem_usd: Decimal,
+        spec_l: InstrumentSpec,
+        spec_s: InstrumentSpec,
+        mid: Decimal,
+    ) -> Decimal:
+        """Compute closing slice notional, absorbing or evenly splitting dust tails."""
+        if rem_usd <= self.risk.slice_usd:
+            return rem_usd
+        min_venue_usd = max(
+            spec_l.min_notional_usd,
+            spec_s.min_notional_usd,
+            spec_l.min_quantity * spec_l.contract_multiplier * mid,
+            spec_s.min_quantity * spec_s.contract_multiplier * mid,
+            spec_l.base_step * mid,
+            spec_s.base_step * mid,
+        )
+        dust_usd = max(min_venue_usd, Decimal("10"), self.risk.slice_usd * Decimal("0.20"))
+        if rem_usd - self.risk.slice_usd < dust_usd:
+            if rem_usd <= self.risk.max_unhedged_usd:
+                return rem_usd
+            return rem_usd / Decimal("2")
+        return self.risk.slice_usd
+
     def _submit_next_slice(
         self,
         *,
@@ -606,7 +636,12 @@ class CarryExecutionController:
             return False, "position_not_active"
 
         mid = Decimal("0.5") * (leg_l_mid + leg_s_mid)
-        slice_target_usd = min(self.risk.slice_usd, remaining_base * mid)
+        rem_usd = remaining_base * mid
+        slice_target_usd = (
+            min(self.risk.slice_usd, rem_usd)
+            if is_opening
+            else self._closing_slice_target_usd(rem_usd=rem_usd, spec_l=spec_l, spec_s=spec_s, mid=mid)
+        )
         if slice_target_usd <= 0:
             return False, "nothing_remaining"
 
@@ -761,16 +796,104 @@ class CarryExecutionController:
             return False, "dual_taker_ioc_unfilled"
         return True, None
 
+    def _submit_dual_taker_close_slice(
+        self,
+        *,
+        position_id: str,
+        pos: Mapping[str, object],
+        spec_l: InstrumentSpec,
+        spec_s: InstrumentSpec,
+        close_l_base: Decimal,
+        close_s_base: Decimal,
+        leg_l_bid: Decimal,
+        leg_s_ask: Decimal,
+        now_s: int,
+    ) -> tuple[bool, str | None]:
+        """Submit reduce-only slippage-protected IOC orders (with async MARKET fallback) on remaining legs."""
+        slip = self.runtime.hedge_ioc_slippage_bps / Decimal("10000")
+        px_l = max(spec_l.price_increment, spec_l.round_price(leg_l_bid * (Decimal("1") - slip)))
+        px_s = max(spec_s.price_increment, spec_s.round_price(leg_s_ask * (Decimal("1") + slip)))
+        specs_sides = (
+            (True, spec_l, str(pos["long_venue"]), "SELL", close_l_base, leg_l_bid, px_l),
+            (False, spec_s, str(pos["short_venue"]), "BUY", close_s_base, leg_s_ask, px_s),
+        )
+        long_leg_obj: ActiveDualTakerLeg | None = None
+        short_leg_obj: ActiveDualTakerLeg | None = None
+        for is_long, spec, venue, side, close_base, ref_px, ioc_px in specs_sides:
+            if close_base <= 0:
+                continue
+            qty_c = max(spec.size_increment, (close_base / spec.base_step).to_integral_value() * spec.size_increment)
+            base_q = qty_c * spec.contract_multiplier
+            coid = f"tc-{position_id[:12]}-{uuid.uuid4().hex[:8]}"
+            self.ledger.register_order_intent(
+                client_order_id=coid,
+                position_id=position_id,
+                venue=venue,
+                instrument_id=spec.instrument_id,
+                side=side,
+                role="TAKER_CLOSE",
+                order_type="IOC",
+                qty_contracts=qty_c,
+                base_qty=base_q,
+                price=ioc_px,
+                ts_s=now_s,
+            )
+            ack = self.gateway.submit_limit(
+                client_order_id=coid,
+                venue=venue,
+                instrument_id=spec.instrument_id,
+                side=side,
+                qty_contracts=qty_c,
+                price=ioc_px,
+                post_only=False,
+                ioc=True,
+                reduce_only=True,
+            )
+            self._update_order_from_ack(coid, ack, now_s=now_s, fallback_price=ref_px)
+            leg_obj = ActiveDualTakerLeg(
+                client_order_id=coid,
+                is_long=is_long,
+                venue=venue,
+                spec=spec,
+                side=side,
+                target_base_qty=base_q,
+                ref_price=ref_px,
+                status=ack.status,
+                filled_base_qty=ack.filled_base_qty,
+            )
+            if is_long:
+                long_leg_obj = leg_obj
+            else:
+                short_leg_obj = leg_obj
+
+        if long_leg_obj is None and short_leg_obj is None:
+            return False, "nothing_remaining"
+
+        batch = ActiveDualTakerBatch(
+            position_id=position_id,
+            long_leg=long_leg_obj,
+            short_leg=short_leg_obj,
+            submitted_ts=now_s,
+            is_opening=False,
+        )
+        self._active_dual_takers[position_id] = batch
+        outcome = self._reconcile_dual_taker_batch(batch, now_s=now_s)
+        if outcome == "UNFILLED":
+            return False, "taker_close_unfilled"
+        return True, None
+
     def _reconcile_dual_taker_batch(self, batch: ActiveDualTakerBatch, *, now_s: int) -> str:
-        for leg in (batch.long_leg, batch.short_leg):
+        active_legs = batch.active_legs()
+        for leg in active_legs:
             d = leg.filled_base_qty - leg.accounted_base_qty
             if d > 0:
                 self._apply_leg_fill_delta(
                     batch.position_id,
                     is_long=leg.is_long,
-                    is_opening=True,
+                    is_opening=batch.is_opening,
                     delta_base=d,
                     now_s=now_s,
+                    clamp_dust_step=(leg.spec.base_step if (not batch.is_opening and leg.status == "FILLED") else None),
                 )
                 leg.accounted_base_qty += d
             df = leg.fallback_filled_base_qty - leg.fallback_accounted_base_qty
@@ -778,97 +901,158 @@ class CarryExecutionController:
                 self._apply_leg_fill_delta(
                     batch.position_id,
                     is_long=leg.is_long,
-                    is_opening=True,
+                    is_opening=batch.is_opening,
                     delta_base=df,
                     now_s=now_s,
+                    clamp_dust_step=(leg.spec.base_step if (not batch.is_opening and leg.fallback_status == "FILLED") else None),
                 )
                 leg.fallback_accounted_base_qty += df
 
-        if (
-            batch.long_leg.status not in TERMINAL_ORDER_STATUSES
-            or batch.short_leg.status not in TERMINAL_ORDER_STATUSES
-        ):
+        if any(leg.status not in TERMINAL_ORDER_STATUSES for leg in active_legs):
             return "PENDING"
 
-        filled_l = batch.long_leg.filled_base_qty
-        filled_s = batch.short_leg.filled_base_qty
-        if filled_l <= 0 and filled_s <= 0:
+        filled_l = batch.long_leg.filled_base_qty if batch.long_leg is not None else Decimal("0")
+        filled_s = batch.short_leg.filled_base_qty if batch.short_leg is not None else Decimal("0")
+        if batch.is_opening and filled_l <= 0 and filled_s <= 0:
             self._active_dual_takers.pop(batch.position_id, None)
             return "UNFILLED"
 
-        if not batch.fallback_submitted and filled_l != filled_s:
-            leading, lagging = (
-                (batch.long_leg, batch.short_leg) if filled_l > filled_s else (batch.short_leg, batch.long_leg)
-            )
-            delta = leading.filled_base_qty - lagging.filled_base_qty
-            if lagging.filled_base_qty < lagging.target_base_qty and delta > Decimal("0"):
-                n_steps = (delta / lagging.spec.base_step).to_integral_value()
-                if n_steps == 0 and delta > leading.filled_base_qty * (self.risk.max_qty_mismatch_pct / Decimal("100")):
-                    n_steps = Decimal("1")
-                if n_steps > 0:
-                    rem_c = n_steps * lagging.spec.size_increment
-                    m_coid = f"tm-{batch.position_id[:12]}-{uuid.uuid4().hex[:8]}"
-                    self.ledger.register_order_intent(
-                        client_order_id=m_coid,
-                        position_id=batch.position_id,
-                        venue=lagging.venue,
-                        instrument_id=lagging.spec.instrument_id,
-                        side=lagging.side,
-                        role="TAKER_OPEN_MARKET_FALLBACK",
-                        order_type="MARKET",
-                        qty_contracts=rem_c,
-                        base_qty=rem_c * lagging.spec.contract_multiplier,
-                        price=None,
-                        ts_s=now_s,
+        if not batch.fallback_submitted:
+            if batch.is_opening:
+                if filled_l != filled_s and batch.long_leg is not None and batch.short_leg is not None:
+                    leading, lagging = (
+                        (batch.long_leg, batch.short_leg) if filled_l > filled_s else (batch.short_leg, batch.long_leg)
                     )
-                    m_ack = self.gateway.submit_market(
-                        client_order_id=m_coid,
-                        venue=lagging.venue,
-                        instrument_id=lagging.spec.instrument_id,
-                        side=lagging.side,
-                        qty_contracts=rem_c,
-                        reduce_only=False,
-                    )
-                    self._update_order_from_ack(m_coid, m_ack, now_s=now_s, fallback_price=lagging.ref_price)
-                    lagging.fallback_coid = m_coid
-                    lagging.fallback_status = m_ack.status
-                    lagging.fallback_filled_base_qty = m_ack.filled_base_qty
-                    if m_ack.filled_base_qty > 0:
-                        self._apply_leg_fill_delta(
-                            batch.position_id,
-                            is_long=lagging.is_long,
-                            is_opening=True,
-                            delta_base=m_ack.filled_base_qty,
-                            now_s=now_s,
+                    delta = leading.filled_base_qty - lagging.filled_base_qty
+                    if lagging.filled_base_qty < lagging.target_base_qty and delta > Decimal("0"):
+                        n_steps = (delta / lagging.spec.base_step).to_integral_value()
+                        if n_steps == 0 and delta > leading.filled_base_qty * (self.risk.max_qty_mismatch_pct / Decimal("100")):
+                            n_steps = Decimal("1")
+                        if n_steps > 0:
+                            rem_c = n_steps * lagging.spec.size_increment
+                            m_coid = f"tm-{batch.position_id[:12]}-{uuid.uuid4().hex[:8]}"
+                            self.ledger.register_order_intent(
+                                client_order_id=m_coid,
+                                position_id=batch.position_id,
+                                venue=lagging.venue,
+                                instrument_id=lagging.spec.instrument_id,
+                                side=lagging.side,
+                                role="TAKER_OPEN_MARKET_FALLBACK",
+                                order_type="MARKET",
+                                qty_contracts=rem_c,
+                                base_qty=rem_c * lagging.spec.contract_multiplier,
+                                price=None,
+                                ts_s=now_s,
+                            )
+                            m_ack = self.gateway.submit_market(
+                                client_order_id=m_coid,
+                                venue=lagging.venue,
+                                instrument_id=lagging.spec.instrument_id,
+                                side=lagging.side,
+                                qty_contracts=rem_c,
+                                reduce_only=False,
+                            )
+                            self._update_order_from_ack(m_coid, m_ack, now_s=now_s, fallback_price=lagging.ref_price)
+                            lagging.fallback_coid = m_coid
+                            lagging.fallback_status = m_ack.status
+                            lagging.fallback_filled_base_qty = m_ack.filled_base_qty
+                            if m_ack.filled_base_qty > 0:
+                                self._apply_leg_fill_delta(
+                                    batch.position_id,
+                                    is_long=lagging.is_long,
+                                    is_opening=True,
+                                    delta_base=m_ack.filled_base_qty,
+                                    now_s=now_s,
+                                )
+                                lagging.fallback_accounted_base_qty = m_ack.filled_base_qty
+            else:
+                for leg in active_legs:
+                    unfilled = leg.target_base_qty - leg.filled_base_qty
+                    if unfilled > Decimal("0") and leg.status != "FILLED":
+                        rem_c = max(
+                            leg.spec.size_increment,
+                            (unfilled / leg.spec.base_step).to_integral_value() * leg.spec.size_increment,
                         )
-                        lagging.fallback_accounted_base_qty = m_ack.filled_base_qty
+                        m_coid = f"tmc-{batch.position_id[:11]}-{uuid.uuid4().hex[:8]}"
+                        self.ledger.register_order_intent(
+                            client_order_id=m_coid,
+                            position_id=batch.position_id,
+                            venue=leg.venue,
+                            instrument_id=leg.spec.instrument_id,
+                            side=leg.side,
+                            role="TAKER_CLOSE_MARKET_FALLBACK",
+                            order_type="MARKET",
+                            qty_contracts=rem_c,
+                            base_qty=rem_c * leg.spec.contract_multiplier,
+                            price=None,
+                            ts_s=now_s,
+                        )
+                        m_ack = self.gateway.submit_market(
+                            client_order_id=m_coid,
+                            venue=leg.venue,
+                            instrument_id=leg.spec.instrument_id,
+                            side=leg.side,
+                            qty_contracts=rem_c,
+                            reduce_only=True,
+                        )
+                        self._update_order_from_ack(m_coid, m_ack, now_s=now_s, fallback_price=leg.ref_price)
+                        leg.fallback_coid = m_coid
+                        leg.fallback_status = m_ack.status
+                        leg.fallback_filled_base_qty = m_ack.filled_base_qty
+                        if m_ack.filled_base_qty > 0:
+                            self._apply_leg_fill_delta(
+                                batch.position_id,
+                                is_long=leg.is_long,
+                                is_opening=False,
+                                delta_base=m_ack.filled_base_qty,
+                                now_s=now_s,
+                                clamp_dust_step=(leg.spec.base_step if m_ack.status == "FILLED" else None),
+                            )
+                            leg.fallback_accounted_base_qty = m_ack.filled_base_qty
             batch.fallback_submitted = True
 
-        for leg in (batch.long_leg, batch.short_leg):
+        for leg in active_legs:
             if leg.fallback_coid is not None and leg.fallback_status not in TERMINAL_ORDER_STATUSES:
                 return "PENDING"
 
         self._active_dual_takers.pop(batch.position_id, None)
-        tot_l = batch.long_leg.filled_base_qty + batch.long_leg.fallback_filled_base_qty
-        tot_s = batch.short_leg.filled_base_qty + batch.short_leg.fallback_filled_base_qty
-        hi = max(tot_l, tot_s)
-        imbalanced = (
-            hi > Decimal("0")
-            and abs(tot_l - tot_s) > max(batch.long_leg.spec.base_step, batch.short_leg.spec.base_step)
-            and (abs(tot_l - tot_s) / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
-        )
-        if batch.fallback_submitted and imbalanced:
-            self.ledger.increment_unhedged_streak(now_s)
-            self.ledger.record_event(
-                "dual_taker_fallback_unhedged",
-                {"position_id": batch.position_id, "long_filled": str(tot_l), "short_filled": str(tot_s)},
-                now_s,
+        tot_l = (batch.long_leg.filled_base_qty + batch.long_leg.fallback_filled_base_qty) if batch.long_leg is not None else Decimal("0")
+        tot_s = (batch.short_leg.filled_base_qty + batch.short_leg.fallback_filled_base_qty) if batch.short_leg is not None else Decimal("0")
+        if batch.is_opening:
+            hi = max(tot_l, tot_s)
+            imbalanced = (
+                hi > Decimal("0")
+                and batch.long_leg is not None
+                and batch.short_leg is not None
+                and abs(tot_l - tot_s) > max(batch.long_leg.spec.base_step, batch.short_leg.spec.base_step)
+                and (abs(tot_l - tot_s) / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
             )
+            if batch.fallback_submitted and imbalanced:
+                self.ledger.increment_unhedged_streak(now_s)
+                self.ledger.record_event(
+                    "dual_taker_fallback_unhedged",
+                    {"position_id": batch.position_id, "long_filled": str(tot_l), "short_filled": str(tot_s)},
+                    now_s,
+                )
+            else:
+                self._slice_attempts[batch.position_id] = 0
         else:
-            self._slice_attempts[batch.position_id] = 0
+            shortfall = any(
+                leg.filled_base_qty + leg.fallback_filled_base_qty + leg.spec.base_step <= leg.target_base_qty
+                for leg in active_legs
+            )
+            if shortfall:
+                self.ledger.increment_unhedged_streak(now_s)
+                self.ledger.record_event(
+                    "dual_taker_close_fallback_shortfall",
+                    {"position_id": batch.position_id, "long_filled": str(tot_l), "short_filled": str(tot_s)},
+                    now_s,
+                )
+            else:
+                self._slice_attempts[batch.position_id] = 0
 
         self._maybe_finalize_position(batch.position_id, now_s=now_s)
-        return "FILLED"
+        return "FILLED" if (tot_l > 0 or tot_s > 0) else "UNFILLED"
 
     def on_maker_progress(
         self,
@@ -1133,7 +1317,38 @@ class CarryExecutionController:
                     )
                     self._slice_attempts.pop(pid, None)
                     continue
-                ok, _ = self._submit_next_slice(
+                if self._slice_attempts.get(pid, 0) >= self.runtime.maker_max_attempts:
+                    mid = Decimal("0.5") * (mid_l + mid_s)
+                    slice_usd = self._closing_slice_target_usd(
+                        rem_usd=rem * mid, spec_l=spec_l, spec_s=spec_s, mid=mid
+                    )
+                    aligned, _ = align_leg_quantities(
+                        spec_l,
+                        spec_s,
+                        target_usd=slice_usd,
+                        mid_price=mid,
+                        max_mismatch_pct=self.risk.max_qty_mismatch_pct,
+                    )
+                    if aligned is not None and cur_l > Decimal("0") and cur_s > Decimal("0"):
+                        close_l = min(cur_l, aligned.long_base_qty)
+                        close_s = min(cur_s, aligned.short_base_qty)
+                    else:
+                        close_l, close_s = cur_l, cur_s
+                    ok, _ = self._submit_dual_taker_close_slice(
+                        position_id=pid,
+                        pos=pos,
+                        spec_l=spec_l,
+                        spec_s=spec_s,
+                        close_l_base=close_l,
+                        close_s_base=close_s,
+                        leg_l_bid=bid_l,
+                        leg_s_ask=ask_s,
+                        now_s=now_s,
+                    )
+                    if ok:
+                        submitted.append(pid)
+                    continue
+                ok, err = self._submit_next_slice(
                     position_id=pid, is_opening=False, spec_l=spec_l, spec_s=spec_s,
                     leg_l_bid=bid_l, leg_l_ask=ask_l, leg_l_mid=mid_l,
                     leg_s_bid=bid_s, leg_s_ask=ask_s, leg_s_mid=mid_s,
@@ -1141,6 +1356,20 @@ class CarryExecutionController:
                 )
                 if ok:
                     submitted.append(pid)
+                elif err in ("min_lot_exceeds_target_usd", "target_below_coarse_step", "alignment_mismatch_exceeds_tolerance"):
+                    ok_tc, _ = self._submit_dual_taker_close_slice(
+                        position_id=pid,
+                        pos=pos,
+                        spec_l=spec_l,
+                        spec_s=spec_s,
+                        close_l_base=cur_l,
+                        close_s_base=cur_s,
+                        leg_l_bid=bid_l,
+                        leg_s_ask=ask_s,
+                        now_s=now_s,
+                    )
+                    if ok_tc:
+                        submitted.append(pid)
         return submitted
 
     def start_sliced_close(
@@ -1158,6 +1387,7 @@ class CarryExecutionController:
         if pos is None:
             return False
         if str(pos["status"]) != "CLOSING":
+            self._slice_attempts.pop(position_id, None)
             self.ledger.update_position_status(position_id, status="CLOSING", ts_s=now_s, close_reason=reason)
         return bool(self.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s))
 
@@ -1226,7 +1456,7 @@ class CarryExecutionController:
                         timed_out.append(coid)
 
         for batch in list(self._active_dual_takers.values()):
-            for leg in (batch.long_leg, batch.short_leg):
+            for leg in batch.active_legs():
                 if leg.status not in TERMINAL_ORDER_STATUSES:
                     ack = self._poll_and_update(
                         leg.client_order_id,
