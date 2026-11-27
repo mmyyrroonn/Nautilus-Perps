@@ -115,6 +115,7 @@ class EntryCandidate:
     basis_bps: float
     rt_cost_bps: float
     net_score_bps_h: float
+    entry_tax_bps: float = 0.0
 
 
 def _route_cat(v1: str, v2: str) -> str:
@@ -186,12 +187,12 @@ def _passes_split_and_market_sanity(leg_l: LegMarketInfo, leg_s: LegMarketInfo, 
 
 
 def _cex_entry_blackout_hit(leg_l: LegMarketInfo, leg_s: LegMarketInfo, policy: CarryPolicy, now_s: int) -> bool:
-    """Avoid entering right before an 8h CEX settlement if that CEX leg is paying funding."""
+    """Avoid entering right before a multi-hour CEX settlement if that CEX leg is paying funding."""
     win_s = policy.cex_entry_blackout_before_settle_mins * 60
     if win_s <= 0:
         return False
     for leg, is_long in ((leg_l, True), (leg_s, False)):
-        if leg.venue not in CEX_VENUES or leg.interval_h < 4 or leg.next_settle_ts <= 0:
+        if leg.venue not in CEX_VENUES or leg.interval_h < 2 or leg.next_settle_ts <= 0:
             continue
         if leg.next_settle_ts <= now_s:
             return True
@@ -202,6 +203,51 @@ def _cex_entry_blackout_hit(leg_l: LegMarketInfo, leg_s: LegMarketInfo, policy: 
             if leg_paying:
                 return True
     return False
+
+
+def estimate_first_settle_entry_tax_bps(leg_l: LegMarketInfo, leg_s: LegMarketInfo, now_s: int) -> float:
+    """Estimate adverse first-settlement cashflow imbalance ('entry tax') across differing/mid-cycle intervals."""
+    max_tax = 0.0
+    for pay_leg, pay_is_long, other_leg, other_is_long in (
+        (leg_l, True, leg_s, False),
+        (leg_s, False, leg_l, True),
+    ):
+        pay_iv = int(pay_leg.interval_h)
+        if pay_iv < 2 or pay_leg.next_settle_ts <= now_s:
+            continue
+        pay_rate = pay_leg.current_rate_bps_h if pay_leg.current_rate_bps_h is not None else pay_leg.r8_bps_h
+        other_rate = other_leg.current_rate_bps_h if other_leg.current_rate_bps_h is not None else other_leg.r8_bps_h
+        if pay_rate is None or other_rate is None:
+            continue
+        pay_is_paying = (pay_rate > 0.0) if pay_is_long else (pay_rate < 0.0)
+        if not pay_is_paying:
+            continue
+
+        pay_lump_bps = abs(float(pay_rate)) * float(pay_iv)
+        other_iv = max(1, int(other_leg.interval_h))
+        other_step_s = other_iv * 3600
+        if other_leg.next_settle_ts > now_s:
+            first_other_ts = int(other_leg.next_settle_ts)
+        elif other_leg.next_settle_ts > 0:
+            steps_past = ((now_s - int(other_leg.next_settle_ts)) // other_step_s) + 1
+            first_other_ts = int(other_leg.next_settle_ts) + steps_past * other_step_s
+        else:
+            first_other_ts = ((int(now_s) // other_step_s) + 1) * other_step_s
+
+        n_other = (
+            0
+            if first_other_ts > pay_leg.next_settle_ts
+            else (1 + (int(pay_leg.next_settle_ts) - first_other_ts) // other_step_s)
+        )
+        other_signed_bps_h = (-float(other_rate)) if other_is_long else float(other_rate)
+        other_leg_window_bps = float(n_other) * other_signed_bps_h * float(other_iv)
+        first_window_net_bps = other_leg_window_bps - pay_lump_bps
+
+        different_interval = pay_iv != other_iv
+        partial_cycle = (int(pay_leg.next_settle_ts) - int(now_s)) < (pay_iv * 3600)
+        if first_window_net_bps < 0.0 and (different_interval or partial_cycle):
+            max_tax = max(max_tax, -first_window_net_bps)
+    return max_tax
 
 
 def evaluate_entry_candidates(
@@ -272,8 +318,11 @@ def evaluate_entry_candidates(
                         continue
                     if _cex_entry_blackout_hit(leg_l, leg_s, policy, now_s):
                         continue
+                    entry_tax_bps = estimate_first_settle_entry_tax_bps(leg_l, leg_s, now_s)
+                    if entry_tax_bps > 0.0 and min(c8, c24) * policy.min_hold_h <= entry_tax_bps:
+                        continue
                     rt_cost = float(policy.fee_pair_rt_bps(lv, sv))
-                    score = min(c8, c24) - rt_cost / 24.0
+                    score = min(c8, c24) - (rt_cost + entry_tax_bps) / 24.0
                     if score <= 0:
                         continue
                     candidates.append(
@@ -289,6 +338,7 @@ def evaluate_entry_candidates(
                             basis_bps=basis,
                             rt_cost_bps=rt_cost,
                             net_score_bps_h=score,
+                            entry_tax_bps=entry_tax_bps,
                         )
                     )
 
@@ -396,11 +446,11 @@ def should_exit_carry_decay(
     if c8 >= float(policy.exit_carry_8h_bps_h):
         return False, "carry_healthy"
 
-    # Defer normal carry_decay exit if a 4h/8h CEX leg is due to RECEIVE funding within 20 minutes
+    # Defer normal carry_decay exit if a >=2h CEX leg is due to RECEIVE funding within defer window
     defer_s = policy.cex_exit_defer_before_settle_mins * 60
     if defer_s > 0:
         for leg, is_long in ((leg_l, True), (leg_s, False)):
-            if leg.venue not in CEX_VENUES or leg.interval_h < 4 or leg.next_settle_ts <= now_s:
+            if leg.venue not in CEX_VENUES or leg.interval_h < 2 or leg.next_settle_ts <= now_s:
                 continue
             if leg.next_settle_ts - now_s <= defer_s:
                 rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else (leg.r8_bps_h or 0.0)

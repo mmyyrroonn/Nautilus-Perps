@@ -8,7 +8,11 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
+
+
+_MAKER_ORDER_ROLES = frozenset({"MAKER_OPEN", "MAKER_CLOSE"})
+_PNL_QUANT = Decimal("0.0001")
 
 
 class LedgerOwnershipError(RuntimeError):
@@ -185,6 +189,9 @@ class CarryLedger:
                     target_base_qty TEXT NOT NULL,
                     long_base_qty TEXT NOT NULL,
                     short_base_qty TEXT NOT NULL,
+                    price_pnl_usd TEXT NOT NULL DEFAULT '0',
+                    funding_pnl_usd TEXT NOT NULL DEFAULT '0',
+                    fee_usd TEXT NOT NULL DEFAULT '0',
                     realized_pnl_usd TEXT NOT NULL DEFAULT '0',
                     close_reason TEXT
                 );
@@ -202,8 +209,23 @@ class CarryLedger:
                     status TEXT NOT NULL,
                     filled_base_qty TEXT NOT NULL DEFAULT '0',
                     venue_order_id TEXT,
+                    fee_usd TEXT,
                     created_ts INTEGER NOT NULL,
                     updated_ts INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS funding_settlements (
+                    position_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    venue TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    settle_ts INTEGER NOT NULL,
+                    rate_bps REAL NOT NULL,
+                    base_qty TEXT NOT NULL,
+                    mark_price REAL NOT NULL,
+                    funding_usd TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    recorded_ts INTEGER NOT NULL,
+                    PRIMARY KEY (position_id, venue, settle_ts)
                 );
                 CREATE TABLE IF NOT EXISTS events (
                     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,6 +244,17 @@ class CarryLedger:
                 );
                 """
             )
+            pos_cols = {str(r["name"]) for r in self.conn.execute("PRAGMA table_info(positions)").fetchall()}
+            for col_name, col_def in (
+                ("price_pnl_usd", "TEXT NOT NULL DEFAULT '0'"),
+                ("funding_pnl_usd", "TEXT NOT NULL DEFAULT '0'"),
+                ("fee_usd", "TEXT NOT NULL DEFAULT '0'"),
+            ):
+                if col_name not in pos_cols:
+                    self.conn.execute(f"ALTER TABLE positions ADD COLUMN {col_name} {col_def}")
+            ord_cols = {str(r["name"]) for r in self.conn.execute("PRAGMA table_info(orders)").fetchall()}
+            if "fee_usd" not in ord_cols:
+                self.conn.execute("ALTER TABLE orders ADD COLUMN fee_usd TEXT")
             cols_after = {str(r["name"]) for r in self.conn.execute("PRAGMA table_info(meta)").fetchall()}
             if "ledger_domain" not in cols_after:
                 self.conn.execute("ALTER TABLE meta ADD COLUMN ledger_domain TEXT")
@@ -343,6 +376,9 @@ class CarryLedger:
         ts_s: int,
         long_base_qty: Decimal | None = None,
         short_base_qty: Decimal | None = None,
+        price_pnl_usd: Decimal | None = None,
+        funding_pnl_usd: Decimal | None = None,
+        fee_usd: Decimal | None = None,
         realized_pnl_usd: Decimal | None = None,
         close_reason: str | None = None,
     ) -> None:
@@ -352,15 +388,30 @@ class CarryLedger:
                 raise KeyError(f"unknown position_id {position_id}")
             new_l = str(long_base_qty) if long_base_qty is not None else row["long_base_qty"]
             new_s = str(short_base_qty) if short_base_qty is not None else row["short_base_qty"]
+            new_price_pnl = str(price_pnl_usd) if price_pnl_usd is not None else row["price_pnl_usd"]
+            new_funding_pnl = str(funding_pnl_usd) if funding_pnl_usd is not None else row["funding_pnl_usd"]
+            new_fee = str(fee_usd) if fee_usd is not None else row["fee_usd"]
             new_pnl = str(realized_pnl_usd) if realized_pnl_usd is not None else row["realized_pnl_usd"]
             closed_ts = ts_s if status == "CLOSED" else row["closed_ts"]
             self.conn.execute(
                 """
                 UPDATE positions
-                SET status=?, long_base_qty=?, short_base_qty=?, realized_pnl_usd=?, closed_ts=?, close_reason=COALESCE(?, close_reason)
+                SET status=?, long_base_qty=?, short_base_qty=?, price_pnl_usd=?, funding_pnl_usd=?, fee_usd=?,
+                    realized_pnl_usd=?, closed_ts=?, close_reason=COALESCE(?, close_reason)
                 WHERE position_id=?
                 """,
-                (status, new_l, new_s, new_pnl, closed_ts, close_reason, position_id),
+                (
+                    status,
+                    new_l,
+                    new_s,
+                    new_price_pnl,
+                    new_funding_pnl,
+                    new_fee,
+                    new_pnl,
+                    closed_ts,
+                    close_reason,
+                    position_id,
+                ),
             )
             if status == "CLOSED" and row["status"] != "CLOSED" and realized_pnl_usd is not None:
                 day = _utc_day(ts_s)
@@ -429,19 +480,45 @@ class CarryLedger:
         filled_base_qty: Decimal | None = None,
         fill_price: Decimal | None = None,
         venue_order_id: str | None = None,
+        fee_usd: Decimal | None = None,
         ts_s: int = 0,
     ) -> None:
         with self.conn:
-            row = self.conn.execute("SELECT filled_base_qty, price, venue_order_id FROM orders WHERE client_order_id=?", (client_order_id,)).fetchone()
+            row = self.conn.execute(
+                "SELECT filled_base_qty, price, venue_order_id, fee_usd FROM orders WHERE client_order_id=?",
+                (client_order_id,),
+            ).fetchone()
             if row is None:
                 raise KeyError(f"unknown order {client_order_id}")
             new_filled = str(filled_base_qty) if filled_base_qty is not None else row["filled_base_qty"]
             new_price = str(fill_price) if fill_price is not None else row["price"]
             new_vid = venue_order_id if venue_order_id is not None else row["venue_order_id"]
+            new_fee = str(max(Decimal("0"), fee_usd)) if fee_usd is not None else row["fee_usd"]
             self.conn.execute(
-                "UPDATE orders SET status=?, filled_base_qty=?, price=?, venue_order_id=?, updated_ts=? WHERE client_order_id=?",
-                (status, new_filled, new_price, new_vid, ts_s, client_order_id),
+                "UPDATE orders SET status=?, filled_base_qty=?, price=?, venue_order_id=?, fee_usd=?, updated_ts=? WHERE client_order_id=?",
+                (status, new_filled, new_price, new_vid, new_fee, ts_s, client_order_id),
             )
+
+    def set_order_fee_usd(
+        self,
+        client_order_id: str,
+        fee_usd: Decimal | None,
+        *,
+        ts_s: int | None = None,
+    ) -> None:
+        """Persist or clear an order's realized commission in USD (no-op if unknown)."""
+        val = str(max(Decimal("0"), fee_usd)) if fee_usd is not None else None
+        with self.conn:
+            if ts_s is not None:
+                self.conn.execute(
+                    "UPDATE orders SET fee_usd=?, updated_ts=? WHERE client_order_id=?",
+                    (val, ts_s, client_order_id),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE orders SET fee_usd=? WHERE client_order_id=?",
+                    (val, client_order_id),
+                )
 
     def stop_loss_cooldown_symbols(self, *, now_s: int, cooldown_hours: int) -> set[str]:
         """Return symbols closed by basis_stop, margin_guard, or unhedged within the cooldown window."""
@@ -523,7 +600,109 @@ class CarryLedger:
                 pnl += filled * (px - cost_l)
             elif str(row["instrument_id"]) == iid_short and str(row["side"]) == "BUY":
                 pnl += filled * (cost_s - px)
-        return pnl.quantize(Decimal("0.0001"))
+        return pnl.quantize(_PNL_QUANT)
+
+    def compute_position_fee_usd(
+        self,
+        position_id: str,
+        *,
+        maker_fee_bps_by_venue: Mapping[str, Decimal] | Sequence[tuple[str, Decimal]],
+        taker_fee_bps_by_venue: Mapping[str, Decimal] | Sequence[tuple[str, Decimal]],
+    ) -> Decimal:
+        """Compute non-negative total fee in USD from recorded order fees or Maker/Taker fee schedules."""
+        maker_map = {str(k): Decimal(str(v)) for k, v in dict(maker_fee_bps_by_venue).items()}
+        taker_map = {str(k): Decimal(str(v)) for k, v in dict(taker_fee_bps_by_venue).items()}
+        rows = self.conn.execute(
+            "SELECT venue, role, filled_base_qty, price, fee_usd FROM orders WHERE position_id=?",
+            (position_id,),
+        ).fetchall()
+        total = Decimal("0")
+        for row in rows:
+            filled = Decimal(str(row["filled_base_qty"]))
+            if filled <= 0:
+                continue
+            raw_fee = row["fee_usd"]
+            if raw_fee is not None and str(raw_fee).strip() != "":
+                total += max(Decimal("0"), Decimal(str(raw_fee)))
+            elif row["price"] is not None:
+                px = Decimal(str(row["price"]))
+                venue = str(row["venue"])
+                role = str(row["role"])
+                fee_bps = maker_map.get(venue, Decimal("0")) if role in _MAKER_ORDER_ROLES else taker_map.get(venue, Decimal("0"))
+                total += (filled * px * fee_bps) / Decimal("10000")
+        return total.quantize(_PNL_QUANT)
+
+    def compute_position_funding_pnl(self, position_id: str) -> Decimal:
+        """Sum persisted realized funding settlements in USD for a position."""
+        rows = self.conn.execute(
+            "SELECT funding_usd FROM funding_settlements WHERE position_id=?",
+            (position_id,),
+        ).fetchall()
+        total = sum((Decimal(str(r["funding_usd"])) for r in rows), Decimal("0"))
+        return total.quantize(_PNL_QUANT)
+
+    def get_position_funding_pnl(self, position_id: str) -> Decimal:
+        """Read current persisted funding_pnl_usd on a position row."""
+        row = self.conn.execute(
+            "SELECT funding_pnl_usd FROM positions WHERE position_id=?",
+            (position_id,),
+        ).fetchone()
+        if row is None or row["funding_pnl_usd"] is None:
+            return Decimal("0").quantize(_PNL_QUANT)
+        return Decimal(str(row["funding_pnl_usd"])).quantize(_PNL_QUANT)
+
+    def record_funding_settlement(
+        self,
+        *,
+        position_id: str,
+        symbol: str,
+        venue: str,
+        side: str,
+        settle_ts: int,
+        rate_bps: float,
+        base_qty: Decimal,
+        mark_price: float,
+        source: str,
+        recorded_ts: int,
+    ) -> bool:
+        """Idempotently record one funding settlement (rate_bps > 0 means longs pay shorts)."""
+        side_norm = side.upper()
+        if side_norm not in ("LONG", "SHORT"):
+            raise ValueError(f"invalid funding settlement side: {side!r}")
+        if base_qty <= 0 or mark_price <= 0:
+            return False
+        raw_usd = (Decimal(str(rate_bps)) / Decimal("10000")) * base_qty * Decimal(str(mark_price))
+        funding_usd = (-raw_usd if side_norm == "LONG" else raw_usd).quantize(_PNL_QUANT)
+        with self.conn:
+            cur = self.conn.execute(
+                """
+                INSERT OR IGNORE INTO funding_settlements(
+                    position_id, symbol, venue, side, settle_ts, rate_bps,
+                    base_qty, mark_price, funding_usd, source, recorded_ts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    position_id,
+                    symbol.upper(),
+                    venue.upper(),
+                    side_norm,
+                    int(settle_ts),
+                    float(rate_bps),
+                    str(base_qty),
+                    float(mark_price),
+                    str(funding_usd),
+                    source,
+                    int(recorded_ts),
+                ),
+            )
+            if cur.rowcount <= 0:
+                return False
+            total_funding = self.compute_position_funding_pnl(position_id)
+            self.conn.execute(
+                "UPDATE positions SET funding_pnl_usd=? WHERE position_id=?",
+                (str(total_funding), position_id),
+            )
+            return True
 
     def active_positions(self) -> dict[str, dict[str, Any]]:
         rows = self.conn.execute("SELECT * FROM positions WHERE status != 'CLOSED'").fetchall()

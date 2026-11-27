@@ -20,6 +20,7 @@ class OrderAck:
     filled_base_qty: Decimal = Decimal("0")
     avg_fill_price: Decimal | None = None
     reason: str | None = None
+    fee_usd: Decimal | None = None
 
 
 class VenueGateway(Protocol):
@@ -548,12 +549,7 @@ class CarryExecutionController:
                         close_reason="shutdown_aborted",
                     )
                 elif status == "CLOSING":
-                    self.ledger.update_position_status(
-                        pid,
-                        status="CLOSED",
-                        ts_s=now_s,
-                        realized_pnl_usd=self.ledger.compute_position_price_pnl(pid),
-                    )
+                    self._finalize_closed_position(pid, now_s=now_s)
                 else:
                     self.ledger.update_position_status(
                         pid,
@@ -683,6 +679,7 @@ class CarryExecutionController:
             filled_base_qty=ack.filled_base_qty,
             fill_price=fill_price,
             venue_order_id=ack.venue_order_id or None,
+            fee_usd=ack.fee_usd,
             ts_s=now_s,
         )
 
@@ -739,6 +736,32 @@ class CarryExecutionController:
         )
         return new_l, new_s
 
+    def _finalize_closed_position(
+        self,
+        position_id: str,
+        *,
+        now_s: int,
+        close_reason: str | None = None,
+    ) -> None:
+        price_pnl = self.ledger.compute_position_price_pnl(position_id)
+        funding_pnl = self.ledger.get_position_funding_pnl(position_id)
+        fee_usd = self.ledger.compute_position_fee_usd(
+            position_id,
+            maker_fee_bps_by_venue=self.policy.maker_fee_bps_by_venue,
+            taker_fee_bps_by_venue=self.policy.taker_fee_bps_by_venue,
+        )
+        net_pnl = (price_pnl + funding_pnl - fee_usd).quantize(Decimal("0.0001"))
+        self.ledger.update_position_status(
+            position_id,
+            status="CLOSED",
+            ts_s=now_s,
+            price_pnl_usd=price_pnl,
+            funding_pnl_usd=funding_pnl,
+            fee_usd=fee_usd,
+            realized_pnl_usd=net_pnl,
+            close_reason=close_reason,
+        )
+
     def _maybe_finalize_position(
         self,
         position_id: str,
@@ -770,14 +793,7 @@ class CarryExecutionController:
                 self._slice_attempts.pop(position_id, None)
         elif status == "CLOSING":
             if cur_l <= Decimal("0") and cur_s <= Decimal("0"):
-                rpnl = self.ledger.compute_position_price_pnl(position_id)
-                self.ledger.update_position_status(
-                    position_id,
-                    status="CLOSED",
-                    ts_s=now_s,
-                    realized_pnl_usd=rpnl,
-                    close_reason=close_reason,
-                )
+                self._finalize_closed_position(position_id, now_s=now_s, close_reason=close_reason)
                 self._slice_attempts.pop(position_id, None)
 
     def _is_position_imbalanced(
@@ -1742,12 +1758,7 @@ class CarryExecutionController:
             elif status == "CLOSING":
                 rem = max(cur_l, cur_s)
                 if rem <= Decimal("0"):
-                    self.ledger.update_position_status(
-                        pid,
-                        status="CLOSED",
-                        ts_s=now_s,
-                        realized_pnl_usd=self.ledger.compute_position_price_pnl(pid),
-                    )
+                    self._finalize_closed_position(pid, now_s=now_s)
                     self._slice_attempts.pop(pid, None)
                     continue
                 if self._slice_attempts.get(pid, 0) >= self.runtime.maker_max_attempts:

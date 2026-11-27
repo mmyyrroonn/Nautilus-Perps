@@ -617,6 +617,7 @@ class PublicCarryFeed:
             iv = live_iv
         if leg.venue == "OKX" and raw_fr is not None:
             cur_rate_bps_h = raw_fr * 1e4 / max(1, iv)
+        sorted_settles = tuple(sorted({int(ts): float(val) for ts, val in settle_events}.items()))
         entry = {
             "fetched_ts": now_s,
             "r8": r8,
@@ -626,6 +627,7 @@ class PublicCarryFeed:
             "next_settle_ts": nxt_settle,
             "prev_1h_price": prev_1h,
             "vol1h_usd": vol1h,
+            "settle_events": sorted_settles,
         }
         enriched = LegMarketInfo(
             **{
@@ -655,6 +657,13 @@ class PublicCarryFeed:
         enriched, entry = self._fetch_leg_detail_uncached(leg, now_s, okx_bulk_funding=okx_bulk_funding)
         self._detail_cache[key] = entry
         return enriched
+
+    def recent_settlements(self, venue: str, symbol: str) -> tuple[tuple[int, float], ...]:
+        """Return cached (settle_ts, rate_bps) history events for (venue, symbol)."""
+        cached = self._detail_cache.get((venue.upper(), symbol.upper()))
+        if not cached:
+            return ()
+        return tuple(cached.get("settle_events", ()))
 
     def poll_snapshot(
         self,
