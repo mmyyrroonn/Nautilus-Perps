@@ -1,11 +1,13 @@
 """Read-only public REST slow-layer aggregator for HL, Lighter, OKX, and Bybit."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import inspect
 import json
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -14,10 +16,14 @@ HOUR = 3600
 HOUR_MS = 3_600_000
 
 HL_INFO_URL = "https://api.hyperliquid.xyz/info"
+HL_TESTNET_INFO_URL = "https://api.hyperliquid-testnet.xyz/info"
 LIGHTER_BASE = "https://mainnet.zklighter.elliot.ai"
+LIGHTER_TESTNET_BASE = "https://testnet.zklighter.elliot.ai"
 OKX_BASE = "https://www.okx.com"
 BYBIT_BASE = "https://api.bybit.com"
+BYBIT_TESTNET_BASE = "https://api-testnet.bybit.com"
 USER_AGENT = "Mozilla/5.0 (compatible; NautilusPerpsCarry/1.0)"
+_VALID_INTERVALS_H = frozenset({1, 2, 4, 8})
 
 # Lighter RWA / equity / commodity tickers so asset_class separates Crypto vs RWA cleanly.
 KNOWN_RWA_SYMBOLS = frozenset({
@@ -31,14 +37,66 @@ KNOWN_RWA_SYMBOLS = frozenset({
 })
 
 
-def default_http_json(url: str, body: dict | None = None, *, timeout: float = 12.0) -> Any:
+def default_http_json(
+    url: str,
+    body: dict | None = None,
+    *,
+    timeout: float = 12.0,
+    headers: Mapping[str, str] | None = None,
+) -> Any:
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    req_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    if headers:
+        req_headers.update(headers)
     if data is not None:
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers)
+        req_headers.setdefault("Content-Type", "application/json")
+    req = urllib.request.Request(url, data=data, headers=req_headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
+
+
+def _callable_accepts_headers(fn: Callable[..., Any]) -> bool:
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if param.name == "headers" and param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+    return False
+
+
+def _parse_okx_funding_row(row: Any) -> tuple[float | None, int | None, int | None]:
+    """Extract (raw_funding_rate, interval_h, next_settle_ts) from an OKX funding-rate item."""
+    if not isinstance(row, dict):
+        return None, None, None
+    fr_val = row.get("fundingRate")
+    raw_fr: float | None = None
+    if fr_val not in (None, ""):
+        try:
+            raw_fr = float(fr_val)
+        except (TypeError, ValueError):
+            raw_fr = None
+    try:
+        funding_ms = int(row.get("fundingTime") or 0)
+    except (TypeError, ValueError):
+        funding_ms = 0
+    try:
+        next_ms = int(row.get("nextFundingTime") or 0)
+    except (TypeError, ValueError):
+        next_ms = 0
+    nxt_settle = (funding_ms // 1000) if funding_ms > 0 else None
+    live_iv: int | None = None
+    if next_ms > funding_ms > 0:
+        cand_iv = round((next_ms - funding_ms) / HOUR_MS)
+        if cand_iv in _VALID_INTERVALS_H:
+            live_iv = cand_iv
+    return raw_fr, live_iv, nxt_settle
 
 
 @dataclass(frozen=True)
@@ -229,13 +287,23 @@ def parse_bybit_tickers(
 
 
 def parse_okx_tickers(
-    inst_payload: Any, tickers_payload: Any, *, now_s: int = 0
+    inst_payload: Any,
+    tickers_payload: Any,
+    funding_payload: Any = None,
+    *,
+    now_s: int = 0,
 ) -> dict[str, LegMarketInfo]:
     """Normalize OKX SWAP instruments + tickers (volCcy24h * last = USD quote volume)."""
     live_ids: set[str] = set()
     for d in (inst_payload.get("data", []) if isinstance(inst_payload, dict) else []):
         if d.get("state") == "live" and d.get("settleCcy") == "USDT" and str(d.get("instId", "")).endswith("-USDT-SWAP"):
             live_ids.add(str(d["instId"]))
+
+    funding_by_raw: dict[str, tuple[float | None, int | None, int | None]] = {}
+    if isinstance(funding_payload, dict):
+        for row in funding_payload.get("data", []):
+            if isinstance(row, dict) and row.get("instId"):
+                funding_by_raw[str(row["instId"])] = _parse_okx_funding_row(row)
 
     out: dict[str, LegMarketInfo] = {}
     for t in (tickers_payload.get("data", []) if isinstance(tickers_payload, dict) else []):
@@ -250,6 +318,19 @@ def parse_okx_tickers(
         ask = float(t.get("askPx") or last or 0.0)
         if last <= 0 or bid <= 0 or ask <= 0:
             continue
+        iv = 8
+        nxt_settle = next_hourly_settle_ts(now_s, 8)
+        cur_rate_bps_h: float | None = None
+        if raw in funding_by_raw:
+            raw_fr, live_iv, nxt_from_fr = funding_by_raw[raw]
+            if live_iv is not None:
+                iv = live_iv
+            if nxt_from_fr is not None:
+                nxt_settle = nxt_from_fr
+            elif live_iv is not None:
+                nxt_settle = next_hourly_settle_ts(now_s, iv)
+            if raw_fr is not None:
+                cur_rate_bps_h = raw_fr * 1e4 / max(1, iv)
         # OKX SWAP volCcy24h is denominated in base currency (coin units)
         vol24_usd = float(t.get("volCcy24h") or 0.0) * last
         out[sym] = LegMarketInfo(
@@ -258,11 +339,11 @@ def parse_okx_tickers(
             raw_symbol=raw,
             instrument_id=f"{raw}.OKX",
             asset_class=classify_asset(sym),
-            interval_h=8,
-            next_settle_ts=next_hourly_settle_ts(now_s, 8),
+            interval_h=iv,
+            next_settle_ts=nxt_settle,
             r8_bps_h=None,
             r24_bps_h=None,
-            current_rate_bps_h=None,
+            current_rate_bps_h=cur_rate_bps_h,
             mark_price=0.5 * (bid + ask),
             prev_1h_price=None,
             bid=bid,
@@ -300,29 +381,60 @@ class PublicCarryFeed:
     def __init__(
         self,
         venues: tuple[str, ...] = ("HL", "LIGHTER", "OKX", "BYBIT"),
-        http_get: Callable[[str, dict | None], Any] = default_http_json,
+        http_get: Callable[..., Any] = default_http_json,
         *,
+        environment: str = "mainnet",
         max_detail_refreshes_per_cycle: int = 35,
+        detail_max_workers: int = 4,
     ) -> None:
+        if environment not in ("mainnet", "testnet"):
+            raise ValueError(f"unsupported environment: {environment!r}")
         self.venues = venues
+        self.environment = environment
+        is_main = environment == "mainnet"
+        self._hl_info_url = HL_INFO_URL if is_main else HL_TESTNET_INFO_URL
+        self._lighter_base = LIGHTER_BASE if is_main else LIGHTER_TESTNET_BASE
+        self._bybit_base = BYBIT_BASE if is_main else BYBIT_TESTNET_BASE
+        self._okx_base = OKX_BASE
+        self._okx_headers: dict[str, str] | None = None if is_main else {"x-simulated-trading": "1"}
         self._http = http_get
+        self._http_accepts_headers = _callable_accepts_headers(http_get)
         self._max_detail_refreshes = max_detail_refreshes_per_cycle
+        self._detail_max_workers = max(1, int(detail_max_workers))
         self._okx_inst_cache: Any = None
         self._okx_inst_ts: int = 0
         self._byb_iv_cache: dict[str, int] = {}
         self._byb_iv_ts: int = 0
         self._detail_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._last_detail_attempt_ts: dict[str, int] = {}
+
+    def _request(
+        self,
+        url: str,
+        body: dict | None = None,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> Any:
+        if headers and self._http_accepts_headers:
+            return self._http(url, body, headers=dict(headers))
+        return self._http(url, body)
 
     def _refresh_venue_metadata(self, now_s: int) -> None:
         if "OKX" in self.venues and (self._okx_inst_cache is None or now_s - self._okx_inst_ts >= 3600):
             try:
-                self._okx_inst_cache = self._http(f"{OKX_BASE}/api/v5/public/instruments?instType=SWAP", None)
+                self._okx_inst_cache = self._request(
+                    f"{self._okx_base}/api/v5/public/instruments?instType=SWAP",
+                    None,
+                    headers=self._okx_headers,
+                )
                 self._okx_inst_ts = now_s
             except Exception:
                 pass
         if "BYBIT" in self.venues and (not self._byb_iv_cache or now_s - self._byb_iv_ts >= 3600):
             try:
-                res = self._http(f"{BYBIT_BASE}/v5/market/instruments-info?category=linear&limit=1000", None).get("result", {})
+                res = self._request(f"{self._bybit_base}/v5/market/instruments-info?category=linear&limit=1000", None).get(
+                    "result", {}
+                )
                 for d in res.get("list", []):
                     if d.get("fundingInterval"):
                         self._byb_iv_cache[str(d["symbol"])] = max(1, round(int(d["fundingInterval"]) / 60))
@@ -330,28 +442,49 @@ class PublicCarryFeed:
             except Exception:
                 pass
 
-    def _fetch_leg_detail(self, leg: LegMarketInfo, now_s: int) -> LegMarketInfo:
-        """Fetch trailing 24h settlements & latest 2h 1h-candles for one overlapping leg."""
-        key = (leg.venue, leg.symbol)
-        cached = self._detail_cache.get(key)
-        # Re-use cached trailing settlements/candles for 5 minutes unless near a new hour
-        if cached and now_s - cached["fetched_ts"] < 300:
-            r8, r24, iv = cached["r8"], cached["r24"], cached["iv"]
-            nxt = cached.get("next_settle_ts") or leg.next_settle_ts
-            cur_rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else cached.get("current_rate_bps_h")
-            return LegMarketInfo(
-                **{
-                    **leg.__dict__,
-                    "r8_bps_h": r8,
-                    "r24_bps_h": r24,
-                    "current_rate_bps_h": cur_rate,
-                    "interval_h": iv,
-                    "next_settle_ts": nxt,
-                    "prev_1h_price": cached.get("prev_1h_price", leg.prev_1h_price),
-                    "vol1h_usd": cached.get("vol1h_usd"),
-                }
-            )
+    def _is_detail_fresh(self, venue: str, symbol: str, now_s: int) -> bool:
+        cached = self._detail_cache.get((venue, symbol))
+        return cached is not None and now_s - cached["fetched_ts"] < 300
 
+    def _apply_cached_detail(
+        self,
+        leg: LegMarketInfo,
+        cached: Mapping[str, Any],
+        *,
+        okx_bulk_funding: Mapping[str, tuple[float | None, int | None, int | None]] | None = None,
+    ) -> LegMarketInfo:
+        r8, r24, iv = cached["r8"], cached["r24"], cached["iv"]
+        nxt = cached.get("next_settle_ts") or leg.next_settle_ts
+        cur_rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else cached.get("current_rate_bps_h")
+        if leg.venue == "OKX" and okx_bulk_funding and leg.raw_symbol in okx_bulk_funding:
+            b_raw_fr, b_live_iv, b_nxt = okx_bulk_funding[leg.raw_symbol]
+            if b_live_iv is not None:
+                iv = b_live_iv
+            if b_nxt is not None:
+                nxt = b_nxt
+            if b_raw_fr is not None:
+                cur_rate = b_raw_fr * 1e4 / max(1, iv)
+        return LegMarketInfo(
+            **{
+                **leg.__dict__,
+                "r8_bps_h": r8,
+                "r24_bps_h": r24,
+                "current_rate_bps_h": cur_rate,
+                "interval_h": iv,
+                "next_settle_ts": nxt,
+                "prev_1h_price": cached.get("prev_1h_price", leg.prev_1h_price),
+                "vol1h_usd": cached.get("vol1h_usd"),
+            }
+        )
+
+    def _fetch_leg_detail_uncached(
+        self,
+        leg: LegMarketInfo,
+        now_s: int,
+        *,
+        okx_bulk_funding: Mapping[str, tuple[float | None, int | None, int | None]] | None = None,
+    ) -> tuple[LegMarketInfo, dict[str, Any]]:
+        """Fetch trailing 24h settlements & latest 2h 1h-candles without mutating shared cache."""
         start_s = now_s - 28 * HOUR
         settle_events: list[tuple[int, float]] = []
         prev_1h: float | None = leg.prev_1h_price
@@ -359,12 +492,27 @@ class PublicCarryFeed:
         nxt_settle = leg.next_settle_ts
         cur_rate_bps_h: float | None = leg.current_rate_bps_h
         live_iv: int | None = None
+        raw_fr: float | None = None
 
         if leg.venue == "HL":
-            rows = self._http(HL_INFO_URL, {"type": "fundingHistory", "coin": leg.raw_symbol, "startTime": start_s * 1000, "endTime": now_s * 1000})
+            rows = self._request(
+                self._hl_info_url,
+                {"type": "fundingHistory", "coin": leg.raw_symbol, "startTime": start_s * 1000, "endTime": now_s * 1000},
+            )
             if isinstance(rows, list):
                 settle_events = [((int(r["time"]) // HOUR_MS) * HOUR, float(r["fundingRate"]) * 1e4) for r in rows]
-            crows = self._http(HL_INFO_URL, {"type": "candleSnapshot", "req": {"coin": leg.raw_symbol, "interval": "1h", "startTime": (now_s - 3 * HOUR) * 1000, "endTime": now_s * 1000}})
+            crows = self._request(
+                self._hl_info_url,
+                {
+                    "type": "candleSnapshot",
+                    "req": {
+                        "coin": leg.raw_symbol,
+                        "interval": "1h",
+                        "startTime": (now_s - 3 * HOUR) * 1000,
+                        "endTime": now_s * 1000,
+                    },
+                },
+            )
             if isinstance(crows, list) and len(crows) >= 2:
                 crows = sorted(crows, key=lambda r: int(r["t"]))
                 prev_1h = float(crows[-2]["c"])
@@ -373,11 +521,17 @@ class PublicCarryFeed:
                 vol1h = float(crows[0]["v"]) * float(crows[0]["c"])
 
         elif leg.venue == "LIGHTER" and leg.market_id is not None:
-            fp = self._http(f"{LIGHTER_BASE}/api/v1/fundings?market_id={leg.market_id}&resolution=1h&start_timestamp={start_s}&end_timestamp={now_s}&count_back=40", None)
+            fp = self._request(
+                f"{self._lighter_base}/api/v1/fundings?market_id={leg.market_id}&resolution=1h&start_timestamp={start_s}&end_timestamp={now_s}&count_back=40",
+                None,
+            )
             for r in (fp.get("fundings", []) if isinstance(fp, dict) else []):
                 val = abs(float(r["rate"])) * 1e2
                 settle_events.append(((int(r["timestamp"]) // HOUR) * HOUR, val if r["direction"] == "long" else -val))
-            cp = self._http(f"{LIGHTER_BASE}/api/v1/candles?market_id={leg.market_id}&resolution=1h&start_timestamp={now_s - 3 * HOUR}&end_timestamp={now_s}&count_back=5&set_timestamp_to_end=false", None)
+            cp = self._request(
+                f"{self._lighter_base}/api/v1/candles?market_id={leg.market_id}&resolution=1h&start_timestamp={now_s - 3 * HOUR}&end_timestamp={now_s}&count_back=5&set_timestamp_to_end=false",
+                None,
+            )
             crows = sorted((cp.get("c", []) if isinstance(cp, dict) else []), key=lambda r: int(r["t"]))
             if crows:
                 last_c = crows[-1]
@@ -387,32 +541,39 @@ class PublicCarryFeed:
 
         elif leg.venue == "OKX":
             q = urllib.parse.quote(leg.raw_symbol)
-            fr_cur = self._http(f"{OKX_BASE}/api/v5/public/funding-rate?instId={q}", None).get("data", [])
-            if fr_cur:
-                cur_row = fr_cur[0]
-                nxt_ms = int(cur_row.get("fundingTime") or 0)
-                if nxt_ms > 0:
-                    nxt_settle = nxt_ms // 1000
-                prev_ms = int(cur_row.get("prevFundingTime") or 0)
-                if nxt_ms > prev_ms > 0:
-                    cand_iv = max(1, round((nxt_ms - prev_ms) / HOUR_MS))
-                    leg_iv = cand_iv
-                    if cand_iv in (1, 2, 4, 8):
-                        live_iv = cand_iv
-                else:
-                    leg_iv = leg.interval_h
+            bulk_row = okx_bulk_funding.get(leg.raw_symbol) if okx_bulk_funding else None
+            if bulk_row is not None and bulk_row[0] is not None:
+                raw_fr, live_iv, nxt_from_fr = bulk_row
             else:
-                leg_iv = leg.interval_h
-            if fr_cur:
-                fr_val = fr_cur[0].get("fundingRate")
-                if fr_val not in (None, ""):
-                    cur_rate_bps_h = float(fr_val) * 1e4 / max(1, leg_iv)
-            fh = self._http(f"{OKX_BASE}/api/v5/public/funding-rate-history?instId={q}&limit=30", None).get("data", [])
+                fr_resp = self._request(
+                    f"{self._okx_base}/api/v5/public/funding-rate?instId={q}",
+                    None,
+                    headers=self._okx_headers,
+                )
+                fr_cur = fr_resp.get("data", []) if isinstance(fr_resp, dict) else []
+                if fr_cur:
+                    raw_fr, live_iv, nxt_from_fr = _parse_okx_funding_row(fr_cur[0])
+                else:
+                    raw_fr, live_iv, nxt_from_fr = (None, None, None)
+            if nxt_from_fr is not None:
+                nxt_settle = nxt_from_fr
+
+            fh_resp = self._request(
+                f"{self._okx_base}/api/v5/public/funding-rate-history?instId={q}&limit=30",
+                None,
+                headers=self._okx_headers,
+            )
+            fh = fh_resp.get("data", []) if isinstance(fh_resp, dict) else []
             for r in fh:
                 ts = ((int(r["fundingTime"]) + 60_000) // HOUR_MS) * HOUR
                 val = float(r.get("realizedRate") or r["fundingRate"]) * 1e4
                 settle_events.append((ts, val))
-            cd = self._http(f"{OKX_BASE}/api/v5/market/candles?instId={q}&bar=1H&limit=3", None).get("data", [])
+            cd_resp = self._request(
+                f"{self._okx_base}/api/v5/market/candles?instId={q}&bar=1H&limit=3",
+                None,
+                headers=self._okx_headers,
+            )
+            cd = cd_resp.get("data", []) if isinstance(cd_resp, dict) else []
             if cd:
                 cd = sorted(cd, key=lambda r: int(r[0]))
                 vol1h = float(cd[-1][7]) if len(cd[-1]) > 7 else float(cd[-1][5]) * float(cd[-1][4])
@@ -421,11 +582,25 @@ class PublicCarryFeed:
 
         elif leg.venue == "BYBIT":
             q = urllib.parse.quote(leg.raw_symbol)
-            fh = self._http(f"{BYBIT_BASE}/v5/market/funding/history?category=linear&symbol={q}&limit=30", None).get("result", {}).get("list", [])
+            fh = (
+                self._request(
+                    f"{self._bybit_base}/v5/market/funding/history?category=linear&symbol={q}&limit=30",
+                    None,
+                )
+                .get("result", {})
+                .get("list", [])
+            )
             for r in fh:
                 ts = ((int(r["fundingRateTimestamp"]) + 60_000) // HOUR_MS) * HOUR
                 settle_events.append((ts, float(r["fundingRate"]) * 1e4))
-            cd = self._http(f"{BYBIT_BASE}/v5/market/kline?category=linear&symbol={q}&interval=60&limit=3", None).get("result", {}).get("list", [])
+            cd = (
+                self._request(
+                    f"{self._bybit_base}/v5/market/kline?category=linear&symbol={q}&interval=60&limit=3",
+                    None,
+                )
+                .get("result", {})
+                .get("list", [])
+            )
             if cd:
                 cd = sorted(cd, key=lambda r: int(r[0]))
                 vol1h = float(cd[-1][6])
@@ -435,7 +610,9 @@ class PublicCarryFeed:
         r8, r24, iv = compute_trailing_rates(settle_events, now_s, live_iv or leg.interval_h)
         if live_iv is not None:
             iv = live_iv
-        self._detail_cache[key] = {
+        if leg.venue == "OKX" and raw_fr is not None:
+            cur_rate_bps_h = raw_fr * 1e4 / max(1, iv)
+        entry = {
             "fetched_ts": now_s,
             "r8": r8,
             "r24": r24,
@@ -445,18 +622,34 @@ class PublicCarryFeed:
             "prev_1h_price": prev_1h,
             "vol1h_usd": vol1h,
         }
-        return LegMarketInfo(
+        enriched = LegMarketInfo(
             **{
                 **leg.__dict__,
                 "r8_bps_h": r8,
                 "r24_bps_h": r24,
-                "current_rate_bps_h": cur_rate_bps_h if leg.current_rate_bps_h is None else leg.current_rate_bps_h,
+                "current_rate_bps_h": cur_rate_bps_h,
                 "interval_h": iv,
                 "next_settle_ts": nxt_settle,
                 "prev_1h_price": prev_1h,
                 "vol1h_usd": vol1h,
             }
         )
+        return enriched, entry
+
+    def _fetch_leg_detail(
+        self,
+        leg: LegMarketInfo,
+        now_s: int,
+        *,
+        okx_bulk_funding: Mapping[str, tuple[float | None, int | None, int | None]] | None = None,
+    ) -> LegMarketInfo:
+        """Fetch trailing 24h settlements & latest 2h 1h-candles for one overlapping leg."""
+        key = (leg.venue, leg.symbol)
+        if self._is_detail_fresh(leg.venue, leg.symbol, now_s):
+            return self._apply_cached_detail(leg, self._detail_cache[key], okx_bulk_funding=okx_bulk_funding)
+        enriched, entry = self._fetch_leg_detail_uncached(leg, now_s, okx_bulk_funding=okx_bulk_funding)
+        self._detail_cache[key] = entry
+        return enriched
 
     def poll_snapshot(
         self,
@@ -478,27 +671,54 @@ class PublicCarryFeed:
 
         if "HL" in self.venues:
             try:
-                _merge(parse_hl_meta_and_ctxs(self._http(HL_INFO_URL, {"type": "metaAndAssetCtxs"}), is_xyz=False, now_s=ts))
-                _merge(parse_hl_meta_and_ctxs(self._http(HL_INFO_URL, {"type": "metaAndAssetCtxs", "dex": "xyz"}), is_xyz=True, now_s=ts))
+                _merge(parse_hl_meta_and_ctxs(self._request(self._hl_info_url, {"type": "metaAndAssetCtxs"}), is_xyz=False, now_s=ts))
+                if self.environment == "mainnet":
+                    _merge(
+                        parse_hl_meta_and_ctxs(
+                            self._request(self._hl_info_url, {"type": "metaAndAssetCtxs", "dex": "xyz"}),
+                            is_xyz=True,
+                            now_s=ts,
+                        )
+                    )
             except Exception:
                 pass
         if "LIGHTER" in self.venues:
             try:
-                det = self._http(f"{LIGHTER_BASE}/api/v1/orderBookDetails", None)
-                fr = self._http(f"{LIGHTER_BASE}/api/v1/funding-rates", None)
+                det = self._request(f"{self._lighter_base}/api/v1/orderBookDetails", None)
+                fr = self._request(f"{self._lighter_base}/api/v1/funding-rates", None)
                 _merge(parse_lighter_snapshots(det, fr, now_s=ts))
             except Exception:
                 pass
         if "BYBIT" in self.venues:
             try:
-                tk = self._http(f"{BYBIT_BASE}/v5/market/tickers?category=linear", None)
+                tk = self._request(f"{self._bybit_base}/v5/market/tickers?category=linear", None)
                 _merge(parse_bybit_tickers(tk, self._byb_iv_cache, now_s=ts))
             except Exception:
                 pass
+        okx_bulk_fr: dict[str, tuple[float | None, int | None, int | None]] = {}
         if "OKX" in self.venues:
             try:
-                tk = self._http(f"{OKX_BASE}/api/v5/market/tickers?instType=SWAP", None)
-                _merge(parse_okx_tickers(self._okx_inst_cache, tk, now_s=ts))
+                tk = self._request(
+                    f"{self._okx_base}/api/v5/market/tickers?instType=SWAP",
+                    None,
+                    headers=self._okx_headers,
+                )
+                fr_payload = None
+                try:
+                    fr_payload = self._request(
+                        f"{self._okx_base}/api/v5/public/funding-rate?instId=ANY",
+                        None,
+                        headers=self._okx_headers,
+                    )
+                except Exception:
+                    fr_payload = None
+                if isinstance(fr_payload, dict):
+                    for row in fr_payload.get("data", []):
+                        if isinstance(row, dict) and row.get("instId"):
+                            parsed = _parse_okx_funding_row(row)
+                            if any(val is not None for val in parsed):
+                                okx_bulk_fr[str(row["instId"])] = parsed
+                _merge(parse_okx_tickers(self._okx_inst_cache, tk, fr_payload, now_s=ts))
             except Exception:
                 pass
 
@@ -507,27 +727,70 @@ class PublicCarryFeed:
 
         # Filter to overlapping multi-venue symbols that meet base liquidity (or are priority/open)
         prio = {s.upper() for s in (priority_symbols or set())}
-        overlap_syms = []
+        fresh_syms: list[str] = []
+        refresh_cands: list[tuple[bool, int, float, str]] = []
         for sym, vmap in by_sym.items():
             if len(vmap) < 2:
                 continue
-            liq_venues = [v for v, leg in vmap.items() if leg.vol24_usd >= min_24h_vol_usd]
-            if sym in prio or len(liq_venues) >= 2:
-                # Score prioritization by max absolute current rate diff when available
+            elig_venues = [v for v, leg in vmap.items() if leg.vol24_usd >= min_24h_vol_usd or sym in prio]
+            if sym in prio or len(elig_venues) >= 2:
+                if elig_venues and all(self._is_detail_fresh(v, sym, ts) for v in elig_venues):
+                    fresh_syms.append(sym)
+                    continue
+                # Score prioritization by oldest refresh attempt (anti-starvation), then max current rate diff
                 rates = [leg.current_rate_bps_h for leg in vmap.values() if leg.current_rate_bps_h is not None]
                 spread = (max(rates) - min(rates)) if len(rates) >= 2 else 0.0
-                overlap_syms.append((sym in prio, spread, sym))
+                last_attempt = self._last_detail_attempt_ts.get(sym, -1)
+                refresh_cands.append((sym in prio, last_attempt, spread, sym))
 
-        overlap_syms.sort(key=lambda x: (not x[0], -x[1], x[2]))
-        selected = [s for _, _, s in overlap_syms[: self._max_detail_refreshes]]
-        for sym in selected:
+        for sym in fresh_syms:
             vmap = by_sym[sym]
             for v, leg in list(vmap.items()):
                 if leg.vol24_usd < min_24h_vol_usd and sym not in prio:
                     continue
+                cached = self._detail_cache.get((v, sym))
+                if cached is not None:
+                    vmap[v] = self._apply_cached_detail(leg, cached, okx_bulk_funding=okx_bulk_fr)
+
+        refresh_cands.sort(key=lambda x: (not x[0], x[1], -x[2], x[3]))
+        selected = [s for _, _, _, s in refresh_cands[: self._max_detail_refreshes]]
+        detail_tasks: list[tuple[str, str, LegMarketInfo]] = []
+        for sym in selected:
+            self._last_detail_attempt_ts[sym] = ts
+            vmap = by_sym[sym]
+            for v, leg in list(vmap.items()):
+                if leg.vol24_usd < min_24h_vol_usd and sym not in prio:
+                    continue
+                if self._is_detail_fresh(v, sym, ts):
+                    vmap[v] = self._apply_cached_detail(leg, self._detail_cache[(v, sym)], okx_bulk_funding=okx_bulk_fr)
+                else:
+                    detail_tasks.append((sym, v, leg))
+
+        if len(detail_tasks) <= 1 or self._detail_max_workers <= 1:
+            for sym, v, leg in detail_tasks:
                 try:
-                    vmap[v] = self._fetch_leg_detail(leg, ts)
+                    enriched, entry = self._fetch_leg_detail_uncached(leg, ts, okx_bulk_funding=okx_bulk_fr)
+                    self._detail_cache[(v, sym)] = entry
+                    by_sym[sym][v] = enriched
                 except Exception:
                     pass
+        else:
+            workers = min(self._detail_max_workers, len(detail_tasks))
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="carry-detail") as pool:
+                futures = [
+                    (
+                        sym,
+                        v,
+                        pool.submit(self._fetch_leg_detail_uncached, leg, ts, okx_bulk_funding=okx_bulk_fr),
+                    )
+                    for sym, v, leg in detail_tasks
+                ]
+                for sym, v, fut in futures:
+                    try:
+                        enriched, entry = fut.result()
+                        self._detail_cache[(v, sym)] = entry
+                        by_sym[sym][v] = enriched
+                    except Exception:
+                        pass
 
         return by_sym

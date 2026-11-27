@@ -639,7 +639,8 @@ def test_carry_strategy_implements_nautilus_on_quote_and_records_bbo(tmp_path: P
         assert hasattr(Strategy, "on_quote")
         assert type(strat).on_quote is not Strategy.on_quote
         assert not hasattr(strat, "on_quote_tick")
-        strat.on_quote(SimpleNamespace(instrument_id="SOL-USDT-SWAP.OKX", bid_price=100.0, ask_price=100.04, ts_event=999))
+        ev_ns = time.time_ns()
+        strat.on_quote(SimpleNamespace(instrument_id="SOL-USDT-SWAP.OKX", bid_price=100.0, ask_price=100.04, ts_event=ev_ns))
         assert strat.live_quotes["SOL-USDT-SWAP.OKX"] == (100.0, 100.04)
     finally:
         rec.close()
@@ -650,7 +651,7 @@ def test_carry_strategy_implements_nautilus_on_quote_and_records_bbo(tmp_path: P
     with gzip.open(fast_files[0], "rt", encoding="utf-8") as fh:
         rows = [json.loads(line) for line in fh]
     assert len(rows) == 1
-    assert rows[0]["iid"] == "SOL-USDT-SWAP.OKX" and rows[0]["ev_ns"] == 999
+    assert rows[0]["iid"] == "SOL-USDT-SWAP.OKX" and rows[0]["ev_ns"] == ev_ns
 
 
 def test_stale_live_quotes_are_evicted_and_never_corrupt_slow_snapshot(tmp_path: Path) -> None:
@@ -721,7 +722,7 @@ def test_live_carry_alignment_okx_cur_rate_and_60bps_basis_cap() -> None:
     # Verify OKX detail parser populates current_rate_bps_h and caches it across ticks
     def fake_http(url: str, _body: dict | None = None):
         if "public/funding-rate?" in url:
-            return {"data": [{"fundingRate": "-0.012", "fundingTime": str((now_s + 3600) * 1000), "prevFundingTime": str((now_s - 3 * 3600) * 1000)}]}
+            return {"data": [{"fundingRate": "-0.012", "fundingTime": str((now_s + 3600) * 1000), "nextFundingTime": str((now_s + 5 * 3600) * 1000)}]}
         if "funding-rate-history" in url:
             return {"data": [{"fundingTime": str((now_s - 3 * 3600) * 1000), "realizedRate": "-0.004"}]}
         if "market/candles" in url:
@@ -1536,7 +1537,7 @@ def test_funding_history_limit_30_and_latest_interval_inference() -> None:
                     {
                         "fundingRate": "-0.0020",
                         "fundingTime": str((now_s + 2 * HOUR) * 1000),
-                        "prevFundingTime": str(now_s * 1000),
+                        "nextFundingTime": str((now_s + 4 * HOUR) * 1000),
                     }
                 ]
             }
@@ -3187,6 +3188,13 @@ def test_daily_loss_and_unhedged_streak_halt_even_when_flat_and_block_new_entrie
         }
     }
 
+    def _flush_slow_poll(s) -> None:
+        deadline = time.monotonic() + 2.0
+        while s._slow_poll_inflight and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert not s._slow_poll_inflight
+        s._consume_pending_slow_snapshot()
+
     def _run_flat_kill_scenario(name: str, *, pnl_usd: str, streak: int, expected_reason: str) -> None:
         led = CarryLedger(tmp_path / f"{name}.sqlite3", plan.fingerprint(), ledger_domain="paper")
         led.create_position(
@@ -3227,8 +3235,10 @@ def test_daily_loss_and_unhedged_streak_halt_even_when_flat_and_block_new_entrie
         strat._on_fast_risk_timer(None)
         assert led.is_kill_halted() == (True, expected_reason)
         strat._on_slow_timer(None)
+        _flush_slow_poll(strat)
         assert led.active_positions() == {}
         assert gw.submitted == []
+        strat.close_slow_poller(wait=True)
         led.close()
 
     _run_flat_kill_scenario("daily_loss", pnl_usd="-41.65", streak=0, expected_reason="daily_loss_kill")
@@ -3252,6 +3262,7 @@ def test_daily_loss_and_unhedged_streak_halt_even_when_flat_and_block_new_entrie
     strat_slow.live_quote_ts = {spec_l.instrument_id: float(now_s), spec_s.instrument_id: float(now_s)}
     monkeypatch.setattr(time, "time", lambda: float(now_s))
     strat_slow._on_slow_timer(None)
+    _flush_slow_poll(strat_slow)
     assert led_slow.is_kill_halted() == (True, "daily_loss_kill")
     assert led_slow.active_positions() == {}
     assert gw_slow.submitted == []
@@ -3263,6 +3274,7 @@ def test_daily_loss_and_unhedged_streak_halt_even_when_flat_and_block_new_entrie
     pid_rej, err_rej = strat_slow.controller.start_entry(cand, specs=specs, now_s=now_s + 2)
     assert pid_rej is None and err_rej == "halted:daily_loss_kill"
     assert led_slow.is_kill_halted() == (True, "daily_loss_kill")
+    strat_slow.close_slow_poller(wait=True)
     led_slow.close()
 
 
@@ -3450,3 +3462,505 @@ def test_cli_mode_override_and_ledger_domain_isolation_protect_live_db(
     led_paper.close()
     with pytest.raises(LedgerOwnershipError):
         CarryLedger(paper_db, live_plan.fingerprint(), ledger_domain="live")
+
+
+def test_slow_poll_nonblocking_anti_reentrancy_error_isolation_and_clean_shutdown(tmp_path: Path) -> None:
+    import threading
+    from types import SimpleNamespace
+    from src.carry.runtime import _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "nonblocking.sqlite3", plan.fingerprint())
+    strat = _create_carry_strategy(plan, led, mode="paper")
+    strat._specs_from_cache = lambda: {}
+
+    entered_evt = threading.Event()
+    release_evt = threading.Event()
+    fail_next = [False]
+    poll_calls = [0]
+
+    def fake_http(url: str, body: dict | None = None):
+        if (body or {}).get("type") == "metaAndAssetCtxs":
+            if body and body.get("dex") == "xyz":
+                return [{"universe": []}, []]
+            poll_calls[0] += 1
+            if fail_next[0]:
+                raise RuntimeError("upstream_timeout")
+            entered_evt.set()
+            assert release_evt.wait(timeout=5.0)
+            return [
+                {"universe": [{"name": "SOL"}]},
+                [{"markPx": "100", "midPx": "100", "funding": "0.0001", "dayNtlVlm": "5000000"}],
+            ]
+        return {}
+
+    strat.feed = PublicCarryFeed(venues=("HL",), http_get=fake_http)
+    try:
+        t0 = time.monotonic()
+        strat._on_slow_timer(None)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 0.2
+        assert entered_evt.wait(timeout=2.0)
+
+        # Event loop handlers remain responsive and overlapping slow timer does not pile up
+        strat._on_fast_risk_timer(None)
+        strat.on_quote(
+            SimpleNamespace(
+                instrument_id="SOL-USD-PERP.HYPERLIQUID",
+                bid_price=100.0,
+                ask_price=100.02,
+                ts_event=time.time_ns(),
+            )
+        )
+        assert strat.live_quotes["SOL-USD-PERP.HYPERLIQUID"] == (100.0, 100.02)
+        strat._on_slow_timer(None)
+        assert poll_calls[0] == 1
+
+        release_evt.set()
+        deadline = time.monotonic() + 2.0
+        while strat._slow_poll_inflight and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert not strat._slow_poll_inflight
+
+        strat._on_fast_risk_timer(None)
+        assert "SOL" in strat.snapshot
+        assert strat._last_slow_poll_error is None
+
+        # Background poll failure is surfaced cleanly without corrupting the last good snapshot
+        fail_next[0] = True
+        strat.feed = type(
+            "_FailFeed",
+            (),
+            {"poll_snapshot": lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("upstream_timeout"))},
+        )()
+        strat._on_slow_timer(None)
+        deadline = time.monotonic() + 2.0
+        while strat._slow_poll_inflight and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert not strat._slow_poll_inflight
+
+        strat._on_fast_risk_timer(None)
+        assert strat._last_slow_poll_error is not None and "upstream_timeout" in strat._last_slow_poll_error
+        assert "SOL" in strat.snapshot
+
+        strat.on_stop()
+        assert strat._slow_poll_executor is None
+        assert not any(t.name.startswith("carry-slow-poll") and t.is_alive() for t in threading.enumerate())
+    finally:
+        release_evt.set()
+        strat.close_slow_poller(wait=True)
+        led.close()
+
+
+def test_on_quote_rejects_stale_ts_event_and_clamps_forward_clock_skew(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    from src.carry.runtime import _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    assert plan.runtime.quote_stale_secs == 15
+    led = CarryLedger(tmp_path / "quote_ts.sqlite3", plan.fingerprint())
+    strat = _create_carry_strategy(plan, led, mode="paper")
+
+    clock = [1_800_000_000.0]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    iid = "SOL-USDT-SWAP.OKX"
+    rest_leg = _make_leg("OKX", "SOL", bid=100.0, ask=100.02)
+    strat.snapshot = {"SOL": {"OKX": rest_leg}}
+
+    try:
+        # 120s-old quote queued during a stall MUST be rejected and never pollute live_quotes or snapshot
+        strat.on_quote(
+            SimpleNamespace(
+                instrument_id=iid,
+                bid_price=90.0,
+                ask_price=90.02,
+                ts_event=int((clock[0] - 120.0) * 1e9),
+            )
+        )
+        assert iid not in strat.live_quotes
+        assert iid not in strat.live_quote_ts
+        assert iid not in strat.live_mids
+        strat._overlay_fresh_quotes(clock[0])
+        assert strat.snapshot["SOL"]["OKX"].bid == 100.0
+
+        # Tiny synthetic ts_event=999 is also treated as stale epoch time and rejected
+        strat.on_quote(SimpleNamespace(instrument_id=iid, bid_price=91.0, ask_price=91.02, ts_event=999))
+        assert iid not in strat.live_quotes
+
+        # 5s-old quote is accepted with its clamped event timestamp and ages out after >15s total
+        strat.on_quote(
+            SimpleNamespace(
+                instrument_id=iid,
+                bid_price=100.5,
+                ask_price=100.52,
+                ts_event=int((clock[0] - 5.0) * 1e9),
+            )
+        )
+        assert strat.live_quotes[iid] == (100.5, 100.52)
+        assert strat.live_quote_ts[iid] == pytest.approx(clock[0] - 5.0)
+        strat._overlay_fresh_quotes(clock[0])
+        assert strat.snapshot["SOL"]["OKX"].bid == 100.5
+
+        clock[0] += 11.0  # 5s + 11s = 16s > 15s stale window
+        strat.snapshot = {"SOL": {"OKX": rest_leg}}
+        strat._overlay_fresh_quotes(clock[0])
+        assert iid not in strat.live_quotes
+        assert strat.snapshot["SOL"]["OKX"].bid == 100.0
+
+        # Forward clock skew (+10s) is clamped to local now_s so it cannot linger beyond quote_stale_secs
+        strat.on_quote(
+            SimpleNamespace(
+                instrument_id=iid,
+                bid_price=101.0,
+                ask_price=101.02,
+                ts_event=int((clock[0] + 10.0) * 1e9),
+            )
+        )
+        assert strat.live_quote_ts[iid] == pytest.approx(clock[0])
+        strat._overlay_fresh_quotes(clock[0] + 15.0)
+        assert iid in strat.live_quotes
+        strat.snapshot = {"SOL": {"OKX": rest_leg}}
+        strat._overlay_fresh_quotes(clock[0] + 16.0)
+        assert iid not in strat.live_quotes
+        assert strat.snapshot["SOL"]["OKX"].bid == 100.0
+    finally:
+        led.close()
+
+
+def test_okx_short_interval_funding_rate_from_next_funding_time_and_history_fallback() -> None:
+    now_s = 1_800_000_000
+    t_ms = (now_s + 1800) * 1000
+    nxt_ms = (now_s + 5400) * 1000  # 1h settlement interval
+
+    # Subtest A: explicit fundingTime + nextFundingTime 1h apart -> interval_h=1, current_rate_bps_h=8.0
+    okx_bulk = parse_okx_tickers(
+        {"data": [{"instId": "FAST-USDT-SWAP", "state": "live", "settleCcy": "USDT"}]},
+        {"data": [{"instId": "FAST-USDT-SWAP", "last": "10", "bidPx": "9.99", "askPx": "10.01", "volCcy24h": "200000"}]},
+        {"data": [{"instId": "FAST-USDT-SWAP", "fundingRate": "0.0008", "fundingTime": str(t_ms), "nextFundingTime": str(nxt_ms)}]},
+        now_s=now_s,
+    )
+    assert okx_bulk["FAST"].interval_h == 1
+    assert okx_bulk["FAST"].current_rate_bps_h == pytest.approx(8.0)
+
+    def http_with_next(url: str, _body: dict | None = None):
+        if "public/funding-rate?" in url:
+            return {"data": [{"instId": "FAST-USDT-SWAP", "fundingRate": "0.0008", "fundingTime": str(t_ms), "nextFundingTime": str(nxt_ms)}]}
+        if "funding-rate-history" in url:
+            return {"data": [{"fundingTime": str((now_s - h * HOUR) * 1000), "realizedRate": "0.0008"} for h in range(10)]}
+        if "market/candles" in url:
+            return {"data": [[str((now_s - 7200) * 1000), "10", "10", "10", "10", "100", "0", "10000"], [str((now_s - 3600) * 1000), "10", "10", "10", "10", "100", "0", "10000"]]}
+        return {}
+
+    feed_a = PublicCarryFeed(venues=("OKX",), http_get=http_with_next)
+    det_a = feed_a._fetch_leg_detail(_make_leg("OKX", "FAST", interval_h=8, cur_rate=None), now_s)
+    assert det_a.interval_h == 1
+    assert det_a.current_rate_bps_h == pytest.approx(8.0)
+
+    # Subtest B: missing/empty nextFundingTime -> history infers 1h and recalculates current_rate_bps_h=8.0
+    bulk_rate = ["0.0008"]
+
+    def http_missing_next(url: str, _body: dict | None = None):
+        if "okx.com" in url:
+            if "public/instruments" in url:
+                return {"data": [{"instId": "FAST-USDT-SWAP", "state": "live", "settleCcy": "USDT"}]}
+            if "market/tickers" in url:
+                return {"data": [{"instId": "FAST-USDT-SWAP", "last": "10", "bidPx": "9.99", "askPx": "10.01", "volCcy24h": "200000"}]}
+            if "instId=ANY" in url:
+                return {"data": [{"instId": "FAST-USDT-SWAP", "fundingRate": bulk_rate[0], "fundingTime": str(t_ms), "nextFundingTime": ""}]}
+            if "public/funding-rate?" in url:
+                return {"data": [{"instId": "FAST-USDT-SWAP", "fundingRate": bulk_rate[0], "fundingTime": str(t_ms)}]}
+            if "funding-rate-history" in url:
+                return {"data": [{"fundingTime": str((now_s - h * HOUR) * 1000), "realizedRate": "0.0008"} for h in range(10)]}
+            if "market/candles" in url:
+                return {"data": [[str((now_s - 7200) * 1000), "10", "10", "10", "10", "100", "0", "10000"], [str((now_s - 3600) * 1000), "10", "10", "10", "10", "100", "0", "10000"]]}
+        if "api.bybit.com" in url:
+            if "instruments-info" in url:
+                return {"result": {"list": [{"symbol": "FASTUSDT", "fundingInterval": "60"}]}}
+            if "market/tickers" in url:
+                return {"result": {"list": [{"symbol": "FASTUSDT", "markPrice": "10", "bid1Price": "9.99", "ask1Price": "10.01", "fundingRate": "0.0001", "fundingIntervalHour": "1", "nextFundingTime": str(t_ms), "turnover24h": "2000000"}]}}
+            if "funding/history" in url:
+                return {"result": {"list": [{"fundingRateTimestamp": str((now_s - h * HOUR) * 1000), "fundingRate": "0.0001"} for h in range(10)]}}
+            if "market/kline" in url:
+                return {"result": {"list": [[str((now_s - 7200) * 1000), "10", "10", "10", "10", "100", "10000"], [str((now_s - 3600) * 1000), "10", "10", "10", "10", "100", "10000"]]}}
+        return {}
+
+    feed_b = PublicCarryFeed(venues=("OKX",), http_get=http_missing_next)
+    det_b = feed_b._fetch_leg_detail(_make_leg("OKX", "FAST", interval_h=8, cur_rate=None), now_s)
+    assert det_b.interval_h == 1
+    assert det_b.current_rate_bps_h == pytest.approx(8.0)
+
+    feed_snap = PublicCarryFeed(venues=("OKX", "BYBIT"), http_get=http_missing_next)
+    snap1 = feed_snap.poll_snapshot(now_s=now_s)
+    assert snap1["FAST"]["OKX"].interval_h == 1
+    assert snap1["FAST"]["OKX"].current_rate_bps_h == pytest.approx(8.0)
+
+    # Cache hit on next cycle still normalizes fresh bulk fundingRate by cached 1h interval
+    bulk_rate[0] = "0.0012"
+    snap2 = feed_snap.poll_snapshot(now_s=now_s + 60)
+    assert snap2["FAST"]["OKX"].interval_h == 1
+    assert snap2["FAST"]["OKX"].current_rate_bps_h == pytest.approx(12.0)
+
+
+def test_okx_bybit_40_overlap_symbols_all_covered_with_bulk_and_degraded_fallback() -> None:
+    now_s = 1_800_000_000
+    syms = [f"SYM{i:02d}" for i in range(40)]
+
+    def _build_http(bulk_funding_empty: bool):
+        seen_urls: list[str] = []
+
+        def fake_http(url: str, _body: dict | None = None):
+            seen_urls.append(url)
+            if "okx.com" in url:
+                if "public/instruments" in url:
+                    return {"data": [{"instId": f"{s}-USDT-SWAP", "state": "live", "settleCcy": "USDT"} for s in syms]}
+                if "market/tickers" in url:
+                    return {
+                        "data": [
+                            {"instId": f"{s}-USDT-SWAP", "last": "10", "bidPx": "9.99", "askPx": "10.01", "volCcy24h": "200000"}
+                            for s in syms
+                        ]
+                    }
+                if "instId=ANY" in url:
+                    if bulk_funding_empty:
+                        return {"data": []}
+                    rows = []
+                    for i, s in enumerate(syms):
+                        # Highest spread on SYM39 (tail alphabetically), lowest on SYM35..SYM38
+                        if i == 39:
+                            fr = "0.0040"
+                        elif 35 <= i <= 38:
+                            fr = "0.0001"
+                        else:
+                            fr = f"{0.0005 + i * 0.00005:.6f}"
+                        rows.append({
+                            "instId": f"{s}-USDT-SWAP",
+                            "fundingRate": fr,
+                            "fundingTime": str((now_s + 3600) * 1000),
+                            "nextFundingTime": str((now_s + 9 * 3600) * 1000),
+                        })
+                    return {"data": rows}
+                if "public/funding-rate?" in url:
+                    return {
+                        "data": [
+                            {
+                                "fundingRate": "0.0008",
+                                "fundingTime": str((now_s + 3600) * 1000),
+                                "nextFundingTime": str((now_s + 9 * 3600) * 1000),
+                            }
+                        ]
+                    }
+                if "funding-rate-history" in url:
+                    return {"data": [{"fundingTime": str((now_s - k * 8 * HOUR) * 1000), "realizedRate": "0.0008"} for k in range(4)]}
+                if "market/candles" in url:
+                    return {"data": [[str((now_s - 7200) * 1000), "10", "10", "10", "10", "100", "0", "10000"], [str((now_s - 3600) * 1000), "10", "10", "10", "10", "100", "0", "10000"]]}
+            if "bybit.com" in url:
+                if "instruments-info" in url:
+                    return {"result": {"list": [{"symbol": f"{s}USDT", "fundingInterval": "480"} for s in syms]}}
+                if "market/tickers" in url:
+                    return {
+                        "result": {
+                            "list": [
+                                {
+                                    "symbol": f"{s}USDT",
+                                    "markPrice": "10",
+                                    "bid1Price": "9.99",
+                                    "ask1Price": "10.01",
+                                    "fundingRate": "0.0001",
+                                    "fundingIntervalHour": "8",
+                                    "nextFundingTime": str((now_s + 3600) * 1000),
+                                    "turnover24h": "2000000",
+                                }
+                                for s in syms
+                            ]
+                        }
+                    }
+                if "funding/history" in url:
+                    return {"result": {"list": [{"fundingRateTimestamp": str((now_s - k * 8 * HOUR) * 1000), "fundingRate": "0.0001"} for k in range(4)]}}
+                if "market/kline" in url:
+                    return {"result": {"list": [[str((now_s - 7200) * 1000), "10", "10", "10", "10", "100", "10000"], [str((now_s - 3600) * 1000), "10", "10", "10", "10", "100", "10000"]]}}
+            return {}
+
+        return fake_http, seen_urls
+
+    # Subtest A: Normal bulk instId=ANY prioritizes tail-named SYM39 immediately & rotates SYM35..SYM38 in round 2
+    http_a, urls_a = _build_http(bulk_funding_empty=False)
+    feed_a = PublicCarryFeed(venues=("OKX", "BYBIT"), http_get=http_a, max_detail_refreshes_per_cycle=35)
+    snap_a1 = feed_a.poll_snapshot(now_s=now_s)
+    assert any("public/funding-rate?instId=ANY" in u for u in urls_a)
+    assert not any("public/funding-rate?instId=SYM" in u for u in urls_a)
+    assert snap_a1["SYM39"]["OKX"].r8_bps_h is not None and snap_a1["SYM39"]["BYBIT"].r8_bps_h is not None
+    assert snap_a1["SYM35"]["OKX"].r8_bps_h is None  # lowest spread deferred to round 2
+
+    snap_a2 = feed_a.poll_snapshot(now_s=now_s + 60)
+    for s in syms:
+        assert snap_a2[s]["OKX"].r8_bps_h is not None and snap_a2[s]["OKX"].r24_bps_h is not None
+        assert snap_a2[s]["BYBIT"].r8_bps_h is not None and snap_a2[s]["BYBIT"].r24_bps_h is not None
+
+    # Even if detail TTL expires between cycles (600s > 300s), unattempted symbols rotate first
+    http_a_exp, _ = _build_http(bulk_funding_empty=False)
+    feed_a_exp = PublicCarryFeed(venues=("OKX", "BYBIT"), http_get=http_a_exp, max_detail_refreshes_per_cycle=35)
+    exp1 = feed_a_exp.poll_snapshot(now_s=now_s)
+    skipped_r1 = [s for s in syms if exp1[s]["OKX"].r8_bps_h is None]
+    assert len(skipped_r1) == 5
+    exp2 = feed_a_exp.poll_snapshot(now_s=now_s + 600)
+    for s in skipped_r1:
+        assert exp2[s]["OKX"].r8_bps_h is not None and exp2[s]["BYBIT"].r8_bps_h is not None
+
+    # Subtest B: Degraded bulk instId=ANY returning empty -> anti-starvation rotation covers SYM35..SYM39
+    http_b, _ = _build_http(bulk_funding_empty=True)
+    feed_b = PublicCarryFeed(venues=("OKX", "BYBIT"), http_get=http_b, max_detail_refreshes_per_cycle=35)
+    snap_b1 = feed_b.poll_snapshot(now_s=now_s)
+    assert all(snap_b1[s]["OKX"].r8_bps_h is not None for s in syms[:35])
+    assert all(snap_b1[s]["OKX"].r8_bps_h is None for s in syms[35:])
+
+    snap_b2 = feed_b.poll_snapshot(now_s=now_s + 60)
+    for s in syms:
+        assert snap_b2[s]["OKX"].r8_bps_h is not None and snap_b2[s]["OKX"].r24_bps_h is not None
+        assert snap_b2[s]["BYBIT"].r8_bps_h is not None and snap_b2[s]["BYBIT"].r24_bps_h is not None
+
+    http_b_exp, _ = _build_http(bulk_funding_empty=True)
+    feed_b_exp = PublicCarryFeed(venues=("OKX", "BYBIT"), http_get=http_b_exp, max_detail_refreshes_per_cycle=35)
+    b_exp1 = feed_b_exp.poll_snapshot(now_s=now_s)
+    assert all(b_exp1[s]["OKX"].r8_bps_h is None for s in syms[35:])
+    b_exp2 = feed_b_exp.poll_snapshot(now_s=now_s + 600)
+    for s in syms[35:]:
+        assert b_exp2[s]["OKX"].r8_bps_h is not None and b_exp2[s]["BYBIT"].r8_bps_h is not None
+
+
+def test_testnet_public_carry_feed_urls_and_okx_demo_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+    import urllib.request
+    from src.carry.funding_feed import default_http_json
+    from src.carry.runtime import _create_carry_strategy
+
+    now_s = 1_800_000_000
+
+    with pytest.raises(ValueError, match="unsupported environment"):
+        PublicCarryFeed(environment="invalid")
+
+    def _make_recorder_http(calls: list[tuple[str, dict | None, dict | None]]):
+        def rec_http(url: str, body: dict | None = None, *, headers: dict | None = None):
+            calls.append((url, body, headers))
+            if "hyperliquid" in url:
+                req_type = (body or {}).get("type")
+                if req_type == "metaAndAssetCtxs":
+                    return [
+                        {"universe": [{"name": "BTC"}]},
+                        [{"markPx": "60000", "midPx": "60000", "funding": "0.00001", "dayNtlVlm": "5000000"}],
+                    ]
+                if req_type == "fundingHistory":
+                    return [{"time": (now_s - HOUR) * 1000, "fundingRate": "0.00001"}]
+                if req_type == "candleSnapshot":
+                    return [
+                        {"t": (now_s - 7200) * 1000, "c": "60000", "v": "10"},
+                        {"t": (now_s - 3600) * 1000, "c": "60000", "v": "10"},
+                    ]
+            if "zklighter" in url:
+                if "orderBookDetails" in url:
+                    return {"order_book_details": [{"symbol": "BTC", "market_id": 1, "market_type": "perp", "status": "active", "is_frozen": False, "mark_price": "60000", "daily_quote_token_volume": "5000000"}]}
+                if "funding-rates" in url:
+                    return {"funding_rates": [{"exchange": "lighter", "symbol": "BTC", "rate": 0.00008}]}
+                if "/api/v1/fundings" in url:
+                    return {"fundings": [{"timestamp": now_s - HOUR, "rate": "0.001", "direction": "long"}]}
+                if "/api/v1/candles" in url:
+                    return {"c": [{"t": now_s - 7200, "c": "60000", "v": "10"}, {"t": now_s - 3600, "c": "60000", "v": "10"}]}
+            if "bybit" in url:
+                if "instruments-info" in url:
+                    return {"result": {"list": [{"symbol": "BTCUSDT", "fundingInterval": "480"}]}}
+                if "market/tickers" in url:
+                    return {"result": {"list": [{"symbol": "BTCUSDT", "markPrice": "60000", "bid1Price": "59999", "ask1Price": "60001", "fundingRate": "0.0001", "fundingIntervalHour": "8", "nextFundingTime": str((now_s + 3600) * 1000), "turnover24h": "5000000"}]}}
+                if "funding/history" in url:
+                    return {"result": {"list": [{"fundingRateTimestamp": str((now_s - HOUR) * 1000), "fundingRate": "0.0001"}]}}
+                if "market/kline" in url:
+                    return {"result": {"list": [[str((now_s - 7200) * 1000), "60000", "60000", "60000", "60000", "10", "600000"], [str((now_s - 3600) * 1000), "60000", "60000", "60000", "60000", "10", "600000"]]}}
+            if "okx.com" in url:
+                if "public/instruments" in url:
+                    return {"data": [{"instId": "BTC-USDT-SWAP", "state": "live", "settleCcy": "USDT"}]}
+                if "market/tickers" in url:
+                    return {"data": [{"instId": "BTC-USDT-SWAP", "last": "60000", "bidPx": "59999", "askPx": "60001", "volCcy24h": "100"}]}
+                if "instId=ANY" in url:
+                    return {"data": []}  # force single-leg OKX funding-rate fallback too
+                if "public/funding-rate?" in url:
+                    return {"data": [{"instId": "BTC-USDT-SWAP", "fundingRate": "0.0001", "fundingTime": str((now_s + 3600) * 1000), "nextFundingTime": str((now_s + 9 * 3600) * 1000)}]}
+                if "funding-rate-history" in url:
+                    return {"data": [{"fundingTime": str((now_s - HOUR) * 1000), "realizedRate": "0.0001"}]}
+                if "market/candles" in url:
+                    return {"data": [[str((now_s - 7200) * 1000), "60000", "60000", "60000", "60000", "10", "0", "600000"], [str((now_s - 3600) * 1000), "60000", "60000", "60000", "60000", "10", "0", "600000"]]}
+            return {}
+
+        return rec_http
+
+    testnet_calls: list[tuple[str, dict | None, dict | None]] = []
+    feed_test = PublicCarryFeed(
+        venues=("HL", "LIGHTER", "OKX", "BYBIT"),
+        environment="testnet",
+        http_get=_make_recorder_http(testnet_calls),
+    )
+    snap_test = feed_test.poll_snapshot(now_s=now_s)
+    assert set(snap_test["BTC"].keys()) == {"HL", "LIGHTER", "OKX", "BYBIT"}
+
+    hl_urls = [u for u, _b, _h in testnet_calls if "hyperliquid" in u]
+    lt_urls = [u for u, _b, _h in testnet_calls if "zklighter" in u]
+    byb_urls = [u for u, _b, _h in testnet_calls if "bybit" in u]
+    okx_calls = [(u, h) for u, _b, h in testnet_calls if "okx.com" in u]
+    non_okx_calls = [(u, h) for u, _b, h in testnet_calls if "okx.com" not in u]
+
+    assert hl_urls and all(u == "https://api.hyperliquid-testnet.xyz/info" for u in hl_urls)
+    assert not any((b or {}).get("dex") == "xyz" for u, b, _h in testnet_calls if "hyperliquid" in u)
+    assert lt_urls and all(u.startswith("https://testnet.zklighter.elliot.ai/") for u in lt_urls)
+    assert byb_urls and all(u.startswith("https://api-testnet.bybit.com/") for u in byb_urls)
+    assert len(okx_calls) == 6  # instruments, tickers, instId=ANY, single-leg fallback, history, candles
+    assert all(u.startswith("https://www.okx.com/") and h == {"x-simulated-trading": "1"} for u, h in okx_calls)
+    assert all(h is None for _u, h in non_okx_calls)
+
+    # Mainnet uses production domains and omits x-simulated-trading header on OKX
+    mainnet_calls: list[tuple[str, dict | None, dict | None]] = []
+    feed_main = PublicCarryFeed(
+        venues=("HL", "LIGHTER", "OKX", "BYBIT"),
+        environment="mainnet",
+        http_get=_make_recorder_http(mainnet_calls),
+    )
+    feed_main.poll_snapshot(now_s=now_s)
+    assert all(u == "https://api.hyperliquid.xyz/info" for u, _b, _h in mainnet_calls if "hyperliquid" in u)
+    assert all(u.startswith("https://mainnet.zklighter.elliot.ai/") for u, _b, _h in mainnet_calls if "zklighter" in u)
+    assert all(u.startswith("https://api.bybit.com/") for u, _b, _h in mainnet_calls if "bybit" in u)
+    assert all(h is None for u, _b, h in mainnet_calls if "okx.com" in u)
+
+    # Verify default_http_json forwards headers onto outgoing urllib.request.Request
+    captured_reqs: list[urllib.request.Request] = []
+
+    class _FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(req: urllib.request.Request, timeout: float = 0.0):
+        captured_reqs.append(req)
+        return _FakeResp(b'{"code":"0","data":[]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    default_http_json("https://www.okx.com/api/v5/public/funding-rate?instId=ANY", None, headers={"x-simulated-trading": "1"})
+    assert len(captured_reqs) == 1
+    hdrs = {k.lower(): v for k, v in captured_reqs[0].header_items()}
+    assert hdrs["x-simulated-trading"] == "1"
+
+    # Verify runtime CarryStrategy propagates plan.environment to PublicCarryFeed
+    test_cfg = tmp_path / "carry-testnet.toml"
+    test_text = (REPO_ROOT / "config" / "carry-paper.toml").read_text(encoding="utf-8")
+    test_text = test_text.replace('environment = "mainnet"', 'environment = "testnet"')
+    test_text = test_text.replace('state_path = "../reports/carry/paper.sqlite3"', f'state_path = "{tmp_path / "t.sqlite3"}"')
+    test_text = test_text.replace('record_dir = "../reports/carry/tape-paper"', 'record_dir = ""')
+    test_cfg.write_text(test_text, encoding="utf-8")
+    test_plan = load_carry_plan(test_cfg)
+    led = CarryLedger(test_plan.state_path, test_plan.fingerprint())
+    try:
+        strat = _create_carry_strategy(test_plan, led, mode="paper")
+        assert strat.feed.environment == "testnet"
+    finally:
+        led.close()
