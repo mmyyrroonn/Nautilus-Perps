@@ -496,10 +496,9 @@ class CarryExecutionController:
         hi = max(cur_l, cur_s)
         if hi <= Decimal("0"):
             return False
+        if cur_l <= Decimal("0") or cur_s <= Decimal("0"):
+            return True
         diff = abs(cur_l - cur_s)
-        step_tol = max(spec_l.base_step, spec_s.base_step) if (spec_l is not None and spec_s is not None) else Decimal("0")
-        if diff <= step_tol:
-            return False
         ref_px = Decimal(
             str(
                 live_mids.get(str(pos["iid_long"]))
@@ -792,11 +791,9 @@ class CarryExecutionController:
         hi = max(cur_l, cur_s)
         if hi <= Decimal("0"):
             return False
-        diff = abs(cur_l - cur_s)
-        return (
-            diff > max(spec_l.base_step, spec_s.base_step)
-            and (diff / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
-        )
+        if cur_l <= Decimal("0") or cur_s <= Decimal("0"):
+            return True
+        return (abs(cur_l - cur_s) / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
 
     def _hedge_quote_ctx(
         self,
@@ -872,7 +869,14 @@ class CarryExecutionController:
             now_s=ts,
         )
         if not ok:
-            self.ledger.update_position_status(pos_id, status="CLOSED", ts_s=ts, close_reason=f"entry_aborted:{slice_err}")
+            pos_row = self.ledger.active_positions().get(pos_id)
+            if pos_row is not None and (
+                Decimal(str(pos_row["long_base_qty"])) <= Decimal("0")
+                and Decimal(str(pos_row["short_base_qty"])) <= Decimal("0")
+            ):
+                self.ledger.update_position_status(
+                    pos_id, status="CLOSED", ts_s=ts, close_reason=f"entry_aborted:{slice_err}"
+                )
             return None, slice_err
         return pos_id, None
 
@@ -1243,8 +1247,10 @@ class CarryExecutionController:
                 self._reconcile_emergency_close(self._active_emergency_closes[batch.position_id], now_s=now_s)
             return "UNFILLED"
 
-        suppress_fallback = (batch.is_opening and self._is_position_closing(batch.position_id)) or (
-            batch.position_id in self._active_emergency_closes
+        suppress_fallback = (
+            (batch.is_opening and self._is_position_closing(batch.position_id))
+            or (batch.position_id in self._active_emergency_closes)
+            or self.ledger.is_reconcile_halted()[0]
         )
         if not batch.fallback_submitted:
             if suppress_fallback:
@@ -1356,8 +1362,11 @@ class CarryExecutionController:
                     hi > Decimal("0")
                     and batch.long_leg is not None
                     and batch.short_leg is not None
-                    and abs(tot_l - tot_s) > max(batch.long_leg.spec.base_step, batch.short_leg.spec.base_step)
-                    and (abs(tot_l - tot_s) / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
+                    and (
+                        tot_l <= Decimal("0")
+                        or tot_s <= Decimal("0")
+                        or (abs(tot_l - tot_s) / hi * Decimal("100")) > self.risk.max_qty_mismatch_pct
+                    )
                 )
                 if batch.fallback_submitted and imbalanced:
                     self.ledger.increment_unhedged_streak(now_s)
@@ -1429,8 +1438,10 @@ class CarryExecutionController:
         if terminal:
             self._active_makers.pop(client_order_id, None)
 
-        if (ctx.is_opening and self._is_position_closing(ctx.position_id, pos)) or (
-            ctx.position_id in self._active_emergency_closes
+        if (
+            (ctx.is_opening and self._is_position_closing(ctx.position_id, pos))
+            or (ctx.position_id in self._active_emergency_closes)
+            or self.ledger.is_reconcile_halted()[0]
         ):
             if ctx.position_id in self._active_emergency_closes:
                 self._reconcile_emergency_close(
@@ -1568,8 +1579,10 @@ class CarryExecutionController:
         if task.status not in TERMINAL_ORDER_STATUSES:
             return OrderAck(task.client_order_id, "", task.status, task.filled_base_qty, None)
 
-        suppress_fallback = (task.is_opening and self._is_position_closing(task.position_id)) or (
-            task.position_id in self._active_emergency_closes
+        suppress_fallback = (
+            (task.is_opening and self._is_position_closing(task.position_id))
+            or (task.position_id in self._active_emergency_closes)
+            or self.ledger.is_reconcile_halted()[0]
         )
         unfilled_h = task.target_base_qty - task.filled_base_qty
         if unfilled_h > Decimal("0") and task.fallback_coid is None and not suppress_fallback:
@@ -1667,6 +1680,8 @@ class CarryExecutionController:
             bbo_s = self._valid_bbo(quotes, iid_s)
 
             if status == "OPENING":
+                if self._is_position_imbalanced(pos, spec_l, spec_s):
+                    continue
                 rem = Decimal(str(pos["target_base_qty"])) - min(cur_l, cur_s)
                 if rem <= Decimal("0"):
                     self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
@@ -1679,11 +1694,10 @@ class CarryExecutionController:
                             long_base_qty=Decimal("0"), short_base_qty=Decimal("0"),
                             close_reason="entry_maker_timeout",
                         )
-                    else:
+                        self._slice_attempts.pop(pid, None)
+                    elif cur_l > Decimal("0") and cur_s > Decimal("0") and not self._is_position_imbalanced(pos, spec_l, spec_s):
                         self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
-                    self._slice_attempts.pop(pid, None)
-                    continue
-                if self._is_position_imbalanced(pos, spec_l, spec_s):
+                        self._slice_attempts.pop(pid, None)
                     continue
                 if bbo_l is None or bbo_s is None:
                     continue
@@ -1698,9 +1712,7 @@ class CarryExecutionController:
                 if ok:
                     submitted.append(pid)
                 elif err in _OPENING_UNFILLABLE_DUST_ERRORS:
-                    if cur_l > Decimal("0") and cur_s > Decimal("0"):
-                        self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
-                    else:
+                    if cur_l <= Decimal("0") and cur_s <= Decimal("0"):
                         self.ledger.update_position_status(
                             pid,
                             status="CLOSED",
@@ -1709,7 +1721,10 @@ class CarryExecutionController:
                             short_base_qty=Decimal("0"),
                             close_reason=f"entry_aborted:{err}",
                         )
-                    self._slice_attempts.pop(pid, None)
+                        self._slice_attempts.pop(pid, None)
+                    elif cur_l > Decimal("0") and cur_s > Decimal("0") and not self._is_position_imbalanced(pos, spec_l, spec_s):
+                        self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                        self._slice_attempts.pop(pid, None)
                 elif err in _OPENING_SLICE_GATE_ERRORS:
                     cnt = self._slice_attempts.get(pid, 0) + 1
                     self._slice_attempts[pid] = cnt
@@ -1720,9 +1735,10 @@ class CarryExecutionController:
                                 long_base_qty=Decimal("0"), short_base_qty=Decimal("0"),
                                 close_reason="entry_maker_timeout",
                             )
-                        else:
+                            self._slice_attempts.pop(pid, None)
+                        elif cur_l > Decimal("0") and cur_s > Decimal("0") and not self._is_position_imbalanced(pos, spec_l, spec_s):
                             self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
-                        self._slice_attempts.pop(pid, None)
+                            self._slice_attempts.pop(pid, None)
             elif status == "CLOSING":
                 rem = max(cur_l, cur_s)
                 if rem <= Decimal("0"):
@@ -1868,6 +1884,7 @@ class CarryExecutionController:
             elif (
                 coid in self._active_makers
                 and not ctx.cancel_requested
+                and not self.ledger.is_reconcile_halted()[0]
                 and now_s - ctx.submitted_ts >= self.runtime.maker_requote_secs
             ):
                 c_ack = self.gateway.cancel_order(

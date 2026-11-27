@@ -5294,3 +5294,334 @@ def test_subsequent_opening_slice_enforces_min_entry_basis_bps(tmp_path: Path) -
     assert gw.submitted == []
     assert led.active_positions()["SOL-LOW-BASIS"]["status"] == "OPEN"
     led.close()
+
+
+def test_single_lot_naked_opening_never_wiped_and_blocks_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    assert plan.risk.slice_usd == D("50")
+    assert plan.risk.leg_notional_usd == D("100")
+
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("1"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec(
+        "SOL-USDT-SWAP.OKX", "OKX", size_increment=D("1"), contract_multiplier=D("1"), price_increment=D("0.01")
+    )
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+
+    now_s = 1_800_000_000
+    clock = [float(now_s)]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+
+    led = CarryLedger(tmp_path / "single_lot_naked.sqlite3", plan.fingerprint(), ledger_domain="live")
+    gw = DelayedAsyncVenueGateway()
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    strat = carry_runtime._create_carry_strategy(plan, led, mode="live")
+    strat.gateway = gw
+    strat.controller.gateway = gw
+    strat.reconciled = True
+    strat._specs_from_cache = lambda: specs
+
+    # Enter at 49.71 -> target_base_qty = 2, slice 1 submits 1 lot each via Dual-Taker IOC
+    quotes_open = {spec_l.instrument_id: (49.70, 49.71), spec_s.instrument_id: (49.85, 49.86)}
+    mids_open = {spec_l.instrument_id: 49.705, spec_s.instrument_id: 49.855}
+    strat.live_quotes = dict(quotes_open)
+    strat.live_mids = dict(mids_open)
+    strat.live_mid_ts = {spec_l.instrument_id: clock[0], spec_s.instrument_id: clock[0]}
+
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=49.70, ask=49.71),
+            "OKX": _make_leg(
+                "OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=49.85, ask=49.86
+            ),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+    pid, err = strat.controller.start_entry(cand, specs=specs, now_s=now_s)
+    assert err is None and pid is not None
+    assert D(led.active_positions()[pid]["target_base_qty"]) == D("2")
+
+    tk_l = next(o["client_order_id"] for o in gw.submitted if o["side"] == "BUY")
+    tk_s = next(o["client_order_id"] for o in gw.submitted if o["side"] == "SELL")
+    gw.deliver_fill(tk_l, filled_base_qty=D("1"), avg_fill_price=D("49.71"))
+    gw.deliver_cancel(tk_s, filled_base_qty=D("0"))
+    strat.controller.poll_active_orders(live_mids=mids_open, now_s=now_s + 1, live_quotes=quotes_open)
+    assert len(gw.submitted) == 3
+    fb_s = gw.submitted[2]["client_order_id"]
+    gw.deliver_reject(fb_s, reason="insufficient_margin")
+    strat.controller.poll_active_orders(live_mids=mids_open, now_s=now_s + 2, live_quotes=quotes_open)
+
+    # Ledger correctly records 1 long / 0 short and increments unhedged_streak
+    pos = led.active_positions()[pid]
+    assert pos["status"] == "OPENING"
+    assert D(pos["long_base_qty"]) == D("1") and D(pos["short_base_qty"]) == D("0")
+    assert led.daily_stats(now_s + 2)[1] == 1
+
+    # Price rises to 50.10 so $50 slice can no longer afford 1 lot -> must NOT wipe to CLOSED 0/0
+    clock[0] = float(now_s + 3)
+    quotes_hi = {spec_l.instrument_id: (50.09, 50.11), spec_s.instrument_id: (50.24, 50.26)}
+    mids_hi = {spec_l.instrument_id: 50.10, spec_s.instrument_id: 50.25}
+    strat.live_quotes = dict(quotes_hi)
+    strat.live_mids = dict(mids_hi)
+    strat.live_mid_ts = {spec_l.instrument_id: clock[0], spec_s.instrument_id: clock[0]}
+
+    assert strat.controller.advance_pending_slices(specs=specs, quotes=quotes_hi, mids=mids_hi, now_s=int(clock[0])) == []
+    assert len(gw.submitted) == 3
+    pos_after = led.active_positions()[pid]
+    assert pos_after["status"] == "OPENING"
+    assert D(pos_after["long_base_qty"]) == D("1") and D(pos_after["short_base_qty"]) == D("0")
+
+    # Even if unhedged dust/timeout branch were reached directly, 1/0 must stay active and un-wiped
+    assert strat.controller._is_position_imbalanced(pos_after, spec_l, spec_s) is True
+    ready_pre, blockers_pre = strat.controller.is_shutdown_ready(specs=specs, live_mids=mids_hi)
+    assert ready_pre is False and any(b.startswith(f"unhedged_exposure:{pid}:") for b in blockers_pre)
+
+    # Requesting shutdown with 1/0 naked leg must refuse immediate stop and emit reduce-only SELL 1
+    stop_calls: list[str] = []
+    strat.request_graceful_shutdown(stop_cb=lambda: stop_calls.append("stopped"), drain_timeout_secs=60.0)
+    strat._on_fast_risk_timer(None)
+    assert stop_calls == []
+    assert len(gw.submitted) == 4
+    em = gw.submitted[3]
+    assert em["side"] == "SELL" and em["reduce_only"] is True and em["base_qty"] == D("1")
+
+    gw.deliver_fill(em["client_order_id"], filled_base_qty=D("1"), avg_fill_price=D("50.10"))
+    strat.on_order_filled(SimpleNamespace(client_order_id=em["client_order_id"]))
+    assert stop_calls == ["stopped"]
+    assert led.active_positions() == {}
+    row = dict(led.conn.execute("SELECT status, long_base_qty, short_base_qty FROM positions WHERE position_id=?", (pid,)).fetchone())
+    assert row["status"] == "CLOSED" and D(row["long_base_qty"]) == D("0") and D(row["short_base_qty"]) == D("0")
+    assert led.reconcile_startup(venue_positions={}, venue_open_orders={}, ts_s=int(clock[0]) + 1).ok is True
+    led.close()
+
+
+def test_inflight_emergency_close_and_other_fills_booked_after_reconcile_halt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec(
+        "SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01")
+    )
+    eth_l = InstrumentSpec("ETH-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.001"), price_increment=D("0.01"))
+    eth_s = InstrumentSpec(
+        "ETH-USDT-SWAP.OKX", "OKX", size_increment=D("0.01"), contract_multiplier=D("0.01"), price_increment=D("0.01")
+    )
+    specs = {
+        spec_l.instrument_id: spec_l,
+        spec_s.instrument_id: spec_s,
+        eth_l.instrument_id: eth_l,
+        eth_s.instrument_id: eth_s,
+    }
+    now_s = 1_800_000_000
+    clock = [float(now_s)]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+
+    led = CarryLedger(tmp_path / "halt_book_fills.sqlite3", plan.fingerprint(), ledger_domain="live")
+    gw = DelayedAsyncVenueGateway()
+    for sp in specs.values():
+        gw.register_spec(sp)
+
+    strat = carry_runtime._create_carry_strategy(plan, led, mode="live")
+    strat.gateway = gw
+    strat.controller.gateway = gw
+    strat.reconciled = True
+    strat.live_mids = {
+        spec_l.instrument_id: 100.0,
+        spec_s.instrument_id: 100.2,
+        eth_l.instrument_id: 2000.0,
+        eth_s.instrument_id: 2003.0,
+    }
+    strat.live_quotes = {
+        spec_l.instrument_id: (99.98, 100.02),
+        spec_s.instrument_id: (100.18, 100.22),
+        eth_l.instrument_id: (1999.8, 2000.2),
+        eth_s.instrument_id: (2002.8, 2003.2),
+    }
+    strat.live_mid_ts = {iid: clock[0] for iid in specs}
+    strat._specs_from_cache = lambda: specs
+
+    # Position A: OPEN 0.49 / 0.49 on SOL -> emergency close
+    led.create_position(
+        position_id="SOL-HALT-CLOSE",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s - 60,
+        entry_l=100.0,
+        entry_s=100.2,
+        entry_basis_bps=20.0,
+        target_base_qty=D("0.49"),
+    )
+    led.update_position_status(
+        "SOL-HALT-CLOSE", status="OPEN", ts_s=now_s - 50, long_base_qty=D("0.49"), short_base_qty=D("0.49")
+    )
+
+    # Trigger emergency close on SOL-HALT-CLOSE; keep long close em_l OPEN while short close keeps rejecting
+    strat.controller.emergency_close_position(
+        "SOL-HALT-CLOSE", specs=specs, reason="basis_stop_30m", now_s=now_s, live_mids=strat.live_mids
+    )
+    em_l = next(o["client_order_id"] for o in gw.submitted if o["side"] == "SELL")
+    em_s1 = next(o["client_order_id"] for o in gw.submitted if o["side"] == "BUY")
+    gw.deliver_reject(em_s1, reason="venue_reject")
+    strat.on_order_rejected(SimpleNamespace(client_order_id=em_s1))
+
+    # Run first 2 backoff retries (at +2s, +7s)
+    for wait_s in (2, 5):
+        clock[0] += wait_s
+        strat._on_fast_risk_timer(None)
+        retry_s = gw.submitted[-1]["client_order_id"]
+        assert retry_s != em_l
+        gw.deliver_reject(retry_s, reason="venue_reject")
+        strat.on_order_rejected(SimpleNamespace(client_order_id=retry_s))
+
+    # Position B: in-flight MAKER_OPEN on ETH started at +7s before final retry fails
+    eth_snap = {
+        "ETH": {
+            "HL": _make_leg("HL", "ETH", r8=0.0, r24=0.0, cur_rate=0.0, bid=1999.8, ask=2000.2),
+            "OKX": _make_leg(
+                "OKX", "ETH", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=2002.8, ask=2003.2
+            ),
+        }
+    }
+    eth_cand = evaluate_entry_candidates(
+        eth_snap, open_symbols={"SOL"}, venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=int(clock[0])
+    )[0]
+    pid_b, err_b = strat.controller.start_entry(eth_cand, specs=specs, now_s=int(clock[0]))
+    assert err_b is None and pid_b is not None
+    mk_b = gw.submitted[-1]["client_order_id"]
+
+    # 3rd retry at +10s (+17s total) rejects -> triggers HALTED_RECONCILE
+    clock[0] += 10
+    strat._on_fast_risk_timer(None)
+    retry_s3 = gw.submitted[-1]["client_order_id"]
+    assert retry_s3 != em_l and retry_s3 != mk_b
+    gw.deliver_reject(retry_s3, reason="venue_reject")
+    strat.on_order_rejected(SimpleNamespace(client_order_id=retry_s3))
+
+    assert led.is_reconcile_halted() == (True, "emergency_close_failed:SOL-HALT-CLOSE")
+    assert "SOL-HALT-CLOSE" in strat.controller._active_emergency_closes
+    submitted_at_halt = len(gw.submitted)
+
+    # Advance past maker_requote_secs (20s >= 15s) while HALTED_RECONCILE: must NOT send cancel or new orders
+    clock[0] += 10
+    strat._on_fast_risk_timer(None)
+    assert gw.cancel_requests == []
+    assert len(gw.submitted) == submitted_at_halt
+
+    # Partial fill 0.20 on in-flight em_l via callback -> books to ledger & position without new orders
+    gw.deliver_fill(em_l, filled_base_qty=D("0.20"), avg_fill_price=D("99.95"), partial=True, venue_order_id="HL-CLOSE-1")
+    strat.on_order_filled(SimpleNamespace(client_order_id=em_l))
+    assert len(gw.submitted) == submitted_at_halt
+    ord_row = dict(led.conn.execute("SELECT status, filled_base_qty FROM orders WHERE client_order_id=?", (em_l,)).fetchone())
+    assert ord_row["status"] == "PARTIAL" and D(ord_row["filled_base_qty"]) == D("0.20")
+    pos_mid = led.active_positions()["SOL-HALT-CLOSE"]
+    assert D(pos_mid["long_base_qty"]) == D("0.29") and D(pos_mid["short_base_qty"]) == D("0.49")
+
+    # Final fill 0.49 on em_l via timer poll -> books 0 remaining long & clears completed close task
+    clock[0] += 1.0
+    gw.deliver_fill(em_l, filled_base_qty=D("0.49"), avg_fill_price=D("99.96"), partial=False, venue_order_id="HL-CLOSE-1")
+    strat._on_fast_risk_timer(None)
+    assert len(gw.submitted) == submitted_at_halt
+    ord_row_final = dict(led.conn.execute("SELECT status, filled_base_qty FROM orders WHERE client_order_id=?", (em_l,)).fetchone())
+    assert ord_row_final["status"] == "FILLED" and D(ord_row_final["filled_base_qty"]) == D("0.49")
+    pos_final = led.active_positions()["SOL-HALT-CLOSE"]
+    assert D(pos_final["long_base_qty"]) == D("0") and D(pos_final["short_base_qty"]) == D("0.49")
+    assert "SOL-HALT-CLOSE" not in strat.controller._active_emergency_closes
+
+    # Late fill on Position B's in-flight maker during HALTED_RECONCILE books inventory without submitting a hedge order
+    mk_qty = gw.orders[mk_b]["base_qty"]
+    gw.deliver_fill(mk_b, filled_base_qty=mk_qty, avg_fill_price=D("1999.80"), venue_order_id="HL-MK-B")
+    strat.on_order_filled(SimpleNamespace(client_order_id=mk_b))
+    assert len(gw.submitted) == submitted_at_halt
+    mk_row = dict(led.conn.execute("SELECT status, filled_base_qty FROM orders WHERE client_order_id=?", (mk_b,)).fetchone())
+    assert mk_row["status"] == "FILLED" and D(mk_row["filled_base_qty"]) == mk_qty
+    assert D(led.active_positions()[pid_b]["long_base_qty"]) == mk_qty
+    assert D(led.active_positions()[pid_b]["short_base_qty"]) == D("0")
+    assert strat.controller.has_any_in_flight_orders() is False
+    led.close()
+
+
+def test_margin_guard_triggers_independently_when_other_leg_quote_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    assert plan.risk.margin_guard_pct == D("25")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec(
+        "SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01")
+    )
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    now_s = 1_800_000_000
+    monkeypatch.setattr(time, "time", lambda: float(now_s))
+
+    def _setup(name: str):
+        led = CarryLedger(tmp_path / f"{name}.sqlite3", plan.fingerprint(), ledger_domain="live")
+        led.create_position(
+            position_id="SOL-MG",
+            symbol="SOL",
+            long_venue="HL",
+            short_venue="OKX",
+            iid_long=spec_l.instrument_id,
+            iid_short=spec_s.instrument_id,
+            opened_ts=now_s - 300,
+            entry_l=100.0,
+            entry_s=100.0,
+            entry_basis_bps=0.0,
+            target_base_qty=D("0.98"),
+        )
+        led.update_position_status(
+            "SOL-MG", status="OPEN", ts_s=now_s - 290, long_base_qty=D("0.98"), short_base_qty=D("0.98")
+        )
+        gw = DelayedAsyncVenueGateway()
+        gw.register_spec(spec_l)
+        gw.register_spec(spec_s)
+        strat = carry_runtime._create_carry_strategy(plan, led, mode="live")
+        strat.gateway = gw
+        strat.controller.gateway = gw
+        strat.reconciled = True
+        strat._specs_from_cache = lambda: specs
+        return led, gw, strat
+
+    # 1) Long drops to 73 (27% drawdown >= 25%) while short feed is stale -> must fire margin_guard_25pct
+    led_l, gw_l, strat_l = _setup("mg_long_fresh_short_stale")
+    strat_l.live_mids = {spec_l.instrument_id: 73.0, spec_s.instrument_id: 100.0}
+    strat_l.live_mid_ts = {spec_l.instrument_id: float(now_s), spec_s.instrument_id: float(now_s - 120)}
+    strat_l._on_fast_risk_timer(None)
+    assert len(gw_l.submitted) == 2
+    assert all(o["reduce_only"] is True for o in gw_l.submitted)
+    assert led_l.active_positions()["SOL-MG"]["close_reason"] == "margin_guard_25pct"
+    led_l.close()
+
+    # 2) Symmetric: short spikes to 127 (27% adverse >= 25%) while long feed is stale -> must fire margin_guard_25pct
+    led_s, gw_s, strat_s = _setup("mg_short_fresh_long_stale")
+    strat_s.live_mids = {spec_l.instrument_id: 100.0, spec_s.instrument_id: 127.0}
+    strat_s.live_mid_ts = {spec_l.instrument_id: float(now_s - 120), spec_s.instrument_id: float(now_s)}
+    strat_s._on_fast_risk_timer(None)
+    assert len(gw_s.submitted) == 2
+    assert all(o["reduce_only"] is True for o in gw_s.submitted)
+    assert led_s.active_positions()["SOL-MG"]["close_reason"] == "margin_guard_25pct"
+    led_s.close()
+
+    # 3) Control: breached leg itself is stale while healthy opposite leg is fresh -> must NOT fire
+    led_c, gw_c, strat_c = _setup("mg_breached_leg_stale")
+    strat_c.live_mids = {spec_l.instrument_id: 73.0, spec_s.instrument_id: 100.0}
+    strat_c.live_mid_ts = {spec_l.instrument_id: float(now_s - 120), spec_s.instrument_id: float(now_s)}
+    strat_c._on_fast_risk_timer(None)
+    assert gw_c.submitted == []
+    assert led_c.active_positions()["SOL-MG"]["status"] == "OPEN"
+    led_c.close()

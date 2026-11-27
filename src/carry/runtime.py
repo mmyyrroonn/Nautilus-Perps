@@ -408,6 +408,9 @@ def _create_carry_strategy(
             rec_halted, _ = self.ledger.is_reconcile_halted()
             return not rec_halted
 
+        def _can_book_in_flight_orders(self) -> bool:
+            return self.mode in ("paper", "live") and self.reconciled
+
         def request_graceful_shutdown(
             self,
             *,
@@ -519,7 +522,7 @@ def _create_carry_strategy(
                 self.live_mid_ts[iid] = quote_ts
                 if self.paper_gateway is not None:
                     filled_coids = self.paper_gateway.update_quote(iid, Decimal(str(bid)), Decimal(str(ask)))
-                    if filled_coids and self._can_trade():
+                    if filled_coids and self._can_book_in_flight_orders():
                         self.controller.poll_active_orders(
                             live_mids=self.live_mids, now_s=int(ts_now), live_quotes=self.live_quotes
                         )
@@ -568,7 +571,7 @@ def _create_carry_strategy(
                                 self.paper_gateway.seed_quote(leg.instrument_id, Decimal(str(leg.bid)), Decimal(str(leg.ask)))
 
         def _handle_order_event(self, event: Any) -> None:
-            if not self._can_trade():
+            if not self._can_book_in_flight_orders():
                 return
             coid = str(getattr(event, "client_order_id", ""))
             now_s = int(time.time())
@@ -664,7 +667,7 @@ def _create_carry_strategy(
             now_s = int(time.time())
             if self._shutdown_requested.is_set() and self._shutdown_drain_started_ts is None:
                 self._start_graceful_shutdown_drain(now_s)
-            if self._can_trade():
+            if self._can_book_in_flight_orders():
                 self.controller.poll_active_orders(
                     live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
                 )
