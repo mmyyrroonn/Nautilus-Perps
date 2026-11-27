@@ -34,6 +34,7 @@ BITGET_MARGIN_MODE = "crossed"
 
 _STABLECOIN_FEE_CCYS = frozenset({"USD", "USDT", "USDC"})
 _BITGET_NOT_FOUND_CODES = frozenset({"40768", "43001"})
+_BITGET_PRIVATE_WS_CHANNELS = frozenset({"orders", "fill"})
 _BITGET_TRANSIENT_HTTP_ERRORS = (
     http.client.RemoteDisconnected,
     http.client.BadStatusLine,
@@ -58,7 +59,6 @@ _BITGET_DEFINITE_PLACE_REJECT_CODES = frozenset(
         "40716",
         "40717",
         "40724",
-        "40725",
         "40726",
         "40754",
         "40757",
@@ -199,6 +199,20 @@ def _format_decimal_plain(value: Decimal) -> str:
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     return text or "0"
+
+
+def bitget_signed_get_path(path: str, params: Mapping[str, Any] | None = None) -> str:
+    """Build a Bitget Classic v2 signed GET requestPath with query keys sorted ascending."""
+    if not params:
+        return path
+    items = sorted(
+        (str(k), str(v))
+        for k, v in params.items()
+        if v is not None and str(v) != ""
+    )
+    if not items:
+        return path
+    return f"{path}?{urllib.parse.urlencode(items, quote_via=urllib.parse.quote)}"
 
 
 def bitget_rest_headers(
@@ -349,6 +363,7 @@ def parse_bitget_contracts(payload: Any) -> dict[str, tuple[InstrumentSpec, dict
             min_quantity=min_qty,
             min_notional_usd=min_notional,
             price_increment=price_inc,
+            close_only=(symbol_status == "limit_open"),
         )
         meta = {
             "symbol": raw_sym[:-4],
@@ -862,14 +877,17 @@ class _TrackedOrder:
     reason: str | None = None
     fee_usd: Decimal | None = None
     fee_invalid: bool = False
+    order_level_price_qty: Decimal = Decimal("0")
     order_level_fee_usd: Decimal | None = None
     order_level_fee_qty: Decimal = Decimal("0")
-    fee_backfill_attempted: bool = False
+    fee_backfill_attempts: int = 0
+    last_fee_backfill_ts: float = 0.0
     seen_trade_ids: set[str] = field(default_factory=set)
     fee_by_trade_id: dict[str, Decimal] = field(default_factory=dict)
     filled_by_trade_id: dict[str, Decimal] = field(default_factory=dict)
     fill_notional_by_trade_id: dict[str, Decimal] = field(default_factory=dict)
     cancel_requested: bool = False
+    cancel_in_place_handled: bool = False
     submit_uncertain: bool = False
     not_found_confirmations: int = 0
     uncertain_error_checks: int = 0
@@ -910,6 +928,7 @@ class BitgetVenueGateway:
         log_queue_maxsize: int = 10_000,
         shutdown_drain_timeout_secs: float = 3.0,
         uncertain_error_max_checks: int = 6,
+        fee_backfill_max_attempts: int = 3,
         terminal_retention_secs: float = 3600.0,
         terminal_prune_threshold: int = 500,
     ) -> None:
@@ -930,6 +949,7 @@ class BitgetVenueGateway:
         self._preflight_symbol = preflight_symbol
         self.shutdown_drain_timeout_secs = max(0.05, float(shutdown_drain_timeout_secs))
         self.uncertain_error_max_checks = max(1, int(uncertain_error_max_checks))
+        self.fee_backfill_max_attempts = max(1, int(fee_backfill_max_attempts))
         self.terminal_retention_secs = max(0.0, float(terminal_retention_secs))
         self.terminal_prune_threshold = max(1, int(terminal_prune_threshold))
 
@@ -953,6 +973,7 @@ class BitgetVenueGateway:
         self._started_ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._ws_logged_in = False
+        self._ws_subs_ready = False
         self._order_async_locks: dict[str, asyncio.Lock] = {}
 
     def _env_map(self) -> Mapping[str, str]:
@@ -1120,10 +1141,13 @@ class BitgetVenueGateway:
     def preflight_check(self) -> None:
         """Synchronously verify Classic v2 USDT-FUTURES credentials, non-UTA, one_way_mode, and crossed."""
         self._require_creds()
-        q = urllib.parse.quote(self._preflight_symbol)
-        path = (
-            f"/api/v2/mix/account/account?symbol={q}"
-            f"&productType={BITGET_PRODUCT_TYPE}&marginCoin={BITGET_MARGIN_COIN}"
+        path = bitget_signed_get_path(
+            "/api/v2/mix/account/account",
+            {
+                "symbol": self._preflight_symbol,
+                "productType": BITGET_PRODUCT_TYPE,
+                "marginCoin": BITGET_MARGIN_COIN,
+            },
         )
         try:
             resp = self._signed_rest("GET", path, None)
@@ -1162,7 +1186,10 @@ class BitgetVenueGateway:
                 f"Bitget marginMode must be crossed, got {margin_mode or 'missing'}"
             )
 
-        iso_path = f"/api/v2/mix/account/isolated-symbols?productType={BITGET_PRODUCT_TYPE}"
+        iso_path = bitget_signed_get_path(
+            "/api/v2/mix/account/isolated-symbols",
+            {"productType": BITGET_PRODUCT_TYPE},
+        )
         try:
             iso_resp = self._signed_rest("GET", iso_path, None)
         except BitgetPreflightError:
@@ -1283,6 +1310,7 @@ class BitgetVenueGateway:
             if rec.status in TERMINAL_ORDER_STATUSES:
                 return ack
             rec.cancel_requested = True
+            rec.cancel_in_place_handled = False
         self._cmd_queue.put(("cancel", client_order_id))
         with self._loop_lock:
             loop = self._loop
@@ -1433,7 +1461,14 @@ class BitgetVenueGateway:
             if op == "place":
                 await asyncio.to_thread(self._exec_place_sync, coid)
             elif op == "cancel":
-                await asyncio.to_thread(self._exec_cancel_sync, coid)
+                skip_cancel = False
+                with self._orders_lock:
+                    rec = self._orders.get(coid)
+                    if rec is not None and rec.cancel_in_place_handled:
+                        rec.cancel_in_place_handled = False
+                        skip_cancel = True
+                if not skip_cancel:
+                    await asyncio.to_thread(self._exec_cancel_sync, coid)
 
     def _parse_fee_detail_list(self, fee_details: Any) -> tuple[bool, Decimal | None]:
         """Return (has_invalid_coin, normalized_nonneg_usd_sum)."""
@@ -1471,7 +1506,7 @@ class BitgetVenueGateway:
             rec.status not in ("FILLED", "CANCELED")
             or rec.filled_base_qty <= 0
             or rec.fee_invalid
-            or rec.fee_backfill_attempted
+            or rec.fee_backfill_attempts >= self.fee_backfill_max_attempts
             or not rec.venue_order_id
         ):
             return False
@@ -1584,14 +1619,23 @@ class BitgetVenueGateway:
             elif vid_str:
                 self._vid_to_coid.setdefault(vid_str, coid)
 
-            new_filled = max(rec.filled_base_qty, filled_dec) if filled_dec is not None else rec.filled_base_qty
+            snap_qty = filled_dec if (filled_dec is not None and filled_dec > 0) else Decimal("0")
+            new_filled = max(rec.filled_base_qty, snap_qty)
             filled_increased = new_filled > rec.filled_base_qty
             if filled_increased:
                 rec.filled_base_qty = new_filled
                 changed = True
-            if avg_px_dec is not None and avg_px_dec > 0 and rec.avg_fill_price != avg_px_dec:
-                rec.avg_fill_price = avg_px_dec
-                changed = True
+            if (
+                avg_px_dec is not None
+                and avg_px_dec > 0
+                and snap_qty > 0
+                and snap_qty >= rec.filled_base_qty
+                and snap_qty >= rec.order_level_price_qty
+            ):
+                if rec.avg_fill_price != avg_px_dec or snap_qty > rec.order_level_price_qty:
+                    rec.avg_fill_price = avg_px_dec
+                    rec.order_level_price_qty = snap_qty
+                    changed = True
 
             mapped_status = _map_bitget_order_status(raw_state, rec.filled_base_qty)
             if rec.status in TERMINAL_ORDER_STATUSES:
@@ -1606,18 +1650,25 @@ class BitgetVenueGateway:
                     rec.status = mapped_status
                     changed = True
 
+            fee_applied = False
             if fee_invalid:
                 if not rec.fee_invalid:
                     rec.fee_invalid = True
                     rec.fee_usd = None
                     changed = True
-            elif parsed_fee is not None:
-                if rec.order_level_fee_usd != parsed_fee or new_filled > rec.order_level_fee_qty:
+            elif (
+                parsed_fee is not None
+                and snap_qty > 0
+                and snap_qty >= rec.filled_base_qty
+                and snap_qty >= rec.order_level_fee_qty
+            ):
+                if rec.order_level_fee_usd != parsed_fee or snap_qty > rec.order_level_fee_qty:
                     rec.order_level_fee_usd = parsed_fee
-                    rec.order_level_fee_qty = max(rec.order_level_fee_qty, new_filled)
+                    rec.order_level_fee_qty = snap_qty
                     changed = True
+                fee_applied = True
 
-            if filled_increased or parsed_fee is not None:
+            if filled_increased or fee_applied:
                 self._recompute_order_fee_locked(rec)
 
             fee_cleared = prev_fee_usd is not None and rec.fee_usd is None and not rec.fee_invalid
@@ -1626,7 +1677,7 @@ class BitgetVenueGateway:
 
             needs_backfill = self._needs_fee_backfill_locked(rec)
 
-            if changed or fee_invalid or parsed_fee is not None or fee_cleared:
+            if changed or fee_invalid or fee_applied or fee_cleared:
                 event_to_emit = BitgetGatewayEvent(
                     client_order_id=coid,
                     fee_usd=None if rec.fee_invalid else rec.fee_usd,
@@ -1670,9 +1721,6 @@ class BitgetVenueGateway:
 
                 trade_id = str(row.get("tradeId") or "").strip()
                 dedup_id = trade_id or f"anon:{row.get('cTime') or row.get('updatedTime') or ''}:{row.get('baseVolume') or row.get('execQty') or ''}"
-                if dedup_id in rec.seen_trade_ids:
-                    continue
-                rec.seen_trade_ids.add(dedup_id)
 
                 qty_dec = _parse_optional_decimal(
                     row.get("baseVolume")
@@ -1682,38 +1730,66 @@ class BitgetVenueGateway:
                 px_dec = _parse_optional_decimal(
                     row.get("price") if row.get("price") is not None else row.get("execPrice")
                 )
-                if qty_dec is not None and qty_dec > 0:
-                    rec.filled_by_trade_id[dedup_id] = qty_dec
-                    if px_dec is not None and px_dec > 0:
-                        rec.fill_notional_by_trade_id[dedup_id] = qty_dec * px_dec
-                    trade_qty_sum = sum(rec.filled_by_trade_id.values(), Decimal("0"))
-                    if trade_qty_sum > rec.filled_base_qty:
-                        rec.filled_base_qty = trade_qty_sum
-                    priced_qty = sum(
-                        (
-                            rec.filled_by_trade_id[tid]
-                            for tid in rec.fill_notional_by_trade_id
-                            if tid in rec.filled_by_trade_id
-                        ),
-                        Decimal("0"),
-                    )
-                    if priced_qty > 0:
-                        tot_notional = sum(rec.fill_notional_by_trade_id.values(), Decimal("0"))
-                        rec.avg_fill_price = tot_notional / priced_qty
-                    if rec.status not in TERMINAL_ORDER_STATUSES:
-                        if rec.filled_base_qty >= rec.qty_contracts > 0:
-                            self._mark_terminal_locked(rec, "FILLED")
-                        elif rec.filled_base_qty > 0:
-                            rec.status = "PARTIAL"
-
                 fee_invalid, trade_fee = self._parse_fee_detail_list(row.get("feeDetail"))
-                if fee_invalid:
-                    rec.fee_invalid = True
-                    rec.fee_usd = None
-                elif trade_fee is not None and not rec.fee_invalid:
-                    rec.fee_by_trade_id[dedup_id] = trade_fee
-                self._recompute_order_fee_locked(rec)
 
+                row_changed = False
+                if dedup_id not in rec.seen_trade_ids:
+                    rec.seen_trade_ids.add(dedup_id)
+                    row_changed = True
+
+                eff_qty = rec.filled_by_trade_id.get(dedup_id)
+                if eff_qty is None and qty_dec is not None and qty_dec > 0:
+                    rec.filled_by_trade_id[dedup_id] = qty_dec
+                    eff_qty = qty_dec
+                    row_changed = True
+
+                if (
+                    dedup_id not in rec.fill_notional_by_trade_id
+                    and eff_qty is not None
+                    and eff_qty > 0
+                    and px_dec is not None
+                    and px_dec > 0
+                ):
+                    rec.fill_notional_by_trade_id[dedup_id] = eff_qty * px_dec
+                    row_changed = True
+
+                if fee_invalid:
+                    if not rec.fee_invalid:
+                        rec.fee_invalid = True
+                        rec.fee_usd = None
+                        row_changed = True
+                elif trade_fee is not None and not rec.fee_invalid and dedup_id not in rec.fee_by_trade_id:
+                    rec.fee_by_trade_id[dedup_id] = trade_fee
+                    row_changed = True
+
+                if not row_changed:
+                    continue
+
+                trade_qty_sum = sum(rec.filled_by_trade_id.values(), Decimal("0"))
+                if trade_qty_sum > rec.filled_base_qty:
+                    rec.filled_base_qty = trade_qty_sum
+                priced_qty = sum(
+                    (
+                        rec.filled_by_trade_id[tid]
+                        for tid in rec.fill_notional_by_trade_id
+                        if tid in rec.filled_by_trade_id
+                    ),
+                    Decimal("0"),
+                )
+                if priced_qty > 0 and (
+                    rec.avg_fill_price is None
+                    or rec.order_level_price_qty <= 0
+                    or (priced_qty >= rec.filled_base_qty and priced_qty >= rec.order_level_price_qty)
+                ):
+                    tot_notional = sum(rec.fill_notional_by_trade_id.values(), Decimal("0"))
+                    rec.avg_fill_price = tot_notional / priced_qty
+                if rec.status not in TERMINAL_ORDER_STATUSES:
+                    if rec.filled_base_qty >= rec.qty_contracts > 0:
+                        self._mark_terminal_locked(rec, "FILLED")
+                    elif rec.filled_base_qty > 0:
+                        rec.status = "PARTIAL"
+
+                self._recompute_order_fee_locked(rec)
                 touched_coids.add(coid)
 
             for coid in sorted(touched_coids):
@@ -1737,28 +1813,68 @@ class BitgetVenueGateway:
     def _fetch_order_fills_sync(self, raw_symbol: str, venue_order_id: str, coid: str) -> None:
         if not venue_order_id:
             return
-        q_sym = urllib.parse.quote(raw_symbol)
-        q_oid = urllib.parse.quote(venue_order_id)
-        path = (
-            f"/api/v2/mix/order/fills?productType={BITGET_PRODUCT_TYPE}"
-            f"&symbol={q_sym}&orderId={q_oid}"
-        )
-        try:
-            resp = self._signed_rest("GET", path, None)
-        except Exception as exc:
-            self._enqueue_log("WARNING", f"[bitget.gw] order/fills failed for {coid}: {type(exc).__name__}")
-            return
-        if str(resp.get("code") or "") != "00000":
-            return
-        data = resp.get("data")
-        if isinstance(data, dict):
-            rows = data.get("fillList") or []
-        elif isinstance(data, list):
-            rows = data
-        else:
-            rows = []
-        if isinstance(rows, list) and rows:
-            self._apply_fill_rows(rows, fallback_coid=coid, emit_event=True)
+        with self._orders_lock:
+            rec0 = self._orders.get(coid)
+            prev_fee_usd = rec0.fee_usd if rec0 is not None else None
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        any_touched = False
+        for _ in range(5):
+            params: dict[str, Any] = {
+                "productType": BITGET_PRODUCT_TYPE,
+                "symbol": raw_symbol,
+                "orderId": venue_order_id,
+                "limit": "100",
+            }
+            if cursor:
+                params["idLessThan"] = cursor
+            path = bitget_signed_get_path("/api/v2/mix/order/fills", params)
+            try:
+                resp = self._signed_rest("GET", path, None)
+            except Exception as exc:
+                self._enqueue_log("WARNING", f"[bitget.gw] order/fills failed for {coid}: {type(exc).__name__}")
+                break
+            if str(resp.get("code") or "") != "00000":
+                break
+            data = resp.get("data")
+            if isinstance(data, dict):
+                rows = data.get("fillList") or []
+                end_id = str(data.get("endId") or "").strip()
+            elif isinstance(data, list):
+                rows = data
+                end_id = ""
+            else:
+                rows = []
+                end_id = ""
+            if not isinstance(rows, list) or not rows:
+                break
+            touched = self._apply_fill_rows(rows, fallback_coid=coid, emit_event=False)
+            if coid in touched:
+                any_touched = True
+            with self._orders_lock:
+                rec = self._orders.get(coid)
+                covered = rec is not None and (
+                    rec.fee_invalid
+                    or (rec.filled_base_qty > 0 and self._trade_fee_covered_qty_locked(rec) >= rec.filled_base_qty)
+                )
+            if covered or not end_id or end_id in seen_cursors:
+                break
+            seen_cursors.add(end_id)
+            cursor = end_id
+        if any_touched:
+            with self._orders_lock:
+                rec = self._orders.get(coid)
+                if rec is not None:
+                    evt = BitgetGatewayEvent(
+                        client_order_id=coid,
+                        fee_usd=None if rec.fee_invalid else rec.fee_usd,
+                        fee_invalid=rec.fee_invalid,
+                        fee_cleared=(prev_fee_usd is not None and rec.fee_usd is None and not rec.fee_invalid),
+                    )
+                else:
+                    evt = None
+            if evt is not None:
+                self._enqueue_event(evt)
 
     def _query_order_detail_sync(
         self,
@@ -1769,12 +1885,15 @@ class BitgetVenueGateway:
         backfill_fills: bool = True,
     ) -> str:
         """Query REST order/detail and update state. Returns 'FOUND', 'NOT_FOUND', or 'ERROR'."""
-        q_sym = urllib.parse.quote(raw_symbol)
+        params: dict[str, Any] = {
+            "productType": BITGET_PRODUCT_TYPE,
+            "symbol": raw_symbol,
+        }
         if venue_order_id:
-            id_q = f"&orderId={urllib.parse.quote(venue_order_id)}"
+            params["orderId"] = venue_order_id
         else:
-            id_q = f"&clientOid={urllib.parse.quote(coid)}"
-        path = f"/api/v2/mix/order/detail?productType={BITGET_PRODUCT_TYPE}&symbol={q_sym}{id_q}"
+            params["clientOid"] = coid
+        path = bitget_signed_get_path("/api/v2/mix/order/detail", params)
         try:
             resp = self._signed_rest("GET", path, None)
         except Exception as exc:
@@ -1803,12 +1922,22 @@ class BitgetVenueGateway:
             emit_event=False,
         )
         if backfill_fills and needs_backfill:
+            should_fetch_fills = False
+            vid = str(data.get("orderId") or venue_order_id or "").strip()
             with self._orders_lock:
                 cur = self._orders.get(coid)
-                if cur is not None:
-                    cur.fee_backfill_attempted = True
-            vid = str(data.get("orderId") or venue_order_id or "").strip()
-            self._fetch_order_fills_sync(raw_symbol, vid, coid)
+                now_bf = time.monotonic()
+                if (
+                    cur is not None
+                    and vid
+                    and self._needs_fee_backfill_locked(cur)
+                    and (cur.fee_backfill_attempts == 0 or (now_bf - cur.last_fee_backfill_ts) >= self.resync_interval_secs)
+                ):
+                    cur.fee_backfill_attempts += 1
+                    cur.last_fee_backfill_ts = now_bf
+                    should_fetch_fills = True
+            if should_fetch_fills:
+                self._fetch_order_fills_sync(raw_symbol, vid, coid)
         with self._orders_lock:
             rec = self._orders.get(coid)
             if rec is not None:
@@ -1825,7 +1954,21 @@ class BitgetVenueGateway:
             self._enqueue_event(evt)
         return "FOUND"
 
-    def _reconcile_uncertain_place_sync(self, raw_sym: str, coid: str, detail_msg: str) -> None:
+    @staticmethod
+    def _has_positive_exchange_ack_locked(rec: _TrackedOrder) -> bool:
+        return bool(rec.venue_order_id) or rec.filled_base_qty > 0 or rec.status != "OPEN"
+
+    def _reconcile_uncertain_place_sync(self, raw_sym: str, coid: str, detail_msg: str) -> str:
+        with self._orders_lock:
+            cur0 = self._orders.get(coid)
+            if cur0 is None or cur0.status in TERMINAL_ORDER_STATUSES:
+                return "TERMINAL"
+            if self._has_positive_exchange_ack_locked(cur0):
+                cur0.submit_uncertain = False
+                cur0.not_found_confirmations = 0
+                cur0.uncertain_error_checks = 0
+                return "ACKED"
+
         self._enqueue_log(
             "WARNING",
             f"[bitget.gw] place uncertain ({detail_msg}); checking order/detail for {coid}",
@@ -1835,16 +1978,29 @@ class BitgetVenueGateway:
             with self._orders_lock:
                 cur = self._orders.get(coid)
                 if cur is not None and cur.status not in TERMINAL_ORDER_STATUSES:
-                    self._mark_terminal_locked(cur, "REJECTED", reason="not_found_after_uncertain_submit")
-            self._enqueue_event(BitgetGatewayEvent(client_order_id=coid))
+                    if self._has_positive_exchange_ack_locked(cur):
+                        cur.submit_uncertain = False
+                        cur.not_found_confirmations = 0
+                        cur.uncertain_error_checks = 0
+                        return "ACKED"
+                    cur.submit_uncertain = True
+                    cur.not_found_confirmations = 1
+                    cur.uncertain_error_checks = 0
+                    cur.last_resync_ts = time.monotonic()
         elif outcome == "ERROR":
             with self._orders_lock:
                 cur = self._orders.get(coid)
                 if cur is not None and cur.status not in TERMINAL_ORDER_STATUSES:
+                    if self._has_positive_exchange_ack_locked(cur):
+                        cur.submit_uncertain = False
+                        cur.not_found_confirmations = 0
+                        cur.uncertain_error_checks = 0
+                        return "ACKED"
                     cur.submit_uncertain = True
                     cur.not_found_confirmations = 0
                     cur.uncertain_error_checks = 1
                     cur.last_resync_ts = time.monotonic()
+        return outcome
 
     def _exec_place_sync(self, coid: str) -> None:
         with self._orders_lock:
@@ -1875,13 +2031,23 @@ class BitgetVenueGateway:
         try:
             resp = self._signed_rest("POST", "/api/v2/mix/order/place-order", body)
         except Exception as exc:
-            self._reconcile_uncertain_place_sync(raw_sym, coid, type(exc).__name__)
+            outcome = self._reconcile_uncertain_place_sync(raw_sym, coid, type(exc).__name__)
+            if outcome in ("FOUND", "ACKED"):
+                should_cancel = False
+                with self._orders_lock:
+                    cur = self._orders.get(coid)
+                    if cur is not None and cur.cancel_requested and not cur.submit_uncertain and cur.status not in TERMINAL_ORDER_STATUSES:
+                        cur.cancel_in_place_handled = True
+                        should_cancel = True
+                if should_cancel:
+                    self._exec_cancel_sync(coid)
             return
 
         code = str(resp.get("code") or "")
         if code == "00000":
             data = resp.get("data")
             vid = str(data.get("orderId") or "").strip() if isinstance(data, dict) else ""
+            should_cancel = False
             with self._orders_lock:
                 cur = self._orders.get(coid)
                 if cur is not None:
@@ -1892,10 +2058,24 @@ class BitgetVenueGateway:
                         if not cur.venue_order_id:
                             cur.venue_order_id = vid
                         self._vid_to_coid[vid] = coid
+                    if cur.cancel_requested and cur.status not in TERMINAL_ORDER_STATUSES:
+                        cur.cancel_in_place_handled = True
+                        should_cancel = True
+            if should_cancel:
+                self._exec_cancel_sync(coid)
             return
 
         if not _is_bitget_definite_place_reject(code, resp.get("msg")):
-            self._reconcile_uncertain_place_sync(raw_sym, coid, f"code={_sanitize_code(code)}")
+            outcome = self._reconcile_uncertain_place_sync(raw_sym, coid, f"code={_sanitize_code(code)}")
+            if outcome in ("FOUND", "ACKED"):
+                should_cancel = False
+                with self._orders_lock:
+                    cur = self._orders.get(coid)
+                    if cur is not None and cur.cancel_requested and not cur.submit_uncertain and cur.status not in TERMINAL_ORDER_STATUSES:
+                        cur.cancel_in_place_handled = True
+                        should_cancel = True
+                if should_cancel:
+                    self._exec_cancel_sync(coid)
             return
 
         if is_bitget_uta_error(code, resp.get("msg")):
@@ -1933,7 +2113,7 @@ class BitgetVenueGateway:
             code = "__TRANSPORT__"
 
         if code == "00000":
-            if not self._ws_logged_in:
+            if not self._ws_subs_ready:
                 self._query_order_detail_sync(raw_sym, coid, vid)
             return
 
@@ -1973,17 +2153,22 @@ class BitgetVenueGateway:
             if outcome == "NOT_FOUND":
                 with self._orders_lock:
                     cur = self._orders.get(coid)
-                    if cur is not None and cur.submit_uncertain and cur.status not in TERMINAL_ORDER_STATUSES:
-                        cur.last_resync_ts = time.monotonic()
-                        cur.uncertain_error_checks = 0
-                        cur.not_found_confirmations += 1
-                        if cur.not_found_confirmations >= 2:
-                            self._mark_terminal_locked(
-                                cur,
-                                "REJECTED",
-                                reason="not_found_after_uncertain_submit",
-                            )
-                            emit_rejected = True
+                    if cur is not None and cur.status not in TERMINAL_ORDER_STATUSES:
+                        if self._has_positive_exchange_ack_locked(cur):
+                            cur.submit_uncertain = False
+                            cur.not_found_confirmations = 0
+                            cur.uncertain_error_checks = 0
+                        elif cur.submit_uncertain:
+                            cur.last_resync_ts = time.monotonic()
+                            cur.uncertain_error_checks = 0
+                            cur.not_found_confirmations += 1
+                            if cur.not_found_confirmations >= 2:
+                                self._mark_terminal_locked(
+                                    cur,
+                                    "REJECTED",
+                                    reason="not_found_after_uncertain_submit",
+                                )
+                                emit_rejected = True
                 if emit_rejected:
                     self._enqueue_log(
                         "WARNING",
@@ -1994,17 +2179,36 @@ class BitgetVenueGateway:
                 alert_checks = 0
                 with self._orders_lock:
                     cur = self._orders.get(coid)
-                    if cur is not None and cur.submit_uncertain and cur.status not in TERMINAL_ORDER_STATUSES:
-                        cur.last_resync_ts = time.monotonic()
-                        cur.not_found_confirmations = 0
-                        cur.uncertain_error_checks += 1
-                        if cur.uncertain_error_checks % self.uncertain_error_max_checks == 0:
-                            alert_checks = cur.uncertain_error_checks
+                    if cur is not None and cur.status not in TERMINAL_ORDER_STATUSES:
+                        if self._has_positive_exchange_ack_locked(cur):
+                            cur.submit_uncertain = False
+                            cur.not_found_confirmations = 0
+                            cur.uncertain_error_checks = 0
+                        elif cur.submit_uncertain:
+                            cur.last_resync_ts = time.monotonic()
+                            cur.not_found_confirmations = 0
+                            cur.uncertain_error_checks += 1
+                            if cur.uncertain_error_checks % self.uncertain_error_max_checks == 0:
+                                alert_checks = cur.uncertain_error_checks
                 if alert_checks > 0:
                     self._enqueue_log(
                         "ERROR",
                         f"[bitget.gw] uncertain submit unresolved after {alert_checks} detail errors: {coid}",
                     )
+
+        now_bf = time.monotonic()
+        backfill_targets: list[tuple[str, str, str]] = []
+        with self._orders_lock:
+            for coid, rec in self._orders.items():
+                if not self._needs_fee_backfill_locked(rec):
+                    continue
+                if not force and rec.fee_backfill_attempts > 0 and (now_bf - rec.last_fee_backfill_ts) < self.resync_interval_secs:
+                    continue
+                rec.fee_backfill_attempts += 1
+                rec.last_fee_backfill_ts = now_bf
+                backfill_targets.append((rec.raw_symbol, rec.venue_order_id, coid))
+        for raw_sym, vid, coid in backfill_targets:
+            self._fetch_order_fills_sync(raw_sym, vid, coid)
 
         with self._orders_lock:
             pruned_coids = self._prune_terminal_orders_locked(time.monotonic())
@@ -2025,11 +2229,15 @@ class BitgetVenueGateway:
                 coid = self._backfill_queue.get_nowait()
             except queue.Empty:
                 break
+            now_bf = time.monotonic()
             with self._orders_lock:
                 rec = self._orders.get(coid)
                 if rec is None or not self._needs_fee_backfill_locked(rec):
                     continue
-                rec.fee_backfill_attempted = True
+                if rec.fee_backfill_attempts > 0 and (now_bf - rec.last_fee_backfill_ts) < self.resync_interval_secs:
+                    continue
+                rec.fee_backfill_attempts += 1
+                rec.last_fee_backfill_ts = now_bf
                 raw_sym = rec.raw_symbol
                 vid = rec.venue_order_id
             self._fetch_order_fills_sync(raw_sym, vid, coid)
@@ -2057,7 +2265,13 @@ class BitgetVenueGateway:
             await asyncio.to_thread(self._drain_backfills_sync)
             await asyncio.to_thread(self._resync_non_terminal_sync, force=False)
 
-    def _handle_private_ws_message(self, raw_msg: str | bytes) -> bool:
+    def _handle_private_ws_message(
+        self,
+        raw_msg: str | bytes,
+        *,
+        confirmed_channels: set[str] | None = None,
+        rejected_channels: set[str] | None = None,
+    ) -> bool:
         text = raw_msg.decode("utf-8", errors="replace") if isinstance(raw_msg, bytes) else raw_msg
         if text == "pong":
             return True
@@ -2067,18 +2281,51 @@ class BitgetVenueGateway:
             return False
         if not isinstance(msg, dict):
             return False
-        if msg.get("event") == "error":
+        event = msg.get("event")
+        if event == "subscribe":
+            arg = msg.get("arg")
+            if isinstance(arg, dict):
+                ch = str(arg.get("channel") or "").strip().lower()
+                if ch in _BITGET_PRIVATE_WS_CHANNELS:
+                    if confirmed_channels is not None:
+                        confirmed_channels.add(ch)
+                        if _BITGET_PRIVATE_WS_CHANNELS <= confirmed_channels:
+                            self._ws_subs_ready = True
+                    if rejected_channels is not None:
+                        rejected_channels.discard(ch)
+            return False
+        if event == "error":
             code = _sanitize_code(msg.get("code"))
             if is_bitget_uta_error(code, msg.get("msg")):
                 self._enqueue_log("ERROR", f"[bitget.ws.priv] UTA error code={code}")
             else:
                 self._enqueue_log("WARNING", f"[bitget.ws.priv] ws error code={code}")
+            arg = msg.get("arg")
+            if isinstance(arg, dict):
+                ch = str(arg.get("channel") or "").strip().lower()
+                if ch in _BITGET_PRIVATE_WS_CHANNELS:
+                    self._ws_subs_ready = False
+                    if confirmed_channels is not None:
+                        confirmed_channels.discard(ch)
+                    if rejected_channels is not None:
+                        rejected_channels.add(ch)
+            elif confirmed_channels is not None and not (_BITGET_PRIVATE_WS_CHANNELS <= confirmed_channels):
+                self._ws_subs_ready = False
+                if rejected_channels is not None:
+                    rejected_channels.update(_BITGET_PRIVATE_WS_CHANNELS - confirmed_channels)
             return False
         arg = msg.get("arg")
         data = msg.get("data")
         if not isinstance(arg, dict) or not isinstance(data, list):
             return False
         channel = str(arg.get("channel") or "").strip().lower()
+        if channel in _BITGET_PRIVATE_WS_CHANNELS:
+            if confirmed_channels is not None:
+                confirmed_channels.add(channel)
+                if _BITGET_PRIVATE_WS_CHANNELS <= confirmed_channels:
+                    self._ws_subs_ready = True
+            if rejected_channels is not None:
+                rejected_channels.discard(channel)
         if channel == "orders":
             need_wake_backfill = False
             for row in data:
@@ -2105,6 +2352,15 @@ class BitgetVenueGateway:
         return False
 
     async def _private_ws_loop(self, stop_evt: asyncio.Event) -> None:
+        def _priv_sub_payload(channels: list[str]) -> dict[str, Any]:
+            return {
+                "op": "subscribe",
+                "args": [
+                    {"instType": BITGET_PRODUCT_TYPE, "channel": ch, "instId": "default"}
+                    for ch in channels
+                ],
+            }
+
         attempt = 0
         while not stop_evt.is_set():
             api_key, api_secret, api_passphrase = self._optional_creds()
@@ -2155,18 +2411,17 @@ class BitgetVenueGateway:
                         raise TimeoutError("private ws login timeout")
 
                     self._ws_logged_in = True
+                    self._ws_subs_ready = False
                     attempt = 0
-                    sub_payload = {
-                        "op": "subscribe",
-                        "args": [
-                            {"instType": BITGET_PRODUCT_TYPE, "channel": "orders", "instId": "default"},
-                            {"instType": BITGET_PRODUCT_TYPE, "channel": "fill", "instId": "default"},
-                        ],
-                    }
-                    await ws.send(json.dumps(sub_payload, separators=(",", ":")))
-                    self._enqueue_log("INFO", f"[bitget.ws.priv] logged in & subscribed ({self.environment})")
+                    confirmed_priv_channels: set[str] = set()
+                    rejected_priv_channels: set[str] = set()
+                    await ws.send(json.dumps(_priv_sub_payload(["orders", "fill"]), separators=(",", ":")))
+                    self._enqueue_log("INFO", f"[bitget.ws.priv] logged in & subscribing ({self.environment})")
                     await asyncio.to_thread(self._resync_non_terminal_sync, force=True)
 
+                    sub_confirm_deadline = time.monotonic() + self.recv_timeout_secs
+                    sub_retry_count = 0
+                    max_sub_inline_retries = 1
                     last_ping_sent = time.monotonic()
                     awaiting_pong = False
                     pong_deadline = 0.0
@@ -2175,6 +2430,23 @@ class BitgetVenueGateway:
                     try:
                         while not stop_evt.is_set():
                             now = time.monotonic()
+                            subs_pending = not (_BITGET_PRIVATE_WS_CHANNELS <= confirmed_priv_channels)
+                            if subs_pending and (rejected_priv_channels or now >= sub_confirm_deadline):
+                                missing = sorted(_BITGET_PRIVATE_WS_CHANNELS - confirmed_priv_channels)
+                                if sub_retry_count < max_sub_inline_retries and missing:
+                                    sub_retry_count += 1
+                                    rejected_priv_channels.clear()
+                                    await ws.send(json.dumps(_priv_sub_payload(missing), separators=(",", ":")))
+                                    sub_confirm_deadline = time.monotonic() + self.recv_timeout_secs
+                                    self._enqueue_log(
+                                        "WARNING",
+                                        f"[bitget.ws.priv] retrying unconfirmed private subscriptions={','.join(missing)}",
+                                    )
+                                else:
+                                    raise RuntimeError(
+                                        f"private ws subscription failed/unconfirmed channels={','.join(missing)}"
+                                    )
+
                             if not awaiting_pong and (now - last_ping_sent) >= self.ping_interval_secs:
                                 await ws.send("ping")
                                 last_ping_sent = now
@@ -2186,6 +2458,8 @@ class BitgetVenueGateway:
                                 if awaiting_pong
                                 else next_ping_in
                             )
+                            if subs_pending:
+                                wait_timeout = min(wait_timeout, max(0.01, sub_confirm_deadline - time.monotonic()))
 
                             if recv_task is None:
                                 recv_task = asyncio.create_task(ws.recv())
@@ -2200,7 +2474,11 @@ class BitgetVenueGateway:
                             if recv_task in done:
                                 raw_msg = recv_task.result()
                                 recv_task = None
-                                if self._handle_private_ws_message(raw_msg):
+                                if self._handle_private_ws_message(
+                                    raw_msg,
+                                    confirmed_channels=confirmed_priv_channels,
+                                    rejected_channels=rejected_priv_channels,
+                                ):
                                     awaiting_pong = False
                             if awaiting_pong and time.monotonic() >= pong_deadline:
                                 raise TimeoutError("private ws pong timeout")
@@ -2214,9 +2492,11 @@ class BitgetVenueGateway:
                                     pass
             except asyncio.CancelledError:
                 self._ws_logged_in = False
+                self._ws_subs_ready = False
                 break
             except Exception as exc:
                 self._ws_logged_in = False
+                self._ws_subs_ready = False
                 if stop_evt.is_set():
                     break
                 delay = self.reconnect_backoffs[min(attempt, len(self.reconnect_backoffs) - 1)]
@@ -2231,6 +2511,7 @@ class BitgetVenueGateway:
                     pass
             finally:
                 self._ws_logged_in = False
+                self._ws_subs_ready = False
 
 
 class RoutingVenueGateway:

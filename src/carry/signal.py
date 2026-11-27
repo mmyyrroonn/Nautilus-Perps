@@ -18,6 +18,7 @@ class InstrumentSpec:
     min_quantity: Decimal = Decimal("0")
     min_notional_usd: Decimal = Decimal("0")
     price_increment: Decimal = Decimal("0.0001")
+    close_only: bool = False
 
     @property
     def base_step(self) -> Decimal:

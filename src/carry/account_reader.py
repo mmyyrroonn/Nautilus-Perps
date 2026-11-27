@@ -27,6 +27,7 @@ from .bitget_gateway import (
     BITGET_REST_BASE,
     bitget_instrument_id,
     bitget_rest_headers,
+    bitget_signed_get_path,
     is_bitget_uta_error,
 )
 
@@ -34,6 +35,7 @@ _MAX_PAGES = 20
 _USER_AGENT = "Mozilla/5.0 (compatible; NautilusPerpsCarry/1.0)"
 _OKX_ALGO_ORD_TYPES = ("conditional", "oco", "trigger", "move_order_stop", "twap", "chase")
 _BITGET_PLAN_TYPES = ("normal_plan", "profit_loss", "track_plan")
+_BITGET_PENDING_STATUSES = ("live", "partially_filled")
 
 
 class StartupSnapshotError(RuntimeError):
@@ -667,7 +669,14 @@ class CarryStartupAccountReader:
             return resp["data"]
 
         acct_data = _signed_get(
-            f"/api/v2/mix/account/account?symbol=BTCUSDT&productType={BITGET_PRODUCT_TYPE}&marginCoin={BITGET_MARGIN_COIN}"
+            bitget_signed_get_path(
+                "/api/v2/mix/account/account",
+                {
+                    "symbol": "BTCUSDT",
+                    "productType": BITGET_PRODUCT_TYPE,
+                    "marginCoin": BITGET_MARGIN_COIN,
+                },
+            )
         )
         if isinstance(acct_data, list):
             if not acct_data or not isinstance(acct_data[0], dict):
@@ -683,7 +692,10 @@ class CarryStartupAccountReader:
             raise StartupSnapshotError(f"BITGET marginMode must be crossed, got {margin_mode or 'missing'}")
 
         iso_rows = _signed_get(
-            f"/api/v2/mix/account/isolated-symbols?productType={BITGET_PRODUCT_TYPE}"
+            bitget_signed_get_path(
+                "/api/v2/mix/account/isolated-symbols",
+                {"productType": BITGET_PRODUCT_TYPE},
+            )
         )
         if not isinstance(iso_rows, list):
             raise StartupSnapshotError("BITGET isolated-symbols response missing list")
@@ -694,7 +706,13 @@ class CarryStartupAccountReader:
 
         def _read_bitget_positions() -> dict[tuple[str, str], Decimal]:
             rows = _signed_get(
-                f"/api/v2/mix/position/all-position?productType={BITGET_PRODUCT_TYPE}&marginCoin={BITGET_MARGIN_COIN}"
+                bitget_signed_get_path(
+                    "/api/v2/mix/position/all-position",
+                    {
+                        "productType": BITGET_PRODUCT_TYPE,
+                        "marginCoin": BITGET_MARGIN_COIN,
+                    },
+                )
             )
             if not isinstance(rows, list):
                 raise StartupSnapshotError("BITGET all-position response missing list")
@@ -755,49 +773,57 @@ class CarryStartupAccountReader:
         pos_before = _read_bitget_positions()
 
         seen_ord_ids: set[str] = set()
-        seen_cursors: set[str] = set()
-        id_less_than: str | None = None
-        for _ in range(_MAX_PAGES):
-            qs = f"productType={BITGET_PRODUCT_TYPE}&limit=100" + (
-                f"&idLessThan={urllib.parse.quote(id_less_than)}" if id_less_than else ""
-            )
-            data = _signed_get(f"/api/v2/mix/order/orders-pending?{qs}")
-            page_rows, end_id = _unpack_order_page(data, "orders-pending")
-            for row in page_rows:
-                if not isinstance(row, dict):
-                    raise StartupSnapshotError("BITGET invalid open order row")
-                symbol = row.get("symbol")
-                ord_id = row.get("orderId")
-                if not isinstance(symbol, str) or not symbol.strip() or not isinstance(ord_id, str) or not ord_id:
-                    raise StartupSnapshotError("BITGET open order missing symbol or orderId")
-                if ord_id in seen_ord_ids:
-                    continue
-                seen_ord_ids.add(ord_id)
-                try:
-                    iid = bitget_instrument_id(symbol)
-                except ValueError:
-                    raise StartupSnapshotError("BITGET open order invalid symbol") from None
-                key = ("BITGET", iid)
-                open_orders[key] = open_orders.get(key, 0) + 1
-            if len(page_rows) < 100 or not end_id:
-                break
-            if end_id in seen_cursors:
-                raise StartupSnapshotError("BITGET orders-pending pagination loop")
-            seen_cursors.add(end_id)
-            id_less_than = end_id
-        else:
-            raise StartupSnapshotError("BITGET orders-pending pagination exceeded max pages")
+        for order_status in _BITGET_PENDING_STATUSES:
+            seen_cursors: set[str] = set()
+            id_less_than: str | None = None
+            for _ in range(_MAX_PAGES):
+                ord_params: dict[str, Any] = {
+                    "productType": BITGET_PRODUCT_TYPE,
+                    "status": order_status,
+                    "limit": "100",
+                }
+                if id_less_than:
+                    ord_params["idLessThan"] = id_less_than
+                data = _signed_get(bitget_signed_get_path("/api/v2/mix/order/orders-pending", ord_params))
+                page_rows, end_id = _unpack_order_page(data, "orders-pending")
+                for row in page_rows:
+                    if not isinstance(row, dict):
+                        raise StartupSnapshotError("BITGET invalid open order row")
+                    symbol = row.get("symbol")
+                    ord_id = row.get("orderId")
+                    if not isinstance(symbol, str) or not symbol.strip() or not isinstance(ord_id, str) or not ord_id:
+                        raise StartupSnapshotError("BITGET open order missing symbol or orderId")
+                    if ord_id in seen_ord_ids:
+                        continue
+                    seen_ord_ids.add(ord_id)
+                    try:
+                        iid = bitget_instrument_id(symbol)
+                    except ValueError:
+                        raise StartupSnapshotError("BITGET open order invalid symbol") from None
+                    key = ("BITGET", iid)
+                    open_orders[key] = open_orders.get(key, 0) + 1
+                if len(page_rows) < 100 or not end_id:
+                    break
+                if end_id in seen_cursors:
+                    raise StartupSnapshotError("BITGET orders-pending pagination loop")
+                seen_cursors.add(end_id)
+                id_less_than = end_id
+            else:
+                raise StartupSnapshotError("BITGET orders-pending pagination exceeded max pages")
 
         seen_plan_ids: set[str] = set()
         for plan_type in _BITGET_PLAN_TYPES:
             plan_cursor: str | None = None
             seen_plan_cursors: set[str] = set()
             for _ in range(_MAX_PAGES):
-                qs = (
-                    f"productType={BITGET_PRODUCT_TYPE}&planType={urllib.parse.quote(plan_type)}&limit=100"
-                    + (f"&idLessThan={urllib.parse.quote(plan_cursor)}" if plan_cursor else "")
-                )
-                data = _signed_get(f"/api/v2/mix/order/orders-plan-pending?{qs}")
+                plan_params: dict[str, Any] = {
+                    "productType": BITGET_PRODUCT_TYPE,
+                    "planType": plan_type,
+                    "limit": "100",
+                }
+                if plan_cursor:
+                    plan_params["idLessThan"] = plan_cursor
+                data = _signed_get(bitget_signed_get_path("/api/v2/mix/order/orders-plan-pending", plan_params))
                 page_rows, end_id = _unpack_order_page(data, "orders-plan-pending")
                 for row in page_rows:
                     if not isinstance(row, dict):

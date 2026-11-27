@@ -647,28 +647,35 @@ def _create_carry_strategy(
                         coid = str(evt.client_order_id or "")
                         if not coid:
                             continue
-                        fee_updated = False
                         if evt.fee_invalid:
-                            self._order_fee_invalid.add(coid)
-                            self._order_fill_fees_usd.pop(coid, None)
-                            self.ledger.set_order_fee_usd(coid, None, ts_s=now_s_evt)
-                            fee_updated = True
-                        elif evt.fee_cleared:
-                            self._order_fill_fees_usd.pop(coid, None)
-                            self.ledger.set_order_fee_usd(coid, None, ts_s=now_s_evt)
-                            fee_updated = True
-                        elif evt.fee_usd is not None and coid not in self._order_fee_invalid:
-                            fee_val = max(Decimal("0"), evt.fee_usd)
-                            self._order_fill_fees_usd[coid] = fee_val
-                            self.ledger.set_order_fee_usd(coid, fee_val, ts_s=now_s_evt)
-                            fee_updated = True
-                        if fee_updated:
-                            self.ledger.reconcile_closed_position_fee_for_order(
+                            self.ledger.set_order_fee_and_reconcile_closed(
                                 coid,
+                                None,
                                 maker_fee_bps_by_venue=self.plan.policy.maker_fee_bps_by_venue,
                                 taker_fee_bps_by_venue=self.plan.policy.taker_fee_bps_by_venue,
                                 ts_s=now_s_evt,
                             )
+                            self._order_fee_invalid.add(coid)
+                            self._order_fill_fees_usd.pop(coid, None)
+                        elif evt.fee_cleared:
+                            self.ledger.set_order_fee_and_reconcile_closed(
+                                coid,
+                                None,
+                                maker_fee_bps_by_venue=self.plan.policy.maker_fee_bps_by_venue,
+                                taker_fee_bps_by_venue=self.plan.policy.taker_fee_bps_by_venue,
+                                ts_s=now_s_evt,
+                            )
+                            self._order_fill_fees_usd.pop(coid, None)
+                        elif evt.fee_usd is not None and coid not in self._order_fee_invalid:
+                            fee_val = max(Decimal("0"), evt.fee_usd)
+                            self.ledger.set_order_fee_and_reconcile_closed(
+                                coid,
+                                fee_val,
+                                maker_fee_bps_by_venue=self.plan.policy.maker_fee_bps_by_venue,
+                                taker_fee_bps_by_venue=self.plan.policy.taker_fee_bps_by_venue,
+                                ts_s=now_s_evt,
+                            )
+                            self._order_fill_fees_usd[coid] = fee_val
                         if evt.cancel_rejected:
                             self.controller.on_cancel_rejected(coid)
                         if self.controller.is_tracked_order(coid):

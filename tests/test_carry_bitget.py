@@ -12,10 +12,12 @@ import json
 import os
 from pathlib import Path
 import queue
+import sqlite3
 import threading
 import time
 from types import SimpleNamespace
 from typing import Any, Callable
+import urllib.parse
 
 import pytest
 import websockets
@@ -29,15 +31,17 @@ from src.carry.bitget_gateway import (
     BitgetVenueGateway,
     RoutingVenueGateway,
     _BitgetKeepAliveRestClient,
+    _is_bitget_definite_place_reject,
     bitget_instrument_id,
     bitget_raw_symbol,
     bitget_rest_headers,
+    bitget_signed_get_path,
     bitget_ws_login_payload,
     is_bitget_uta_error,
     parse_bitget_contracts,
 )
-from src.carry.config import CarryPolicy, load_carry_plan
-from src.carry.executor import CarryExecutionController, OrderAck
+from src.carry.config import CarryPolicy, CarryRiskPolicy, CarryRuntimePolicy, load_carry_plan
+from src.carry.executor import CarryExecutionController, OrderAck, PaperVenueGateway
 from src.carry.funding_feed import HOUR, LegMarketInfo, PublicCarryFeed, SlowPollError, parse_bitget_tickers
 from src.carry.ledger import CarryLedger
 from src.carry.runtime import _create_carry_strategy, build_data_clients, build_execution_clients
@@ -602,7 +606,13 @@ def test_bitget_venue_gateway_async_submit_resync_cancel_race_and_fees() -> None
         if obj.get("op") == "login":
             return ws.send(json.dumps({"event": "login", "code": "0"}))
         if obj.get("op") == "subscribe":
-            return ws.send(json.dumps({"event": "subscribe", "arg": obj["args"][0]}))
+            args = obj.get("args", [])
+
+            async def _send_acks() -> None:
+                for arg in args:
+                    await ws.send(json.dumps({"event": "subscribe", "arg": arg}))
+
+            return _send_acks()
         return None
 
     priv_srv = _LoopbackWsServer(on_message=on_priv_msg)
@@ -746,12 +756,16 @@ def test_bitget_venue_gateway_async_submit_resync_cancel_race_and_fees() -> None
         _wait_until(lambda: any("coid-uncertain" in p for _, p, _ in rest_calls))
         assert gw.poll_order(client_order_id="coid-uncertain", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "OPEN"
 
-        # Uncertain submit -> 40768 not found -> REJECTED
+        # Uncertain submit -> 40768 not found once stays OPEN (not_found_confirmations=1), 2nd NOT_FOUND -> REJECTED
         mode_state["place_mode"] = "uncertain_missing"
         gw.submit_limit(
             client_order_id="coid-missing", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
             side="BUY", qty_contracts=D("0.1"), price=D("60000"), post_only=False, ioc=False, reduce_only=False,
         )
+        _wait_until(lambda: any("coid-missing" in p for _, p, _ in rest_calls if "/order/detail" in p))
+        _wait_until(lambda: gw._orders["coid-missing"].not_found_confirmations == 1)
+        assert gw.poll_order(client_order_id="coid-missing", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "OPEN"
+        gw._resync_non_terminal_sync(force=True)
         _wait_until(lambda: gw.poll_order(client_order_id="coid-missing", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "REJECTED")
 
         # Cancel race: cancel fails 40768 because order filled -> advances to FILLED + backfill fee
@@ -1856,3 +1870,830 @@ def test_closed_position_late_fee_and_fee_invalid_reconciliation(tmp_path: Path,
         pub_feed.stop(timeout=1.0)
         strat.on_stop()
         led.close()
+
+
+def test_bitget_signed_get_canonicalization_and_partial_pending_orders(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = {
+        "BITGET_API_KEY": "bg-key-secret",
+        "BITGET_API_SECRET": "bg-secret-value",
+        "BITGET_API_PASSPHRASE": "bg-pass-secret",
+    }
+
+    assert bitget_signed_get_path("/api/v2/mix/order/detail", None) == "/api/v2/mix/order/detail"
+    assert (
+        bitget_signed_get_path(
+            "/api/v2/mix/account/account",
+            {"symbol": "BTCUSDT", "productType": "USDT-FUTURES", "marginCoin": "USDT"},
+        )
+        == "/api/v2/mix/account/account?marginCoin=USDT&productType=USDT-FUTURES&symbol=BTCUSDT"
+    )
+    assert (
+        bitget_signed_get_path(
+            "/api/v2/mix/order/detail",
+            {"symbol": "BTCUSDT", "clientOid": "a b", "empty": "", "none": None, "productType": "USDT-FUTURES"},
+        )
+        == "/api/v2/mix/order/detail?clientOid=a%20b&productType=USDT-FUTURES&symbol=BTCUSDT"
+    )
+
+    def _assert_sorted_and_signed(path_and_query: str, headers: dict[str, str]) -> None:
+        parsed = urllib.parse.urlsplit(path_and_query)
+        q_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        q_keys = [k for k, _ in q_pairs]
+        assert q_keys == sorted(q_keys), f"unsorted query params in {path_and_query}"
+        ts = headers["ACCESS-TIMESTAMP"]
+        prehash = f"{ts}GET{path_and_query}".encode("utf-8")
+        expected_sig = base64.b64encode(hmac.new(b"bg-secret-value", prehash, hashlib.sha256).digest()).decode("ascii")
+        assert headers["ACCESS-SIGN"] == expected_sig
+
+    # Verify BitgetVenueGateway signed GET paths + HMAC prehash match byte-for-byte
+    gw = BitgetVenueGateway(environ=env, enable_ws=False)
+    gw_paths: list[str] = []
+
+    def fake_request_json(method: str, path_and_query: str, *, headers, body_str: str = "") -> dict[str, Any]:
+        assert method == "GET" and body_str == ""
+        gw_paths.append(path_and_query)
+        _assert_sorted_and_signed(path_and_query, dict(headers))
+        if "/account/account" in path_and_query:
+            return {"code": "00000", "data": {"posMode": "one_way_mode", "marginMode": "crossed"}}
+        if "/account/isolated-symbols" in path_and_query:
+            return {"code": "00000", "data": []}
+        if "/order/detail" in path_and_query:
+            return {"code": "00000", "data": {"clientOid": "c-get-1", "orderId": "VID-GET-1", "state": "filled", "accBaseVolume": "0.5", "priceAvg": "100"}}
+        if "/order/fills" in path_and_query:
+            return {
+                "code": "00000",
+                "data": {"fillList": [{"tradeId": "tg-1", "orderId": "VID-GET-1", "baseVolume": "0.5", "price": "100", "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.05"}]}], "endId": ""},
+            }
+        raise AssertionError(path_and_query)
+
+    assert gw._rest_client is not None
+    monkeypatch.setattr(gw._rest_client, "request_json", fake_request_json)
+    gw.preflight_check()
+    gw.submit_limit(
+        client_order_id="c-get-1", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("0.5"), price=D("100"), post_only=False, ioc=False, reduce_only=False,
+    )
+    assert gw._query_order_detail_sync("BTCUSDT", "c-get-1") == "FOUND"
+    assert len(gw_paths) == 4
+    assert gw_paths[0] == "/api/v2/mix/account/account?marginCoin=USDT&productType=USDT-FUTURES&symbol=BTCUSDT"
+    assert gw_paths[1] == "/api/v2/mix/account/isolated-symbols?productType=USDT-FUTURES"
+    assert gw_paths[2] == "/api/v2/mix/order/detail?clientOid=c-get-1&productType=USDT-FUTURES&symbol=BTCUSDT"
+    assert gw_paths[3] == "/api/v2/mix/order/fills?limit=100&orderId=VID-GET-1&productType=USDT-FUTURES&symbol=BTCUSDT"
+
+    # Verify startup account reader canonicalizes all signed GETs and reads both live + partially_filled (paginated & deduplicated)
+    seen_urls: list[str] = []
+    seen_pending_statuses: list[str] = []
+
+    def reader_http(method: str, url: str, *, headers=None, body=None, timeout=10.0) -> dict[str, Any]:
+        assert method == "GET" and headers is not None
+        seen_urls.append(url)
+        parts = urllib.parse.urlsplit(url)
+        path_and_q = f"{parts.path}?{parts.query}" if parts.query else parts.path
+        _assert_sorted_and_signed(path_and_q, dict(headers))
+        qs_map = dict(urllib.parse.parse_qsl(parts.query))
+        if parts.path == "/api/v2/mix/account/account":
+            return {"code": "00000", "data": {"posMode": "one_way_mode", "marginMode": "crossed"}}
+        if parts.path == "/api/v2/mix/account/isolated-symbols":
+            return {"code": "00000", "data": []}
+        if parts.path == "/api/v2/mix/position/all-position":
+            return {"code": "00000", "data": [{"symbol": "ETHUSDT", "holdSide": "long", "total": "0.5", "available": "0.5", "posMode": "one_way_mode", "marginMode": "crossed"}]}
+        if parts.path == "/api/v2/mix/order/orders-pending":
+            st = qs_map.get("status", "")
+            seen_pending_statuses.append(st)
+            if st == "live":
+                return {
+                    "code": "00000",
+                    "data": {
+                        "entrustedList": [
+                            {"symbol": "BTCUSDT", "orderId": "ord-live-1"},
+                            {"symbol": "ETHUSDT", "orderId": "ord-shared"},
+                        ],
+                        "endId": "",
+                    },
+                }
+            if st == "partially_filled":
+                if "idLessThan" not in qs_map:
+                    rows = [{"symbol": "ETHUSDT", "orderId": f"pf-{i}"} for i in range(99)] + [
+                        {"symbol": "ETHUSDT", "orderId": "ord-shared"}
+                    ]
+                    return {"code": "00000", "data": {"entrustedList": rows, "endId": "pf-cursor-1"}}
+                assert qs_map["idLessThan"] == "pf-cursor-1"
+                return {
+                    "code": "00000",
+                    "data": {"entrustedList": [{"symbol": "ETHUSDT", "orderId": "pf-last"}], "endId": ""},
+                }
+            raise AssertionError(f"unexpected status {st!r}")
+        if parts.path == "/api/v2/mix/order/orders-plan-pending":
+            return {"code": "00000", "data": {"entrustedList": [], "endId": ""}}
+        raise AssertionError(url)
+
+    snap = CarryStartupAccountReader(environment="mainnet", environ=env, http_request=reader_http).fetch_startup_snapshot(("BITGET",))
+    assert seen_pending_statuses == ["live", "partially_filled", "partially_filled"]
+    assert snap.open_orders == {
+        ("BITGET", "BTCUSDT-PERP.BITGET"): 1,
+        ("BITGET", "ETHUSDT-PERP.BITGET"): 101,
+    }
+    assert any("/order/orders-pending?" in u for u in seen_urls)
+
+
+def test_bitget_40725_and_uncertain_ws_ack_preservation() -> None:
+    env = {"BITGET_API_KEY": "k", "BITGET_API_SECRET": "s", "BITGET_API_PASSPHRASE": "p"}
+    assert _is_bitget_definite_place_reject("40725", "service return an error") is False
+
+    detail_queries: list[str] = []
+    gw_ref: list[BitgetVenueGateway] = []
+
+    def fake_rest(_m: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if path.endswith("/place-order"):
+            coid = str((body or {}).get("clientOid") or "")
+            if coid == "coid-40725":
+                return {"code": "40725", "msg": "service return an error"}
+            raise BitgetTransportError("timeout")
+        if "/api/v2/mix/order/detail" in path:
+            if "coid-40725" in path:
+                detail_queries.append("coid-40725")
+                return {
+                    "code": "00000",
+                    "data": {"orderId": "VID-40725", "clientOid": "coid-40725", "state": "filled", "accBaseVolume": "0.5", "priceAvg": "100"},
+                }
+            if "coid-ws-during" in path:
+                detail_queries.append("coid-ws-during")
+                # Concurrent WS live ack arrives while order/detail returns 40768 NOT_FOUND
+                gw_ref[0]._handle_private_ws_message(
+                    json.dumps(
+                        {
+                            "action": "push",
+                            "arg": {"instType": "USDT-FUTURES", "channel": "orders", "instId": "default"},
+                            "data": [{"clientOid": "coid-ws-during", "orderId": "VID-WS-DURING", "state": "live", "accBaseVolume": "0"}],
+                        }
+                    )
+                )
+                return {"code": "40768", "msg": "order does not exist"}
+            if "coid-ws-before" in path:
+                detail_queries.append("coid-ws-before")
+                return {"code": "40768", "msg": "order does not exist"}
+            if "coid-ws-partial" in path:
+                detail_queries.append("coid-ws-partial")
+                return {"code": "40768", "msg": "order does not exist"}
+        return {"code": "00000", "data": {}}
+
+    gw = BitgetVenueGateway(environ=env, rest_request=fake_rest, enable_ws=False, resync_interval_secs=0.05)
+    gw_ref.append(gw)
+
+    # 1. 40725 reconciles via order/detail instead of definite reject
+    gw.submit_limit(
+        client_order_id="coid-40725", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("0.5"), price=D("100"), post_only=False, ioc=True, reduce_only=False,
+    )
+    gw._exec_place_sync("coid-40725")
+    ack_40725 = gw.poll_order(client_order_id="coid-40725", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+    assert "coid-40725" in detail_queries
+    assert ack_40725.status == "FILLED" and ack_40725.venue_order_id == "VID-40725"
+
+    # 2. WS live ack before uncertain reconciliation skips order/detail and never rejects
+    gw.submit_limit(
+        client_order_id="coid-ws-before", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("0.5"), price=D("100"), post_only=True, ioc=False, reduce_only=False,
+    )
+    gw._handle_private_ws_message(
+        json.dumps(
+            {
+                "action": "push",
+                "arg": {"instType": "USDT-FUTURES", "channel": "orders", "instId": "default"},
+                "data": [{"clientOid": "coid-ws-before", "orderId": "VID-WS-BEFORE", "state": "live", "accBaseVolume": "0"}],
+            }
+        )
+    )
+    gw._exec_place_sync("coid-ws-before")
+    assert "coid-ws-before" not in detail_queries
+    ack_before = gw.poll_order(client_order_id="coid-ws-before", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+    assert ack_before.status == "OPEN" and ack_before.venue_order_id == "VID-WS-BEFORE"
+    assert gw._orders["coid-ws-before"].submit_uncertain is False
+
+    # 3. WS live ack concurrently during 40768 response + subsequent resync 40768 never rejects
+    gw.submit_limit(
+        client_order_id="coid-ws-during", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("0.5"), price=D("100"), post_only=True, ioc=False, reduce_only=False,
+    )
+    gw._exec_place_sync("coid-ws-during")
+    ack_during = gw.poll_order(client_order_id="coid-ws-during", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+    assert ack_during.status == "OPEN" and ack_during.venue_order_id == "VID-WS-DURING"
+    assert gw._orders["coid-ws-during"].submit_uncertain is False
+    gw._resync_non_terminal_sync(force=True)
+    assert gw.poll_order(client_order_id="coid-ws-during", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "OPEN"
+
+    # 4. Partial fill without venue_order_id is also positive exchange evidence
+    gw.submit_limit(
+        client_order_id="coid-ws-partial", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("1.0"), price=D("100"), post_only=True, ioc=False, reduce_only=False,
+    )
+    with gw._orders_lock:
+        gw._orders["coid-ws-partial"].filled_base_qty = D("0.2")
+        gw._orders["coid-ws-partial"].status = "PARTIAL"
+    assert gw._reconcile_uncertain_place_sync("BTCUSDT", "coid-ws-partial", "timeout") == "ACKED"
+    assert gw.poll_order(client_order_id="coid-ws-partial", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "PARTIAL"
+
+
+def test_bitget_shutdown_preserves_queued_cancel_after_slow_place() -> None:
+    env = {"BITGET_API_KEY": "k", "BITGET_API_SECRET": "s", "BITGET_API_PASSPHRASE": "p"}
+
+    # A. Slow place ("00000") outlasts shutdown drain timeout -> cancel still executes in place worker
+    place_started = threading.Event()
+    release_place = threading.Event()
+    cancel_calls: list[dict[str, Any]] = []
+
+    def slow_ok_rest(_m: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if path.endswith("/place-order"):
+            place_started.set()
+            release_place.wait(timeout=2.0)
+            coid = str((body or {}).get("clientOid") or "")
+            return {"code": "00000", "data": {"orderId": f"VID-{coid}"}}
+        if path.endswith("/cancel-order"):
+            cancel_calls.append(dict(body or {}))
+            return {"code": "00000", "data": {"orderId": (body or {}).get("orderId", "")}}
+        if "/order/detail" in path:
+            return {"code": "00000", "data": {"orderId": "VID-coid-shut-ok", "clientOid": "coid-shut-ok", "state": "canceled", "accBaseVolume": "0"}}
+        return {"code": "00000", "data": {}}
+
+    gw = BitgetVenueGateway(environ=env, rest_request=slow_ok_rest, enable_ws=False, shutdown_drain_timeout_secs=0.06)
+    gw.start()
+    try:
+        gw.submit_limit(
+            client_order_id="coid-shut-ok", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+            side="BUY", qty_contracts=D("0.1"), price=D("60000"), post_only=True, ioc=False, reduce_only=False,
+        )
+        assert place_started.wait(timeout=1.0)
+        gw.cancel_order(client_order_id="coid-shut-ok", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+        gw.stop(timeout=0.3)
+        release_place.set()
+        _wait_until(lambda: len(cancel_calls) == 1)
+        assert cancel_calls[0]["orderId"] == "VID-coid-shut-ok"
+        _wait_until(lambda: gw.poll_order(client_order_id="coid-shut-ok", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "CANCELED")
+    finally:
+        release_place.set()
+        gw.stop(timeout=1.0)
+
+    # B. Slow place hits uncertain timeout -> order/detail finds it live -> queued cancel still executes
+    place_started2 = threading.Event()
+    release_place2 = threading.Event()
+    cancel_calls2: list[dict[str, Any]] = []
+
+    def slow_uncertain_rest(_m: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if path.endswith("/place-order"):
+            place_started2.set()
+            release_place2.wait(timeout=2.0)
+            raise BitgetTransportError("timeout")
+        if "/order/detail" in path:
+            state = "canceled" if cancel_calls2 else "live"
+            return {"code": "00000", "data": {"orderId": "VID-shut-rec", "clientOid": "coid-shut-rec", "state": state, "accBaseVolume": "0"}}
+        if path.endswith("/cancel-order"):
+            cancel_calls2.append(dict(body or {}))
+            return {"code": "00000", "data": {"orderId": "VID-shut-rec"}}
+        return {"code": "00000", "data": {}}
+
+    gw2 = BitgetVenueGateway(environ=env, rest_request=slow_uncertain_rest, enable_ws=False, shutdown_drain_timeout_secs=0.06)
+    gw2.start()
+    try:
+        gw2.submit_limit(
+            client_order_id="coid-shut-rec", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+            side="BUY", qty_contracts=D("0.1"), price=D("60000"), post_only=True, ioc=False, reduce_only=False,
+        )
+        assert place_started2.wait(timeout=1.0)
+        gw2.cancel_order(client_order_id="coid-shut-rec", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+        gw2.stop(timeout=0.3)
+        release_place2.set()
+        _wait_until(lambda: len(cancel_calls2) == 1)
+        assert cancel_calls2[0]["orderId"] == "VID-shut-rec"
+        _wait_until(lambda: gw2.poll_order(client_order_id="coid-shut-rec", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "CANCELED")
+    finally:
+        release_place2.set()
+        gw2.stop(timeout=1.0)
+
+    # C. Normal non-shutdown path sends cancel exactly once (no duplicate)
+    cancel_calls3: list[dict[str, Any]] = []
+
+    def normal_slow_rest(_m: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
+        if path.endswith("/place-order"):
+            time.sleep(0.08)
+            return {"code": "00000", "data": {"orderId": "VID-ONCE"}}
+        if path.endswith("/cancel-order"):
+            cancel_calls3.append(dict(body or {}))
+            return {"code": "00000", "data": {"orderId": "VID-ONCE"}}
+        if "/order/detail" in path:
+            return {"code": "00000", "data": {"orderId": "VID-ONCE", "clientOid": "coid-once", "state": "canceled", "accBaseVolume": "0"}}
+        return {"code": "00000", "data": {}}
+
+    gw3 = BitgetVenueGateway(environ=env, rest_request=normal_slow_rest, enable_ws=False)
+    gw3.start()
+    try:
+        gw3.submit_limit(
+            client_order_id="coid-once", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+            side="BUY", qty_contracts=D("0.1"), price=D("60000"), post_only=True, ioc=False, reduce_only=False,
+        )
+        gw3.cancel_order(client_order_id="coid-once", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+        _wait_until(lambda: gw3.poll_order(client_order_id="coid-once", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").status == "CANCELED")
+        time.sleep(0.08)
+        assert len(cancel_calls3) == 1
+    finally:
+        gw3.stop(timeout=1.0)
+
+
+def test_bitget_close_only_blocks_opening_but_allows_exits(tmp_path: Path) -> None:
+    now_s = 1_800_000_000
+    contracts = parse_bitget_contracts(
+        {
+            "code": "00000",
+            "data": [
+                {
+                    "symbol": "OLDUSDT", "symbolType": "perpetual", "symbolStatus": "limit_open",
+                    "sizeMultiplier": "0.1", "minTradeNum": "0.1", "minTradeUSDT": "5",
+                    "pricePlace": "2", "priceEndStep": "1", "isRwa": "NO", "fundInterval": "8",
+                }
+            ],
+        }
+    )
+    spec_bg_close_only, _ = contracts["OLDUSDT"]
+    assert spec_bg_close_only.close_only is True
+    spec_hl = InstrumentSpec("OLD-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.1"), price_increment=D("0.01"))
+
+    pol = CarryPolicy(route_scope="ALL", min_entry_basis_bps=D("-10"), max_entry_basis_bps=D("50"), min_exec_basis_bps=D("-10"))
+    risk = CarryRiskPolicy(leg_notional_usd=D("100"), slice_usd=D("50"), max_slots=3, max_gross_notional_usd=D("500"), max_venue_notional_usd=D("300"))
+    rt = CarryRuntimePolicy(slow_poll_secs=60)
+    led = CarryLedger(tmp_path / "close_only.sqlite3", "fp-co", ledger_domain="paper")
+    pgw = PaperVenueGateway(fill_maker_immediately=True, use_realistic_bbo=True)
+    pgw.register_spec(spec_hl, D("10"))
+    pgw.register_spec(spec_bg_close_only, D("10"))
+    pgw.update_quote(spec_hl.instrument_id, D("9.99"), D("10.01"))
+    pgw.update_quote(spec_bg_close_only.instrument_id, D("9.99"), D("10.01"))
+    ctrl = CarryExecutionController(ledger=led, gateway=pgw, risk=risk, runtime=rt, policy=pol)
+
+    try:
+        leg_hl = _make_leg("HL", "OLD", r8=0.0, r24=0.0, bid=9.99, ask=10.01, prev_1h=10.0)
+        leg_bg = LegMarketInfo(
+            venue="BITGET", symbol="OLD", raw_symbol="OLDUSDT", instrument_id=spec_bg_close_only.instrument_id,
+            asset_class="CRYPTO", interval_h=8, next_settle_ts=now_s + 3600, r8_bps_h=2.0, r24_bps_h=2.0,
+            current_rate_bps_h=2.0, mark_price=10.0, prev_1h_price=10.0, bid=9.99, ask=10.01,
+            vol24_usd=5_000_000.0, vol1h_usd=100_000.0, fetched_ts=now_s,
+        )
+        cand_bg_short = evaluate_entry_candidates(
+            {"OLD": {"HL": leg_hl, "BITGET": leg_bg}},
+            open_symbols=set(), venue_notional_used={}, excluded_symbols=set(),
+            policy=pol, risk=risk, now_s=now_s,
+        )[0]
+
+        # 1. start_entry blocked when either leg is close_only
+        pid_blk, err_blk = ctrl.start_entry(
+            cand_bg_short, specs={spec_hl.instrument_id: spec_hl, spec_bg_close_only.instrument_id: spec_bg_close_only}, now_s=now_s
+        )
+        assert pid_blk is None and err_blk == "close_only_contract"
+        assert led.active_positions() == {}
+
+        # 2. advance_pending_slices blocks next opening slice if contract flipped to limit_open mid-entry
+        # Empty OPENING -> aborted cleanly with 0 orders submitted
+        pid_empty = "pos-empty-opening"
+        led.create_position(
+            position_id=pid_empty, symbol="OLD", long_venue="HL", short_venue="BITGET",
+            iid_long=spec_hl.instrument_id, iid_short=spec_bg_close_only.instrument_id,
+            opened_ts=now_s, entry_l=10.0, entry_s=10.0, entry_basis_bps=0.0, target_base_qty=D("10"),
+        )
+        quotes = {spec_hl.instrument_id: (9.99, 10.01), spec_bg_close_only.instrument_id: (9.99, 10.01)}
+        mids = {spec_hl.instrument_id: 10.0, spec_bg_close_only.instrument_id: 10.0}
+        submitted = ctrl.advance_pending_slices(
+            specs={spec_hl.instrument_id: spec_hl, spec_bg_close_only.instrument_id: spec_bg_close_only},
+            quotes=quotes, mids=mids, now_s=now_s + 1,
+        )
+        assert submitted == []
+        assert pgw.orders == {}
+        row_empty = led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id=?", (pid_empty,)).fetchone()
+        assert row_empty["status"] == "CLOSED" and row_empty["close_reason"] == "entry_aborted:close_only_contract"
+
+        # Partially filled balanced OPENING -> promoted to OPEN without opening new slice
+        pid_part = "pos-partial-opening"
+        led.create_position(
+            position_id=pid_part, symbol="OLD", long_venue="HL", short_venue="BITGET",
+            iid_long=spec_hl.instrument_id, iid_short=spec_bg_close_only.instrument_id,
+            opened_ts=now_s, entry_l=10.0, entry_s=10.0, entry_basis_bps=0.0, target_base_qty=D("10"),
+        )
+        led.update_position_status(pid_part, status="OPENING", ts_s=now_s, long_base_qty=D("5"), short_base_qty=D("5"))
+        submitted2 = ctrl.advance_pending_slices(
+            specs={spec_hl.instrument_id: spec_hl, spec_bg_close_only.instrument_id: spec_bg_close_only},
+            quotes=quotes, mids=mids, now_s=now_s + 2,
+        )
+        assert submitted2 == [] and pgw.orders == {}
+        assert led.active_positions()[pid_part]["status"] == "OPEN"
+
+        # 3. Normal sliced close (CLOSING) and emergency_close_position both still work on close_only specs
+        ok_close = ctrl.start_sliced_close(
+            pid_part,
+            specs={spec_hl.instrument_id: spec_hl, spec_bg_close_only.instrument_id: spec_bg_close_only},
+            quotes=quotes, mids=mids, reason="carry_decay", now_s=now_s + 3,
+        )
+        assert ok_close is True
+        row_closed = led.conn.execute("SELECT status FROM positions WHERE position_id=?", (pid_part,)).fetchone()
+        assert row_closed["status"] == "CLOSED"
+
+        pid_em = "pos-em-close"
+        led.create_position(
+            position_id=pid_em, symbol="OLD", long_venue="HL", short_venue="BITGET",
+            iid_long=spec_hl.instrument_id, iid_short=spec_bg_close_only.instrument_id,
+            opened_ts=now_s, entry_l=10.0, entry_s=10.0, entry_basis_bps=0.0, target_base_qty=D("4"),
+        )
+        led.update_position_status(pid_em, status="OPEN", ts_s=now_s, long_base_qty=D("4"), short_base_qty=D("4"))
+        ctrl.emergency_close_position(
+            pid_em,
+            specs={spec_hl.instrument_id: spec_hl, spec_bg_close_only.instrument_id: spec_bg_close_only},
+            reason="basis_stop_30m", now_s=now_s + 4, live_mids=mids,
+        )
+        row_em = led.conn.execute("SELECT status FROM positions WHERE position_id=?", (pid_em,)).fetchone()
+        assert row_em["status"] == "CLOSED"
+    finally:
+        led.close()
+
+
+def test_bitget_snapshot_monotonic_vwap_fee_merge_and_paginated_backfill() -> None:
+    env = {"BITGET_API_KEY": "k", "BITGET_API_SECRET": "s", "BITGET_API_PASSPHRASE": "p"}
+    fills_calls: list[str] = []
+    retry_attempts = [0]
+
+    def fake_rest(_m: str, path: str, _b: dict[str, Any] | None) -> dict[str, Any]:
+        if "/api/v2/mix/order/fills" in path:
+            fills_calls.append(path)
+            if "VID-RETRY" in path:
+                retry_attempts[0] += 1
+                if retry_attempts[0] == 1:
+                    raise BitgetTransportError("transient timeout")
+                if retry_attempts[0] == 2:
+                    return {"code": "00000", "data": {"fillList": [], "endId": ""}}
+                return {
+                    "code": "00000",
+                    "data": {
+                        "fillList": [{"tradeId": "rt-1", "orderId": "VID-RETRY", "baseVolume": "1.0", "price": "100", "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.06"}]}],
+                        "endId": "",
+                    },
+                }
+            if "VID-EXHAUST" in path:
+                return {"code": "00000", "data": {"fillList": [], "endId": ""}}
+            if "VID-PAGES" in path:
+                if "idLessThan=pg-cur-1" not in path:
+                    return {
+                        "code": "00000",
+                        "data": {
+                            "fillList": [{"tradeId": "pg-1", "orderId": "VID-PAGES", "baseVolume": "0.5", "price": "100", "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.05"}]}],
+                            "endId": "pg-cur-1",
+                        },
+                    }
+                return {
+                    "code": "00000",
+                    "data": {
+                        "fillList": [{"tradeId": "pg-2", "orderId": "VID-PAGES", "baseVolume": "1.0", "price": "102", "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.10"}]}],
+                        "endId": "",
+                    },
+                }
+        return {"code": "00000", "data": {}}
+
+    gw = BitgetVenueGateway(environ=env, rest_request=fake_rest, enable_ws=False, resync_interval_secs=0.05, fee_backfill_max_attempts=3)
+
+    # #7 & #8: Monotonic snapshot price/fee protection + preserve snapshot VWAP until trades cover full filled qty
+    gw.submit_limit(
+        client_order_id="coid-mono", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("2.0"), price=D("105"), post_only=True, ioc=False, reduce_only=False,
+    )
+    gw._apply_order_snapshot_dict(
+        {"clientOid": "coid-mono", "orderId": "VID-MONO", "state": "filled", "accBaseVolume": "2", "priceAvg": "105", "feeDetail": [{"feeCoin": "USDT", "fee": "-0.20"}]},
+        emit_event=False,
+    )
+    # Out-of-order older partial snapshot (1 @ 100, fee 0.10) must NOT overwrite priceAvg or fee
+    gw._apply_order_snapshot_dict(
+        {"clientOid": "coid-mono", "orderId": "VID-MONO", "state": "partially_filled", "accBaseVolume": "1", "priceAvg": "100", "feeDetail": [{"feeCoin": "USDT", "fee": "-0.10"}]},
+        emit_event=False,
+    )
+    ack_mono = gw.poll_order(client_order_id="coid-mono", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+    assert ack_mono.status == "FILLED" and ack_mono.filled_base_qty == D("2")
+    assert ack_mono.avg_fill_price == D("105") and ack_mono.fee_usd == D("0.20")
+
+    # Partial trade row (1 @ 110) must NOT overwrite snapshot VWAP 105
+    gw._apply_fill_rows(
+        [{"clientOid": "coid-mono", "orderId": "VID-MONO", "tradeId": "m-t1", "baseVolume": "1", "price": "110"}],
+        emit_event=False,
+    )
+    assert gw.poll_order(client_order_id="coid-mono", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").avg_fill_price == D("105")
+
+    # Once remaining trade completes full coverage (2 >= 2), VWAP updates to exact trade average (1*110 + 1*102)/2 = 106
+    gw._apply_fill_rows(
+        [{"clientOid": "coid-mono", "orderId": "VID-MONO", "tradeId": "m-t2", "baseVolume": "1", "price": "102"}],
+        emit_event=False,
+    )
+    assert gw.poll_order(client_order_id="coid-mono", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").avg_fill_price == D("106")
+
+    # #9: Same tradeId backfills missing price and fee without double-counting executed quantity
+    gw.submit_limit(
+        client_order_id="coid-merge", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("0.5"), price=D("102"), post_only=True, ioc=False, reduce_only=False,
+    )
+    gw._apply_fill_rows(
+        [{"clientOid": "coid-merge", "orderId": "VID-MERGE", "tradeId": "tr-m1", "baseVolume": "0.5", "price": "", "feeDetail": []}],
+        emit_event=False,
+    )
+    ack_m0 = gw.poll_order(client_order_id="coid-merge", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+    assert ack_m0.filled_base_qty == D("0.5") and ack_m0.avg_fill_price is None and ack_m0.fee_usd is None
+    gw._apply_fill_rows(
+        [{"clientOid": "coid-merge", "orderId": "VID-MERGE", "tradeId": "tr-m1", "baseVolume": "0.5", "price": "102", "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.08"}]}],
+        emit_event=False,
+    )
+    ack_m1 = gw.poll_order(client_order_id="coid-merge", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+    assert ack_m1.filled_base_qty == D("0.5") and ack_m1.avg_fill_price == D("102") and ack_m1.fee_usd == D("0.08")
+
+    # #10a: Bounded retry across transport error + empty fillList until resolved
+    gw.submit_limit(
+        client_order_id="coid-retry", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("1.0"), price=D("100"), post_only=True, ioc=False, reduce_only=False,
+    )
+    gw._apply_order_snapshot_dict(
+        {"clientOid": "coid-retry", "orderId": "VID-RETRY", "state": "filled", "accBaseVolume": "1.0", "priceAvg": "100"},
+        emit_event=False,
+    )
+    gw._backfill_queue.put("coid-retry")
+    gw._drain_backfills_sync()  # attempt 1: BitgetTransportError
+    assert gw.poll_order(client_order_id="coid-retry", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").fee_usd is None
+    time.sleep(0.06)
+    gw._resync_non_terminal_sync(force=False)  # attempt 2: empty fillList
+    assert gw.poll_order(client_order_id="coid-retry", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").fee_usd is None
+    time.sleep(0.06)
+    gw._resync_non_terminal_sync(force=False)  # attempt 3: succeeds
+    assert gw.poll_order(client_order_id="coid-retry", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET").fee_usd == D("0.06")
+
+    # Exhausted order stops after fee_backfill_max_attempts=3
+    gw.submit_limit(
+        client_order_id="coid-exhaust", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("1.0"), price=D("100"), post_only=True, ioc=False, reduce_only=False,
+    )
+    gw._apply_order_snapshot_dict(
+        {"clientOid": "coid-exhaust", "orderId": "VID-EXHAUST", "state": "filled", "accBaseVolume": "1.0", "priceAvg": "100"},
+        emit_event=False,
+    )
+    for _ in range(5):
+        gw._resync_non_terminal_sync(force=True)
+    assert sum(1 for p in fills_calls if "VID-EXHAUST" in p) == 3
+
+    # #10b: Paginated order/fills follows endId -> idLessThan
+    gw.submit_limit(
+        client_order_id="coid-pages", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+        side="BUY", qty_contracts=D("1.5"), price=D("101"), post_only=True, ioc=False, reduce_only=False,
+    )
+    gw._apply_order_snapshot_dict(
+        {"clientOid": "coid-pages", "orderId": "VID-PAGES", "state": "filled", "accBaseVolume": "1.5", "priceAvg": "101"},
+        emit_event=False,
+    )
+    gw._fetch_order_fills_sync("BTCUSDT", "VID-PAGES", "coid-pages")
+    ack_pg = gw.poll_order(client_order_id="coid-pages", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET")
+    assert ack_pg.fee_usd == D("0.15")
+    assert any("VID-PAGES" in p and "idLessThan=pg-cur-1" in p for p in fills_calls)
+
+
+def test_bitget_expired_contracts_refresh_failure_surfaces_error_and_pauses_entries() -> None:
+    t0 = 1_800_000_000
+    state = {"fail_contracts": False}
+    contracts_payload = {
+        "code": "00000",
+        "data": [
+            {"symbol": "BTCUSDT", "symbolType": "perpetual", "symbolStatus": "normal", "sizeMultiplier": "0.001", "minTradeNum": "0.001", "minTradeUSDT": "5", "pricePlace": "1", "priceEndStep": "1", "isRwa": "NO", "fundInterval": "8"},
+            {"symbol": "TSLAUSDT", "symbolType": "perpetual", "symbolStatus": "normal", "sizeMultiplier": "0.01", "minTradeNum": "0.01", "minTradeUSDT": "5", "pricePlace": "2", "priceEndStep": "1", "isRwa": "YES", "fundInterval": "4"},
+        ],
+    }
+
+    def fake_http(url: str, body: dict | None = None):
+        if "hyperliquid.xyz" in url:
+            if (body or {}).get("dex") == "xyz":
+                return [{"universe": []}, []]
+            return [
+                {"universe": [{"name": "BTC"}, {"name": "TSLA"}]},
+                [
+                    {"markPx": "60000", "midPx": "60000", "funding": "0.0001", "dayNtlVlm": "5000000"},
+                    {"markPx": "250", "midPx": "250", "funding": "0.0001", "dayNtlVlm": "5000000"},
+                ],
+            ]
+        if "mix/market/contracts" in url:
+            if state["fail_contracts"]:
+                raise RuntimeError("contracts refresh timeout")
+            return contracts_payload
+        if "mix/market/tickers" in url:
+            return {
+                "code": "00000",
+                "data": [
+                    {"symbol": "BTCUSDT", "markPrice": "60000", "bidPr": "59999", "askPr": "60001", "usdtVolume": "10000000"},
+                    {"symbol": "TSLAUSDT", "markPrice": "250", "bidPr": "249.9", "askPr": "250.1", "usdtVolume": "5000000"},
+                ],
+            }
+        if "mix/market/current-fund-rate" in url:
+            return {
+                "code": "00000",
+                "data": [
+                    {"symbol": "BTCUSDT", "fundingRate": "0.0008", "fundingRateInterval": "8", "nextUpdate": str((t0 + 7200) * 1000)},
+                    {"symbol": "TSLAUSDT", "fundingRate": "0.0004", "fundingRateInterval": "4", "nextUpdate": str((t0 + 3600) * 1000)},
+                ],
+            }
+        raise AssertionError(url)
+
+    feed = PublicCarryFeed(venues=("HL", "BITGET"), http_get=fake_http)
+    snap0 = feed.poll_snapshot(now_s=t0, include_details=False)
+    assert feed.last_venue_errors == {}
+    assert "BITGET" in snap0["BTC"] and "BITGET" in snap0["TSLA"]
+    assert feed.bitget_instrument_specs()["TSLAUSDT-PERP.BITGET"].close_only is False
+
+    # Past 3600s TTL + refresh failure -> surfaces error, withholds non-priority entries, preserves priority exits
+    state["fail_contracts"] = True
+    snap_exp = feed.poll_snapshot(now_s=t0 + 4000, priority_symbols={"BTC"}, include_details=False)
+    assert "BITGET" in feed.last_venue_errors
+    assert "contracts_refresh_failed" in feed.last_venue_errors["BITGET"]
+    assert "BITGET" in snap_exp["BTC"]
+    assert "BITGET" not in snap_exp["TSLA"]
+    specs_exp = feed.bitget_instrument_specs()
+    assert specs_exp["BTCUSDT-PERP.BITGET"].close_only is True
+    assert specs_exp["TSLAUSDT-PERP.BITGET"].close_only is True
+
+    # Sole Bitget venue with no priority_symbols raises SlowPollError when metadata is expired & failing
+    solo = PublicCarryFeed(venues=("BITGET",), http_get=fake_http)
+    state["fail_contracts"] = False
+    solo.poll_snapshot(now_s=t0, include_details=False)
+    state["fail_contracts"] = True
+    with pytest.raises(SlowPollError, match="BITGET="):
+        solo.poll_snapshot(now_s=t0 + 4000, include_details=False)
+
+    # Recovery clears error and restores new entry specs
+    state["fail_contracts"] = False
+    snap_rec = feed.poll_snapshot(now_s=t0 + 4060, include_details=False)
+    assert feed.last_venue_errors == {}
+    assert "BITGET" in snap_rec["TSLA"]
+    assert feed.bitget_instrument_specs()["TSLAUSDT-PERP.BITGET"].close_only is False
+
+
+def test_ledger_set_order_fee_and_reconcile_closed_atomicity(tmp_path: Path) -> None:
+    now_s = 1_800_000_000
+    bg_plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper-bitget.toml")
+    led = CarryLedger(tmp_path / "atomic_fee.sqlite3", bg_plan.fingerprint(), ledger_domain="paper")
+    try:
+        pid = "pos-atomic-1"
+        led.create_position(
+            position_id=pid, symbol="BTC", long_venue="HL", short_venue="BITGET",
+            iid_long="BTC-USD-PERP.HYPERLIQUID", iid_short="BTCUSDT-PERP.BITGET",
+            opened_ts=now_s - 600, entry_l=100.0, entry_s=100.0, entry_basis_bps=0.0,
+            target_base_qty=D("1"),
+        )
+        led.register_order_intent(
+            client_order_id="hg-open", position_id=pid, venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+            side="SELL", role="HEDGE_OPEN", order_type="IOC", qty_contracts=D("1"), base_qty=D("1"), price=D("100"), ts_s=now_s - 500,
+        )
+        led.update_order_state("hg-open", status="FILLED", filled_base_qty=D("1"), fill_price=D("100"), fee_usd=None, ts_s=now_s - 400)
+        init_fee = led.compute_position_fee_usd(
+            pid, maker_fee_bps_by_venue=bg_plan.policy.maker_fee_bps_by_venue, taker_fee_bps_by_venue=bg_plan.policy.taker_fee_bps_by_venue,
+        )
+        assert init_fee == D("0.0600")
+        led.update_position_status(
+            pid, status="CLOSED", ts_s=now_s - 10, long_base_qty=D("1"), short_base_qty=D("1"),
+            price_pnl_usd=D("1.0000"), funding_pnl_usd=D("0.0000"), fee_usd=init_fee, realized_pnl_usd=D("0.9400"), close_reason="carry_decay",
+        )
+
+        # Simulate DB failure between order fee update and closed position reconciliation
+        assert led.conn is not None
+        led.conn.execute(
+            "CREATE TRIGGER abort_pos_fee_update BEFORE UPDATE ON positions BEGIN SELECT RAISE(ABORT, 'boom'); END;"
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="boom"):
+            led.set_order_fee_and_reconcile_closed(
+                "hg-open",
+                D("0.1100"),
+                maker_fee_bps_by_venue=bg_plan.policy.maker_fee_bps_by_venue,
+                taker_fee_bps_by_venue=bg_plan.policy.taker_fee_bps_by_venue,
+                ts_s=now_s,
+            )
+
+        # Entire transaction rolled back: order fee_usd remains NULL and position/daily_stats unchanged
+        ord_row = led.conn.execute("SELECT fee_usd FROM orders WHERE client_order_id='hg-open'").fetchone()
+        pos_row = led.conn.execute("SELECT fee_usd, realized_pnl_usd FROM positions WHERE position_id=?", (pid,)).fetchone()
+        assert ord_row["fee_usd"] is None
+        assert D(pos_row["fee_usd"]) == D("0.0600") and D(pos_row["realized_pnl_usd"]) == D("0.9400")
+        assert led.daily_stats(now_s - 10) == (D("0.9400"), 0)
+
+        # Verify runtime._drain_external_events also goes through the atomic single-tx path
+        gw = BitgetVenueGateway(environ={"BITGET_API_KEY": "k", "BITGET_API_SECRET": "s", "BITGET_API_PASSPHRASE": "p"}, enable_ws=False)
+        pub_feed = BitgetPublicQuoteFeed(ws_url="ws://127.0.0.1:9")
+        strat = _create_carry_strategy(bg_plan, led, mode="paper", bitget_quote_feed=pub_feed, bitget_gateway=gw)
+        strat.reconciled = True
+        gw._enqueue_event(BitgetGatewayEvent(client_order_id="hg-open", fee_usd=D("0.1100")))
+        with pytest.raises(sqlite3.IntegrityError, match="boom"):
+            strat._drain_external_events()
+        ord_row_rt = led.conn.execute("SELECT fee_usd FROM orders WHERE client_order_id='hg-open'").fetchone()
+        assert ord_row_rt["fee_usd"] is None and "hg-open" not in strat._order_fill_fees_usd
+
+        led.conn.execute("DROP TRIGGER abort_pos_fee_update;")
+        gw._enqueue_event(BitgetGatewayEvent(client_order_id="hg-open", fee_usd=D("0.1100")))
+        strat._drain_external_events()
+        ord_row2 = led.conn.execute("SELECT fee_usd FROM orders WHERE client_order_id='hg-open'").fetchone()
+        pos_row2 = led.conn.execute("SELECT fee_usd, realized_pnl_usd FROM positions WHERE position_id=?", (pid,)).fetchone()
+        assert D(ord_row2["fee_usd"]) == D("0.1100")
+        assert D(pos_row2["fee_usd"]) == D("0.1100") and D(pos_row2["realized_pnl_usd"]) == D("0.8900")
+        assert led.daily_stats(now_s - 10) == (D("0.8900"), 0)
+        strat.on_stop()
+    finally:
+        led.close()
+
+
+def test_bitget_private_ws_subscription_confirmation_and_error_recovery() -> None:
+    env = {"BITGET_API_KEY": "k", "BITGET_API_SECRET": "s", "BITGET_API_PASSPHRASE": "p"}
+
+    # A. Single-channel rejection retries missing channel and marks _ws_subs_ready only after both confirm
+    fill_sub_calls = [0]
+
+    def on_msg_retry(ws: Any, raw: str | bytes) -> Any:
+        obj = json.loads(raw)
+        if obj.get("op") == "login":
+            return ws.send(json.dumps({"event": "login", "code": "0"}))
+        if obj.get("op") != "subscribe":
+            return None
+        replies: list[str] = []
+        for a in obj.get("args", []):
+            ch = a.get("channel")
+            if ch == "orders":
+                replies.append(json.dumps({"event": "subscribe", "arg": a}))
+            elif ch == "fill":
+                fill_sub_calls[0] += 1
+                if fill_sub_calls[0] == 1:
+                    replies.append(json.dumps({"event": "error", "code": "30001", "arg": a}))
+                else:
+                    replies.append(json.dumps({"event": "subscribe", "arg": a}))
+
+        async def _send() -> None:
+            for r in replies:
+                await ws.send(r)
+
+        return _send()
+
+    srv1 = _LoopbackWsServer(on_message=on_msg_retry)
+    srv1.start()
+    gw1 = BitgetVenueGateway(
+        environ=env, ws_url=srv1.url, rest_request=lambda *_a, **_kw: {"code": "00000", "data": {}},
+        ping_interval_secs=5.0, recv_timeout_secs=0.5, reconnect_backoffs=(0.05,),
+    )
+    try:
+        gw1.start()
+        _wait_until(lambda: gw1._ws_subs_ready is True)
+        assert fill_sub_calls[0] >= 2
+        assert srv1.connection_count == 1
+    finally:
+        gw1.stop(timeout=1.5)
+        srv1.stop()
+
+    # B. Persistent fill rejection keeps _ws_subs_ready=False, triggers detail check on cancel, and reconnects until confirmed
+    conn_seen = {"count": 0}
+    detail_checks: list[str] = []
+
+    def on_msg_reconn(ws: Any, raw: str | bytes) -> Any:
+        obj = json.loads(raw)
+        if obj.get("op") == "login":
+            conn_seen["count"] += 1
+            return ws.send(json.dumps({"event": "login", "code": "0"}))
+        if obj.get("op") != "subscribe":
+            return None
+        replies = []
+        for a in obj.get("args", []):
+            if conn_seen["count"] == 1 and a.get("channel") == "fill":
+                replies.append(json.dumps({"event": "error", "code": "30001", "arg": a}))
+            else:
+                replies.append(json.dumps({"event": "subscribe", "arg": a}))
+
+        async def _send() -> None:
+            for r in replies:
+                await ws.send(r)
+
+        return _send()
+
+    def rest_req(_m: str, path: str, _b: dict[str, Any] | None) -> dict[str, Any]:
+        if path.endswith("/cancel-order"):
+            return {"code": "00000", "data": {"orderId": "VID-SUB"}}
+        if "/order/detail" in path:
+            detail_checks.append(path)
+            return {"code": "00000", "data": {"orderId": "VID-SUB", "clientOid": "coid-sub-chk", "state": "canceled", "accBaseVolume": "0"}}
+        return {"code": "00000", "data": {}}
+
+    srv2 = _LoopbackWsServer(on_message=on_msg_reconn)
+    srv2.start()
+    gw2 = BitgetVenueGateway(
+        environ=env, ws_url=srv2.url, rest_request=rest_req,
+        ping_interval_secs=5.0, recv_timeout_secs=0.4, reconnect_backoffs=(0.05,),
+    )
+    try:
+        # While _ws_subs_ready is False (even if _ws_logged_in is True), cancel 00000 must still query order/detail
+        gw2._ws_logged_in = True
+        gw2._ws_subs_ready = False
+        gw2.submit_limit(
+            client_order_id="coid-sub-chk", venue="BITGET", instrument_id="BTCUSDT-PERP.BITGET",
+            side="BUY", qty_contracts=D("0.1"), price=D("60000"), post_only=True, ioc=False, reduce_only=False,
+        )
+        gw2._exec_cancel_sync("coid-sub-chk")
+        assert len(detail_checks) == 1
+
+        gw2.start()
+        _wait_until(lambda: srv2.connection_count >= 2 and gw2._ws_subs_ready is True)
+    finally:
+        gw2.stop(timeout=1.5)
+        srv2.stop()

@@ -843,6 +843,8 @@ class CarryExecutionController:
         spec_s = specs.get(candidate.short_leg.instrument_id)
         if spec_l is None or spec_s is None:
             return None, "missing_instrument_spec"
+        if spec_l.close_only or spec_s.close_only:
+            return None, "close_only_contract"
 
         mid = Decimal(str(0.5 * (candidate.long_leg.mid + candidate.short_leg.mid)))
         aligned_full, err = align_leg_quantities(
@@ -946,6 +948,8 @@ class CarryExecutionController:
             return False, "position_not_active"
         if is_opening and self._is_position_closing(position_id, pos):
             return False, "position_closing"
+        if is_opening and (spec_l.close_only or spec_s.close_only):
+            return False, "close_only_contract"
 
         if is_opening:
             if (
@@ -1698,6 +1702,21 @@ class CarryExecutionController:
             if status == "OPENING":
                 if self._is_position_imbalanced(pos, spec_l, spec_s):
                     continue
+                if spec_l.close_only or spec_s.close_only:
+                    if cur_l <= Decimal("0") and cur_s <= Decimal("0"):
+                        self.ledger.update_position_status(
+                            pid,
+                            status="CLOSED",
+                            ts_s=now_s,
+                            long_base_qty=Decimal("0"),
+                            short_base_qty=Decimal("0"),
+                            close_reason="entry_aborted:close_only_contract",
+                        )
+                        self._slice_attempts.pop(pid, None)
+                    elif cur_l > Decimal("0") and cur_s > Decimal("0") and not self._is_position_imbalanced(pos, spec_l, spec_s):
+                        self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                        self._slice_attempts.pop(pid, None)
+                    continue
                 rem = Decimal(str(pos["target_base_qty"])) - min(cur_l, cur_s)
                 if rem <= Decimal("0"):
                     self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
@@ -1727,7 +1746,7 @@ class CarryExecutionController:
                 )
                 if ok:
                     submitted.append(pid)
-                elif err in _OPENING_UNFILLABLE_DUST_ERRORS:
+                elif err in _OPENING_UNFILLABLE_DUST_ERRORS or err == "close_only_contract":
                     if cur_l <= Decimal("0") and cur_s <= Decimal("0"):
                         self.ledger.update_position_status(
                             pid,

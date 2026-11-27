@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import inspect
 import json
@@ -557,6 +557,9 @@ class PublicCarryFeed:
         self._bitget_contracts_cache: Any = None
         self._bitget_contracts_ts: int = 0
         self._bitget_specs: dict[str, InstrumentSpec] = {}
+        self._bitget_contracts_refresh_error: str | None = None
+        self._bitget_contracts_expired: bool = False
+        self._bitget_entry_paused: bool = False
         self._bitget_meta_lock = threading.Lock()
         self._detail_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._last_detail_attempt_ts: dict[str, int] = {}
@@ -565,6 +568,11 @@ class PublicCarryFeed:
     def bitget_instrument_specs(self) -> dict[str, InstrumentSpec]:
         """Return cached Bitget InstrumentSpec entries keyed by instrument_id."""
         with self._bitget_meta_lock:
+            if self._bitget_entry_paused:
+                return {
+                    iid: replace(spec, close_only=True)
+                    for iid, spec in self._bitget_specs.items()
+                }
             return dict(self._bitget_specs)
 
     def _request(
@@ -620,8 +628,15 @@ class PublicCarryFeed:
                         self._bitget_contracts_cache = contracts_payload
                         self._bitget_contracts_ts = now_s
                         self._bitget_specs = {spec.instrument_id: spec for spec, _ in parsed.values()}
-                except Exception:
-                    pass
+                        self._bitget_contracts_refresh_error = None
+                        self._bitget_contracts_expired = False
+                        self._bitget_entry_paused = False
+                except Exception as exc:
+                    with self._bitget_meta_lock:
+                        self._bitget_contracts_refresh_error = f"contracts_refresh_failed:{type(exc).__name__}: {exc}"
+                        if self._bitget_contracts_cache is not None and (now_s - self._bitget_contracts_ts) >= 3600:
+                            self._bitget_contracts_expired = True
+                            self._bitget_entry_paused = True
 
     def _is_detail_fresh(self, venue: str, symbol: str, now_s: int) -> bool:
         cached = self._detail_cache.get((venue, symbol))
@@ -966,6 +981,13 @@ class PublicCarryFeed:
             try:
                 with self._bitget_meta_lock:
                     contracts_payload = self._bitget_contracts_cache
+                    contracts_expired = (
+                        contracts_payload is not None
+                        and self._bitget_contracts_expired
+                        and (ts - self._bitget_contracts_ts) >= 3600
+                        and self._bitget_contracts_refresh_error is not None
+                    )
+                    contracts_err = self._bitget_contracts_refresh_error
                 if contracts_payload is None:
                     from .bitget_gateway import parse_bitget_contracts
 
@@ -982,6 +1004,11 @@ class PublicCarryFeed:
                         self._bitget_contracts_cache = contracts_payload
                         self._bitget_contracts_ts = ts
                         self._bitget_specs = {spec.instrument_id: spec for spec, _ in parsed.values()}
+                        self._bitget_contracts_refresh_error = None
+                        self._bitget_contracts_expired = False
+                        self._bitget_entry_paused = False
+                    contracts_expired = False
+                    contracts_err = None
                 tk = _validate_bitget_public_list_resp(
                     self._request(
                         f"{self._bitget_base}/api/v2/mix/market/tickers?productType=USDT-FUTURES",
@@ -998,16 +1025,22 @@ class PublicCarryFeed:
                     ),
                     "current-fund-rate",
                 )
-                _merge(
-                    parse_bitget_tickers(
-                        contracts_payload,
-                        tk,
-                        fr_payload,
-                        now_s=ts,
-                        close_only_symbols=prio,
-                    )
+                bg_legs = parse_bitget_tickers(
+                    contracts_payload,
+                    tk,
+                    fr_payload,
+                    now_s=ts,
+                    close_only_symbols=prio,
                 )
-                succeeded_venues.append("BITGET")
+                if contracts_expired:
+                    venue_errors["BITGET"] = contracts_err or "contracts_metadata_expired"
+                    bg_legs = {sym: leg for sym, leg in bg_legs.items() if sym in prio}
+                    if bg_legs:
+                        _merge(bg_legs)
+                        succeeded_venues.append("BITGET")
+                else:
+                    _merge(bg_legs)
+                    succeeded_venues.append("BITGET")
             except Exception as exc:
                 venue_errors["BITGET"] = f"{type(exc).__name__}: {exc}"
 
