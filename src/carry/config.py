@@ -150,7 +150,7 @@ class CarryPlan:
     risk: CarryRiskPolicy
     runtime: CarryRuntimePolicy
 
-    def fingerprint(self) -> str:
+    def _fingerprint_payload(self, *, include_domain: bool) -> str:
         def _plain(obj: object) -> object:
             if isinstance(obj, (Decimal, Path)):
                 return str(obj)
@@ -163,14 +163,23 @@ class CarryPlan:
             return obj
 
         doc = _plain(asdict(self))
-        # Isolate paper vs live/readonly ledger domains while allowing live <-> readonly sharing.
-        doc["ledger_domain"] = ledger_domain_for_mode(doc.pop("mode"))
+        mode = doc.pop("mode")
+        if include_domain:
+            # Isolate paper vs live/readonly ledger domains while allowing live <-> readonly sharing.
+            doc["ledger_domain"] = ledger_domain_for_mode(mode)
         doc["runtime"].pop("duration_secs", None)
         doc["runtime"].pop("record_dir", None)
         doc["runtime"].pop("bbo_record_interval_secs", None)
         doc["runtime"].pop("watch_fill_min_carry_bps_h", None)
         raw = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
+
+    def fingerprint(self) -> str:
+        return self._fingerprint_payload(include_domain=True)
+
+    def legacy_fingerprint(self) -> str:
+        """Pre-ledger_domain fingerprint (6b47a19) used to verify legacy ledger migrations."""
+        return self._fingerprint_payload(include_domain=False)
 
 
 def _parse_fee_map(raw: object, name: str, defaults: tuple[tuple[str, Decimal], ...]) -> tuple[tuple[str, Decimal], ...]:

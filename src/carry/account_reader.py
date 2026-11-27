@@ -23,6 +23,7 @@ import urllib.request
 
 _MAX_PAGES = 20
 _USER_AGENT = "Mozilla/5.0 (compatible; NautilusPerpsCarry/1.0)"
+_OKX_ALGO_ORD_TYPES = ("conditional", "oco", "trigger", "move_order_stop", "twap", "chase")
 
 
 class StartupSnapshotError(RuntimeError):
@@ -172,45 +173,62 @@ class CarryStartupAccountReader:
 
         url = "https://api.hyperliquid.xyz/info" if is_main else "https://api.hyperliquid-testnet.xyz/info"
         dexes: tuple[str | None, ...] = (None, "xyz") if is_main else (None,)
-        seen_pos: set[str] = set()
 
+        def _read_hl_positions() -> dict[tuple[str, str], Decimal]:
+            out: dict[tuple[str, str], Decimal] = {}
+            seen_pos: set[str] = set()
+            for dex in dexes:
+                common: dict[str, Any] = {"user": addr}
+                if dex:
+                    common["dex"] = dex
+                state = self._request_json("POST", url, body={"type": "clearinghouseState", **common})
+                if not isinstance(state, dict) or not isinstance(state.get("assetPositions"), list):
+                    raise StartupSnapshotError("HL clearinghouseState missing assetPositions")
+                for row in state["assetPositions"]:
+                    if not isinstance(row, dict) or not isinstance(row.get("position"), dict):
+                        raise StartupSnapshotError("HL invalid assetPositions row")
+                    item = row["position"]
+                    coin = item.get("coin")
+                    if not isinstance(coin, str) or not coin:
+                        raise StartupSnapshotError("HL invalid position coin")
+                    szi = _exact_decimal(item.get("szi"), "HL position szi")
+                    full_coin = coin if (not dex or ":" in coin) else f"{dex}:{coin}"
+                    iid = f"{full_coin}-USD-PERP.HYPERLIQUID"
+                    if iid in seen_pos:
+                        raise StartupSnapshotError(f"HL duplicate position row for {iid}")
+                    seen_pos.add(iid)
+                    if szi != 0:
+                        out[("HL", iid)] = szi
+            return out
+
+        pos_before = _read_hl_positions()
+        seen_oids: set[tuple[str, str]] = set()
         for dex in dexes:
-            common: dict[str, Any] = {"user": addr}
+            common = {"user": addr}
             if dex:
                 common["dex"] = dex
-
-            state = self._request_json("POST", url, body={"type": "clearinghouseState", **common})
-            if not isinstance(state, dict) or not isinstance(state.get("assetPositions"), list):
-                raise StartupSnapshotError("HL clearinghouseState missing assetPositions")
-            for row in state["assetPositions"]:
-                if not isinstance(row, dict) or not isinstance(row.get("position"), dict):
-                    raise StartupSnapshotError("HL invalid assetPositions row")
-                item = row["position"]
-                coin = item.get("coin")
-                if not isinstance(coin, str) or not coin:
-                    raise StartupSnapshotError("HL invalid position coin")
-                szi = _exact_decimal(item.get("szi"), "HL position szi")
-                full_coin = coin if (not dex or ":" in coin) else f"{dex}:{coin}"
-                iid = f"{full_coin}-USD-PERP.HYPERLIQUID"
-                if iid in seen_pos:
-                    raise StartupSnapshotError(f"HL duplicate position row for {iid}")
-                seen_pos.add(iid)
-                if szi != 0:
-                    positions[("HL", iid)] = szi
-
-            orders = self._request_json("POST", url, body={"type": "openOrders", **common})
+            orders = self._request_json("POST", url, body={"type": "frontendOpenOrders", **common})
             if not isinstance(orders, list):
-                raise StartupSnapshotError("HL openOrders invalid payload")
+                raise StartupSnapshotError("HL frontendOpenOrders invalid payload")
             for row in orders:
                 if not isinstance(row, dict):
-                    raise StartupSnapshotError("HL invalid openOrders row")
+                    raise StartupSnapshotError("HL invalid frontendOpenOrders row")
                 coin = row.get("coin")
                 if not isinstance(coin, str) or not coin or "oid" not in row:
-                    raise StartupSnapshotError("HL openOrders missing coin or oid")
+                    raise StartupSnapshotError("HL frontendOpenOrders missing coin or oid")
+                oid_key = (dex or "", str(row["oid"]))
+                if oid_key in seen_oids:
+                    continue
+                seen_oids.add(oid_key)
                 full_coin = coin if (not dex or ":" in coin) else f"{dex}:{coin}"
                 iid = f"{full_coin}-USD-PERP.HYPERLIQUID"
                 key = ("HL", iid)
                 open_orders[key] = open_orders.get(key, 0) + 1
+
+        pos_after = _read_hl_positions()
+        if pos_before != pos_after:
+            raise StartupSnapshotError("HL positions changed during startup snapshot read")
+        positions.update(pos_after)
 
     def _read_lighter(
         self,
@@ -337,68 +355,73 @@ class CarryStartupAccountReader:
                 raise StartupSnapshotError(f"OKX API error code={code}")
             return resp["data"]
 
-        pos_rows = _signed_get("/api/v5/account/positions?instType=SWAP")
-        nonzero_rows: list[tuple[str, Decimal, str]] = []
         mult_map: dict[str, Decimal] = {}
         if okx_multipliers:
             for k, v in okx_multipliers.items():
                 if isinstance(v, Decimal) and v > 0:
                     mult_map[k] = v
 
-        for row in pos_rows:
-            if not isinstance(row, dict):
-                raise StartupSnapshotError("OKX invalid position row")
-            inst_id = row.get("instId")
-            if not isinstance(inst_id, str) or not inst_id:
-                raise StartupSnapshotError("OKX position missing instId")
-            pos_raw = row.get("pos")
-            if pos_raw in (None, ""):
-                continue
-            pos_dec = _exact_decimal(pos_raw, "OKX position pos")
-            if pos_dec == 0:
-                continue
-            pos_side = str(row.get("posSide") or "")
-            nonzero_rows.append((inst_id, pos_dec, pos_side))
+        def _read_okx_positions() -> dict[tuple[str, str], Decimal]:
+            out: dict[tuple[str, str], Decimal] = {}
+            pos_rows = _signed_get("/api/v5/account/positions?instType=SWAP")
+            nonzero_rows: list[tuple[str, Decimal, str]] = []
+            for row in pos_rows:
+                if not isinstance(row, dict):
+                    raise StartupSnapshotError("OKX invalid position row")
+                inst_id = row.get("instId")
+                if not isinstance(inst_id, str) or not inst_id:
+                    raise StartupSnapshotError("OKX position missing instId")
+                pos_raw = row.get("pos")
+                if pos_raw in (None, ""):
+                    continue
+                pos_dec = _exact_decimal(pos_raw, "OKX position pos")
+                if pos_dec == 0:
+                    continue
+                pos_side = str(row.get("posSide") or "")
+                nonzero_rows.append((inst_id, pos_dec, pos_side))
 
-        missing_ctval = [
-            inst_id
-            for inst_id, _, _ in nonzero_rows
-            if f"{inst_id}.OKX" not in mult_map and inst_id not in mult_map
-        ]
-        if missing_ctval:
-            inst_resp = self._request_json("GET", f"{base}/api/v5/public/instruments?instType=SWAP")
-            if not isinstance(inst_resp, dict) or inst_resp.get("code") != "0" or not isinstance(inst_resp.get("data"), list):
-                raise StartupSnapshotError("OKX public instruments fetch failed")
-            for item in inst_resp["data"]:
-                if isinstance(item, dict) and isinstance(item.get("instId"), str) and item.get("ctVal") not in (None, ""):
-                    ct = _exact_decimal(item["ctVal"], "OKX ctVal")
-                    if ct > 0:
-                        mult_map[item["instId"]] = ct
+            missing_ctval = [
+                inst_id
+                for inst_id, _, _ in nonzero_rows
+                if f"{inst_id}.OKX" not in mult_map and inst_id not in mult_map
+            ]
+            if missing_ctval:
+                inst_resp = self._request_json("GET", f"{base}/api/v5/public/instruments?instType=SWAP")
+                if not isinstance(inst_resp, dict) or inst_resp.get("code") != "0" or not isinstance(inst_resp.get("data"), list):
+                    raise StartupSnapshotError("OKX public instruments fetch failed")
+                for item in inst_resp["data"]:
+                    if isinstance(item, dict) and isinstance(item.get("instId"), str) and item.get("ctVal") not in (None, ""):
+                        ct = _exact_decimal(item["ctVal"], "OKX ctVal")
+                        if ct > 0:
+                            mult_map[item["instId"]] = ct
 
-        for inst_id, pos_dec, pos_side in nonzero_rows:
-            full_iid = f"{inst_id}.OKX"
-            ct_val = mult_map.get(full_iid) or mult_map.get(inst_id)
-            if ct_val is None or ct_val <= 0:
-                raise StartupSnapshotError(f"OKX missing positive ctVal for {inst_id}")
-            if pos_side == "long":
-                signed_contracts = abs(pos_dec)
-            elif pos_side == "short":
-                signed_contracts = -abs(pos_dec)
-            elif pos_side in ("net", ""):
-                signed_contracts = pos_dec
-            else:
-                raise StartupSnapshotError(f"OKX unsupported posSide {pos_side!r}")
-            base_qty = signed_contracts * ct_val
-            key = ("OKX", full_iid)
-            if key in positions:
-                key = ("OKX", f"{full_iid}:{pos_side}")
-            positions[key] = base_qty
+            for inst_id, pos_dec, pos_side in nonzero_rows:
+                full_iid = f"{inst_id}.OKX"
+                ct_val = mult_map.get(full_iid) or mult_map.get(inst_id)
+                if ct_val is None or ct_val <= 0:
+                    raise StartupSnapshotError(f"OKX missing positive ctVal for {inst_id}")
+                if pos_side == "long":
+                    signed_contracts = abs(pos_dec)
+                elif pos_side == "short":
+                    signed_contracts = -abs(pos_dec)
+                elif pos_side in ("net", ""):
+                    signed_contracts = pos_dec
+                else:
+                    raise StartupSnapshotError(f"OKX unsupported posSide {pos_side!r}")
+                base_qty = signed_contracts * ct_val
+                key = ("OKX", full_iid)
+                if key in out:
+                    key = ("OKX", f"{full_iid}:{pos_side}")
+                out[key] = base_qty
+            return out
+
+        pos_before = _read_okx_positions()
 
         seen_ord_ids: set[str] = set()
         seen_cursors: set[str] = set()
         after: str | None = None
         for _ in range(_MAX_PAGES):
-            qs = f"instType=SWAP&limit=100" + (f"&after={urllib.parse.quote(after)}" if after else "")
+            qs = "instType=SWAP&limit=100" + (f"&after={urllib.parse.quote(after)}" if after else "")
             page = _signed_get(f"/api/v5/trade/orders-pending?{qs}")
             for row in page:
                 if not isinstance(row, dict):
@@ -421,6 +444,42 @@ class CarryStartupAccountReader:
             after = next_after
         else:
             raise StartupSnapshotError("OKX orders-pending pagination exceeded max pages")
+
+        seen_algo_ids: set[str] = set()
+        for ord_type in _OKX_ALGO_ORD_TYPES:
+            algo_after: str | None = None
+            seen_algo_cursors: set[str] = set()
+            for _ in range(_MAX_PAGES):
+                qs = f"instType=SWAP&ordType={urllib.parse.quote(ord_type)}&limit=100" + (
+                    f"&after={urllib.parse.quote(algo_after)}" if algo_after else ""
+                )
+                page = _signed_get(f"/api/v5/trade/orders-algo-pending?{qs}")
+                for row in page:
+                    if not isinstance(row, dict):
+                        raise StartupSnapshotError("OKX invalid algo order row")
+                    inst_id = row.get("instId")
+                    algo_id = row.get("algoId")
+                    if not isinstance(inst_id, str) or not inst_id or not isinstance(algo_id, str) or not algo_id:
+                        raise StartupSnapshotError("OKX algo order missing instId or algoId")
+                    if algo_id in seen_algo_ids:
+                        continue
+                    seen_algo_ids.add(algo_id)
+                    key = ("OKX", f"{inst_id}.OKX")
+                    open_orders[key] = open_orders.get(key, 0) + 1
+                if len(page) < 100:
+                    break
+                next_after = str(page[-1]["algoId"])
+                if next_after in seen_algo_cursors:
+                    raise StartupSnapshotError("OKX orders-algo-pending pagination loop")
+                seen_algo_cursors.add(next_after)
+                algo_after = next_after
+            else:
+                raise StartupSnapshotError("OKX orders-algo-pending pagination exceeded max pages")
+
+        pos_after = _read_okx_positions()
+        if pos_before != pos_after:
+            raise StartupSnapshotError("OKX positions changed during startup snapshot read")
+        positions.update(pos_after)
 
     def _bybit_headers(self, *, api_key: str, api_secret: str, query_string: str) -> dict[str, str]:
         ts_ms = str(int(time.time() * 1000))
@@ -460,75 +519,93 @@ class CarryStartupAccountReader:
                 raise StartupSnapshotError("BYBIT response missing result.list")
             return result
 
+        def _read_bybit_positions() -> dict[tuple[str, str], Decimal]:
+            out: dict[tuple[str, str], Decimal] = {}
+            for settle_coin in ("USDT", "USDC"):
+                cursor: str | None = None
+                seen_pos_cursors: set[str] = set()
+                for _ in range(_MAX_PAGES):
+                    params = [("category", "linear"), ("settleCoin", settle_coin), ("limit", "200")]
+                    if cursor:
+                        params.append(("cursor", cursor))
+                    result = _signed_get("/v5/position/list", params)
+                    for row in result["list"]:
+                        if not isinstance(row, dict):
+                            raise StartupSnapshotError("BYBIT invalid position row")
+                        symbol = row.get("symbol")
+                        if not isinstance(symbol, str):
+                            raise StartupSnapshotError("BYBIT invalid position symbol")
+                        if not symbol:
+                            continue
+                        size = _exact_decimal(row.get("size"), "Bybit position size")
+                        if size < 0:
+                            raise StartupSnapshotError("BYBIT negative position size")
+                        if size == 0:
+                            continue
+                        side = row.get("side")
+                        if side == "Buy":
+                            signed_qty = size
+                        elif side == "Sell":
+                            signed_qty = -size
+                        else:
+                            raise StartupSnapshotError(f"BYBIT non-zero position has invalid side {side!r}")
+                        iid = f"{symbol}-LINEAR.BYBIT"
+                        key = ("BYBIT", iid)
+                        if key in out:
+                            key = ("BYBIT", f"{iid}:{side.lower()}")
+                        out[key] = signed_qty
+                    next_cursor = str(result.get("nextPageCursor") or "")
+                    if not next_cursor:
+                        break
+                    if next_cursor in seen_pos_cursors:
+                        raise StartupSnapshotError("BYBIT position pagination loop")
+                    seen_pos_cursors.add(next_cursor)
+                    cursor = next_cursor
+                else:
+                    raise StartupSnapshotError("BYBIT position pagination exceeded max pages")
+            return out
+
+        pos_before = _read_bybit_positions()
+
         seen_ord_ids: set[str] = set()
         for settle_coin in ("USDT", "USDC"):
-            cursor: str | None = None
-            seen_pos_cursors: set[str] = set()
-            for _ in range(_MAX_PAGES):
-                params = [("category", "linear"), ("settleCoin", settle_coin), ("limit", "200")]
-                if cursor:
-                    params.append(("cursor", cursor))
-                result = _signed_get("/v5/position/list", params)
-                for row in result["list"]:
-                    if not isinstance(row, dict):
-                        raise StartupSnapshotError("BYBIT invalid position row")
-                    symbol = row.get("symbol")
-                    if not isinstance(symbol, str):
-                        raise StartupSnapshotError("BYBIT invalid position symbol")
-                    if not symbol:
-                        continue
-                    size = _exact_decimal(row.get("size"), "Bybit position size")
-                    if size < 0:
-                        raise StartupSnapshotError("BYBIT negative position size")
-                    if size == 0:
-                        continue
-                    side = row.get("side")
-                    if side == "Buy":
-                        signed_qty = size
-                    elif side == "Sell":
-                        signed_qty = -size
-                    else:
-                        raise StartupSnapshotError(f"BYBIT non-zero position has invalid side {side!r}")
-                    iid = f"{symbol}-LINEAR.BYBIT"
-                    key = ("BYBIT", iid)
-                    if key in positions:
-                        key = ("BYBIT", f"{iid}:{side.lower()}")
-                    positions[key] = signed_qty
-                next_cursor = str(result.get("nextPageCursor") or "")
-                if not next_cursor:
-                    break
-                if next_cursor in seen_pos_cursors:
-                    raise StartupSnapshotError("BYBIT position pagination loop")
-                seen_pos_cursors.add(next_cursor)
-                cursor = next_cursor
-            else:
-                raise StartupSnapshotError("BYBIT position pagination exceeded max pages")
+            for order_filter in ("Order", "StopOrder"):
+                ord_cursor: str | None = None
+                seen_ord_cursors: set[str] = set()
+                for _ in range(_MAX_PAGES):
+                    params = [
+                        ("category", "linear"),
+                        ("settleCoin", settle_coin),
+                        ("openOnly", "0"),
+                        ("orderFilter", order_filter),
+                        ("limit", "50"),
+                    ]
+                    if ord_cursor:
+                        params.append(("cursor", ord_cursor))
+                    result = _signed_get("/v5/order/realtime", params)
+                    for row in result["list"]:
+                        if not isinstance(row, dict):
+                            raise StartupSnapshotError("BYBIT invalid open order row")
+                        symbol = row.get("symbol")
+                        order_id = row.get("orderId")
+                        if not isinstance(symbol, str) or not symbol or not isinstance(order_id, str) or not order_id:
+                            raise StartupSnapshotError("BYBIT open order missing symbol or orderId")
+                        if order_id in seen_ord_ids:
+                            continue
+                        seen_ord_ids.add(order_id)
+                        key = ("BYBIT", f"{symbol}-LINEAR.BYBIT")
+                        open_orders[key] = open_orders.get(key, 0) + 1
+                    next_cursor = str(result.get("nextPageCursor") or "")
+                    if not next_cursor:
+                        break
+                    if next_cursor in seen_ord_cursors:
+                        raise StartupSnapshotError("BYBIT order pagination loop")
+                    seen_ord_cursors.add(next_cursor)
+                    ord_cursor = next_cursor
+                else:
+                    raise StartupSnapshotError("BYBIT order pagination exceeded max pages")
 
-            ord_cursor: str | None = None
-            seen_ord_cursors: set[str] = set()
-            for _ in range(_MAX_PAGES):
-                params = [("category", "linear"), ("settleCoin", settle_coin), ("openOnly", "0"), ("limit", "50")]
-                if ord_cursor:
-                    params.append(("cursor", ord_cursor))
-                result = _signed_get("/v5/order/realtime", params)
-                for row in result["list"]:
-                    if not isinstance(row, dict):
-                        raise StartupSnapshotError("BYBIT invalid open order row")
-                    symbol = row.get("symbol")
-                    order_id = row.get("orderId")
-                    if not isinstance(symbol, str) or not symbol or not isinstance(order_id, str) or not order_id:
-                        raise StartupSnapshotError("BYBIT open order missing symbol or orderId")
-                    if order_id in seen_ord_ids:
-                        continue
-                    seen_ord_ids.add(order_id)
-                    key = ("BYBIT", f"{symbol}-LINEAR.BYBIT")
-                    open_orders[key] = open_orders.get(key, 0) + 1
-                next_cursor = str(result.get("nextPageCursor") or "")
-                if not next_cursor:
-                    break
-                if next_cursor in seen_ord_cursors:
-                    raise StartupSnapshotError("BYBIT order pagination loop")
-                seen_ord_cursors.add(next_cursor)
-                ord_cursor = next_cursor
-            else:
-                raise StartupSnapshotError("BYBIT order pagination exceeded max pages")
+        pos_after = _read_bybit_positions()
+        if pos_before != pos_after:
+            raise StartupSnapshotError("BYBIT positions changed during startup snapshot read")
+        positions.update(pos_after)
