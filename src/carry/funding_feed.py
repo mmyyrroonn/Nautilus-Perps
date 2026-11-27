@@ -23,7 +23,11 @@ OKX_BASE = "https://www.okx.com"
 BYBIT_BASE = "https://api.bybit.com"
 BYBIT_TESTNET_BASE = "https://api-testnet.bybit.com"
 USER_AGENT = "Mozilla/5.0 (compatible; NautilusPerpsCarry/1.0)"
-_VALID_INTERVALS_H = frozenset({1, 2, 4, 8})
+_VALID_INTERVALS_H = frozenset({1, 2, 3, 4, 6, 8, 12, 24})
+
+
+class SlowPollError(RuntimeError):
+    """Raised when all configured venues fail during a slow snapshot poll."""
 
 # Lighter RWA / equity / commodity tickers so asset_class separates Crypto vs RWA cleanly.
 KNOWN_RWA_SYMBOLS = frozenset({
@@ -363,7 +367,7 @@ def compute_trailing_rates(settle_events: list[tuple[int, float]], now_s: int, d
     iv = default_iv
     if len(past) >= 2:
         diffs = [(past[i][0] - past[i - 1][0]) // HOUR for i in range(1, len(past)) if past[i][0] > past[i - 1][0]]
-        valid_diffs = [d for d in diffs if d in (1, 2, 4, 8)]
+        valid_diffs = [d for d in diffs if d in _VALID_INTERVALS_H]
         if valid_diffs:
             iv = valid_diffs[-1]
     cut8 = now_s - 8 * HOUR
@@ -407,6 +411,7 @@ class PublicCarryFeed:
         self._byb_iv_ts: int = 0
         self._detail_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._last_detail_attempt_ts: dict[str, int] = {}
+        self.last_venue_errors: dict[str, str] = {}
 
     def _request(
         self,
@@ -664,15 +669,23 @@ class PublicCarryFeed:
         self._refresh_venue_metadata(ts)
 
         by_sym: dict[str, dict[str, LegMarketInfo]] = {}
+        succeeded_venues: list[str] = []
+        venue_errors: dict[str, str] = {}
 
         def _merge(legs: dict[str, LegMarketInfo]) -> None:
             for sym, leg in legs.items():
                 by_sym.setdefault(sym, {})[leg.venue] = leg
 
         if "HL" in self.venues:
+            hl_ok = False
+            hl_errs: list[str] = []
             try:
                 _merge(parse_hl_meta_and_ctxs(self._request(self._hl_info_url, {"type": "metaAndAssetCtxs"}), is_xyz=False, now_s=ts))
-                if self.environment == "mainnet":
+                hl_ok = True
+            except Exception as exc:
+                hl_errs.append(f"{type(exc).__name__}: {exc}")
+            if self.environment == "mainnet":
+                try:
                     _merge(
                         parse_hl_meta_and_ctxs(
                             self._request(self._hl_info_url, {"type": "metaAndAssetCtxs", "dex": "xyz"}),
@@ -680,21 +693,28 @@ class PublicCarryFeed:
                             now_s=ts,
                         )
                     )
-            except Exception:
-                pass
+                    hl_ok = True
+                except Exception as exc:
+                    hl_errs.append(f"xyz:{type(exc).__name__}: {exc}")
+            if hl_ok:
+                succeeded_venues.append("HL")
+            elif hl_errs:
+                venue_errors["HL"] = "; ".join(hl_errs)
         if "LIGHTER" in self.venues:
             try:
                 det = self._request(f"{self._lighter_base}/api/v1/orderBookDetails", None)
                 fr = self._request(f"{self._lighter_base}/api/v1/funding-rates", None)
                 _merge(parse_lighter_snapshots(det, fr, now_s=ts))
-            except Exception:
-                pass
+                succeeded_venues.append("LIGHTER")
+            except Exception as exc:
+                venue_errors["LIGHTER"] = f"{type(exc).__name__}: {exc}"
         if "BYBIT" in self.venues:
             try:
                 tk = self._request(f"{self._bybit_base}/v5/market/tickers?category=linear", None)
                 _merge(parse_bybit_tickers(tk, self._byb_iv_cache, now_s=ts))
-            except Exception:
-                pass
+                succeeded_venues.append("BYBIT")
+            except Exception as exc:
+                venue_errors["BYBIT"] = f"{type(exc).__name__}: {exc}"
         okx_bulk_fr: dict[str, tuple[float | None, int | None, int | None]] = {}
         if "OKX" in self.venues:
             try:
@@ -719,8 +739,14 @@ class PublicCarryFeed:
                             if any(val is not None for val in parsed):
                                 okx_bulk_fr[str(row["instId"])] = parsed
                 _merge(parse_okx_tickers(self._okx_inst_cache, tk, fr_payload, now_s=ts))
-            except Exception:
-                pass
+                succeeded_venues.append("OKX")
+            except Exception as exc:
+                venue_errors["OKX"] = f"{type(exc).__name__}: {exc}"
+
+        self.last_venue_errors = dict(venue_errors)
+        if self.venues and not succeeded_venues:
+            details = "; ".join(f"{v}={err}" for v, err in sorted(venue_errors.items()))
+            raise SlowPollError(f"all configured venues failed slow poll ({details})")
 
         if not include_details:
             return by_sym

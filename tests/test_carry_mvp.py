@@ -4578,3 +4578,236 @@ def test_slow_poll_account_guards_do_not_reset_unhedged_risk_timer(
     assert len(gw.submitted) == 1
     assert gw.submitted[0]["side"] == "SELL" and gw.submitted[0]["reduce_only"] is True and gw.submitted[0]["base_qty"] == D("0.49")
     led.close()
+
+
+def test_basis_stop_and_margin_guard_do_not_fire_on_stale_frozen_mids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    now_s = 1_800_000_000
+    clock = [float(now_s)]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+
+    def _setup_strat(name: str):
+        led = CarryLedger(tmp_path / f"{name}.sqlite3", plan.fingerprint(), ledger_domain="live")
+        led.create_position(
+            position_id="SOL-BASIS-1",
+            symbol="SOL",
+            long_venue="HL",
+            short_venue="OKX",
+            iid_long=spec_l.instrument_id,
+            iid_short=spec_s.instrument_id,
+            opened_ts=now_s - 600,
+            entry_l=100.0,
+            entry_s=100.1,
+            entry_basis_bps=10.0,
+            target_base_qty=D("0.98"),
+        )
+        led.update_position_status(
+            "SOL-BASIS-1", status="OPEN", ts_s=now_s - 590, long_base_qty=D("0.98"), short_base_qty=D("0.98")
+        )
+        gw = DelayedAsyncVenueGateway()
+        gw.register_spec(spec_l)
+        gw.register_spec(spec_s)
+        strat = carry_runtime._create_carry_strategy(plan, led, mode="live")
+        strat.gateway = gw
+        strat.controller.gateway = gw
+        strat.reconciled = True
+        strat._specs_from_cache = lambda: specs
+        return led, gw, strat
+
+    # Subcase A: Last quotes 100 / 103 at t0, then NO WS or REST updates for 35 minutes
+    led_a, gw_a, strat_a = _setup_strat("basis_both_frozen")
+    strat_a.on_quote(SimpleNamespace(instrument_id=spec_l.instrument_id, bid_price=99.99, ask_price=100.01, ts_event=int(clock[0] * 1e9)))
+    strat_a.on_quote(SimpleNamespace(instrument_id=spec_s.instrument_id, bid_price=102.99, ask_price=103.01, ts_event=int(clock[0] * 1e9)))
+    for step in range(1, 211):
+        clock[0] = float(now_s + step * 10)
+        strat_a._prune_stale_quotes(clock[0])
+        strat_a._on_basis_timer(None)
+    assert gw_a.submitted == []
+    assert "SOL-BASIS-1" in led_a.active_positions()
+    led_a.close()
+
+    # Subcase B: Single-leg outage (long keeps updating, short frozen at 103) -> MUST NOT trigger
+    clock[0] = float(now_s)
+    led_b, gw_b, strat_b = _setup_strat("basis_one_frozen")
+    strat_b.on_quote(SimpleNamespace(instrument_id=spec_l.instrument_id, bid_price=99.99, ask_price=100.01, ts_event=int(clock[0] * 1e9)))
+    strat_b.on_quote(SimpleNamespace(instrument_id=spec_s.instrument_id, bid_price=102.99, ask_price=103.01, ts_event=int(clock[0] * 1e9)))
+    for step in range(1, 211):
+        clock[0] = float(now_s + step * 10)
+        strat_b.on_quote(SimpleNamespace(instrument_id=spec_l.instrument_id, bid_price=99.99, ask_price=100.01, ts_event=int(clock[0] * 1e9)))
+        strat_b._on_basis_timer(None)
+    assert gw_b.submitted == []
+    led_b.close()
+
+    # Subcase C: Both legs continue delivering fresh 100 / 103 updates for 30 minutes -> triggers basis_stop_30m
+    clock[0] = float(now_s)
+    led_c, gw_c, strat_c = _setup_strat("basis_both_fresh")
+    for step in range(0, 182):
+        clock[0] = float(now_s + step * 10)
+        strat_c.on_quote(SimpleNamespace(instrument_id=spec_l.instrument_id, bid_price=99.99, ask_price=100.01, ts_event=int(clock[0] * 1e9)))
+        strat_c.on_quote(SimpleNamespace(instrument_id=spec_s.instrument_id, bid_price=102.99, ask_price=103.01, ts_event=int(clock[0] * 1e9)))
+        strat_c._on_basis_timer(None)
+    assert len(gw_c.submitted) == 2
+    assert all(o["reduce_only"] is True for o in gw_c.submitted)
+    assert led_c.active_positions()["SOL-BASIS-1"]["close_reason"] == "basis_stop_30m"
+    led_c.close()
+
+    # Subcase D: Stale mid (50.0 from 120s ago) does NOT fire spurious margin_guard_25pct
+    clock[0] = float(now_s)
+    led_d, gw_d, strat_d = _setup_strat("stale_margin")
+    strat_d.live_mids = {spec_l.instrument_id: 50.0, spec_s.instrument_id: 100.1}
+    strat_d.live_mid_ts = {spec_l.instrument_id: float(now_s - 120), spec_s.instrument_id: float(now_s)}
+    strat_d._on_fast_risk_timer(None)
+    assert gw_d.submitted == []
+    led_d.close()
+
+
+def test_stale_slow_snapshot_and_past_settlement_are_rejected_without_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import MappingProxyType, SimpleNamespace
+    import src.carry.runtime as carry_runtime
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    now_s = 1_800_000_000
+    monkeypatch.setattr(time, "time", lambda: float(now_s))
+
+    led = CarryLedger(tmp_path / "stale_slow.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw = DelayedAsyncVenueGateway()
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    strat = carry_runtime._create_carry_strategy(plan, led, mode="paper")
+    strat.gateway = gw
+    strat.controller.gateway = gw
+    strat.reconciled = True
+    strat._specs_from_cache = lambda: specs
+
+    # Fresh WS quotes at now_s
+    strat.on_quote(SimpleNamespace(instrument_id=spec_l.instrument_id, bid_price=99.98, ask_price=100.02, ts_event=now_s * 1_000_000_000))
+    strat.on_quote(SimpleNamespace(instrument_id=spec_s.instrument_id, bid_price=100.13, ask_price=100.17, ts_event=now_s * 1_000_000_000))
+
+    # 20-minute-old slow poll result with settlement timestamp already in the past
+    old_ts = now_s - 1200
+    stale_snap = MappingProxyType(
+        {
+            "SOL": MappingProxyType(
+                {
+                    "HL": LegMarketInfo(**{**_make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02).__dict__, "fetched_ts": old_ts}),
+                    "OKX": LegMarketInfo(**{**_make_leg("OKX", "SOL", interval_h=8, next_settle_ts=old_ts + 600, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.13, ask=100.17).__dict__, "fetched_ts": old_ts}),
+                }
+            )
+        }
+    )
+    strat._pending_slow_result = carry_runtime._SlowPollResult(poll_ts_s=old_ts, snapshot=stale_snap)
+    assert strat._consume_pending_slow_snapshot() is False
+    assert strat._last_slow_poll_error == "stale_slow_snapshot:age=1200s"
+    assert strat.snapshot == {}
+    assert gw.submitted == []
+    assert led.active_positions() == {}
+
+    # Also verify signal blackout directly blocks CEX legs with past next_settle_ts
+    assert (
+        evaluate_entry_candidates(
+            stale_snap,
+            open_symbols=set(),
+            venue_notional_used={},
+            excluded_symbols=set(),
+            policy=plan.policy,
+            risk=plan.risk,
+            now_s=now_s,
+        )
+        == []
+    )
+    led.close()
+
+
+def test_okx_6h_funding_interval_realtime_and_history_parsing() -> None:
+    now_s = 1_800_000_000
+    t_ms = (now_s + 3600) * 1000
+    nxt_ms = (now_s + 7 * 3600) * 1000  # 6h settlement interval
+
+    # Realtime bulk parsing: 0.0006 over 6h == 6 bps / 6h == 1.0 bps/h (NOT 0.75 bps/h!)
+    okx_6h = parse_okx_tickers(
+        {"data": [{"instId": "SIX-USDT-SWAP", "state": "live", "settleCcy": "USDT"}]},
+        {"data": [{"instId": "SIX-USDT-SWAP", "last": "10", "bidPx": "9.99", "askPx": "10.01", "volCcy24h": "200000"}]},
+        {"data": [{"instId": "SIX-USDT-SWAP", "fundingRate": "0.0006", "fundingTime": str(t_ms), "nextFundingTime": str(nxt_ms)}]},
+        now_s=now_s,
+    )
+    assert okx_6h["SIX"].interval_h == 6
+    assert okx_6h["SIX"].current_rate_bps_h == pytest.approx(1.0)
+
+    # History fallback when nextFundingTime is absent: 6h-spaced settlements infer interval_h=6 -> 1.0 bps/h
+    def fake_http(url: str, _body: dict | None = None):
+        if "public/funding-rate?" in url:
+            return {"data": [{"instId": "SIX-USDT-SWAP", "fundingRate": "0.0006", "fundingTime": str(t_ms)}]}
+        if "funding-rate-history" in url:
+            return {
+                "data": [
+                    {"fundingTime": str((now_s - k * 6 * HOUR) * 1000), "realizedRate": "0.0006"}
+                    for k in range(0, 5)
+                ]
+            }
+        if "market/candles" in url:
+            return {
+                "data": [
+                    [str((now_s - 7200) * 1000), "10", "10", "10", "10", "100", "0", "10000"],
+                    [str((now_s - 3600) * 1000), "10", "10", "10", "10", "100", "0", "10000"],
+                ]
+            }
+        return {}
+
+    feed = PublicCarryFeed(venues=("OKX",), http_get=fake_http)
+    det = feed._fetch_leg_detail(_make_leg("OKX", "SIX", interval_h=8, cur_rate=None), now_s)
+    assert det.interval_h == 6
+    assert det.current_rate_bps_h == pytest.approx(1.0)
+    assert det.r8_bps_h == pytest.approx(12.0 / 8.0)
+    assert det.r24_bps_h == pytest.approx(24.0 / 24.0)
+
+
+def test_slow_poll_all_venues_timeout_raises_and_preserves_prior_snapshot_and_error(tmp_path: Path) -> None:
+    from src.carry.funding_feed import SlowPollError
+    import src.carry.runtime as carry_runtime
+
+    now_s = 1_800_000_000
+
+    def timeout_http(_url: str, _body: dict | None = None, **_kw):
+        raise TimeoutError("timed out")
+
+    feed = PublicCarryFeed(venues=("HL", "LIGHTER", "OKX", "BYBIT"), http_get=timeout_http)
+    with pytest.raises(SlowPollError, match="all configured venues failed"):
+        feed.poll_snapshot(now_s=now_s)
+    assert set(feed.last_venue_errors.keys()) == {"HL", "LIGHTER", "OKX", "BYBIT"}
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "all_timeout.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    strat = carry_runtime._create_carry_strategy(plan, led, mode="paper")
+    prior_snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.13, ask=100.17),
+        }
+    }
+    strat.snapshot = prior_snap
+    strat.feed = feed
+    try:
+        assert strat._trigger_slow_poll(now_s=int(time.time()), priority_symbols=frozenset()) is True
+        deadline = time.monotonic() + 2.0
+        while strat._slow_poll_inflight and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert not strat._slow_poll_inflight
+        assert strat._consume_pending_slow_snapshot() is False
+        assert strat._last_slow_poll_error is not None and "SlowPollError" in strat._last_slow_poll_error
+        assert "SOL" in strat.snapshot
+    finally:
+        strat.close_slow_poller(wait=True)
+        led.close()
