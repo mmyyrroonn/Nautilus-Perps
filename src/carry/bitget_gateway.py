@@ -974,6 +974,7 @@ class BitgetVenueGateway:
         self._thread: threading.Thread | None = None
         self._ws_logged_in = False
         self._ws_subs_ready = False
+        self._force_resync_pending = False
         self._order_async_locks: dict[str, asyncio.Lock] = {}
 
     def _env_map(self) -> Mapping[str, str]:
@@ -2148,6 +2149,7 @@ class BitgetVenueGateway:
         for coid, raw_sym, vid, last_ts in self._non_terminal_orders_snapshot():
             if not force and (now - last_ts) < self.resync_interval_secs:
                 continue
+            query_start = time.monotonic()
             outcome = self._query_order_detail_sync(raw_sym, coid, vid)
             emit_rejected = False
             if outcome == "NOT_FOUND":
@@ -2159,16 +2161,20 @@ class BitgetVenueGateway:
                             cur.not_found_confirmations = 0
                             cur.uncertain_error_checks = 0
                         elif cur.submit_uncertain:
-                            cur.last_resync_ts = time.monotonic()
-                            cur.uncertain_error_checks = 0
-                            cur.not_found_confirmations += 1
-                            if cur.not_found_confirmations >= 2:
-                                self._mark_terminal_locked(
-                                    cur,
-                                    "REJECTED",
-                                    reason="not_found_after_uncertain_submit",
-                                )
-                                emit_rejected = True
+                            if (
+                                cur.not_found_confirmations == 0
+                                or (query_start - cur.last_resync_ts) >= self.resync_interval_secs
+                            ):
+                                cur.last_resync_ts = time.monotonic()
+                                cur.uncertain_error_checks = 0
+                                cur.not_found_confirmations += 1
+                                if cur.not_found_confirmations >= 2:
+                                    self._mark_terminal_locked(
+                                        cur,
+                                        "REJECTED",
+                                        reason="not_found_after_uncertain_submit",
+                                    )
+                                    emit_rejected = True
                 if emit_rejected:
                     self._enqueue_log(
                         "WARNING",
@@ -2262,8 +2268,10 @@ class BitgetVenueGateway:
                 break
             if resync_wake.is_set():
                 resync_wake.clear()
+            force_now = self._force_resync_pending
+            self._force_resync_pending = False
             await asyncio.to_thread(self._drain_backfills_sync)
-            await asyncio.to_thread(self._resync_non_terminal_sync, force=False)
+            await asyncio.to_thread(self._resync_non_terminal_sync, force=force_now)
 
     def _handle_private_ws_message(
         self,
@@ -2417,7 +2425,8 @@ class BitgetVenueGateway:
                     rejected_priv_channels: set[str] = set()
                     await ws.send(json.dumps(_priv_sub_payload(["orders", "fill"]), separators=(",", ":")))
                     self._enqueue_log("INFO", f"[bitget.ws.priv] logged in & subscribing ({self.environment})")
-                    await asyncio.to_thread(self._resync_non_terminal_sync, force=True)
+                    self._force_resync_pending = True
+                    self._wake_resync_async()
 
                     sub_confirm_deadline = time.monotonic() + self.recv_timeout_secs
                     sub_retry_count = 0

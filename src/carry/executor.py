@@ -1473,6 +1473,24 @@ class CarryExecutionController:
                 self._maybe_finalize_position(ctx.position_id, now_s=now_s)
             return None
 
+        if ctx.is_opening and (ctx.spec_hedge.close_only or ctx.spec_maker.close_only):
+            spec_l_m, spec_s_m = (
+                (ctx.spec_maker, ctx.spec_hedge) if ctx.maker_side_is_long else (ctx.spec_hedge, ctx.spec_maker)
+            )
+            if ctx.position_id not in self._active_emergency_closes:
+                pos_m = self.ledger.active_positions().get(ctx.position_id)
+                if pos_m is not None and self._is_position_imbalanced(pos_m, spec_l_m, spec_s_m):
+                    self.emergency_close_position(
+                        ctx.position_id,
+                        specs={spec_l_m.instrument_id: spec_l_m, spec_s_m.instrument_id: spec_s_m},
+                        reason="close_only_hedge_race",
+                        now_s=now_s,
+                        live_mids={ctx.spec_hedge.instrument_id: float(hedge_mid)} if hedge_mid > 0 else None,
+                    )
+                elif terminal:
+                    self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+            return None
+
         unhedged = self._maker_unhedged_qty(ctx)
         if unhedged <= Decimal("0") or pos is None:
             if terminal:
@@ -1684,14 +1702,51 @@ class CarryExecutionController:
             return []
         submitted: list[str] = []
         for pid, pos in sorted(self.ledger.active_positions().items()):
-            if self.has_in_flight_orders(pid):
-                continue
             status = str(pos["status"])
             if status not in ("OPENING", "CLOSING"):
                 continue
             iid_l, iid_s = str(pos["iid_long"]), str(pos["iid_short"])
             spec_l, spec_s = specs.get(iid_l), specs.get(iid_s)
             if spec_l is None or spec_s is None:
+                continue
+            if status == "OPENING" and (spec_l.close_only or spec_s.close_only):
+                for coid, ctx in list(self._active_makers.items()):
+                    if ctx.position_id != pid or not ctx.is_opening:
+                        continue
+                    ctx.spec_maker = spec_l if ctx.maker_side_is_long else spec_s
+                    ctx.spec_hedge = spec_s if ctx.maker_side_is_long else spec_l
+                    if not ctx.cancel_requested:
+                        c_ack = self.gateway.cancel_order(
+                            client_order_id=coid,
+                            venue=ctx.maker_venue,
+                            instrument_id=ctx.spec_maker.instrument_id,
+                        )
+                        ctx.cancel_requested = True
+                        self._update_order_from_ack(coid, c_ack, now_s=now_s)
+                        if c_ack.filled_base_qty > ctx.accounted_maker_base_qty:
+                            self._apply_leg_fill_delta(
+                                pid,
+                                is_long=ctx.maker_side_is_long,
+                                is_opening=True,
+                                delta_base=c_ack.filled_base_qty - ctx.accounted_maker_base_qty,
+                                now_s=now_s,
+                            )
+                            ctx.accounted_maker_base_qty = c_ack.filled_base_qty
+                        if c_ack.status in TERMINAL_ORDER_STATUSES:
+                            self._active_makers.pop(coid, None)
+                pos_now = self.ledger.active_positions().get(pid)
+                if pos_now is not None and self._is_position_imbalanced(pos_now, spec_l, spec_s):
+                    self.emergency_close_position(
+                        pid,
+                        specs=specs,
+                        reason="close_only_hedge_race",
+                        now_s=now_s,
+                        live_mids=mids,
+                    )
+                    continue
+                if pos_now is not None:
+                    pos = pos_now
+            if self.has_in_flight_orders(pid):
                 continue
 
             cur_l = Decimal(str(pos["long_base_qty"]))
@@ -1746,7 +1801,7 @@ class CarryExecutionController:
                 )
                 if ok:
                     submitted.append(pid)
-                elif err in _OPENING_UNFILLABLE_DUST_ERRORS or err == "close_only_contract":
+                elif err in _OPENING_UNFILLABLE_DUST_ERRORS:
                     if cur_l <= Decimal("0") and cur_s <= Decimal("0"):
                         self.ledger.update_position_status(
                             pid,
