@@ -219,10 +219,18 @@ _OPENING_SLICE_GATE_ERRORS = frozenset(
     {
         "exec_basis_below_min",
         "exec_basis_above_max",
+        "entry_basis_below_min",
         "entry_basis_above_max",
         "spread_too_wide",
         "price_ratio_mismatch",
         "dual_taker_ioc_unfilled",
+    }
+)
+_OPENING_UNFILLABLE_DUST_ERRORS = frozenset(
+    {
+        "min_lot_exceeds_target_usd",
+        "target_below_coarse_step",
+        "alignment_mismatch_exceeds_tolerance",
     }
 )
 
@@ -939,7 +947,10 @@ class CarryExecutionController:
                 return False, "spread_too_wide"
             sp_l = float(leg_sp_l)
             sp_s = float(leg_sp_s)
-            if self._exec_basis_bps(leg_l_mid, leg_s_mid) > self.policy.max_entry_basis_bps:
+            mid_basis = self._exec_basis_bps(leg_l_mid, leg_s_mid)
+            if mid_basis < self.policy.min_entry_basis_bps:
+                return False, "entry_basis_below_min"
+            if mid_basis > self.policy.max_entry_basis_bps:
                 return False, "entry_basis_above_max"
 
         mid = Decimal("0.5") * (leg_l_mid + leg_s_mid)
@@ -1686,6 +1697,19 @@ class CarryExecutionController:
                 )
                 if ok:
                     submitted.append(pid)
+                elif err in _OPENING_UNFILLABLE_DUST_ERRORS:
+                    if cur_l > Decimal("0") and cur_s > Decimal("0"):
+                        self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                    else:
+                        self.ledger.update_position_status(
+                            pid,
+                            status="CLOSED",
+                            ts_s=now_s,
+                            long_base_qty=Decimal("0"),
+                            short_base_qty=Decimal("0"),
+                            close_reason=f"entry_aborted:{err}",
+                        )
+                    self._slice_attempts.pop(pid, None)
                 elif err in _OPENING_SLICE_GATE_ERRORS:
                     cnt = self._slice_attempts.get(pid, 0) + 1
                     self._slice_attempts[pid] = cnt

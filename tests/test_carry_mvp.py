@@ -2693,7 +2693,7 @@ def test_cold_start_reconciliation_reads_exchange_ground_truth_and_fails_closed(
                 if body.get("dex") == "xyz":
                     return {"assetPositions": [{"position": {"coin": "xyz:NVDA", "szi": "-0.5"}}]}
                 return {"assetPositions": [{"position": {"coin": "SOL", "szi": "0.49"}}]}
-            if body["type"] == "openOrders":
+            if body["type"] == "frontendOpenOrders":
                 if body.get("dex") == "xyz":
                     return []
                 return [{"coin": "SOL", "oid": 101}]
@@ -2731,6 +2731,8 @@ def test_cold_start_reconciliation_reads_exchange_ground_truth_and_fails_closed(
                     "data": [{"instId": "SOL-USDT-SWAP", "ordId": f"okx-{i}"} for i in range(100)],
                 }
             return {"code": "0", "data": [{"instId": "SOL-USDT-SWAP", "ordId": "okx-100"}]}
+        if "okx.com/api/v5/trade/orders-algo-pending" in url:
+            return {"code": "0", "data": []}
         if "bybit.com/v5/position/list" in url:
             if "settleCoin=USDT" in url and "cursor=" not in url:
                 return {
@@ -2750,6 +2752,8 @@ def test_cold_start_reconciliation_reads_exchange_ground_truth_and_fails_closed(
                 }
             return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
         if "bybit.com/v5/order/realtime" in url:
+            if "orderFilter=StopOrder" in url:
+                return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
             if "settleCoin=USDC" in url:
                 return {
                     "retCode": 0,
@@ -4811,3 +4815,482 @@ def test_slow_poll_all_venues_timeout_raises_and_preserves_prior_snapshot_and_er
     finally:
         strat.close_slow_poller(wait=True)
         led.close()
+
+
+def _create_6b47a19_legacy_db(
+    db_path: Path,
+    *,
+    legacy_fp: str,
+    position_id: str,
+    venue_order_id: str,
+) -> None:
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                fingerprint TEXT NOT NULL,
+                created_ts INTEGER NOT NULL
+            );
+            CREATE TABLE positions (
+                position_id TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                long_venue TEXT NOT NULL,
+                short_venue TEXT NOT NULL,
+                iid_long TEXT NOT NULL,
+                iid_short TEXT NOT NULL,
+                status TEXT NOT NULL,
+                opened_ts INTEGER NOT NULL,
+                closed_ts INTEGER,
+                entry_l REAL NOT NULL,
+                entry_s REAL NOT NULL,
+                entry_basis_bps REAL NOT NULL,
+                target_base_qty TEXT NOT NULL,
+                long_base_qty TEXT NOT NULL,
+                short_base_qty TEXT NOT NULL,
+                realized_pnl_usd TEXT NOT NULL DEFAULT '0',
+                close_reason TEXT
+            );
+            CREATE TABLE orders (
+                client_order_id TEXT PRIMARY KEY,
+                position_id TEXT NOT NULL,
+                venue TEXT NOT NULL,
+                instrument_id TEXT NOT NULL,
+                side TEXT NOT NULL,
+                role TEXT NOT NULL,
+                order_type TEXT NOT NULL,
+                qty_contracts TEXT NOT NULL,
+                base_qty TEXT NOT NULL,
+                price TEXT,
+                status TEXT NOT NULL,
+                filled_base_qty TEXT NOT NULL DEFAULT '0',
+                venue_order_id TEXT,
+                created_ts INTEGER NOT NULL,
+                updated_ts INTEGER NOT NULL
+            );
+            CREATE TABLE events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE TABLE daily_stats (
+                utc_day TEXT PRIMARY KEY,
+                realized_pnl_usd TEXT NOT NULL,
+                consecutive_unhedged INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE runtime_flags (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            """
+        )
+        conn.execute("INSERT INTO meta(id, fingerprint, created_ts) VALUES (1, ?, 1800000000)", (legacy_fp,))
+        conn.execute(
+            """
+            INSERT INTO positions(
+                position_id, symbol, long_venue, short_venue, iid_long, iid_short,
+                status, opened_ts, entry_l, entry_s, entry_basis_bps,
+                target_base_qty, long_base_qty, short_base_qty
+            ) VALUES (?, 'SOL', 'HL', 'OKX', 'SOL-USD-PERP.HYPERLIQUID', 'SOL-USDT-SWAP.OKX',
+                      'OPEN', 1800000000, 100.0, 100.2, 20.0, '0.49', '0.49', '0.49')
+            """,
+            (position_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO orders(
+                client_order_id, position_id, venue, instrument_id, side, role,
+                order_type, qty_contracts, base_qty, price, status, filled_base_qty,
+                venue_order_id, created_ts, updated_ts
+            ) VALUES (?, ?, 'HL', 'SOL-USD-PERP.HYPERLIQUID', 'BUY', 'MAKER_OPEN',
+                      'POST_ONLY', '0.49', '0.49', '100.0', 'FILLED', '0.49',
+                      ?, 1800000001, 1800000002)
+            """,
+            (f"coid-{position_id}", position_id, venue_order_id),
+        )
+
+
+def test_legacy_6b47a19_ledger_migration_preserves_positions_and_blocks_cross_domain(tmp_path: Path) -> None:
+    from src.carry.runtime import build_live_node
+
+    paper_db = tmp_path / "legacy_paper.sqlite3"
+    live_db = tmp_path / "legacy_live.sqlite3"
+
+    paper_cfg = tmp_path / "paper.toml"
+    paper_text = (REPO_ROOT / "config" / "carry-paper.toml").read_text(encoding="utf-8")
+    paper_text = paper_text.replace('state_path = "../reports/carry/paper.sqlite3"', f'state_path = "{paper_db}"')
+    paper_text = paper_text.replace('record_dir = "../reports/carry/tape-paper"', 'record_dir = ""')
+    paper_cfg.write_text(paper_text, encoding="utf-8")
+    paper_plan = load_carry_plan(paper_cfg)
+
+    live_cfg = tmp_path / "live.toml"
+    live_text = (REPO_ROOT / "config" / "carry-live.toml").read_text(encoding="utf-8")
+    live_text = live_text.replace('state_path = "../reports/carry/live.sqlite3"', f'state_path = "{live_db}"')
+    live_text = live_text.replace('record_dir = "../reports/carry/tape-live"', 'record_dir = ""')
+    live_cfg.write_text(live_text, encoding="utf-8")
+    live_plan = load_carry_plan(live_cfg)
+
+    assert paper_plan.legacy_fingerprint() != paper_plan.fingerprint()
+    assert live_plan.legacy_fingerprint() != live_plan.fingerprint()
+
+    _create_6b47a19_legacy_db(
+        paper_db,
+        legacy_fp=paper_plan.legacy_fingerprint(),
+        position_id="LEG-PAPER-1",
+        venue_order_id="PAPER-abc123",
+    )
+    _create_6b47a19_legacy_db(
+        live_db,
+        legacy_fp=live_plan.legacy_fingerprint(),
+        position_id="LEG-LIVE-1",
+        venue_order_id="OKX-real-123",
+    )
+
+    # Cross-domain refusal MUST still fire even when legacy_fingerprint matches
+    with pytest.raises(LedgerOwnershipError):
+        CarryLedger(
+            paper_db,
+            paper_plan.fingerprint(),
+            ledger_domain="live",
+            legacy_fingerprint=paper_plan.legacy_fingerprint(),
+        )
+    with pytest.raises(LedgerOwnershipError):
+        CarryLedger(
+            live_db,
+            live_plan.fingerprint(),
+            ledger_domain="paper",
+            legacy_fingerprint=live_plan.legacy_fingerprint(),
+        )
+
+    # Same-config paper upgrade migrates cleanly & preserves OPEN position
+    node_p, led_p, strat_p = build_live_node(paper_plan, mode="paper")
+    try:
+        assert led_p.is_halted() == (False, None)
+        assert led_p.active_positions()["LEG-PAPER-1"]["status"] == "OPEN"
+        meta_p = dict(led_p.conn.execute("SELECT fingerprint, ledger_domain FROM meta WHERE id=1").fetchone())
+        assert meta_p == {"fingerprint": paper_plan.fingerprint(), "ledger_domain": "paper"}
+        ev_p = [r["kind"] for r in led_p.conn.execute("SELECT kind FROM events").fetchall()]
+        assert "ledger_migrated_domain" in ev_p
+    finally:
+        strat_p.close_slow_poller(wait=False)
+        node_p.dispose()
+        led_p.close()
+
+    # Same-config live upgrade migrates cleanly without fingerprint_mismatch & reconciles with exchange
+    led_l = CarryLedger(
+        live_db,
+        live_plan.fingerprint(),
+        ledger_domain="live",
+        legacy_fingerprint=live_plan.legacy_fingerprint(),
+    )
+    try:
+        assert led_l.is_halted() == (False, None)
+        assert led_l.active_positions()["LEG-LIVE-1"]["status"] == "OPEN"
+        meta_l = dict(led_l.conn.execute("SELECT fingerprint, ledger_domain FROM meta WHERE id=1").fetchone())
+        assert meta_l == {"fingerprint": live_plan.fingerprint(), "ledger_domain": "live"}
+        rec = led_l.reconcile_startup(
+            venue_positions={
+                ("HL", "SOL-USD-PERP.HYPERLIQUID"): D("0.49"),
+                ("OKX", "SOL-USDT-SWAP.OKX"): D("-0.49"),
+            },
+            venue_open_orders={},
+            ts_s=1_800_000_100,
+        )
+        assert rec.ok and not rec.halted
+    finally:
+        led_l.close()
+
+    # Different-config legacy DB still halts live / rejects paper
+    mismatch_db = tmp_path / "legacy_mismatch.sqlite3"
+    _create_6b47a19_legacy_db(
+        mismatch_db,
+        legacy_fp="deadbeef" * 8,
+        position_id="LEG-BAD-1",
+        venue_order_id="OKX-real-999",
+    )
+    with pytest.raises(LedgerOwnershipError):
+        CarryLedger(mismatch_db, paper_plan.fingerprint(), ledger_domain="paper", legacy_fingerprint=paper_plan.legacy_fingerprint())
+    led_bad = CarryLedger(mismatch_db, live_plan.fingerprint(), ledger_domain="live", legacy_fingerprint=live_plan.legacy_fingerprint())
+    assert led_bad.is_reconcile_halted() == (True, "fingerprint_mismatch")
+    led_bad.close()
+
+
+def test_startup_account_reader_catches_conditional_orders_and_position_toctou_races(tmp_path: Path) -> None:
+    from src.carry.account_reader import CarryStartupAccountReader, StartupSnapshotError
+    from src.carry.config import CarryPlan
+    from src.carry.runtime import _create_carry_strategy
+
+    env = {
+        "HYPERLIQUID_ACCOUNT_ADDRESS": "0x" + "11" * 20,
+        "OKX_API_KEY": "okx-k",
+        "OKX_API_SECRET": "okx-s",
+        "OKX_API_PASSPHRASE": "okx-p",
+        "BYBIT_API_KEY": "byb-k",
+        "BYBIT_API_SECRET": "byb-s",
+    }
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+
+    # 1) OKX untriggered conditional order on flat position MUST fail startup reconcile
+    def okx_algo_http(_method: str, url: str, **_kw):
+        if "okx.com/api/v5/account/positions" in url:
+            return {"code": "0", "data": []}
+        if "okx.com/api/v5/trade/orders-pending" in url:
+            return {"code": "0", "data": []}
+        if "okx.com/api/v5/trade/orders-algo-pending" in url:
+            if "ordType=conditional" in url:
+                return {"code": "0", "data": [{"instId": "BTC-USDT-SWAP", "algoId": "algo-1"}]}
+            return {"code": "0", "data": []}
+        raise AssertionError(url)
+
+    reader_algo = CarryStartupAccountReader(environment="mainnet", environ=env, http_request=okx_algo_http)
+    snap_algo = reader_algo.fetch_startup_snapshot(("OKX",))
+    assert snap_algo.positions == {}
+    assert snap_algo.open_orders == {("OKX", "BTC-USDT-SWAP.OKX"): 1}
+    led_algo = CarryLedger(tmp_path / "okx_algo.sqlite3", plan.fingerprint(), ledger_domain="live")
+    res_algo = led_algo.reconcile_startup(
+        venue_positions=snap_algo.positions, venue_open_orders=snap_algo.open_orders, ts_s=1_800_000_000
+    )
+    assert not res_algo.ok and res_algo.halted
+    assert any("orphaned_open_orders:OKX:BTC-USDT-SWAP.OKX:count=1" in d for d in res_algo.discrepancies)
+    led_algo.close()
+
+    # 2) OKX TOCTOU race: order outside ledger fills between positions #1 (flat) and orders-pending (flat)
+    okx_pos_calls = [0]
+
+    def okx_toctou_http(_method: str, url: str, **_kw):
+        if "okx.com/api/v5/account/positions" in url:
+            okx_pos_calls[0] += 1
+            if okx_pos_calls[0] == 1:
+                return {"code": "0", "data": []}
+            return {"code": "0", "data": [{"instId": "SOL-USDT-SWAP", "pos": "5", "posSide": "net"}]}
+        if "okx.com/api/v5/public/instruments" in url:
+            return {"code": "0", "data": [{"instId": "SOL-USDT-SWAP", "ctVal": "0.1"}]}
+        if "okx.com/api/v5/trade/orders-pending" in url or "okx.com/api/v5/trade/orders-algo-pending" in url:
+            return {"code": "0", "data": []}
+        raise AssertionError(url)
+
+    reader_race = CarryStartupAccountReader(environment="mainnet", environ=env, http_request=okx_toctou_http)
+    with pytest.raises(StartupSnapshotError, match="OKX positions changed"):
+        reader_race.fetch_startup_snapshot(("OKX",))
+
+    okx_pos_calls[0] = 0
+    led_race = CarryLedger(tmp_path / "okx_race.sqlite3", plan.fingerprint(), ledger_domain="live")
+    strat_race = _create_carry_strategy(
+        CarryPlan(**{**plan.__dict__, "venues": ("OKX", "HL")}),
+        led_race,
+        mode="live",
+        account_reader=reader_race,
+    )
+    strat_race._reconcile_on_start()
+    assert strat_race.reconciled is False
+    assert led_race.is_reconcile_halted()[0] is True
+    led_race.close()
+
+    # 3) Bybit StopOrder detection + Bybit TOCTOU detection
+    def bybit_stop_http(_method: str, url: str, **_kw):
+        if "bybit.com/v5/position/list" in url:
+            return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
+        if "bybit.com/v5/order/realtime" in url:
+            if "settleCoin=USDT" in url and "orderFilter=StopOrder" in url:
+                return {"retCode": 0, "result": {"list": [{"symbol": "ETHUSDT", "orderId": "stop-1"}], "nextPageCursor": ""}}
+            return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
+        raise AssertionError(url)
+
+    snap_byb = CarryStartupAccountReader(environment="mainnet", environ=env, http_request=bybit_stop_http).fetch_startup_snapshot(("BYBIT",))
+    assert snap_byb.open_orders == {("BYBIT", "ETHUSDT-LINEAR.BYBIT"): 1}
+
+    byb_calls = [0]
+
+    def bybit_toctou_http(_method: str, url: str, **_kw):
+        if "bybit.com/v5/position/list" in url:
+            if "settleCoin=USDT" in url:
+                byb_calls[0] += 1
+                if byb_calls[0] == 2:
+                    return {"retCode": 0, "result": {"list": [{"symbol": "ETHUSDT", "size": "0.1", "side": "Buy"}], "nextPageCursor": ""}}
+            return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
+        if "bybit.com/v5/order/realtime" in url:
+            return {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}
+        raise AssertionError(url)
+
+    with pytest.raises(StartupSnapshotError, match="BYBIT positions changed"):
+        CarryStartupAccountReader(environment="mainnet", environ=env, http_request=bybit_toctou_http).fetch_startup_snapshot(("BYBIT",))
+
+    # 4) HL frontendOpenOrders trigger order + HL TOCTOU detection
+    def hl_trigger_http(_method: str, url: str, *, body=None, **_kw):
+        if body["type"] == "clearinghouseState":
+            return {"assetPositions": []}
+        if body["type"] == "frontendOpenOrders":
+            if body.get("dex") is None:
+                return [{"coin": "SOL", "oid": 777, "isTrigger": True}]
+            return []
+        raise AssertionError(body)
+
+    snap_hl = CarryStartupAccountReader(environment="mainnet", environ=env, http_request=hl_trigger_http).fetch_startup_snapshot(("HL",))
+    assert snap_hl.open_orders == {("HL", "SOL-USD-PERP.HYPERLIQUID"): 1}
+
+    hl_calls = [0]
+
+    def hl_toctou_http(_method: str, url: str, *, body=None, **_kw):
+        if body["type"] == "clearinghouseState":
+            if body.get("dex") is None:
+                hl_calls[0] += 1
+                if hl_calls[0] == 2:
+                    return {"assetPositions": [{"position": {"coin": "SOL", "szi": "0.5"}}]}
+            return {"assetPositions": []}
+        if body["type"] == "frontendOpenOrders":
+            return []
+        raise AssertionError(body)
+
+    with pytest.raises(StartupSnapshotError, match="HL positions changed"):
+        CarryStartupAccountReader(environment="mainnet", environ=env, http_request=hl_toctou_http).fetch_startup_snapshot(("HL",))
+
+
+def test_opening_below_min_notional_dust_remainder_converges_to_open(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    spec_l = InstrumentSpec(
+        "COIN-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.1"), min_notional_usd=D("10"), price_increment=D("0.01")
+    )
+    spec_s = InstrumentSpec(
+        "COIN-USDT-SWAP.OKX",
+        "OKX",
+        size_increment=D("0.1"),
+        contract_multiplier=D("1"),
+        min_notional_usd=D("10"),
+        price_increment=D("0.01"),
+    )
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (31.49, 31.51), spec_s.instrument_id: (31.54, 31.56)}
+    mids = {spec_l.instrument_id: 31.50, spec_s.instrument_id: 31.55}
+    now_s = 1_800_000_000
+
+    led = CarryLedger(tmp_path / "dust_opening.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw = DelayedAsyncVenueGateway()
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+
+    # Target 3.1, filled 3.0 / 3.0 -> remaining 0.1 * ~$31.525 = ~$3.15 < $10 min_notional_usd
+    led.create_position(
+        position_id="COIN-DUST",
+        symbol="COIN",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s,
+        entry_l=31.50,
+        entry_s=31.55,
+        entry_basis_bps=15.8,
+        target_base_qty=D("3.1"),
+    )
+    led.update_position_status(
+        "COIN-DUST", status="OPENING", ts_s=now_s + 1, long_base_qty=D("3.0"), short_base_qty=D("3.0")
+    )
+
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 2) == []
+    assert gw.submitted == []
+    pos = led.active_positions()["COIN-DUST"]
+    assert pos["status"] == "OPEN"
+    assert D(pos["long_base_qty"]) == D("3.0") and D(pos["short_base_qty"]) == D("3.0")
+    assert led.reconcile_startup(
+        venue_positions={("HL", spec_l.instrument_id): D("3.0"), ("OKX", spec_s.instrument_id): D("-3.0")},
+        venue_open_orders={},
+        ts_s=now_s + 3,
+    ).ok is True
+
+    # Zero-fill unfillable dust closes cleanly as entry_aborted
+    led.create_position(
+        position_id="COIN-ZERO-DUST",
+        symbol="COIN",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s + 4,
+        entry_l=31.50,
+        entry_s=31.55,
+        entry_basis_bps=15.8,
+        target_base_qty=D("0.1"),
+    )
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 5) == []
+    row_z = dict(led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id='COIN-ZERO-DUST'").fetchone())
+    assert row_z["status"] == "CLOSED" and row_z["close_reason"] == "entry_aborted:min_lot_exceeds_target_usd"
+    led.close()
+
+
+def test_subsequent_opening_slice_enforces_min_entry_basis_bps(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    assert plan.policy.min_entry_basis_bps == D("10")
+    assert plan.policy.min_exec_basis_bps == D("10")
+    pol = plan.policy.__class__(**{**plan.policy.__dict__, "taker_fast_entry_basis_bps": D("0")})
+    rt = plan.runtime.__class__(**{**plan.runtime.__dict__, "maker_max_attempts": 2})
+
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    now_s = 1_800_000_000
+
+    # Quotes: mid_basis ~ 6 bps (< 10 bps), maker_exec_basis ~ 15 bps (>= 10 bps)
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.85, ask=100.05),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.00, ask=100.02),
+        }
+    }
+    assert (
+        evaluate_entry_candidates(
+            snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=pol, risk=plan.risk, now_s=now_s
+        )
+        == []
+    )
+
+    led = CarryLedger(tmp_path / "min_basis_slice.sqlite3", plan.fingerprint(), ledger_domain="paper")
+    gw = DelayedAsyncVenueGateway()
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=rt, policy=pol)
+    led.create_position(
+        position_id="SOL-LOW-BASIS",
+        symbol="SOL",
+        long_venue="HL",
+        short_venue="OKX",
+        iid_long=spec_l.instrument_id,
+        iid_short=spec_s.instrument_id,
+        opened_ts=now_s,
+        entry_l=99.90,
+        entry_s=100.05,
+        entry_basis_bps=15.0,
+        target_base_qty=D("0.98"),
+    )
+    led.update_position_status(
+        "SOL-LOW-BASIS", status="OPENING", ts_s=now_s + 1, long_base_qty=D("0.49"), short_base_qty=D("0.49")
+    )
+
+    quotes = {spec_l.instrument_id: (99.85, 100.05), spec_s.instrument_id: (100.00, 100.02)}
+    mids = {spec_l.instrument_id: 99.95, spec_s.instrument_id: 100.01}
+    ok_s, err_s = ctrl._submit_next_slice(
+        position_id="SOL-LOW-BASIS",
+        is_opening=True,
+        spec_l=spec_l,
+        spec_s=spec_s,
+        leg_l_bid=D("99.85"),
+        leg_l_ask=D("100.05"),
+        leg_l_mid=D("99.95"),
+        leg_s_bid=D("100.00"),
+        leg_s_ask=D("100.02"),
+        leg_s_mid=D("100.01"),
+        remaining_base=D("0.49"),
+        sp_l=20.0,
+        sp_s=2.0,
+        now_s=now_s + 2,
+    )
+    assert not ok_s and err_s == "entry_basis_below_min"
+
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 3) == []
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 4) == []
+    assert gw.submitted == []
+    assert led.active_positions()["SOL-LOW-BASIS"]["status"] == "OPEN"
+    led.close()

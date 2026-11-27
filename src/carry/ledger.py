@@ -69,7 +69,14 @@ def _utc_day(ts_s: int) -> str:
 class CarryLedger:
     """SQLite WAL + synchronous=FULL state store with crash recovery and reconciliation."""
 
-    def __init__(self, path: Path, fingerprint: str, *, ledger_domain: str | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        fingerprint: str,
+        *,
+        ledger_domain: str | None = None,
+        legacy_fingerprint: str | None = None,
+    ) -> None:
         if ledger_domain is not None and ledger_domain not in ("paper", "live"):
             raise ValueError(f"invalid ledger_domain: {ledger_domain!r}")
         self.path = Path(path).resolve()
@@ -80,6 +87,7 @@ class CarryLedger:
             raise LedgerOwnershipError(f"state file locked by another process: {self.path}") from exc
         self.fingerprint = fingerprint
         self.ledger_domain = ledger_domain
+        self.legacy_fingerprint = legacy_fingerprint
         self.conn: sqlite3.Connection | None = None
         try:
             self.conn = sqlite3.connect(self.path)
@@ -92,6 +100,8 @@ class CarryLedger:
     def _init_schema(self) -> None:
         assert self.conn is not None
         # Validate domain ownership read-only BEFORE any write pragma, DDL, or flag mutation.
+        migrate_legacy = False
+        legacy_fp_from: str | None = None
         has_meta = (
             self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
             is not None
@@ -115,10 +125,38 @@ class CarryLedger:
                     raise LedgerOwnershipError(
                         f"ledger domain mismatch: {self.path} belongs to '{existing_domain}', refused '{self.ledger_domain}'"
                     )
-                if existing_domain is None and self.ledger_domain == "paper" and existing_fp != self.fingerprint:
-                    raise LedgerOwnershipError(
-                        f"ledger domain mismatch: {self.path} belongs to an existing non-paper fingerprint, refused 'paper'"
-                    )
+                if existing_domain is None and existing_fp != self.fingerprint:
+                    if (
+                        self.legacy_fingerprint is not None
+                        and existing_fp == self.legacy_fingerprint
+                        and self.ledger_domain is not None
+                    ):
+                        has_orders = (
+                            self.conn.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'"
+                            ).fetchone()
+                            is not None
+                        )
+                        if has_orders:
+                            order_rows = self.conn.execute(
+                                "SELECT venue_order_id FROM orders WHERE venue_order_id IS NOT NULL AND venue_order_id != ''"
+                            ).fetchall()
+                            has_paper_order = any(str(r["venue_order_id"]).startswith("PAPER-") for r in order_rows)
+                            has_live_order = any(not str(r["venue_order_id"]).startswith("PAPER-") for r in order_rows)
+                            if self.ledger_domain == "paper" and has_live_order:
+                                raise LedgerOwnershipError(
+                                    f"ledger domain mismatch: {self.path} contains non-paper venue orders, refused 'paper'"
+                                )
+                            if self.ledger_domain == "live" and has_paper_order:
+                                raise LedgerOwnershipError(
+                                    f"ledger domain mismatch: {self.path} contains paper orders, refused 'live'"
+                                )
+                        migrate_legacy = True
+                        legacy_fp_from = existing_fp
+                    elif self.ledger_domain == "paper":
+                        raise LedgerOwnershipError(
+                            f"ledger domain mismatch: {self.path} belongs to an existing non-paper fingerprint, refused 'paper'"
+                        )
 
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=FULL")
@@ -194,13 +232,31 @@ class CarryLedger:
                     (self.fingerprint, self.ledger_domain),
                 )
             else:
-                if row["ledger_domain"] is None and self.ledger_domain is not None and row["fingerprint"] == self.fingerprint:
-                    self.conn.execute("UPDATE meta SET ledger_domain=? WHERE id=1", (self.ledger_domain,))
-                if row["fingerprint"] != self.fingerprint:
-                    # Preserve existing positions but halt trading if risk/venue fingerprint changed unexpectedly
+                if migrate_legacy and self.ledger_domain is not None:
                     self.conn.execute(
-                        "INSERT OR REPLACE INTO runtime_flags(key, value) VALUES ('HALTED_RECONCILE', 'fingerprint_mismatch')"
+                        "UPDATE meta SET fingerprint=?, ledger_domain=? WHERE id=1",
+                        (self.fingerprint, self.ledger_domain),
                     )
+                    self.conn.execute(
+                        "INSERT INTO events(ts, kind, payload) VALUES (strftime('%s','now'), 'ledger_migrated_domain', ?)",
+                        (
+                            json.dumps(
+                                {
+                                    "from_fingerprint": legacy_fp_from,
+                                    "to_fingerprint": self.fingerprint,
+                                    "ledger_domain": self.ledger_domain,
+                                }
+                            ),
+                        ),
+                    )
+                else:
+                    if row["ledger_domain"] is None and self.ledger_domain is not None and row["fingerprint"] == self.fingerprint:
+                        self.conn.execute("UPDATE meta SET ledger_domain=? WHERE id=1", (self.ledger_domain,))
+                    if row["fingerprint"] != self.fingerprint:
+                        # Preserve existing positions but halt trading if risk/venue fingerprint changed unexpectedly
+                        self.conn.execute(
+                            "INSERT OR REPLACE INTO runtime_flags(key, value) VALUES ('HALTED_RECONCILE', 'fingerprint_mismatch')"
+                        )
 
     def close(self) -> None:
         try:

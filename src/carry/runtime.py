@@ -1002,7 +1002,12 @@ def build_live_node(plan: CarryPlan, *, mode: str, environ: Mapping[str, str] | 
             f"cannot run mode '{mode}' (domain={run_domain}) against '{plan.mode}' config state_path {plan.state_path} (domain={plan_domain})"
         )
 
-    ledger = CarryLedger(plan.state_path, plan.fingerprint(), ledger_domain=run_domain)
+    ledger = CarryLedger(
+        plan.state_path,
+        plan.fingerprint(),
+        ledger_domain=run_domain,
+        legacy_fingerprint=plan.legacy_fingerprint(),
+    )
     try:
         builder = (
             LiveNode.builder(f"CARRY-{mode.upper()}", TraderId.from_str("CARRY-001"), Environment.LIVE)
