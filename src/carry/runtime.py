@@ -1,12 +1,16 @@
 """NautilusTrader LiveNode assembly and dynamic Strategy lifecycle for Route A Carry."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
+import math
 import os
 from pathlib import Path
 import threading
 import time
+from types import MappingProxyType
 from typing import Any, Mapping
 import uuid
 
@@ -27,6 +31,26 @@ from .signal import (
 
 
 _GRACEFUL_SHUTDOWN_DRAIN_SECS = 10.0
+
+
+@dataclass(frozen=True)
+class _SlowPollResult:
+    poll_ts_s: int
+    snapshot: Mapping[str, Mapping[str, LegMarketInfo]] | None
+    error: str | None = None
+
+
+def _resolve_quote_event_ts(tick: Any, now_s: float) -> float:
+    raw_ns = getattr(tick, "ts_event", None)
+    if raw_ns is None:
+        return now_s
+    try:
+        ev_s = float(raw_ns) / 1e9
+    except (TypeError, ValueError):
+        return now_s
+    if not math.isfinite(ev_s):
+        return 0.0
+    return min(now_s, ev_s)
 
 
 def _extract_money_decimal(raw: Any) -> Decimal:
@@ -327,7 +351,7 @@ def _create_carry_strategy(
                 if account_reader is not None
                 else CarryStartupAccountReader(environment=plan.environment, environ=environ)
             )
-            self.feed = PublicCarryFeed(venues=plan.venues)
+            self.feed = PublicCarryFeed(venues=plan.venues, environment=plan.environment)
             self.subs = SubscriptionManager(
                 top_k=plan.runtime.watch_top_k,
                 unsubscribe_hysteresis_secs=plan.runtime.unsubscribe_hysteresis_secs,
@@ -356,6 +380,22 @@ def _create_carry_strategy(
             self._shutdown_drain_timeout_secs: float = _GRACEFUL_SHUTDOWN_DRAIN_SECS
             self._stop_node_cb: Any = None
             self._stop_node_triggered: bool = False
+            self._slow_poll_lock = threading.Lock()
+            self._slow_poll_executor: ThreadPoolExecutor | None = None
+            self._slow_poll_inflight: bool = False
+            self._slow_poll_stopped: bool = False
+            self._pending_slow_result: _SlowPollResult | None = None
+            self._last_slow_poll_error: str | None = None
+
+        def close_slow_poller(self, *, wait: bool = False) -> None:
+            with self._slow_poll_lock:
+                self._slow_poll_stopped = True
+                self._pending_slow_result = None
+                inflight = self._slow_poll_inflight
+                executor = self._slow_poll_executor
+                self._slow_poll_executor = None
+            if executor is not None:
+                executor.shutdown(wait=(wait or not inflight), cancel_futures=True)
 
         def _can_trade(self) -> bool:
             if self.mode not in ("paper", "live") or not self.reconciled:
@@ -395,6 +435,7 @@ def _create_carry_strategy(
             else:
                 self.controller._stopping = True
                 canceled = []
+            self.close_slow_poller(wait=False)
             try:
                 self.log.info(
                     f"[carry] on_stop canceled_makers={len(canceled)} open_positions={len(self.ledger.active_positions())}"
@@ -429,9 +470,20 @@ def _create_carry_strategy(
             ask = float(tick.ask_price)
             if bid > 0 and ask >= bid:
                 ts_now = time.time()
+                quote_ts = _resolve_quote_event_ts(tick, ts_now)
+                stale_s = float(self.plan.runtime.quote_stale_secs)
+                if ts_now - quote_ts > stale_s:
+                    existing_ts = self.live_quote_ts.get(iid)
+                    if existing_ts is not None and ts_now - existing_ts > stale_s:
+                        self.live_quotes.pop(iid, None)
+                        self.live_quote_ts.pop(iid, None)
+                    return
+                prev_ts = self.live_quote_ts.get(iid)
+                if prev_ts is not None and quote_ts < prev_ts:
+                    return
                 mid = 0.5 * (bid + ask)
                 self.live_quotes[iid] = (bid, ask)
-                self.live_quote_ts[iid] = ts_now
+                self.live_quote_ts[iid] = quote_ts
                 self.live_mids[iid] = mid
                 if self.paper_gateway is not None:
                     filled_coids = self.paper_gateway.update_quote(iid, Decimal(str(bid)), Decimal(str(ask)))
@@ -604,6 +656,8 @@ def _create_carry_strategy(
                     self.controller.advance_pending_slices(
                         specs=specs_now, quotes=self.live_quotes, mids=self.live_mids, now_s=now_s
                     )
+            if not self._shutdown_requested.is_set() and not self.controller.is_stopping:
+                self._consume_pending_slow_snapshot()
             if self._shutdown_requested.is_set():
                 self._drive_graceful_shutdown(now_s)
 
@@ -627,19 +681,68 @@ def _create_carry_strategy(
                             pid, specs=specs, reason="basis_stop_30m", now_s=now_s, live_mids=self.live_mids
                         )
 
-        def _on_slow_timer(self, _event: Any) -> None:
+        def _trigger_slow_poll(self, *, now_s: int, priority_symbols: frozenset[str]) -> bool:
+            with self._slow_poll_lock:
+                if self._slow_poll_stopped or self._slow_poll_inflight:
+                    return False
+                if self._slow_poll_executor is None:
+                    self._slow_poll_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="carry-slow-poll")
+                self._slow_poll_inflight = True
+                executor = self._slow_poll_executor
+                feed = self.feed
+                min_vol = float(self.plan.policy.min_24h_vol_usd)
+
+            def _worker() -> None:
+                result: _SlowPollResult | None = None
+                try:
+                    raw = feed.poll_snapshot(
+                        now_s=now_s,
+                        priority_symbols=set(priority_symbols),
+                        min_24h_vol_usd=min_vol,
+                    )
+                    frozen = MappingProxyType({sym: MappingProxyType(dict(vmap)) for sym, vmap in raw.items()})
+                    result = _SlowPollResult(poll_ts_s=now_s, snapshot=frozen)
+                except Exception as exc:
+                    result = _SlowPollResult(poll_ts_s=now_s, snapshot=None, error=f"{type(exc).__name__}: {exc}")
+                finally:
+                    with self._slow_poll_lock:
+                        self._slow_poll_inflight = False
+                        if not self._slow_poll_stopped and result is not None:
+                            self._pending_slow_result = result
+
+            try:
+                executor.submit(_worker)
+            except Exception as exc:
+                with self._slow_poll_lock:
+                    self._slow_poll_inflight = False
+                try:
+                    self.log.warning(f"[carry] slow poll dispatch failed: {exc}")
+                except Exception:
+                    pass
+                return False
+            return True
+
+        def _consume_pending_slow_snapshot(self) -> bool:
+            with self._slow_poll_lock:
+                res = self._pending_slow_result
+                self._pending_slow_result = None
+            if res is None:
+                return False
+            if res.error is not None:
+                self._last_slow_poll_error = res.error
+                self.log.warning(f"[carry] slow poll failed: {res.error}")
+                return False
+            if res.snapshot is None:
+                return False
+            self._last_slow_poll_error = None
+            self._apply_slow_snapshot(res.snapshot)
+            return True
+
+        def _apply_slow_snapshot(self, frozen_snapshot: Mapping[str, Mapping[str, LegMarketInfo]]) -> None:
             now_s = int(time.time())
             active = self.ledger.active_positions()
             open_syms = {str(p["symbol"]) for p in active.values()}
-            try:
-                self.snapshot = self.feed.poll_snapshot(
-                    now_s=now_s,
-                    priority_symbols=open_syms,
-                    min_24h_vol_usd=float(self.plan.policy.min_24h_vol_usd),
-                )
-            except Exception as exc:
-                self.log.warning(f"[carry] slow poll failed: {exc}")
-                return
+            self.snapshot = {sym: dict(vmap) for sym, vmap in frozen_snapshot.items()}
 
             # Overlay only fresh WS BBO quotes onto slow snapshot; stale quotes are evicted to REST
             self._overlay_fresh_quotes(time.time())
@@ -767,6 +870,19 @@ def _create_carry_strategy(
                         if err:
                             self.log.debug(f"[carry] skip {cand.symbol}: {err}")
 
+        def _on_slow_timer(self, _event: Any) -> None:
+            self._consume_pending_slow_snapshot()
+            if self._shutdown_requested.is_set() or self.controller.is_stopping:
+                return
+            now_s = int(time.time())
+            open_syms = frozenset(str(p["symbol"]) for p in self.ledger.active_positions().values())
+            started = self._trigger_slow_poll(now_s=now_s, priority_symbols=open_syms)
+            if not started and self._slow_poll_inflight:
+                try:
+                    self.log.warning("[carry] slow poll still in flight; skipping overlapping poll")
+                except Exception:
+                    pass
+
     return CarryStrategy()
 
 
@@ -882,6 +998,11 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
         with timers_lock:
             if hard_timer is not None:
                 hard_timer.cancel()
+        if hasattr(strategy, "close_slow_poller"):
+            try:
+                strategy.close_slow_poller(wait=False)
+            except Exception:
+                pass
         if getattr(strategy, "recorder", None) is not None:
             try:
                 strategy.recorder.close()
