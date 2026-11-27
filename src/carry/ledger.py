@@ -379,6 +379,12 @@ class CarryLedger:
         rows = self.conn.execute("SELECT * FROM positions WHERE status != 'CLOSED'").fetchall()
         return {str(r["position_id"]): dict(r) for r in rows}
 
+    def open_orders(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM orders WHERE status IN ('SUBMITTING','OPEN','PARTIAL') ORDER BY created_ts ASC, client_order_id ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def open_orders_for_position(self, position_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM orders WHERE position_id=? AND status IN ('SUBMITTING','OPEN','PARTIAL')",
@@ -405,6 +411,11 @@ class CarryLedger:
             ks = (str(pos["short_venue"]), str(pos["iid_short"]))
             expected_signed[kl] = expected_signed.get(kl, Decimal("0")) + Decimal(str(pos["long_base_qty"]))
             expected_signed[ks] = expected_signed.get(ks, Decimal("0")) - Decimal(str(pos["short_base_qty"]))
+
+        for ord_row in self.open_orders():
+            discrepancies.append(
+                f"in_flight_order:{ord_row['client_order_id']}:{ord_row['role']}:{ord_row['status']}"
+            )
 
         all_keys = set(expected_signed) | {k for k, v in venue_positions.items() if v != 0}
         for k in sorted(all_keys):

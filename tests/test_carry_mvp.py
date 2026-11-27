@@ -972,3 +972,537 @@ def test_realistic_bbo_maker_fill_and_max_attempt_timeout_abort(tmp_path: Path) 
     row2 = dict(led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id=?", (pid2,)).fetchone())
     assert row2["status"] == "CLOSED" and row2["close_reason"] == "entry_maker_timeout"
     led.close()
+
+
+class DelayedAsyncVenueGateway:
+    """Async gateway test double mirroring _NautilusStrategyGateway (always acks OPEN with 0 filled)."""
+
+    def __init__(self) -> None:
+        self.orders: dict[str, dict] = {}
+        self.submitted: list[dict] = []
+        self.cancel_requests: list[str] = []
+        self.specs: dict[str, InstrumentSpec] = {}
+
+    def register_spec(self, spec: InstrumentSpec) -> None:
+        self.specs[spec.instrument_id] = spec
+
+    def _base_qty(self, iid: str, qty_contracts: Decimal) -> Decimal:
+        spec = self.specs.get(iid)
+        mult = spec.contract_multiplier if spec is not None else Decimal("1")
+        return qty_contracts * mult
+
+    def submit_limit(
+        self,
+        *,
+        client_order_id: str,
+        venue: str,
+        instrument_id: str,
+        side: str,
+        qty_contracts: Decimal,
+        price: Decimal,
+        post_only: bool,
+        ioc: bool,
+        reduce_only: bool,
+    ) -> OrderAck:
+        base_qty = self._base_qty(instrument_id, qty_contracts)
+        rec = {
+            "client_order_id": client_order_id,
+            "venue": venue,
+            "instrument_id": instrument_id,
+            "side": side,
+            "order_type": "POST_ONLY" if post_only else ("IOC" if ioc else "LIMIT"),
+            "qty_contracts": qty_contracts,
+            "base_qty": base_qty,
+            "price": price,
+            "reduce_only": reduce_only,
+            "status": "OPEN",
+            "filled_base_qty": Decimal("0"),
+            "avg_fill_price": None,
+            "venue_order_id": "",
+            "reason": None,
+        }
+        self.orders[client_order_id] = rec
+        self.submitted.append(rec)
+        return OrderAck(client_order_id, "", "OPEN", Decimal("0"), None)
+
+    def submit_market(
+        self,
+        *,
+        client_order_id: str,
+        venue: str,
+        instrument_id: str,
+        side: str,
+        qty_contracts: Decimal,
+        reduce_only: bool,
+    ) -> OrderAck:
+        base_qty = self._base_qty(instrument_id, qty_contracts)
+        rec = {
+            "client_order_id": client_order_id,
+            "venue": venue,
+            "instrument_id": instrument_id,
+            "side": side,
+            "order_type": "MARKET",
+            "qty_contracts": qty_contracts,
+            "base_qty": base_qty,
+            "price": None,
+            "reduce_only": reduce_only,
+            "status": "OPEN",
+            "filled_base_qty": Decimal("0"),
+            "avg_fill_price": None,
+            "venue_order_id": "",
+            "reason": None,
+        }
+        self.orders[client_order_id] = rec
+        self.submitted.append(rec)
+        return OrderAck(client_order_id, "", "OPEN", Decimal("0"), None)
+
+    def cancel_order(self, *, client_order_id: str, venue: str, instrument_id: str) -> OrderAck:
+        self.cancel_requests.append(client_order_id)
+        return self.poll_order(client_order_id=client_order_id, venue=venue, instrument_id=instrument_id)
+
+    def poll_order(self, *, client_order_id: str, venue: str, instrument_id: str) -> OrderAck:
+        rec = self.orders[client_order_id]
+        return OrderAck(
+            client_order_id,
+            rec["venue_order_id"],
+            rec["status"],
+            rec["filled_base_qty"],
+            rec["avg_fill_price"],
+            rec["reason"],
+        )
+
+    def deliver_fill(
+        self,
+        client_order_id: str,
+        *,
+        filled_base_qty: Decimal,
+        avg_fill_price: Decimal,
+        partial: bool = False,
+        venue_order_id: str = "VID-1",
+    ) -> None:
+        rec = self.orders[client_order_id]
+        rec["filled_base_qty"] = min(rec["base_qty"], filled_base_qty)
+        rec["avg_fill_price"] = avg_fill_price
+        rec["venue_order_id"] = venue_order_id
+        rec["status"] = "PARTIAL" if partial else "FILLED"
+
+    def deliver_cancel(
+        self,
+        client_order_id: str,
+        *,
+        filled_base_qty: Decimal | None = None,
+        avg_fill_price: Decimal | None = None,
+        venue_order_id: str = "VID-1",
+    ) -> None:
+        rec = self.orders[client_order_id]
+        if filled_base_qty is not None:
+            rec["filled_base_qty"] = min(rec["base_qty"], filled_base_qty)
+        if avg_fill_price is not None:
+            rec["avg_fill_price"] = avg_fill_price
+        rec["venue_order_id"] = venue_order_id
+        rec["status"] = "CANCELED"
+
+    def deliver_reject(self, client_order_id: str, *, reason: str = "rejected") -> None:
+        rec = self.orders[client_order_id]
+        rec["status"] = "REJECTED"
+        rec["reason"] = reason
+
+
+def test_async_dual_taker_delayed_fills_block_duplicate_orders_and_settle(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "async_dt.sqlite3", plan.fingerprint())
+    gw = DelayedAsyncVenueGateway()
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.28, 100.32)}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.30}
+
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.28, ask=100.32),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+    pid, err = ctrl.start_entry(cand, specs=specs, now_s=now_s)
+    assert err is None and pid is not None
+
+    # Round 1 submits 2 TAKER_OPEN orders (OPEN, 0 filled) and ledger shows 0/0
+    rows = led.conn.execute("SELECT client_order_id, role, status, filled_base_qty FROM orders WHERE position_id=? ORDER BY client_order_id", (pid,)).fetchall()
+    assert len(rows) == 2 and all(r["role"] == "TAKER_OPEN" and r["status"] == "OPEN" and D(r["filled_base_qty"]) == D("0") for r in rows)
+    pos = led.active_positions()[pid]
+    assert pos["status"] == "OPENING" and D(pos["long_base_qty"]) == D("0") and D(pos["short_base_qty"]) == D("0")
+
+    # Repeated advance_pending_slices while both IOCs are OPEN must NOT submit duplicate orders
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 1) == []
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 2) == []
+    assert len(gw.submitted) == 2
+
+    # Delayed fill on long leg only -> updates long leg, does NOT trigger fallback while short is still OPEN
+    coid_l = next(o["client_order_id"] for o in gw.submitted if o["side"] == "BUY")
+    coid_s = next(o["client_order_id"] for o in gw.submitted if o["side"] == "SELL")
+    gw.deliver_fill(coid_l, filled_base_qty=D("0.49"), avg_fill_price=D("100.02"), venue_order_id="HL-1")
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 3, live_quotes=quotes)
+    pos = led.active_positions()[pid]
+    assert D(pos["long_base_qty"]) == D("0.49") and D(pos["short_base_qty"]) == D("0")
+    assert len(gw.submitted) == 2
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 3) == []
+
+    # Delayed fill on short leg completes Slice 1 and updates order fill prices
+    gw.deliver_fill(coid_s, filled_base_qty=D("0.49"), avg_fill_price=D("100.28"), venue_order_id="OKX-1")
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 4, live_quotes=quotes)
+    pos = led.active_positions()[pid]
+    assert D(pos["short_base_qty"]) == D("0.49") and pos["status"] == "OPENING"
+    assert ctrl._active_dual_takers == {}
+    prices = {r["client_order_id"]: D(r["price"]) for r in led.conn.execute("SELECT client_order_id, price FROM orders WHERE position_id=?", (pid,)).fetchall()}
+    assert prices[coid_l] == D("100.02") and prices[coid_s] == D("100.28")
+
+    # Slice 2 submits cleanly and promotes to OPEN upon delayed fills
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 5) == [pid]
+    assert len(gw.submitted) == 4
+    for rec in gw.submitted[2:]:
+        px = D("100.02") if rec["side"] == "BUY" else D("100.28")
+        gw.deliver_fill(rec["client_order_id"], filled_base_qty=D("0.49"), avg_fill_price=px)
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 6, live_quotes=quotes)
+    pos = led.active_positions()[pid]
+    assert pos["status"] == "OPEN" and D(pos["long_base_qty"]) == D("0.98") and D(pos["short_base_qty"]) == D("0.98")
+
+    # Delayed double-cancel increments attempts and closes cleanly at maker_max_attempts
+    gw2 = DelayedAsyncVenueGateway()
+    gw2.register_spec(spec_l)
+    gw2.register_spec(spec_s)
+    rt_fast = plan.runtime.__class__(**{**plan.runtime.__dict__, "maker_max_attempts": 2})
+    ctrl2 = CarryExecutionController(ledger=led, gateway=gw2, risk=plan.risk, runtime=rt_fast, policy=plan.policy)
+    pid2, _ = ctrl2.start_entry(cand, specs=specs, now_s=now_s + 20)
+    assert pid2 is not None
+    for rec in gw2.submitted[:2]:
+        gw2.deliver_cancel(rec["client_order_id"], filled_base_qty=D("0"))
+    ctrl2.poll_active_orders(live_mids=mids, now_s=now_s + 21, live_quotes=quotes)
+    assert ctrl2._slice_attempts[pid2] == 1
+    assert ctrl2.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 22) == [pid2]
+    assert len(gw2.submitted) == 4
+    for rec in gw2.submitted[2:]:
+        gw2.deliver_cancel(rec["client_order_id"], filled_base_qty=D("0"))
+    ctrl2.poll_active_orders(live_mids=mids, now_s=now_s + 23, live_quotes=quotes)
+    assert ctrl2._slice_attempts[pid2] == 2
+    assert ctrl2.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 24) == []
+    row2 = dict(led.conn.execute("SELECT status, close_reason FROM positions WHERE position_id=?", (pid2,)).fetchone())
+    assert row2["status"] == "CLOSED" and row2["close_reason"] == "entry_maker_timeout"
+    led.close()
+
+
+def test_async_dual_taker_single_leg_partial_fill_hedges_exact_delta_and_guards_failed_fallback(tmp_path: Path) -> None:
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "async_partial.sqlite3", plan.fingerprint())
+    gw = DelayedAsyncVenueGateway()
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.28, 100.32)}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.30}
+
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.28, ask=100.32),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+
+    # Scenario A: long partial fill 0.20 + cancel, short partial cancel 0.08 -> fallback only hedges 0.12 delta
+    pid, err = ctrl.start_entry(cand, specs=specs, now_s=now_s)
+    assert err is None and pid is not None
+    coid_l = next(o["client_order_id"] for o in gw.submitted if o["side"] == "BUY")
+    coid_s = next(o["client_order_id"] for o in gw.submitted if o["side"] == "SELL")
+
+    gw.deliver_fill(coid_l, filled_base_qty=D("0.20"), avg_fill_price=D("100.02"), partial=True)
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 1, live_quotes=quotes)
+    assert D(led.active_positions()[pid]["long_base_qty"]) == D("0.20")
+    assert len(gw.submitted) == 2
+
+    gw.deliver_cancel(coid_l, filled_base_qty=D("0.20"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 2, live_quotes=quotes)
+    assert len(gw.submitted) == 2
+
+    gw.deliver_cancel(coid_s, filled_base_qty=D("0.08"), avg_fill_price=D("100.28"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 3, live_quotes=quotes)
+    assert len(gw.submitted) == 3
+    fb = gw.submitted[2]
+    assert fb["order_type"] == "MARKET" and fb["side"] == "SELL" and fb["base_qty"] == D("0.12")
+    fb_row = dict(led.conn.execute("SELECT role, base_qty, status FROM orders WHERE client_order_id=?", (fb["client_order_id"],)).fetchone())
+    assert fb_row["role"] == "TAKER_OPEN_MARKET_FALLBACK" and D(fb_row["base_qty"]) == D("0.12") and fb_row["status"] == "OPEN"
+
+    # Cannot submit next slice while fallback order is still in flight
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 4) == []
+    gw.deliver_fill(fb["client_order_id"], filled_base_qty=D("0.12"), avg_fill_price=D("100.29"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 5, live_quotes=quotes)
+    pos = led.active_positions()[pid]
+    assert D(pos["long_base_qty"]) == D("0.20") and D(pos["short_base_qty"]) == D("0.20")
+    assert ctrl._active_dual_takers == {}
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 6) == [pid]
+
+    # Scenario B: rejected fallback increments unhedged streak and blocks further slices on imbalanced position
+    gw2 = DelayedAsyncVenueGateway()
+    gw2.register_spec(spec_l)
+    gw2.register_spec(spec_s)
+    led2 = CarryLedger(tmp_path / "async_failfb.sqlite3", plan.fingerprint())
+    ctrl2 = CarryExecutionController(ledger=led2, gateway=gw2, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    pid2, _ = ctrl2.start_entry(cand, specs=specs, now_s=now_s + 100)
+    assert pid2 is not None
+    c2_l = next(o["client_order_id"] for o in gw2.submitted if o["side"] == "BUY")
+    c2_s = next(o["client_order_id"] for o in gw2.submitted if o["side"] == "SELL")
+    gw2.deliver_fill(c2_l, filled_base_qty=D("0.49"), avg_fill_price=D("100.02"))
+    gw2.deliver_cancel(c2_s, filled_base_qty=D("0"))
+    ctrl2.poll_active_orders(live_mids=mids, now_s=now_s + 101, live_quotes=quotes)
+    assert len(gw2.submitted) == 3
+    fb2 = gw2.submitted[2]
+    gw2.deliver_reject(fb2["client_order_id"], reason="insufficient_margin")
+    ctrl2.poll_active_orders(live_mids=mids, now_s=now_s + 102, live_quotes=quotes)
+    assert led2.daily_stats(now_s + 102)[1] == 1
+    assert ctrl2.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 103) == []
+    assert len(gw2.submitted) == 3
+
+    led.close()
+    led2.close()
+
+
+def test_async_in_flight_restart_halts_reconcile_and_blocks_duplicate_resubmission(tmp_path: Path) -> None:
+    from src.carry.runtime import _live_exec_engine_config
+
+    assert _live_exec_engine_config("live").reconciliation is True
+    assert _live_exec_engine_config("live").reconciliation_lookback_mins == 60
+    assert _live_exec_engine_config("readonly").reconciliation is True
+    assert _live_exec_engine_config("paper").reconciliation is False
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    db_path = tmp_path / "restart.sqlite3"
+    led = CarryLedger(db_path, plan.fingerprint())
+    gw = DelayedAsyncVenueGateway()
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.28, 100.32)}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.30}
+
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.28, ask=100.32),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+    pid, _ = ctrl.start_entry(cand, specs=specs, now_s=now_s)
+    assert pid is not None
+    # Simulate process crash while both IOC orders are in flight in SQLite (and exchange already filled long leg 0.49)
+    led.close()
+
+    led_reopened = CarryLedger(db_path, plan.fingerprint())
+    res = led_reopened.reconcile_startup(
+        venue_positions={("HL", spec_l.instrument_id): D("0.49")},
+        venue_open_orders={},
+        ts_s=now_s + 10,
+    )
+    assert not res.ok and res.halted
+    assert led_reopened.is_halted()[0]
+    assert any(d.startswith(f"in_flight_position:{pid}:OPENING") for d in res.discrepancies)
+    assert sum(1 for d in res.discrepancies if d.startswith("in_flight_order:") and ":TAKER_OPEN:OPEN" in d) == 2
+    assert any(d.startswith(f"position_mismatch:HL:{spec_l.instrument_id}") for d in res.discrepancies)
+
+    # Fresh controller with empty in-memory maps must also block advance_pending_slices via SQLite open_orders
+    gw_restarted = DelayedAsyncVenueGateway()
+    gw_restarted.register_spec(spec_l)
+    gw_restarted.register_spec(spec_s)
+    ctrl_restarted = CarryExecutionController(ledger=led_reopened, gateway=gw_restarted, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    assert ctrl_restarted.has_in_flight_orders(pid)
+    assert ctrl_restarted.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 11) == []
+    assert gw_restarted.submitted == []
+    led_reopened.close()
+
+
+def test_async_maker_hedge_cancel_race_emergency_close_and_strategy_callbacks(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from nautilus_trader.model import ClientOrderId, InstrumentId, OrderSide, Price, Quantity, StrategyId, TraderId
+    from nautilus_trader.trading import Strategy
+    from src.carry.runtime import _NautilusStrategyGateway, _create_carry_strategy
+
+    plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
+    led = CarryLedger(tmp_path / "async_maker.sqlite3", plan.fingerprint())
+    gw = DelayedAsyncVenueGateway()
+    spec_l = InstrumentSpec("SOL-USD-PERP.HYPERLIQUID", "HL", size_increment=D("0.01"), price_increment=D("0.01"))
+    spec_s = InstrumentSpec("SOL-USDT-SWAP.OKX", "OKX", size_increment=D("0.1"), contract_multiplier=D("0.1"), price_increment=D("0.01"))
+    gw.register_spec(spec_l)
+    gw.register_spec(spec_s)
+    specs = {spec_l.instrument_id: spec_l, spec_s.instrument_id: spec_s}
+    quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.13, 100.17)}
+    mids = {spec_l.instrument_id: 100.00, spec_s.instrument_id: 100.15}
+
+    ctrl = CarryExecutionController(ledger=led, gateway=gw, risk=plan.risk, runtime=plan.runtime, policy=plan.policy)
+    now_s = 1_800_000_000
+    snap = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.13, ask=100.17),
+        }
+    }
+    cand = evaluate_entry_candidates(
+        snap, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s
+    )[0]
+    pid, err = ctrl.start_entry(cand, specs=specs, now_s=now_s)
+    assert err is None and pid is not None
+    mk1 = gw.submitted[0]["client_order_id"]
+
+    # Maker fills asynchronously -> HEDGE_OPEN IOC returns (OPEN, 0) -> MUST NOT fire market fallback prematurely
+    gw.deliver_fill(mk1, filled_base_qty=D("0.49"), avg_fill_price=D("99.98"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 1, live_quotes=quotes)
+    assert len(gw.submitted) == 2
+    hg1 = gw.submitted[1]
+    assert hg1["order_type"] == "IOC"
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 1) == []
+
+    # HEDGE_OPEN IOC fills -> balanced 0.49/0.49 with only 1 hedge order
+    gw.deliver_fill(hg1["client_order_id"], filled_base_qty=D("0.49"), avg_fill_price=D("100.13"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 2, live_quotes=quotes)
+    assert len(gw.submitted) == 2
+    pos = led.active_positions()[pid]
+    assert D(pos["long_base_qty"]) == D("0.49") and D(pos["short_base_qty"]) == D("0.49")
+
+    # Slice 2: Maker fills, HEDGE_OPEN IOC gets partial 0.10 + CANCELED -> fires ONE fallback for 0.39
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 3) == [pid]
+    mk2 = gw.submitted[2]["client_order_id"]
+    gw.deliver_fill(mk2, filled_base_qty=D("0.49"), avg_fill_price=D("99.98"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 4, live_quotes=quotes)
+    hg2 = gw.submitted[3]["client_order_id"]
+    gw.deliver_cancel(hg2, filled_base_qty=D("0.10"), avg_fill_price=D("100.13"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 5, live_quotes=quotes)
+    assert len(gw.submitted) == 5
+    hm2 = gw.submitted[4]
+    assert hm2["order_type"] == "MARKET" and hm2["base_qty"] == D("0.39")
+    assert ctrl.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 5) == []
+    gw.deliver_fill(hm2["client_order_id"], filled_base_qty=D("0.39"), avg_fill_price=D("100.14"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 6, live_quotes=quotes)
+    pos = led.active_positions()[pid]
+    assert pos["status"] == "OPEN" and D(pos["long_base_qty"]) == D("0.98") and D(pos["short_base_qty"]) == D("0.98")
+
+    # Async emergency_close_position: stays CLOSING while MARKET orders are OPEN, deduplicates, then settles PnL on fill
+    ctrl.emergency_close_position(pid, specs=specs, reason="basis_stop_30m", now_s=now_s + 10, live_mids=mids)
+    assert len(gw.submitted) == 7
+    assert led.active_positions()[pid]["status"] == "CLOSING"
+    ctrl.emergency_close_position(pid, specs=specs, reason="basis_stop_30m", now_s=now_s + 11, live_mids=mids)
+    assert len(gw.submitted) == 7
+    em_l = next(o["client_order_id"] for o in gw.submitted[5:] if o["side"] == "SELL")
+    em_s = next(o["client_order_id"] for o in gw.submitted[5:] if o["side"] == "BUY")
+    gw.deliver_fill(em_l, filled_base_qty=D("0.98"), avg_fill_price=D("100.00"))
+    gw.deliver_fill(em_s, filled_base_qty=D("0.98"), avg_fill_price=D("101.00"))
+    ctrl.poll_active_orders(live_mids=mids, now_s=now_s + 12, live_quotes=quotes)
+    assert pid not in led.active_positions()
+    closed_row = dict(led.conn.execute("SELECT status, realized_pnl_usd FROM positions WHERE position_id=?", (pid,)).fetchone())
+    assert closed_row["status"] == "CLOSED"
+    assert D(closed_row["realized_pnl_usd"]) < D("0")
+
+    # Maker timeout cancel race: keeps order tracked while cancel pending, blocks duplicates, hedges racing fill
+    gw_race = DelayedAsyncVenueGateway()
+    gw_race.register_spec(spec_l)
+    gw_race.register_spec(spec_s)
+    rt_race = plan.runtime.__class__(**{**plan.runtime.__dict__, "maker_requote_secs": 3})
+    ctrl_race = CarryExecutionController(ledger=led, gateway=gw_race, risk=plan.risk, runtime=rt_race, policy=plan.policy)
+    pid_race, _ = ctrl_race.start_entry(cand, specs=specs, now_s=now_s + 50)
+    assert pid_race is not None
+    mk_race = gw_race.submitted[0]["client_order_id"]
+    ctrl_race.poll_active_orders(live_mids=mids, now_s=now_s + 54, live_quotes=quotes)
+    assert gw_race.cancel_requests == [mk_race]
+    assert mk_race in ctrl_race._active_makers and ctrl_race._active_makers[mk_race].cancel_requested
+    assert ctrl_race.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s + 54) == []
+    # Polling again before cancel confirms does not spam cancel_order
+    ctrl_race.poll_active_orders(live_mids=mids, now_s=now_s + 55, live_quotes=quotes)
+    assert gw_race.cancel_requests == [mk_race]
+    # Cancel rejected clears flag, then racing partial fill + cancel hedges 0.20 and frees maker slot
+    ctrl_race.on_cancel_rejected(mk_race)
+    assert not ctrl_race._active_makers[mk_race].cancel_requested
+    gw_race.deliver_cancel(mk_race, filled_base_qty=D("0.20"), avg_fill_price=D("99.98"))
+    ctrl_race.poll_active_orders(live_mids=mids, now_s=now_s + 56, live_quotes=quotes)
+    assert mk_race not in ctrl_race._active_makers
+    assert len(gw_race.submitted) == 2 and gw_race.submitted[1]["order_type"] == "IOC"
+    assert gw_race.submitted[1]["base_qty"] == D("0.20")
+
+    # Strategy order lifecycle callbacks + _NautilusStrategyGateway.poll_order avg_px
+    strat = _create_carry_strategy(plan, led, mode="paper")
+    for hook in (
+        "on_order_filled",
+        "on_order_canceled",
+        "on_order_expired",
+        "on_order_rejected",
+        "on_order_denied",
+        "on_order_cancel_rejected",
+    ):
+        assert getattr(type(strat), hook) is not getattr(Strategy, hook)
+    assert type(strat).on_order_event is Strategy.on_order_event
+
+    gw_strat = DelayedAsyncVenueGateway()
+    gw_strat.register_spec(spec_l)
+    gw_strat.register_spec(spec_s)
+    strat.gateway = gw_strat
+    strat.controller.gateway = gw_strat
+    strat.reconciled = True
+    strat.live_mids = mids
+    strat.live_quotes = {spec_l.instrument_id: (99.98, 100.02), spec_s.instrument_id: (100.28, 100.32)}
+    snap_wide = {
+        "SOL": {
+            "HL": _make_leg("HL", "SOL", r8=0.0, r24=0.0, cur_rate=0.0, bid=99.98, ask=100.02),
+            "OKX": _make_leg("OKX", "SOL", interval_h=8, next_settle_ts=now_s + 7200, r8=2.0, r24=2.0, cur_rate=2.0, bid=100.28, ask=100.32),
+        }
+    }
+    cand_wide = evaluate_entry_candidates(
+        snap_wide, open_symbols=set(), venue_notional_used={}, excluded_symbols=set(), policy=plan.policy, risk=plan.risk, now_s=now_s + 100
+    )[0]
+    pid_s, _ = strat.controller.start_entry(cand_wide, specs=specs, now_s=now_s + 100)
+    assert pid_s is not None
+    tk_l = next(o["client_order_id"] for o in gw_strat.submitted if o["side"] == "BUY")
+    tk_s = next(o["client_order_id"] for o in gw_strat.submitted if o["side"] == "SELL")
+    gw_strat.deliver_fill(tk_l, filled_base_qty=D("0.49"), avg_fill_price=D("100.02"))
+    strat.on_order_filled(SimpleNamespace(client_order_id=tk_l))
+    assert D(led.active_positions()[pid_s]["long_base_qty"]) == D("0.49")
+    gw_strat.deliver_cancel(tk_s, filled_base_qty=D("0.49"), avg_fill_price=D("100.28"))
+    strat.on_order_canceled(SimpleNamespace(client_order_id=tk_s))
+    assert D(led.active_positions()[pid_s]["short_base_qty"]) == D("0.49")
+
+    # _NautilusStrategyGateway.poll_order extracts avg_px and handles CANCELLED spelling
+    fake_order = SimpleNamespace(
+        instrument_id=InstrumentId.from_str(spec_s.instrument_id),
+        filled_qty=Quantity.from_str("5.0"),
+        avg_px=100.25,
+        status="FILLED",
+        venue_order_id="V-99",
+    )
+    fake_inst = SimpleNamespace(multiplier=D("0.1"))
+    fake_strat = SimpleNamespace(
+        cache=SimpleNamespace(
+            order=lambda _coid: fake_order,
+            instrument=lambda _iid: fake_inst,
+        )
+    )
+    nt_gw = _NautilusStrategyGateway(fake_strat)
+    nt_ack = nt_gw.poll_order(client_order_id="tk-1", venue="OKX", instrument_id=spec_s.instrument_id)
+    assert nt_ack.status == "FILLED"
+    assert nt_ack.venue_order_id == "V-99"
+    assert nt_ack.filled_base_qty == D("0.50")
+    assert nt_ack.avg_fill_price == D("100.25")
+    led.close()
