@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.carry.config import load_carry_plan
+from src.carry.config import CarryPolicy, CarryRiskPolicy, CarryRuntimePolicy, load_carry_plan
 from src.carry.executor import CarryExecutionController
 from src.carry.funding_feed import HOUR, LegMarketInfo, PublicCarryFeed
 from src.carry.ledger import CarryLedger
@@ -70,9 +70,31 @@ def _create_95ba5a1_db(db_path: Path, *, fingerprint: str, domain: str, pid: str
 def test_legacy_95ba5a1_ledger_upgrade_and_baseline_fingerprints(tmp_path: Path) -> None:
     paper_plan = load_carry_plan(REPO_ROOT / "config" / "carry-paper.toml")
     live_plan = load_carry_plan(REPO_ROOT / "config" / "carry-live.toml")
+    legacy_paper_plan = replace(
+        paper_plan,
+        state_path=Path("/Volumes/Expansion/perpsarb/Nautilus-Perps/reports/carry/paper.sqlite3"),
+        policy=replace(paper_plan.policy, cex_exit_defer_dual_leg_net=CarryPolicy.cex_exit_defer_dual_leg_net),
+        risk=replace(
+            paper_plan.risk,
+            basis_stop_via_closing=CarryRiskPolicy.basis_stop_via_closing,
+            soft_margin_guard_pct=CarryRiskPolicy.soft_margin_guard_pct,
+            carry_inversion_stop_bps_h=CarryRiskPolicy.carry_inversion_stop_bps_h,
+            carry_inversion_persist_mins=CarryRiskPolicy.carry_inversion_persist_mins,
+            margin_guard_cooldown_hours=CarryRiskPolicy.margin_guard_cooldown_hours,
+        ),
+        runtime=replace(
+            paper_plan.runtime,
+            max_close_cross_spread_bps=CarryRuntimePolicy.max_close_cross_spread_bps,
+            close_vacuum_defer_max_secs=CarryRuntimePolicy.close_vacuum_defer_max_secs,
+        ),
+    )
+    assert (
+        legacy_paper_plan.fingerprint()
+        == "8247c775c8ac8598f85d92bcc74bfeca8cbac36113e758aa8f70d5b3761ba49e"
+    )
     assert (
         replace(paper_plan, state_path=Path("/Volumes/Expansion/perpsarb/Nautilus-Perps/reports/carry/paper.sqlite3")).fingerprint()
-        == "8247c775c8ac8598f85d92bcc74bfeca8cbac36113e758aa8f70d5b3761ba49e"
+        == "8a000727ac1d0ca2f466ac61c3237c20837bfe2557490b02cffa9542427b7481"
     )
     assert (
         replace(live_plan, state_path=Path("/Volumes/Expansion/perpsarb/Nautilus-Perps/reports/carry/live.sqlite3")).fingerprint()

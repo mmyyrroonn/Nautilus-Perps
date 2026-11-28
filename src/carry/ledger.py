@@ -13,6 +13,64 @@ from typing import Any, Mapping, Sequence
 
 _MAKER_ORDER_ROLES = frozenset({"MAKER_OPEN", "MAKER_CLOSE"})
 _PNL_QUANT = Decimal("0.0001")
+RISK_CLOSE_REASON_PREFIXES = (
+    "carry_inversion",
+    "basis_stop",
+    "soft_margin_guard",
+    "margin_guard",
+    "unhedged",
+    "daily_loss_kill",
+    "consecutive_unhedged_kill",
+    "shutdown_kill_flatten",
+    "shutdown_unhedged_flatten",
+    "close_only_hedge_race",
+)
+SLICED_RISK_CLOSE_REASON_PREFIXES = ("carry_inversion", "soft_margin_guard")
+
+
+def close_reason_priority(reason: str | None) -> int:
+    """Return monotonicity rank so active CLOSING reasons escalate and never downgrade."""
+    r = (reason or "").strip().lower()
+    if not r:
+        return 0
+    if r.startswith("carry_decay"):
+        return 10
+    if r.startswith("carry_inversion"):
+        return 20
+    if r.startswith("basis_stop"):
+        return 30
+    if r.startswith("soft_margin_guard"):
+        return 40
+    if r.startswith("margin_guard"):
+        return 50
+    if r.startswith(
+        (
+            "unhedged",
+            "daily_loss_kill",
+            "consecutive_unhedged_kill",
+            "shutdown_kill_flatten",
+            "shutdown_unhedged_flatten",
+            "close_only_hedge_race",
+        )
+    ):
+        return 60
+    return 10
+
+
+def is_risk_close_reason(reason: str | None) -> bool:
+    """Return True if close_reason represents a risk-driven exit that survives graceful restart."""
+    r = (reason or "").strip().lower()
+    return bool(r) and r.startswith(RISK_CLOSE_REASON_PREFIXES)
+
+
+def is_sliced_risk_close_reason(reason: str | None, *, basis_stop_via_closing: bool = False) -> bool:
+    """Return True ONLY for risk close reasons executed via Maker-First/IOC sliced closing."""
+    r = (reason or "").strip().lower()
+    if not r:
+        return False
+    if basis_stop_via_closing and r.startswith("basis_stop"):
+        return True
+    return r.startswith(SLICED_RISK_CLOSE_REASON_PREFIXES)
 
 
 class LedgerOwnershipError(RuntimeError):
@@ -413,6 +471,8 @@ class CarryLedger:
                     position_id,
                 ),
             )
+            if status in ("CLOSING", "CLOSED"):
+                self._clear_exit_defer_in_tx(position_id, ts_s=ts_s)
             if status == "CLOSED" and row["status"] != "CLOSED" and realized_pnl_usd is not None:
                 day = _utc_day(ts_s)
                 cur = self.conn.execute("SELECT realized_pnl_usd, consecutive_unhedged FROM daily_stats WHERE utc_day=?", (day,)).fetchone()
@@ -634,20 +694,165 @@ class CarryLedger:
                 ts_s=ts_s,
             )
 
-    def stop_loss_cooldown_symbols(self, *, now_s: int, cooldown_hours: int) -> set[str]:
-        """Return symbols closed by basis_stop, margin_guard, or unhedged within the cooldown window."""
-        if cooldown_hours <= 0:
-            return set()
-        cutoff = now_s - cooldown_hours * 3600
+    def stop_loss_cooldown_symbols(
+        self,
+        *,
+        now_s: int,
+        cooldown_hours: int,
+        margin_guard_cooldown_hours: int | None = None,
+    ) -> set[str]:
+        """Return symbols closed by risk stops within their stratified cooldown windows."""
+        out: set[str] = set()
+        mg_hours = cooldown_hours if margin_guard_cooldown_hours is None else int(margin_guard_cooldown_hours)
+        if cooldown_hours > 0:
+            cutoff_severe = now_s - cooldown_hours * 3600
+            rows = self.conn.execute(
+                """
+                SELECT DISTINCT symbol FROM positions
+                WHERE status='CLOSED' AND closed_ts IS NOT NULL AND closed_ts > ?
+                  AND (
+                    close_reason LIKE 'basis_stop%'
+                    OR close_reason LIKE 'carry_inversion%'
+                    OR close_reason LIKE 'unhedged%'
+                  )
+                """,
+                (cutoff_severe,),
+            ).fetchall()
+            out.update(str(r["symbol"]).upper() for r in rows)
+        if mg_hours > 0:
+            cutoff_mg = now_s - mg_hours * 3600
+            rows = self.conn.execute(
+                """
+                SELECT DISTINCT symbol FROM positions
+                WHERE status='CLOSED' AND closed_ts IS NOT NULL AND closed_ts > ?
+                  AND (
+                    close_reason LIKE 'margin_guard%'
+                    OR close_reason LIKE 'soft_margin_guard%'
+                  )
+                """,
+                (cutoff_mg,),
+            ).fetchall()
+            out.update(str(r["symbol"]).upper() for r in rows)
+        return out
+
+    def revert_closing_to_open(self, position_id: str, *, ts_s: int) -> None:
+        """Atomically revert non-risk CLOSING to OPEN and clear prior vacuum-defer/exit-defer episode in one commit."""
+        with self.conn:
+            row = self.conn.execute("SELECT status FROM positions WHERE position_id=?", (position_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"unknown position_id {position_id}")
+            self.conn.execute("UPDATE positions SET status='OPEN' WHERE position_id=?", (position_id,))
+            self.conn.execute(
+                "INSERT INTO events(ts, kind, payload) VALUES (?, 'closing_reverted_to_open', ?)",
+                (int(ts_s), json.dumps({"position_id": position_id})),
+            )
+            self._clear_exit_defer_in_tx(position_id, ts_s=ts_s)
+
+    def _query_exit_defer_target_ts(self, position_id: str) -> int | None:
         rows = self.conn.execute(
             """
-            SELECT DISTINCT symbol FROM positions
-            WHERE status='CLOSED' AND closed_ts IS NOT NULL AND closed_ts >= ?
-              AND (close_reason LIKE 'basis_stop%' OR close_reason LIKE 'margin_guard%' OR close_reason LIKE 'unhedged%')
-            """,
-            (cutoff,),
+            SELECT kind, payload FROM events
+            WHERE kind IN ('exit_defer_pinned', 'exit_defer_cleared')
+            ORDER BY seq ASC
+            """
         ).fetchall()
-        return {str(r["symbol"]).upper() for r in rows}
+        target_ts: int | None = None
+        for r in rows:
+            try:
+                data = json.loads(str(r["payload"]))
+            except json.JSONDecodeError:
+                continue
+            if str(data.get("position_id") or "") != position_id:
+                continue
+            if r["kind"] == "exit_defer_cleared":
+                target_ts = None
+            elif r["kind"] == "exit_defer_pinned":
+                raw_ts = data.get("target_ts")
+                if raw_ts is not None:
+                    target_ts = int(raw_ts)
+        return target_ts
+
+    def _clear_exit_defer_in_tx(self, position_id: str, *, ts_s: int) -> None:
+        if self._query_exit_defer_target_ts(position_id) is not None:
+            self.conn.execute(
+                "INSERT INTO events(ts, kind, payload) VALUES (?, 'exit_defer_cleared', ?)",
+                (int(ts_s), json.dumps({"position_id": position_id})),
+            )
+
+    def get_exit_defer_target_ts(self, position_id: str) -> int | None:
+        """Return persisted CEX exit-defer target timestamp for position_id, or None."""
+        return self._query_exit_defer_target_ts(position_id)
+
+    def record_exit_defer_target(self, position_id: str, *, target_ts: int, ts_s: int) -> None:
+        """Persist pinned CEX exit-defer target timestamp across restarts."""
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO events(ts, kind, payload) VALUES (?, 'exit_defer_pinned', ?)",
+                (int(ts_s), json.dumps({"position_id": position_id, "target_ts": int(target_ts)})),
+            )
+
+    def clear_exit_defer_target(self, position_id: str, *, ts_s: int) -> None:
+        """Clear persisted CEX exit-defer target timestamp when carry recovers."""
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO events(ts, kind, payload) VALUES (?, 'exit_defer_cleared', ?)",
+                (int(ts_s), json.dumps({"position_id": position_id})),
+            )
+
+    def _query_close_vacuum_defer_ts(self, position_id: str) -> int | None:
+        rows = self.conn.execute(
+            """
+            SELECT kind, payload FROM events
+            WHERE kind IN ('close_vacuum_defer_started', 'closing_reverted_to_open')
+            ORDER BY seq ASC
+            """
+        ).fetchall()
+        started_ts: int | None = None
+        for r in rows:
+            try:
+                data = json.loads(str(r["payload"]))
+            except json.JSONDecodeError:
+                continue
+            if str(data.get("position_id") or "") != position_id:
+                continue
+            if r["kind"] == "closing_reverted_to_open":
+                started_ts = None
+            elif r["kind"] == "close_vacuum_defer_started" and started_ts is None:
+                raw_ts = data.get("started_ts")
+                if raw_ts is not None:
+                    started_ts = int(raw_ts)
+        return started_ts
+
+    def get_close_vacuum_defer_ts(self, position_id: str) -> int | None:
+        """Return persisted close-vacuum defer start timestamp for current CLOSING episode, or None."""
+        return self._query_close_vacuum_defer_ts(position_id)
+
+    def record_close_vacuum_defer_start(
+        self,
+        position_id: str,
+        *,
+        reason: str,
+        spread_bps: Decimal,
+        deadline_secs: int,
+        ts_s: int,
+    ) -> int:
+        """Idempotently persist close_vacuum_defer_started once per CLOSING episode and return started_ts."""
+        with self.conn:
+            existing = self._query_close_vacuum_defer_ts(position_id)
+            if existing is not None:
+                return existing
+            payload = {
+                "position_id": position_id,
+                "reason": reason,
+                "spread_bps": str(spread_bps),
+                "started_ts": int(ts_s),
+                "deadline_ts": int(ts_s) + int(deadline_secs),
+            }
+            self.conn.execute(
+                "INSERT INTO events(ts, kind, payload) VALUES (?, 'close_vacuum_defer_started', ?)",
+                (int(ts_s), json.dumps(payload, default=str)),
+            )
+            return int(ts_s)
 
     def compute_position_price_pnl(self, position_id: str) -> Decimal:
         """Compute realized price PnL in USD from persisted closing fills against actual opening fill VWAP."""
@@ -841,6 +1046,9 @@ class CarryLedger:
         venue_positions: Mapping[tuple[str, str], Decimal],
         venue_open_orders: Mapping[tuple[str, str], int],
         tolerance_pct: Decimal = Decimal("2.0"),
+        max_qty_mismatch_pct: Decimal | None = None,
+        max_unhedged_usd: Decimal | None = None,
+        basis_stop_via_closing: bool = False,
         ts_s: int = 0,
     ) -> ReconcileResult:
         """Verify persisted active positions & orders match exchange ground truth before trading."""
@@ -850,14 +1058,35 @@ class CarryLedger:
             discrepancies.append(f"existing_reconcile_halt:{rec_reason}")
 
         expected_signed: dict[tuple[str, str], Decimal] = {}
+        leg_tol = tolerance_pct if max_qty_mismatch_pct is None else max_qty_mismatch_pct
+        kill_halted = self.is_kill_halted()[0]
 
         for pid, pos in self.active_positions().items():
-            if pos["status"] in ("OPENING", "CLOSING"):
+            long_q = Decimal(str(pos["long_base_qty"]))
+            short_q = Decimal(str(pos["short_base_qty"]))
+            if pos["status"] == "OPENING":
                 discrepancies.append(f"in_flight_position:{pid}:{pos['status']}")
+            elif pos["status"] == "CLOSING":
+                hi_q = max(long_q, short_q)
+                diff_q = abs(long_q - short_q)
+                ref_px = max(Decimal(str(pos.get("entry_l") or 0)), Decimal(str(pos.get("entry_s") or 0)))
+                unhedged_ok = max_unhedged_usd is None or (diff_q * ref_px) <= max_unhedged_usd
+                balanced_risk_closing = (
+                    not kill_halted
+                    and is_sliced_risk_close_reason(
+                        pos.get("close_reason"), basis_stop_via_closing=basis_stop_via_closing
+                    )
+                    and long_q > Decimal("0")
+                    and short_q > Decimal("0")
+                    and ((diff_q / hi_q) * Decimal("100")) <= leg_tol
+                    and unhedged_ok
+                )
+                if not balanced_risk_closing:
+                    discrepancies.append(f"in_flight_position:{pid}:{pos['status']}")
             kl = (str(pos["long_venue"]), str(pos["iid_long"]))
             ks = (str(pos["short_venue"]), str(pos["iid_short"]))
-            expected_signed[kl] = expected_signed.get(kl, Decimal("0")) + Decimal(str(pos["long_base_qty"]))
-            expected_signed[ks] = expected_signed.get(ks, Decimal("0")) - Decimal(str(pos["short_base_qty"]))
+            expected_signed[kl] = expected_signed.get(kl, Decimal("0")) + long_q
+            expected_signed[ks] = expected_signed.get(ks, Decimal("0")) - short_q
 
         for ord_row in self.open_orders():
             discrepancies.append(

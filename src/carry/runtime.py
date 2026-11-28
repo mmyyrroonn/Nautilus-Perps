@@ -28,12 +28,13 @@ from .executor import CarryExecutionController, OrderAck, PaperVenueGateway
 from .funding_feed import LegMarketInfo, PublicCarryFeed
 from .ledger import CarryLedger, LedgerOwnershipError
 from .recorder import CarryRecorder
-from .risk import BasisStopTracker, FastRiskEvaluator
+from .risk import BasisStopTracker, CarryInversionTracker, FastRiskEvaluator
 from .signal import (
     InstrumentSpec,
     SubscriptionManager,
     evaluate_entry_candidates,
     evaluate_watch_candidates,
+    select_cex_exit_defer_ts,
     should_exit_carry_decay,
 )
 
@@ -426,6 +427,13 @@ def _create_carry_strategy(
                 persist_mins=plan.risk.basis_persist_mins,
                 max_gap_secs=max(30, plan.runtime.slow_poll_secs + 15),
             )
+            self.inversion_tracker = CarryInversionTracker(
+                inversion_stop_bps_h=plan.risk.carry_inversion_stop_bps_h,
+                persist_mins=plan.risk.carry_inversion_persist_mins,
+                max_gap_secs=max(180, plan.runtime.slow_poll_secs * 2 + 30),
+            )
+            self._exit_defer_target_ts: dict[str, int] = {}
+            self._exit_defer_loaded: set[str] = set()
             self.fast_risk = FastRiskEvaluator(plan.risk)
             self.bitget_quote_feed: BitgetPublicQuoteFeed | None = (
                 bitget_quote_feed
@@ -681,9 +689,11 @@ def _create_carry_strategy(
                         if self.controller.is_tracked_order(coid):
                             should_poll = True
                     if should_poll:
-                        now_s = int(time.time())
+                        now_f = time.time()
+                        now_s = int(now_f)
+                        self._prune_stale_quotes(now_f)
                         self.controller.poll_active_orders(
-                            live_mids=self.live_mids,
+                            live_mids=self._exec_fresh_mids(now_f),
                             now_s=now_s,
                             live_quotes=self.live_quotes,
                         )
@@ -704,7 +714,7 @@ def _create_carry_strategy(
                 prev_ts = self.live_quote_ts.get(iid)
                 if prev_ts is not None and quote_ts < prev_ts:
                     return
-                mid = 0.5 * (bid + ask)
+                mid = float((Decimal(str(bid)) + Decimal(str(ask))) * Decimal("0.5"))
                 self.live_quotes[iid] = (bid, ask)
                 self.live_quote_ts[iid] = quote_ts
                 self.live_mids[iid] = mid
@@ -712,8 +722,11 @@ def _create_carry_strategy(
                 if self.paper_gateway is not None:
                     filled_coids = self.paper_gateway.update_quote(iid, Decimal(str(bid)), Decimal(str(ask)))
                     if filled_coids and self._can_book_in_flight_orders():
+                        self._prune_stale_quotes(ts_now)
                         self.controller.poll_active_orders(
-                            live_mids=self.live_mids, now_s=int(ts_now), live_quotes=self.live_quotes
+                            live_mids=self._exec_fresh_mids(ts_now),
+                            now_s=int(ts_now),
+                            live_quotes=self.live_quotes,
                         )
                 if self.recorder is not None:
                     self.recorder.record_bbo(
@@ -741,6 +754,14 @@ def _create_carry_strategy(
 
         def _fresh_mid_max_age_secs(self) -> float:
             return max(float(self.plan.runtime.quote_stale_secs), float(self.plan.runtime.slow_poll_secs) + 15.0)
+
+        def _exec_fresh_mids(self, now_f: float) -> dict[str, float]:
+            max_age = self._fresh_mid_max_age_secs()
+            return {
+                iid: px
+                for iid, px in self.live_mids.items()
+                if iid in self.live_mid_ts and (now_f - self.live_mid_ts[iid]) <= max_age
+            }
 
         def _prune_stale_quotes(self, now_ts: float) -> list[str]:
             stale_s = float(self.plan.runtime.quote_stale_secs)
@@ -771,10 +792,12 @@ def _create_carry_strategy(
             if not self._can_book_in_flight_orders():
                 return
             coid = str(getattr(event, "client_order_id", ""))
-            now_s = int(time.time())
+            now_f = time.time()
+            now_s = int(now_f)
             if coid and self.controller.is_tracked_order(coid):
+                self._prune_stale_quotes(now_f)
                 self.controller.poll_active_orders(
-                    live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
+                    live_mids=self._exec_fresh_mids(now_f), now_s=now_s, live_quotes=self.live_quotes
                 )
             if self._shutdown_requested.is_set():
                 self._drive_graceful_shutdown(now_s)
@@ -874,6 +897,9 @@ def _create_carry_strategy(
                 venue_positions=snap.positions,
                 venue_open_orders=snap.open_orders,
                 tolerance_pct=self.plan.risk.reconcile_tolerance_pct,
+                max_qty_mismatch_pct=self.plan.risk.max_qty_mismatch_pct,
+                max_unhedged_usd=self.plan.risk.max_unhedged_usd,
+                basis_stop_via_closing=self.plan.risk.basis_stop_via_closing,
                 ts_s=now_s,
             )
             rec_halted, _ = self.ledger.is_reconcile_halted()
@@ -911,28 +937,25 @@ def _create_carry_strategy(
             return specs
 
         def _on_fast_risk_timer(self, _event: Any) -> None:
-            now_s = int(time.time())
+            now_f = time.time()
+            now_s = int(now_f)
             if self._shutdown_requested.is_set() and self._shutdown_drain_started_ts is None:
                 self._start_graceful_shutdown_drain(now_s)
+            self._prune_stale_quotes(now_f)
+            fresh_mids = self._exec_fresh_mids(now_f)
             if self._can_book_in_flight_orders():
                 self.controller.poll_active_orders(
-                    live_mids=self.live_mids, now_s=now_s, live_quotes=self.live_quotes
+                    live_mids=fresh_mids, now_s=now_s, live_quotes=self.live_quotes
                 )
             active = self.ledger.active_positions()
             daily_pnl, streak = self.ledger.daily_stats(now_s)
-            now_f = time.time()
-            max_age = self._fresh_mid_max_age_secs()
-            fresh_mids = {
-                iid: px
-                for iid, px in self.live_mids.items()
-                if iid in self.live_mid_ts and (now_f - self.live_mid_ts[iid]) <= max_age
-            }
             dec = self.fast_risk.evaluate(
                 positions=active,
                 live_mids=fresh_mids,
                 daily_realized_pnl_usd=daily_pnl,
                 consecutive_unhedged=streak,
                 now_s=now_s,
+                live_quotes=self.live_quotes,
             )
             if dec.halt_system and dec.halt_reason:
                 if not self.ledger.is_kill_halted()[0]:
@@ -942,15 +965,19 @@ def _create_carry_strategy(
                 for pid, reason in dec.close_positions:
                     if str(active[pid]["iid_long"]) in specs and str(active[pid]["iid_short"]) in specs:
                         self.controller.emergency_close_position(
-                            pid, specs=specs, reason=reason, now_s=now_s, live_mids=self.live_mids
+                            pid, specs=specs, reason=reason, now_s=now_s, live_mids=fresh_mids
                         )
             if self._can_trade():
                 halted_now, _ = self.ledger.is_halted()
                 if not halted_now and not self._shutdown_requested.is_set() and not self.controller.is_stopping:
-                    self._prune_stale_quotes(time.time())
                     specs_now = self._specs_from_cache()
+                    for pid, reason in dec.soft_close_positions:
+                        if pid in active and str(active[pid]["iid_long"]) in specs_now and str(active[pid]["iid_short"]) in specs_now:
+                            self.controller.start_sliced_close(
+                                pid, specs=specs_now, quotes=self.live_quotes, mids=fresh_mids, reason=reason, now_s=now_s
+                            )
                     self.controller.advance_pending_slices(
-                        specs=specs_now, quotes=self.live_quotes, mids=self.live_mids, now_s=now_s
+                        specs=specs_now, quotes=self.live_quotes, mids=fresh_mids, now_s=now_s
                     )
             if not self._shutdown_requested.is_set() and not self.controller.is_stopping:
                 self._consume_pending_slow_snapshot()
@@ -991,9 +1018,18 @@ def _create_carry_strategy(
                 )
                 if hit and self._can_trade():
                     if iid_l in specs and iid_s in specs:
-                        self.controller.emergency_close_position(
-                            pid, specs=specs, reason="basis_stop_30m", now_s=now_s, live_mids=self.live_mids
-                        )
+                        reason = f"basis_stop_{self.plan.risk.basis_persist_mins}m"
+                        if self.plan.risk.basis_stop_via_closing:
+                            halted_now, _ = self.ledger.is_halted()
+                            if not halted_now and not self._shutdown_requested.is_set() and not self.controller.is_stopping:
+                                self._prune_stale_quotes(time.time())
+                                self.controller.start_sliced_close(
+                                    pid, specs=specs, quotes=self.live_quotes, mids=self._exec_fresh_mids(now_f), reason=reason, now_s=now_s
+                                )
+                        else:
+                            self.controller.emergency_close_position(
+                                pid, specs=specs, reason=reason, now_s=now_s, live_mids=self._exec_fresh_mids(now_f)
+                            )
 
         def _trigger_slow_poll(self, *, now_s: int, priority_symbols: frozenset[str]) -> bool:
             with self._slow_poll_lock:
@@ -1148,7 +1184,9 @@ def _create_carry_strategy(
                 venue_used[sv] = venue_used.get(sv, Decimal("0")) + self.plan.risk.leg_notional_usd
 
             cooldown_syms = self.ledger.stop_loss_cooldown_symbols(
-                now_s=now_s, cooldown_hours=self.plan.risk.stop_loss_cooldown_hours
+                now_s=now_s,
+                cooldown_hours=self.plan.risk.stop_loss_cooldown_hours,
+                margin_guard_cooldown_hours=self.plan.risk.margin_guard_cooldown_hours,
             )
             base_excl = set(self.plan.excluded_symbols)
             strict_cands = evaluate_entry_candidates(
@@ -1218,19 +1256,83 @@ def _create_carry_strategy(
             if halted or self._shutdown_requested.is_set() or self.controller.is_stopping:
                 return
 
+            active_pids = set(active)
+            self.inversion_tracker.prune(active_pids)
+            for stale_pid in list(self._exit_defer_target_ts):
+                if stale_pid not in active_pids:
+                    self._exit_defer_target_ts.pop(stale_pid, None)
+            self._exit_defer_loaded &= active_pids
             specs = self._specs_from_cache()
-            # Check carry_decay exits
+            exec_mids = self._exec_fresh_mids(time.time())
+            # Check carry_inversion (bypasses min_hold_h) then normal carry_decay exits
             for pid, pos in list(active.items()):
                 vmap = self.snapshot.get(str(pos["symbol"]), {})
                 ll, ls = vmap.get(str(pos["long_venue"])), vmap.get(str(pos["short_venue"]))
-                if ll and ls:
-                    do_exit, rsn = should_exit_carry_decay(
-                        opened_ts=int(pos["opened_ts"]), leg_l=ll, leg_s=ls, policy=self.plan.policy, now_s=now_s
+                if ll and ls and str(pos["iid_long"]) in specs and str(pos["iid_short"]) in specs:
+                    fresh_l = ll.fetched_ts <= 0 or (now_s - ll.fetched_ts) <= max_slow_age_s
+                    fresh_s = ls.fetched_ts <= 0 or (now_s - ls.fetched_ts) <= max_slow_age_s
+                    rate_l = (ll.current_rate_bps_h if ll.current_rate_bps_h is not None else ll.r8_bps_h) if fresh_l else None
+                    rate_s = (ls.current_rate_bps_h if ls.current_rate_bps_h is not None else ls.r8_bps_h) if fresh_s else None
+                    live_c = (
+                        (Decimal(str(rate_s)) - Decimal(str(rate_l)))
+                        if (rate_l is not None and rate_s is not None)
+                        else None
                     )
-                    if do_exit and str(pos["iid_long"]) in specs and str(pos["iid_short"]) in specs:
+                    inv_hit, _ = self.inversion_tracker.observe(
+                        position_id=pid,
+                        live_carry_bps_h=live_c,
+                        now_s=now_s,
+                    )
+                    if inv_hit:
                         self.controller.start_sliced_close(
-                            pid, specs=specs, quotes=self.live_quotes, mids=self.live_mids, reason=rsn, now_s=now_s
+                            pid,
+                            specs=specs,
+                            quotes=self.live_quotes,
+                            mids=exec_mids,
+                            reason=f"carry_inversion_{self.plan.risk.carry_inversion_persist_mins}m",
+                            now_s=now_s,
                         )
+                        self._exit_defer_target_ts.pop(pid, None)
+                        self._exit_defer_loaded.discard(pid)
+                        continue
+                    if str(pos["status"]) not in ("OPEN", "OPENING"):
+                        self._exit_defer_target_ts.pop(pid, None)
+                        self._exit_defer_loaded.discard(pid)
+                        continue
+                    if pid not in self._exit_defer_loaded:
+                        self._exit_defer_loaded.add(pid)
+                        persisted_pin = self.ledger.get_exit_defer_target_ts(pid)
+                        if persisted_pin is not None:
+                            self._exit_defer_target_ts[pid] = persisted_pin
+                    do_exit, rsn = should_exit_carry_decay(
+                        opened_ts=int(pos["opened_ts"]),
+                        leg_l=ll,
+                        leg_s=ls,
+                        policy=self.plan.policy,
+                        now_s=now_s,
+                        pinned_defer_ts=self._exit_defer_target_ts.get(pid),
+                    )
+                    if rsn == "carry_healthy":
+                        if pid in self._exit_defer_target_ts:
+                            self._exit_defer_target_ts.pop(pid, None)
+                            self.ledger.clear_exit_defer_target(pid, ts_s=now_s)
+                    elif (
+                        rsn == "defer_collect_cex_settlement"
+                        and self.plan.policy.cex_exit_defer_dual_leg_net
+                        and pid not in self._exit_defer_target_ts
+                    ):
+                        defer_ts = select_cex_exit_defer_ts(ll, ls, self.plan.policy, now_s)
+                        if defer_ts is not None:
+                            self._exit_defer_target_ts[pid] = defer_ts
+                            self.ledger.record_exit_defer_target(pid, target_ts=defer_ts, ts_s=now_s)
+                    if do_exit:
+                        self.controller.start_sliced_close(
+                            pid, specs=specs, quotes=self.live_quotes, mids=exec_mids, reason=rsn, now_s=now_s
+                        )
+                        self._exit_defer_target_ts.pop(pid, None)
+                        self._exit_defer_loaded.discard(pid)
+                else:
+                    self.inversion_tracker.observe(position_id=pid, live_carry_bps_h=None, now_s=now_s)
 
             daily_pnl_now, streak_now = self.ledger.daily_stats(now_s)
             kill_dec = self.fast_risk.evaluate_account_guards(

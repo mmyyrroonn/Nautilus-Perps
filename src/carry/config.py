@@ -63,6 +63,7 @@ class CarryPolicy:
     max_1h_split_divergence: Decimal = Decimal("0.15")
     cex_entry_blackout_before_settle_mins: int = 30
     cex_exit_defer_before_settle_mins: int = 20
+    cex_exit_defer_dual_leg_net: bool = False
     maker_fee_bps_by_venue: tuple[tuple[str, Decimal], ...] = (
         ("BYBIT", Decimal("2.0")),
         ("HL", Decimal("1.5")),
@@ -105,12 +106,17 @@ class CarryRiskPolicy:
     max_gross_notional_usd: Decimal = Decimal("1200")
     basis_stop_bps: Decimal = Decimal("200")
     basis_persist_mins: int = 30
+    basis_stop_via_closing: bool = False
     margin_guard_pct: Decimal = Decimal("25")
+    soft_margin_guard_pct: Decimal = Decimal("0")
+    carry_inversion_stop_bps_h: Decimal = Decimal("0")
+    carry_inversion_persist_mins: int = 0
     max_unhedged_usd: Decimal = Decimal("60")
     max_unhedged_secs: int = 10
     max_daily_loss_usd: Decimal = Decimal("40")
     max_consecutive_unhedged: int = 3
     stop_loss_cooldown_hours: int = 24
+    margin_guard_cooldown_hours: int | None = None
     max_qty_mismatch_pct: Decimal = Decimal("2.0")
     reconcile_tolerance_pct: Decimal = Decimal("2.0")
 
@@ -131,6 +137,8 @@ class CarryRuntimePolicy:
     record_dir: Path | None = None
     bbo_record_interval_secs: int = 1
     watch_fill_min_carry_bps_h: Decimal = Decimal("0.35")
+    max_close_cross_spread_bps: Decimal = Decimal("0")
+    close_vacuum_defer_max_secs: int = 0
 
 
 def ledger_domain_for_mode(mode: str) -> str:
@@ -175,6 +183,23 @@ class CarryPlan:
         doc["runtime"].pop("record_dir", None)
         doc["runtime"].pop("bbo_record_interval_secs", None)
         doc["runtime"].pop("watch_fill_min_carry_bps_h", None)
+        # Preserve legacy fingerprint hashes when PR2 remediation features remain at disabled defaults.
+        if not self.policy.cex_exit_defer_dual_leg_net:
+            doc["policy"].pop("cex_exit_defer_dual_leg_net", None)
+        if self.risk.soft_margin_guard_pct == Decimal("0"):
+            doc["risk"].pop("soft_margin_guard_pct", None)
+        if not self.risk.basis_stop_via_closing:
+            doc["risk"].pop("basis_stop_via_closing", None)
+        if self.risk.carry_inversion_stop_bps_h == Decimal("0"):
+            doc["risk"].pop("carry_inversion_stop_bps_h", None)
+        if self.risk.carry_inversion_persist_mins == 0:
+            doc["risk"].pop("carry_inversion_persist_mins", None)
+        if self.risk.margin_guard_cooldown_hours is None:
+            doc["risk"].pop("margin_guard_cooldown_hours", None)
+        if self.runtime.max_close_cross_spread_bps == Decimal("0"):
+            doc["runtime"].pop("max_close_cross_spread_bps", None)
+        if self.runtime.close_vacuum_defer_max_secs == 0:
+            doc["runtime"].pop("close_vacuum_defer_max_secs", None)
         raw = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
 
@@ -258,6 +283,7 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
             "max_entry_basis_bps", "min_24h_vol_usd",
             "max_leg_spread_bps", "max_price_ratio_deviation", "max_1h_split_divergence",
             "cex_entry_blackout_before_settle_mins", "cex_exit_defer_before_settle_mins",
+            "cex_exit_defer_dual_leg_net",
             "maker_fee_bps_by_venue", "taker_fee_bps_by_venue",
         },
         "policy",
@@ -275,8 +301,11 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         {
             "max_slots", "leg_notional_usd", "slice_usd", "max_venue_notional_usd",
             "max_gross_notional_usd", "basis_stop_bps", "basis_persist_mins",
-            "margin_guard_pct", "max_unhedged_usd", "max_unhedged_secs",
-            "max_daily_loss_usd", "max_consecutive_unhedged", "stop_loss_cooldown_hours",
+            "basis_stop_via_closing", "margin_guard_pct", "soft_margin_guard_pct",
+            "carry_inversion_stop_bps_h", "carry_inversion_persist_mins",
+            "max_unhedged_usd", "max_unhedged_secs",
+            "max_daily_loss_usd", "max_consecutive_unhedged",
+            "stop_loss_cooldown_hours", "margin_guard_cooldown_hours",
             "max_qty_mismatch_pct", "reconcile_tolerance_pct",
         },
         "risk",
@@ -335,6 +364,7 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         max_1h_split_divergence=exact_decimal(pol_raw.get("max_1h_split_divergence", "0.15"), "policy.max_1h_split_divergence", positive=True),
         cex_entry_blackout_before_settle_mins=_int_val(pol_raw.get("cex_entry_blackout_before_settle_mins", 30), "policy.cex_entry_blackout_before_settle_mins", 0, 120),
         cex_exit_defer_before_settle_mins=_int_val(pol_raw.get("cex_exit_defer_before_settle_mins", 20), "policy.cex_exit_defer_before_settle_mins", 0, 120),
+        cex_exit_defer_dual_leg_net=_bool_val(pol_raw.get("cex_exit_defer_dual_leg_net", False), "policy.cex_exit_defer_dual_leg_net"),
         maker_fee_bps_by_venue=_parse_fee_map(
             pol_raw.get("maker_fee_bps_by_venue"),
             "policy.maker_fee_bps_by_venue",
@@ -351,6 +381,22 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         ),
     )
 
+    soft_mg = exact_decimal(risk_raw.get("soft_margin_guard_pct", "0"), "risk.soft_margin_guard_pct", nonnegative=True)
+    if soft_mg > 0 and soft_mg >= clamped.margin_guard_pct:
+        raise CarryConfigError("risk.soft_margin_guard_pct must be < risk.margin_guard_pct")
+    inv_bps_h = exact_decimal(
+        risk_raw.get("carry_inversion_stop_bps_h", "0"),
+        "risk.carry_inversion_stop_bps_h",
+        nonnegative=True,
+    )
+    inv_mins = _int_val(risk_raw.get("carry_inversion_persist_mins", 0), "risk.carry_inversion_persist_mins", 0, 240)
+    if (inv_bps_h > 0) != (inv_mins > 0):
+        raise CarryConfigError(
+            "risk.carry_inversion_stop_bps_h and risk.carry_inversion_persist_mins must both be > 0 or both be 0"
+        )
+    mg_cd_raw = risk_raw.get("margin_guard_cooldown_hours")
+    mg_cd_h = None if mg_cd_raw is None else _int_val(mg_cd_raw, "risk.margin_guard_cooldown_hours", 0, 168)
+
     risk = CarryRiskPolicy(
         max_slots=clamped.max_slots,
         leg_notional_usd=clamped.leg_notional_usd,
@@ -359,12 +405,17 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         max_gross_notional_usd=clamped.max_gross_notional_usd,
         basis_stop_bps=exact_decimal(risk_raw.get("basis_stop_bps", "200"), "risk.basis_stop_bps", positive=True),
         basis_persist_mins=_int_val(risk_raw.get("basis_persist_mins", 30), "risk.basis_persist_mins", 5, 240),
+        basis_stop_via_closing=_bool_val(risk_raw.get("basis_stop_via_closing", False), "risk.basis_stop_via_closing"),
         margin_guard_pct=clamped.margin_guard_pct,
+        soft_margin_guard_pct=soft_mg,
+        carry_inversion_stop_bps_h=inv_bps_h,
+        carry_inversion_persist_mins=inv_mins,
         max_unhedged_usd=clamped.max_unhedged_usd,
         max_unhedged_secs=clamped.max_unhedged_secs,
         max_daily_loss_usd=clamped.max_daily_loss_usd,
         max_consecutive_unhedged=_int_val(risk_raw.get("max_consecutive_unhedged", 3), "risk.max_consecutive_unhedged", 1, 20),
         stop_loss_cooldown_hours=_int_val(risk_raw.get("stop_loss_cooldown_hours", 24), "risk.stop_loss_cooldown_hours", 0, 168),
+        margin_guard_cooldown_hours=mg_cd_h,
         max_qty_mismatch_pct=exact_decimal(risk_raw.get("max_qty_mismatch_pct", "2.0"), "risk.max_qty_mismatch_pct", positive=True),
         reconcile_tolerance_pct=exact_decimal(risk_raw.get("reconcile_tolerance_pct", "2.0"), "risk.reconcile_tolerance_pct", positive=True),
     )
@@ -377,6 +428,7 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
             "watch_top_k", "unsubscribe_hysteresis_secs", "maker_requote_secs", "maker_max_attempts",
             "hedge_ioc_slippage_bps", "update_instruments_interval_mins", "duration_secs",
             "record_dir", "bbo_record_interval_secs", "watch_fill_min_carry_bps_h",
+            "max_close_cross_spread_bps", "close_vacuum_defer_max_secs",
         },
         "runtime",
     )
@@ -396,6 +448,21 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         record_dir = None
     else:
         record_dir = (path.parent / rd_raw).resolve() if not Path(rd_raw).is_absolute() else Path(rd_raw)
+    max_close_sp = exact_decimal(
+        rt_raw.get("max_close_cross_spread_bps", "0"),
+        "runtime.max_close_cross_spread_bps",
+        nonnegative=True,
+    )
+    vacuum_max_s = _int_val(
+        rt_raw.get("close_vacuum_defer_max_secs", 0),
+        "runtime.close_vacuum_defer_max_secs",
+        0,
+        600,
+    )
+    if (max_close_sp > 0) != (vacuum_max_s > 0):
+        raise CarryConfigError(
+            "runtime.max_close_cross_spread_bps and runtime.close_vacuum_defer_max_secs must both be > 0 or both be 0"
+        )
     runtime = CarryRuntimePolicy(
         slow_poll_secs=_int_val(rt_raw.get("slow_poll_secs", 60), "runtime.slow_poll_secs", 10, 600),
         fast_risk_poll_secs=_int_val(rt_raw.get("fast_risk_poll_secs", 1), "runtime.fast_risk_poll_secs", 1, 10),
@@ -411,6 +478,8 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         record_dir=record_dir,
         bbo_record_interval_secs=_int_val(rt_raw.get("bbo_record_interval_secs", 1), "runtime.bbo_record_interval_secs", 1, 60),
         watch_fill_min_carry_bps_h=watch_fill_min,
+        max_close_cross_spread_bps=max_close_sp,
+        close_vacuum_defer_max_secs=vacuum_max_s,
     )
 
     return CarryPlan(

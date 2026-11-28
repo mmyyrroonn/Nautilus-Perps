@@ -183,7 +183,7 @@ def test_four_venue_fingerprint_invariance_and_bitget_config(tmp_path: Path) -> 
     if os.name != "nt":
         assert (
             replace(paper_plan, state_path=Path("/Volumes/Expansion/perpsarb/Nautilus-Perps/reports/carry/paper.sqlite3")).fingerprint()
-            == "8247c775c8ac8598f85d92bcc74bfeca8cbac36113e758aa8f70d5b3761ba49e"
+            == "8a000727ac1d0ca2f466ac61c3237c20837bfe2557490b02cffa9542427b7481"
         )
         assert (
             replace(live_plan, state_path=Path("/Volumes/Expansion/perpsarb/Nautilus-Perps/reports/carry/live.sqlite3")).fingerprint()
