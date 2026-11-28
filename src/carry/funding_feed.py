@@ -250,7 +250,12 @@ def parse_lighter_snapshots(
 
 
 def parse_bybit_tickers(
-    tickers_payload: Any, intervals_by_raw: dict[str, int] | None = None, *, now_s: int = 0
+    tickers_payload: Any,
+    intervals_by_raw: dict[str, int] | None = None,
+    *,
+    now_s: int = 0,
+    explicit_iv_out: set[str] | None = None,
+    explicit_nxt_out: set[str] | None = None,
 ) -> dict[str, LegMarketInfo]:
     """Normalize Bybit /v5/market/tickers?category=linear."""
     rows = tickers_payload.get("result", {}).get("list", []) if isinstance(tickers_payload, dict) else []
@@ -266,10 +271,22 @@ def parse_bybit_tickers(
         ask = float(r.get("ask1Price") or mark or 0.0)
         if mark <= 0 or bid <= 0 or ask <= 0:
             continue
-        iv = int(r.get("fundingIntervalHour") or iv_map.get(raw) or 8)
+        raw_iv = r.get("fundingIntervalHour")
+        if raw_iv not in (None, ""):
+            iv = max(1, int(raw_iv))
+            if explicit_iv_out is not None:
+                explicit_iv_out.add(raw)
+        elif raw in iv_map:
+            iv = max(1, int(iv_map[raw]))
+            if explicit_iv_out is not None:
+                explicit_iv_out.add(raw)
+        else:
+            iv = 8
         fr_raw = r.get("fundingRate")
         rate_bps_h = (float(fr_raw) * 1e4 / max(1, iv)) if fr_raw not in (None, "") else None
         nxt_ms = int(r.get("nextFundingTime") or 0)
+        if nxt_ms > 0 and explicit_nxt_out is not None:
+            explicit_nxt_out.add(raw)
         prev_1h = float(r["prevPrice1h"]) if r.get("prevPrice1h") not in (None, "") else None
         vol24 = float(r.get("turnover24h") or 0.0)
         out[sym] = LegMarketInfo(
@@ -563,6 +580,8 @@ class PublicCarryFeed:
         self._bitget_meta_lock = threading.Lock()
         self._detail_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._last_detail_attempt_ts: dict[str, int] = {}
+        self._byb_explicit_iv_raw: set[str] = set()
+        self._byb_explicit_nxt_raw: set[str] = set()
         self.last_venue_errors: dict[str, str] = {}
 
     def bitget_instrument_specs(self) -> dict[str, InstrumentSpec]:
@@ -642,6 +661,23 @@ class PublicCarryFeed:
         cached = self._detail_cache.get((venue, symbol))
         return cached is not None and now_s - cached["fetched_ts"] < 300
 
+    def _bybit_has_explicit_interval(self, leg: LegMarketInfo) -> bool:
+        return (
+            leg.raw_symbol in self._byb_explicit_iv_raw
+            or leg.raw_symbol in self._byb_iv_cache
+            or leg.interval_h != 8
+        )
+
+    @staticmethod
+    def _advance_cached_settle_ts(cached_nxt: int, fetched_ts: int, iv_h: int) -> int:
+        step_s = max(1, int(iv_h)) * HOUR
+        if cached_nxt > 0:
+            if fetched_ts <= 0 or cached_nxt > fetched_ts:
+                return int(cached_nxt)
+            steps_past = ((int(fetched_ts) - int(cached_nxt)) // step_s) + 1
+            return int(cached_nxt) + steps_past * step_s
+        return next_hourly_settle_ts(fetched_ts, max(1, int(iv_h))) if fetched_ts > 0 else 0
+
     def _apply_cached_detail(
         self,
         leg: LegMarketInfo,
@@ -650,16 +686,43 @@ class PublicCarryFeed:
         okx_bulk_funding: Mapping[str, tuple[float | None, int | None, int | None]] | None = None,
     ) -> LegMarketInfo:
         r8, r24, iv = cached["r8"], cached["r24"], cached["iv"]
-        nxt = cached.get("next_settle_ts") or leg.next_settle_ts
+        cached_nxt = int(cached.get("next_settle_ts") or 0)
+        nxt = cached_nxt or leg.next_settle_ts
         cur_rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else cached.get("current_rate_bps_h")
-        if leg.venue == "OKX" and okx_bulk_funding and leg.raw_symbol in okx_bulk_funding:
-            b_raw_fr, b_live_iv, b_nxt = okx_bulk_funding[leg.raw_symbol]
-            if b_live_iv is not None:
-                iv = b_live_iv
-            if b_nxt is not None:
-                nxt = b_nxt
-            if b_raw_fr is not None:
-                cur_rate = b_raw_fr * 1e4 / max(1, iv)
+        if leg.venue in ("HL", "LIGHTER"):
+            iv = 1
+            if leg.next_settle_ts > 0 and (leg.fetched_ts <= 0 or leg.next_settle_ts > leg.fetched_ts):
+                nxt = leg.next_settle_ts
+            elif leg.fetched_ts > 0 and nxt <= leg.fetched_ts:
+                nxt = next_hourly_settle_ts(leg.fetched_ts, 1)
+        elif leg.venue == "BYBIT":
+            cached_iv = max(1, int(iv))
+            if self._bybit_has_explicit_interval(leg):
+                iv = max(1, int(leg.interval_h))
+                if leg.current_rate_bps_h is None and cached_iv != iv:
+                    cur_rate = None
+            elif leg.current_rate_bps_h is not None and cached_iv != leg.interval_h:
+                cur_rate = leg.current_rate_bps_h * float(leg.interval_h) / float(cached_iv)
+            has_explicit_nxt = leg.raw_symbol in self._byb_explicit_nxt_raw
+            if has_explicit_nxt and leg.next_settle_ts > 0 and (leg.fetched_ts <= 0 or leg.next_settle_ts > leg.fetched_ts):
+                nxt = leg.next_settle_ts
+            elif cached_nxt > 0 and cached_iv == max(1, int(iv)):
+                nxt = self._advance_cached_settle_ts(cached_nxt, leg.fetched_ts, max(1, int(iv)))
+            elif leg.next_settle_ts > 0 and (leg.fetched_ts <= 0 or leg.next_settle_ts > leg.fetched_ts):
+                nxt = leg.next_settle_ts
+            elif leg.fetched_ts > 0:
+                nxt = next_hourly_settle_ts(leg.fetched_ts, max(1, int(iv)))
+        elif leg.venue == "OKX":
+            if okx_bulk_funding and leg.raw_symbol in okx_bulk_funding:
+                b_raw_fr, b_live_iv, b_nxt = okx_bulk_funding[leg.raw_symbol]
+                if b_live_iv is not None:
+                    iv = b_live_iv
+                if b_nxt is not None:
+                    nxt = b_nxt
+                if b_raw_fr is not None:
+                    cur_rate = b_raw_fr * 1e4 / max(1, iv)
+            elif cached_nxt > 0 and leg.fetched_ts > 0 and cached_nxt <= leg.fetched_ts:
+                nxt = self._advance_cached_settle_ts(cached_nxt, leg.fetched_ts, max(1, int(iv)))
         elif leg.venue == "BITGET":
             if leg.interval_h > 0:
                 iv = leg.interval_h
@@ -696,6 +759,7 @@ class PublicCarryFeed:
         raw_fr: float | None = None
 
         if leg.venue == "HL":
+            live_iv = 1
             rows = self._request(
                 self._hl_info_url,
                 {"type": "fundingHistory", "coin": leg.raw_symbol, "startTime": start_s * 1000, "endTime": now_s * 1000},
@@ -722,6 +786,7 @@ class PublicCarryFeed:
                 vol1h = float(crows[0]["v"]) * float(crows[0]["c"])
 
         elif leg.venue == "LIGHTER" and leg.market_id is not None:
+            live_iv = 1
             fp = self._request(
                 f"{self._lighter_base}/api/v1/fundings?market_id={leg.market_id}&resolution=1h&start_timestamp={start_s}&end_timestamp={now_s}&count_back=40",
                 None,
@@ -782,6 +847,8 @@ class PublicCarryFeed:
                     prev_1h = float(cd[-2][4])
 
         elif leg.venue == "BYBIT":
+            if self._bybit_has_explicit_interval(leg):
+                live_iv = max(1, int(leg.interval_h))
             q = urllib.parse.quote(leg.raw_symbol)
             fh = (
                 self._request(
@@ -840,6 +907,8 @@ class PublicCarryFeed:
         r8, r24, iv = compute_trailing_rates(settle_events, now_s, live_iv or leg.interval_h)
         if live_iv is not None:
             iv = live_iv
+        elif leg.venue == "BYBIT" and cur_rate_bps_h is not None and iv > 0 and iv != leg.interval_h:
+            cur_rate_bps_h = cur_rate_bps_h * float(leg.interval_h) / float(iv)
         if leg.venue == "OKX" and raw_fr is not None:
             cur_rate_bps_h = raw_fr * 1e4 / max(1, iv)
         sorted_settles = tuple(sorted({int(ts): float(val) for ts, val in settle_events}.items()))
@@ -946,7 +1015,19 @@ class PublicCarryFeed:
         if "BYBIT" in self.venues:
             try:
                 tk = self._request(f"{self._bybit_base}/v5/market/tickers?category=linear", None)
-                _merge(parse_bybit_tickers(tk, self._byb_iv_cache, now_s=ts))
+                byb_explicit_iv: set[str] = set()
+                byb_explicit_nxt: set[str] = set()
+                _merge(
+                    parse_bybit_tickers(
+                        tk,
+                        self._byb_iv_cache,
+                        now_s=ts,
+                        explicit_iv_out=byb_explicit_iv,
+                        explicit_nxt_out=byb_explicit_nxt,
+                    )
+                )
+                self._byb_explicit_iv_raw = byb_explicit_iv
+                self._byb_explicit_nxt_raw = byb_explicit_nxt
                 succeeded_venues.append("BYBIT")
             except Exception as exc:
                 venue_errors["BYBIT"] = f"{type(exc).__name__}: {exc}"

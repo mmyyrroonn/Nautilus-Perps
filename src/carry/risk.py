@@ -155,11 +155,8 @@ class FastRiskEvaluator:
                 and entry_s > 0
                 and ((mid_s - entry_s) / entry_s) >= mg_ratio
             )
-            if long_breach or short_breach:
-                to_close.append((pid, f"margin_guard_{int(self.policy.margin_guard_pct)}pct"))
-                continue
 
-            # Unhedged delta check: USD exposure cap or significant percentage leg imbalance
+            # Unhedged delta check runs independently so margin_guard never masks halt timers
             long_base = Decimal(str(pos.get("long_base_qty", "0")))
             short_base = Decimal(str(pos.get("short_base_qty", "0")))
             ref_px = Decimal(str(mid_l or mid_s or entry_l or entry_s or 0))
@@ -171,13 +168,19 @@ class FastRiskEvaluator:
                 and unhedged_usd > Decimal("0")
                 and (diff_base / hi_base * Decimal("100")) > self.policy.max_qty_mismatch_pct
             )
+            unhedged_killed = False
             if unhedged_usd > self.policy.max_unhedged_usd or qty_imbalanced:
                 since = self._unhedged_since.setdefault(pid, now_s)
                 if now_s - since >= self.policy.max_unhedged_secs:
-                    to_close.append((pid, "unhedged_timeout_kill"))
-                    halt = True
-                    halt_reason = "unhedged_timeout_kill"
+                    unhedged_killed = True
             else:
                 self._unhedged_since.pop(pid, None)
+
+            if unhedged_killed:
+                to_close.append((pid, "unhedged_timeout_kill"))
+                halt = True
+                halt_reason = "unhedged_timeout_kill"
+            elif long_breach or short_breach:
+                to_close.append((pid, f"margin_guard_{int(self.policy.margin_guard_pct)}pct"))
 
         return FastRiskDecision(close_positions=tuple(to_close), halt_system=halt, halt_reason=halt_reason)

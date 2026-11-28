@@ -206,6 +206,16 @@ def _cex_entry_blackout_hit(leg_l: LegMarketInfo, leg_s: LegMarketInfo, policy: 
     return False
 
 
+def _first_future_settle_ts(next_settle_ts: int, iv_h: int, now_s: int) -> int:
+    step_s = max(1, int(iv_h)) * 3600
+    if next_settle_ts > now_s:
+        return int(next_settle_ts)
+    if next_settle_ts > 0:
+        steps_past = ((int(now_s) - int(next_settle_ts)) // step_s) + 1
+        return int(next_settle_ts) + steps_past * step_s
+    return ((int(now_s) // step_s) + 1) * step_s
+
+
 def estimate_first_settle_entry_tax_bps(leg_l: LegMarketInfo, leg_s: LegMarketInfo, now_s: int) -> float:
     """Estimate adverse first-settlement cashflow imbalance ('entry tax') across differing/mid-cycle intervals."""
     max_tax = 0.0
@@ -227,13 +237,7 @@ def estimate_first_settle_entry_tax_bps(leg_l: LegMarketInfo, leg_s: LegMarketIn
         pay_lump_bps = abs(float(pay_rate)) * float(pay_iv)
         other_iv = max(1, int(other_leg.interval_h))
         other_step_s = other_iv * 3600
-        if other_leg.next_settle_ts > now_s:
-            first_other_ts = int(other_leg.next_settle_ts)
-        elif other_leg.next_settle_ts > 0:
-            steps_past = ((now_s - int(other_leg.next_settle_ts)) // other_step_s) + 1
-            first_other_ts = int(other_leg.next_settle_ts) + steps_past * other_step_s
-        else:
-            first_other_ts = ((int(now_s) // other_step_s) + 1) * other_step_s
+        first_other_ts = _first_future_settle_ts(int(other_leg.next_settle_ts), other_iv, int(now_s))
 
         n_other = (
             0
@@ -251,6 +255,34 @@ def estimate_first_settle_entry_tax_bps(leg_l: LegMarketInfo, leg_s: LegMarketIn
     return max_tax
 
 
+def estimate_min_hold_window_net_funding_bps(
+    leg_l: LegMarketInfo,
+    leg_s: LegMarketInfo,
+    now_s: int,
+    min_hold_h: int,
+) -> tuple[float, bool]:
+    """Compute merged signed funding in (now_s, now_s + min_hold_h] and flag post-horizon receiving leg."""
+    rate_l = leg_l.current_rate_bps_h if leg_l.current_rate_bps_h is not None else leg_l.r8_bps_h
+    rate_s = leg_s.current_rate_bps_h if leg_s.current_rate_bps_h is not None else leg_s.r8_bps_h
+    if rate_l is None or rate_s is None:
+        return 0.0, False
+
+    horizon_ts = int(now_s) + max(1, int(min_hold_h)) * 3600
+    window_net_bps = 0.0
+    recv_after_horizon = False
+    for leg, is_long, rate in ((leg_l, True, float(rate_l)), (leg_s, False, float(rate_s))):
+        iv = max(1, int(leg.interval_h))
+        step_s = iv * 3600
+        first_ts = _first_future_settle_ts(int(leg.next_settle_ts), iv, int(now_s))
+        is_receiving = (rate < 0.0) if is_long else (rate > 0.0)
+        if is_receiving and first_ts > horizon_ts:
+            recv_after_horizon = True
+        n_settle = 0 if first_ts > horizon_ts else (1 + (horizon_ts - first_ts) // step_s)
+        signed_bps_h = (-rate) if is_long else rate
+        window_net_bps += float(n_settle) * signed_bps_h * float(iv)
+    return window_net_bps, recv_after_horizon
+
+
 def evaluate_entry_candidates(
     snapshot: Mapping[str, Mapping[str, LegMarketInfo]],
     *,
@@ -261,6 +293,7 @@ def evaluate_entry_candidates(
     risk: CarryRiskPolicy,
     now_s: int,
     respect_capacity: bool = True,
+    vetoed_window_pairs_out: list[tuple[LegMarketInfo, LegMarketInfo]] | None = None,
 ) -> list[EntryCandidate]:
     """Evaluate all ordered multi-venue pairs deterministically and rank by net carry score."""
     if respect_capacity:
@@ -321,6 +354,13 @@ def evaluate_entry_candidates(
                         continue
                     entry_tax_bps = estimate_first_settle_entry_tax_bps(leg_l, leg_s, now_s)
                     if entry_tax_bps > 0.0 and min(c8, c24) * policy.min_hold_h <= entry_tax_bps:
+                        continue
+                    win_net_bps, recv_after_h = estimate_min_hold_window_net_funding_bps(
+                        leg_l, leg_s, now_s, policy.min_hold_h
+                    )
+                    if recv_after_h and win_net_bps < 0.0 and (-win_net_bps) >= min(c8, c24) * policy.min_hold_h - 1e-12:
+                        if vetoed_window_pairs_out is not None:
+                            vetoed_window_pairs_out.append((leg_l, leg_s))
                         continue
                     rt_cost = float(policy.fee_pair_rt_bps(lv, sv))
                     score = min(c8, c24) - (rt_cost + entry_tax_bps) / 24.0

@@ -221,6 +221,9 @@ class _SimPosition:
     slice_attempts: int = 0
     close_reason: str | None = None
     closed_ts: int | None = None
+    entry_pay_leg_cr_bps_h: float | None = None
+    entry_c_live_bps_h: float | None = None
+    entry_would_block_d: bool = False
 
     def as_risk_row(self) -> dict[str, Any]:
         return {
@@ -298,6 +301,11 @@ def replay_tape(
         "fast_records": 0,
         "truncated_files": 0,
         "skipped_lines": 0,
+    }
+    diagnostics: dict[str, int] = {
+        "candidates_passed": 0,
+        "candidates_would_block_d": 0,
+        "vetoed_window_recv_within_h_plus_defer": 0,
     }
 
     live_quotes: dict[str, tuple[float, float, float]] = {}
@@ -412,6 +420,9 @@ def replay_tape(
                 "fee_usd": str(fee_q),
                 "net_pnl_usd": str(net_q),
                 "close_reason": reason,
+                "entry_pay_leg_cr_bps_h": pos.entry_pay_leg_cr_bps_h,
+                "entry_c_live_bps_h": pos.entry_c_live_bps_h,
+                "entry_would_block_d": pos.entry_would_block_d,
             }
         )
 
@@ -457,13 +468,34 @@ def replay_tape(
         ts_s: int,
     ) -> bool:
         nonlocal maker_orders_submitted, taker_orders_submitted
-        mid_l = Decimal(str(0.5 * (bbo_l[0] + bbo_l[1])))
-        mid_s = Decimal(str(0.5 * (bbo_s[0] + bbo_s[1])))
-        mid = Decimal("0.5") * (mid_l + mid_s)
+        bid_l_dec = Decimal(str(bbo_l[0]))
+        ask_l_dec = Decimal(str(bbo_l[1]))
+        bid_s_dec = Decimal(str(bbo_s[0]))
+        ask_s_dec = Decimal(str(bbo_s[1]))
+        mid_l = (bid_l_dec + ask_l_dec) / Decimal("2")
+        mid_s = (bid_s_dec + ask_s_dec) / Decimal("2")
+        mid = (mid_l + mid_s) / Decimal("2")
         if mid <= 0:
             return False
 
         if is_opening:
+            if (
+                bid_l_dec <= 0
+                or ask_l_dec < bid_l_dec
+                or bid_s_dec <= 0
+                or ask_s_dec < bid_s_dec
+                or mid_l <= 0
+                or mid_s <= 0
+            ):
+                return False
+            ratio = mid_s / mid_l
+            dev = effective_policy.max_price_ratio_deviation
+            if ratio < Decimal("1") - dev or ratio > Decimal("1") + dev:
+                return False
+            sp_l = (ask_l_dec - bid_l_dec) / mid_l * Decimal("10000")
+            sp_s = (ask_s_dec - bid_s_dec) / mid_s * Decimal("10000")
+            if sp_l > effective_policy.max_leg_spread_bps or sp_s > effective_policy.max_leg_spread_bps:
+                return False
             rem_base = pos.target_base_qty - min(pos.long_base_qty, pos.short_base_qty)
             slice_usd = min(risk.slice_usd, rem_base * mid)
             if slice_usd <= 0:
@@ -815,6 +847,7 @@ def replay_tape(
             venue_used[p.short_venue] = venue_used.get(p.short_venue, Decimal("0")) + risk.leg_notional_usd
         cooldown_syms = {sym for sym, until in cooldown_until_by_sym.items() if ts_s < until}
 
+        vetoed_window_pairs: list[tuple[LegMarketInfo, LegMarketInfo]] = []
         candidates = evaluate_entry_candidates(
             snap,
             open_symbols=open_syms,
@@ -824,8 +857,50 @@ def replay_tape(
             risk=risk,
             now_s=ts_s,
             respect_capacity=True,
+            vetoed_window_pairs_out=vetoed_window_pairs,
         )
+        defer_pad_s = int(effective_policy.cex_exit_defer_before_settle_mins) * 60
+        if defer_pad_s > 0 and vetoed_window_pairs:
+            horizon_s = ts_s + int(effective_policy.min_hold_h) * _HOUR_SECS
+            for ll_d, ls_d in vetoed_window_pairs:
+                rl = ll_d.current_rate_bps_h if ll_d.current_rate_bps_h is not None else ll_d.r8_bps_h
+                rs = ls_d.current_rate_bps_h if ls_d.current_rate_bps_h is not None else ls_d.r8_bps_h
+                near_recv = any(
+                    rate is not None
+                    and ((float(rate) < 0.0) if is_l else (float(rate) > 0.0))
+                    and horizon_s < int(lg.next_settle_ts) <= horizon_s + defer_pad_s
+                    for lg, is_l, rate in ((ll_d, True, rl), (ls_d, False, rs))
+                )
+                if near_recv:
+                    diagnostics["vetoed_window_recv_within_h_plus_defer"] += 1
+
         for cand in candidates:
+            cr_l = cand.long_leg.current_rate_bps_h
+            cr_s = cand.short_leg.current_rate_bps_h
+            pay_leg_cr = (
+                (max(0.0, float(cr_l)) + max(0.0, -float(cr_s)))
+                if (cr_l is not None and cr_s is not None)
+                else None
+            )
+            would_block_d = bool(
+                pay_leg_cr is not None and pay_leg_cr >= 8.0 and cand.net_score_bps_h < 0.25 * pay_leg_cr
+            )
+            diagnostics["candidates_passed"] += 1
+            if would_block_d:
+                diagnostics["candidates_would_block_d"] += 1
+
+        for cand in candidates:
+            cr_l = cand.long_leg.current_rate_bps_h
+            cr_s = cand.short_leg.current_rate_bps_h
+            pay_leg_cr = (
+                (max(0.0, float(cr_l)) + max(0.0, -float(cr_s)))
+                if (cr_l is not None and cr_s is not None)
+                else None
+            )
+            c_live_entry = (float(cr_s) - float(cr_l)) if (cr_l is not None and cr_s is not None) else None
+            would_block_d = bool(
+                pay_leg_cr is not None and pay_leg_cr >= 8.0 and cand.net_score_bps_h < 0.25 * pay_leg_cr
+            )
             bbo_l = _fresh_bbo(cand.long_leg.instrument_id, ts) or (cand.long_leg.bid, cand.long_leg.ask)
             bbo_s = _fresh_bbo(cand.short_leg.instrument_id, ts) or (cand.short_leg.bid, cand.short_leg.ask)
             live_quotes[cand.long_leg.instrument_id] = (bbo_l[0], bbo_l[1], ts)
@@ -850,6 +925,9 @@ def replay_tape(
                 entry_s=cand.short_leg.mid,
                 entry_basis_bps=cand.basis_bps,
                 target_base_qty=target_qty,
+                entry_pay_leg_cr_bps_h=round(pay_leg_cr, 4) if pay_leg_cr is not None else None,
+                entry_c_live_bps_h=round(c_live_entry, 4) if c_live_entry is not None else None,
+                entry_would_block_d=would_block_d,
             )
             active_positions[pid] = pos
             if not _submit_slice(pos, is_opening=True, bbo_l=bbo_l, bbo_s=bbo_s, ts_s=ts_s):
@@ -977,6 +1055,7 @@ def replay_tape(
         "by_venue_pair": _serialize_group(by_pair),
         "by_close_reason": _serialize_group(by_reason),
         "tape_stats": stats,
+        "diagnostics": diagnostics,
         "open_positions": open_out,
         "trades": closed_trades,
     }
