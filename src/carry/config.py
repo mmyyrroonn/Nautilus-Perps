@@ -7,15 +7,19 @@ import hashlib
 import json
 from pathlib import Path
 import tomllib
+from typing import Mapping, Sequence
 
 from .limits import LimitValidationError, clamp_limits, exact_decimal
 
-SUPPORTED_VENUES = frozenset({"HL", "LIGHTER", "OKX", "BYBIT"})
+SUPPORTED_VENUES = frozenset({"HL", "LIGHTER", "OKX", "BYBIT", "BITGET"})
 DEX_VENUES = frozenset({"HL", "LIGHTER"})
-CEX_VENUES = frozenset({"OKX", "BYBIT"})
-ROUTE_SCOPES = frozenset({"ALL_4V", "DEX_CEX_ONLY", "DEX_ONLY", "CEX_ONLY"})
+CEX_VENUES = frozenset({"OKX", "BYBIT", "BITGET"})
+ROUTE_SCOPES = frozenset({"ALL", "ALL_4V", "DEX_CEX_ONLY", "DEX_ONLY", "CEX_ONLY"})
 ASSET_CLASSES = frozenset({"CRYPTO", "RWA"})
 MODES = frozenset({"paper", "readonly", "live"})
+
+_EXTRA_DEFAULT_MAKER_FEE_BPS: dict[str, Decimal] = {"BITGET": Decimal("2.0")}
+_EXTRA_DEFAULT_TAKER_FEE_BPS: dict[str, Decimal] = {"BITGET": Decimal("6.0")}
 
 
 class CarryConfigError(ValueError):
@@ -73,8 +77,8 @@ class CarryPolicy:
     )
 
     def fee_pair_rt_bps(self, v_long: str, v_short: str) -> Decimal:
-        mk = dict(self.maker_fee_bps_by_venue)
-        tk = dict(self.taker_fee_bps_by_venue)
+        mk = {**_EXTRA_DEFAULT_MAKER_FEE_BPS, **dict(self.maker_fee_bps_by_venue)}
+        tk = {**_EXTRA_DEFAULT_TAKER_FEE_BPS, **dict(self.taker_fee_bps_by_venue)}
         is_l_dex = v_long in DEX_VENUES
         is_s_dex = v_short in DEX_VENUES
         if is_l_dex and is_s_dex:
@@ -182,8 +186,19 @@ class CarryPlan:
         return self._fingerprint_payload(include_domain=False)
 
 
-def _parse_fee_map(raw: object, name: str, defaults: tuple[tuple[str, Decimal], ...]) -> tuple[tuple[str, Decimal], ...]:
+def _parse_fee_map(
+    raw: object,
+    name: str,
+    defaults: tuple[tuple[str, Decimal], ...],
+    *,
+    extra_defaults: Mapping[str, Decimal] | None = None,
+    active_venues: Sequence[str] = (),
+) -> tuple[tuple[str, Decimal], ...]:
     merged = dict(defaults)
+    if extra_defaults:
+        for venue in active_venues:
+            if venue in extra_defaults and venue not in merged:
+                merged[venue] = extra_defaults[venue]
     if raw is not None:
         if not isinstance(raw, dict):
             raise CarryConfigError(f"{name} must be a table")
@@ -320,8 +335,20 @@ def load_carry_plan(config_path: Path) -> CarryPlan:
         max_1h_split_divergence=exact_decimal(pol_raw.get("max_1h_split_divergence", "0.15"), "policy.max_1h_split_divergence", positive=True),
         cex_entry_blackout_before_settle_mins=_int_val(pol_raw.get("cex_entry_blackout_before_settle_mins", 30), "policy.cex_entry_blackout_before_settle_mins", 0, 120),
         cex_exit_defer_before_settle_mins=_int_val(pol_raw.get("cex_exit_defer_before_settle_mins", 20), "policy.cex_exit_defer_before_settle_mins", 0, 120),
-        maker_fee_bps_by_venue=_parse_fee_map(pol_raw.get("maker_fee_bps_by_venue"), "policy.maker_fee_bps_by_venue", CarryPolicy.maker_fee_bps_by_venue),
-        taker_fee_bps_by_venue=_parse_fee_map(pol_raw.get("taker_fee_bps_by_venue"), "policy.taker_fee_bps_by_venue", CarryPolicy.taker_fee_bps_by_venue),
+        maker_fee_bps_by_venue=_parse_fee_map(
+            pol_raw.get("maker_fee_bps_by_venue"),
+            "policy.maker_fee_bps_by_venue",
+            CarryPolicy.maker_fee_bps_by_venue,
+            extra_defaults=_EXTRA_DEFAULT_MAKER_FEE_BPS,
+            active_venues=venues_norm,
+        ),
+        taker_fee_bps_by_venue=_parse_fee_map(
+            pol_raw.get("taker_fee_bps_by_venue"),
+            "policy.taker_fee_bps_by_venue",
+            CarryPolicy.taker_fee_bps_by_venue,
+            extra_defaults=_EXTRA_DEFAULT_TAKER_FEE_BPS,
+            active_venues=venues_norm,
+        ),
     )
 
     risk = CarryRiskPolicy(

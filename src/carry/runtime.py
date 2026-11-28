@@ -17,6 +17,12 @@ from typing import Any, Mapping
 import uuid
 
 from .account_reader import CarryStartupAccountReader, StartupSnapshotError
+from .bitget_gateway import (
+    BitgetPreflightError,
+    BitgetPublicQuoteFeed,
+    BitgetVenueGateway,
+    RoutingVenueGateway,
+)
 from .config import CarryPlan, CarryPolicy, ledger_domain_for_mode
 from .executor import CarryExecutionController, OrderAck, PaperVenueGateway
 from .funding_feed import LegMarketInfo, PublicCarryFeed
@@ -43,8 +49,7 @@ class _SlowPollResult:
     partial_errors: tuple[tuple[str, str], ...] = ()
 
 
-def _resolve_quote_event_ts(tick: Any, now_s: float) -> float:
-    raw_ns = getattr(tick, "ts_event", None)
+def _resolve_quote_event_ts_ns(raw_ns: Any, now_s: float) -> float:
     if raw_ns is None:
         return now_s
     try:
@@ -54,6 +59,10 @@ def _resolve_quote_event_ts(tick: Any, now_s: float) -> float:
     if not math.isfinite(ev_s):
         return 0.0
     return min(now_s, ev_s)
+
+
+def _resolve_quote_event_ts(tick: Any, now_s: float) -> float:
+    return _resolve_quote_event_ts_ns(getattr(tick, "ts_event", None), now_s)
 
 
 def _extract_money_decimal(raw: Any) -> Decimal:
@@ -279,6 +288,8 @@ def build_data_clients(plan: CarryPlan) -> list[tuple[str, Any, Any]]:
                     update_instruments_interval_mins=iv_mins,
                 ),
             ))
+        elif venue == "BITGET":
+            continue
         else:
             raise ValueError(f"unsupported venue {venue}")
     return clients
@@ -373,6 +384,8 @@ def build_execution_clients(plan: CarryPlan, *, environ: Mapping[str, str] | Non
                     margin_mode=BybitMarginMode.REGULAR_MARGIN,
                 ),
             ))
+        elif venue == "BITGET":
+            continue
     return clients
 
 
@@ -384,6 +397,8 @@ def _create_carry_strategy(
     recorder: CarryRecorder | None = None,
     environ: Mapping[str, str] | None = None,
     account_reader: CarryStartupAccountReader | None = None,
+    bitget_quote_feed: BitgetPublicQuoteFeed | None = None,
+    bitget_gateway: BitgetVenueGateway | None = None,
 ):
     from nautilus_trader.model import InstrumentId
     from nautilus_trader.trading import Strategy, StrategyConfig
@@ -395,6 +410,7 @@ def _create_carry_strategy(
             self.ledger = ledger
             self.mode = mode
             self.recorder = recorder
+            self.has_bitget = "BITGET" in plan.venues
             self.account_reader = (
                 account_reader
                 if account_reader is not None
@@ -411,8 +427,26 @@ def _create_carry_strategy(
                 max_gap_secs=max(30, plan.runtime.slow_poll_secs + 15),
             )
             self.fast_risk = FastRiskEvaluator(plan.risk)
+            self.bitget_quote_feed: BitgetPublicQuoteFeed | None = (
+                bitget_quote_feed
+                if bitget_quote_feed is not None
+                else (BitgetPublicQuoteFeed(environment=plan.environment) if self.has_bitget else None)
+            )
+            self.bitget_gateway: BitgetVenueGateway | None = (
+                bitget_gateway
+                if bitget_gateway is not None
+                else (BitgetVenueGateway(environment=plan.environment, environ=environ) if (self.has_bitget and mode == "live") else None)
+            )
             self.paper_gateway = PaperVenueGateway(fill_maker_immediately=False, use_realistic_bbo=True) if mode == "paper" else None
-            self.gateway = self.paper_gateway if self.paper_gateway is not None else _NautilusStrategyGateway(self)
+            if self.paper_gateway is not None:
+                self.gateway = self.paper_gateway
+            elif self.bitget_gateway is not None:
+                self.gateway = RoutingVenueGateway(
+                    native_gateway=_NautilusStrategyGateway(self),
+                    bitget_gateway=self.bitget_gateway,
+                )
+            else:
+                self.gateway = _NautilusStrategyGateway(self)
             self.controller = CarryExecutionController(
                 ledger=ledger,
                 gateway=self.gateway,
@@ -450,6 +484,20 @@ def _create_carry_strategy(
                 self._slow_poll_executor = None
             if executor is not None:
                 executor.shutdown(wait=(wait or not inflight), cancel_futures=True)
+
+        def close_external_gateways(self, *, timeout: float = 2.0) -> None:
+            bitget_feed = getattr(self, "bitget_quote_feed", None)
+            if bitget_feed is not None:
+                try:
+                    bitget_feed.stop(timeout=timeout)
+                except Exception:
+                    pass
+            bitget_gw = getattr(self, "bitget_gateway", None)
+            if bitget_gw is not None:
+                try:
+                    bitget_gw.stop(timeout=timeout)
+                except Exception:
+                    pass
 
         def _can_trade(self) -> bool:
             if self.mode not in ("paper", "live") or not self.reconciled:
@@ -513,12 +561,21 @@ def _create_carry_strategy(
 
         def on_stop(self) -> None:
             now_s = int(time.time())
+            try:
+                self.clock.cancel_timer("carry_external_drain")
+            except Exception:
+                pass
+            try:
+                self._drain_external_events()
+            except Exception:
+                pass
             if self._can_trade():
                 canceled = self.controller.begin_shutdown(now_s=now_s, live_mids=self.live_mids, live_quotes=self.live_quotes)
             else:
                 self.controller._stopping = True
                 canceled = []
             self.close_slow_poller(wait=False)
+            self.close_external_gateways(timeout=2.0)
             try:
                 self.log.info(
                     f"[carry] on_stop canceled_makers={len(canceled)} open_positions={len(self.ledger.active_positions())}"
@@ -529,6 +586,18 @@ def _create_carry_strategy(
         def on_start(self) -> None:
             if not self.reconciled:
                 self._reconcile_on_start()
+            bitget_feed = getattr(self, "bitget_quote_feed", None)
+            if bitget_feed is not None:
+                bitget_feed.start()
+            bitget_gw = getattr(self, "bitget_gateway", None)
+            if bitget_gw is not None and self._can_trade():
+                bitget_gw.start()
+            if bitget_feed is not None or bitget_gw is not None:
+                self.clock.set_timer(
+                    "carry_external_drain",
+                    timedelta(milliseconds=50),
+                    callback=self._drain_external_events,
+                )
             self.clock.set_timer(
                 "carry_fast_risk",
                 timedelta(seconds=self.plan.runtime.fast_risk_poll_secs),
@@ -547,13 +616,84 @@ def _create_carry_strategy(
             # Run initial slow discovery immediately so dynamic subscriptions start right away
             self._on_slow_timer(None)
 
-        def on_quote(self, tick: Any) -> None:
-            iid = str(tick.instrument_id)
-            bid = float(tick.bid_price)
-            ask = float(tick.ask_price)
+        def _emit_queued_logs(self, source: Any) -> None:
+            drain_fn = getattr(source, "drain_logs", None)
+            if not callable(drain_fn):
+                return
+            for level, msg in drain_fn():
+                lvl = str(level).upper()
+                if lvl == "ERROR":
+                    self.log.error(msg)
+                elif lvl == "WARNING":
+                    self.log.warning(msg)
+                else:
+                    self.log.info(msg)
+
+        def _drain_external_events(self, _event: Any = None) -> None:
+            bitget_feed = getattr(self, "bitget_quote_feed", None)
+            if bitget_feed is not None:
+                self._emit_queued_logs(bitget_feed)
+                for iid, bid, ask, ts_ns in bitget_feed.drain_quotes():
+                    self._ingest_quote(iid, bid, ask, ts_ns)
+
+            bitget_gw = getattr(self, "bitget_gateway", None)
+            if bitget_gw is not None:
+                self._emit_queued_logs(bitget_gw)
+                events = bitget_gw.drain_events()
+                if events and self._can_book_in_flight_orders():
+                    should_poll = False
+                    now_s_evt = int(time.time())
+                    for evt in events:
+                        coid = str(evt.client_order_id or "")
+                        if not coid:
+                            continue
+                        if evt.fee_invalid:
+                            self.ledger.set_order_fee_and_reconcile_closed(
+                                coid,
+                                None,
+                                maker_fee_bps_by_venue=self.plan.policy.maker_fee_bps_by_venue,
+                                taker_fee_bps_by_venue=self.plan.policy.taker_fee_bps_by_venue,
+                                ts_s=now_s_evt,
+                            )
+                            self._order_fee_invalid.add(coid)
+                            self._order_fill_fees_usd.pop(coid, None)
+                        elif evt.fee_cleared:
+                            self.ledger.set_order_fee_and_reconcile_closed(
+                                coid,
+                                None,
+                                maker_fee_bps_by_venue=self.plan.policy.maker_fee_bps_by_venue,
+                                taker_fee_bps_by_venue=self.plan.policy.taker_fee_bps_by_venue,
+                                ts_s=now_s_evt,
+                            )
+                            self._order_fill_fees_usd.pop(coid, None)
+                        elif evt.fee_usd is not None and coid not in self._order_fee_invalid:
+                            fee_val = max(Decimal("0"), evt.fee_usd)
+                            self.ledger.set_order_fee_and_reconcile_closed(
+                                coid,
+                                fee_val,
+                                maker_fee_bps_by_venue=self.plan.policy.maker_fee_bps_by_venue,
+                                taker_fee_bps_by_venue=self.plan.policy.taker_fee_bps_by_venue,
+                                ts_s=now_s_evt,
+                            )
+                            self._order_fill_fees_usd[coid] = fee_val
+                        if evt.cancel_rejected:
+                            self.controller.on_cancel_rejected(coid)
+                        if self.controller.is_tracked_order(coid):
+                            should_poll = True
+                    if should_poll:
+                        now_s = int(time.time())
+                        self.controller.poll_active_orders(
+                            live_mids=self.live_mids,
+                            now_s=now_s,
+                            live_quotes=self.live_quotes,
+                        )
+                        if self._shutdown_requested.is_set():
+                            self._drive_graceful_shutdown(now_s)
+
+        def _ingest_quote(self, iid: str, bid: float, ask: float, ts_event_ns: int | None) -> None:
             if bid > 0 and ask >= bid:
                 ts_now = time.time()
-                quote_ts = _resolve_quote_event_ts(tick, ts_now)
+                quote_ts = _resolve_quote_event_ts_ns(ts_event_ns, ts_now)
                 stale_s = float(self.plan.runtime.quote_stale_secs)
                 if ts_now - quote_ts > stale_s:
                     existing_ts = self.live_quote_ts.get(iid)
@@ -582,8 +722,16 @@ def _create_carry_strategy(
                         ask=ask,
                         mid=mid,
                         now_s=ts_now,
-                        event_ts_ns=getattr(tick, "ts_event", None),
+                        event_ts_ns=ts_event_ns,
                     )
+
+        def on_quote(self, tick: Any) -> None:
+            self._ingest_quote(
+                str(tick.instrument_id),
+                float(tick.bid_price),
+                float(tick.ask_price),
+                getattr(tick, "ts_event", None),
+            )
 
         def _evict_quote(self, iid: str) -> None:
             self.live_quotes.pop(iid, None)
@@ -679,6 +827,22 @@ def _create_carry_strategy(
 
         def _reconcile_on_start(self) -> None:
             now_s = int(time.time())
+            bitget_gw = getattr(self, "bitget_gateway", None)
+            if bitget_gw is not None and getattr(self, "mode", None) == "live":
+                try:
+                    bitget_gw.preflight_check()
+                except BitgetPreflightError as exc:
+                    reason = f"bitget_preflight_failed:{exc}"[:240]
+                    self.ledger.set_halt("HALTED_RECONCILE", reason, now_s)
+                    self.reconciled = False
+                    self.log.error(f"[carry] HALTED_RECONCILE: {reason}")
+                    return
+                except Exception as exc:
+                    reason = f"bitget_preflight_failed:{type(exc).__name__}"[:240]
+                    self.ledger.set_halt("HALTED_RECONCILE", reason, now_s)
+                    self.reconciled = False
+                    self.log.error(f"[carry] HALTED_RECONCILE: {reason}")
+                    return
             okx_multipliers: dict[str, Decimal] = {}
             try:
                 for inst in self.cache.instruments():
@@ -735,6 +899,15 @@ def _create_carry_strategy(
                 specs[iid] = spec
                 if self.paper_gateway is not None and iid in self.live_mids:
                     self.paper_gateway.register_spec(spec, Decimal(str(self.live_mids[iid])))
+            feed = getattr(self, "feed", None)
+            bitget_specs_fn = getattr(feed, "bitget_instrument_specs", None)
+            if callable(bitget_specs_fn):
+                bg_specs = bitget_specs_fn()
+                if bg_specs:
+                    for iid, spec in bg_specs.items():
+                        specs[iid] = spec
+                        if self.paper_gateway is not None and iid in self.live_mids:
+                            self.paper_gateway.register_spec(spec, Decimal(str(self.live_mids[iid])))
             return specs
 
         def _on_fast_risk_timer(self, _event: Any) -> None:
@@ -1000,13 +1173,28 @@ def _create_carry_strategy(
 
             open_iids = {str(p["iid_long"]) for p in active.values()} | {str(p["iid_short"]) for p in active.values()}
             to_sub, to_unsub = self.subs.reconcile(open_instrument_ids=open_iids, ranked_candidates=watch_cands, now_s=now_s)
+            bitget_feed = getattr(self, "bitget_quote_feed", None)
             for iid in to_sub:
+                if iid.endswith(".BITGET"):
+                    if bitget_feed is not None:
+                        try:
+                            bitget_feed.subscribe(iid)
+                        except Exception:
+                            pass
+                    continue
                 try:
                     self.subscribe_quotes(InstrumentId.from_str(iid))
                 except Exception:
                     pass
             for iid in to_unsub:
                 self._evict_quote(iid)
+                if iid.endswith(".BITGET"):
+                    if bitget_feed is not None:
+                        try:
+                            bitget_feed.unsubscribe(iid)
+                        except Exception:
+                            pass
+                    continue
                 try:
                     self.unsubscribe_quotes(InstrumentId.from_str(iid))
                 except Exception:
@@ -1280,6 +1468,11 @@ def run_node(plan: CarryPlan, *, mode: str, execute_live: bool = False, duration
         if hasattr(strategy, "close_slow_poller"):
             try:
                 strategy.close_slow_poller(wait=False)
+            except Exception:
+                pass
+        if hasattr(strategy, "close_external_gateways"):
+            try:
+                strategy.close_external_gateways(timeout=2.0)
             except Exception:
                 pass
         if getattr(strategy, "recorder", None) is not None:

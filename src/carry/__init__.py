@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 __all__ = [
+    "bitget_gateway",
     "config",
     "executor",
     "funding_feed",

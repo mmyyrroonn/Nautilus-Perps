@@ -18,6 +18,7 @@ class InstrumentSpec:
     min_quantity: Decimal = Decimal("0")
     min_notional_usd: Decimal = Decimal("0")
     price_increment: Decimal = Decimal("0.0001")
+    close_only: bool = False
 
     @property
     def base_step(self) -> Decimal:
@@ -128,7 +129,7 @@ def _route_cat(v1: str, v2: str) -> str:
 
 
 def _route_allowed(cat: str, route_scope: str) -> bool:
-    if route_scope == "ALL_4V":
+    if route_scope in ("ALL", "ALL_4V"):
         return True
     if route_scope == "DEX_CEX_ONLY":
         return cat == "DEX-CEX"
