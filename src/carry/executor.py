@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_CEILING, ROUND_DOWN
 import time
 from typing import Mapping, Protocol
 import uuid
 
 from .config import CarryPolicy, CarryRiskPolicy, CarryRuntimePolicy, DEX_VENUES
-from .ledger import CarryLedger
+from .ledger import CarryLedger, close_reason_priority, is_risk_close_reason, is_sliced_risk_close_reason
 from .signal import EntryCandidate, InstrumentSpec, align_leg_quantities
 
 
@@ -265,6 +265,7 @@ class ActiveMakerLeg:
     accounted_maker_base_qty: Decimal = Decimal("0")
     settled_hedged_base_qty: Decimal = Decimal("0")
     cancel_requested: bool = False
+    vacuum_canceled: bool = False
 
 
 @dataclass
@@ -377,6 +378,7 @@ class CarryExecutionController:
         self._active_hedges: dict[str, ActiveHedgeOrder] = {}
         self._active_emergency_closes: dict[str, ActiveEmergencyClose] = {}
         self._slice_attempts: dict[str, int] = {}
+        self._close_vacuum_defer_started: dict[str, int | None] = {}
         self._stopping: bool = False
 
     @property
@@ -473,10 +475,72 @@ class CarryExecutionController:
                 return True
         return False
 
+    @staticmethod
+    def _bbo_spread_bps_dec(bbo: tuple[Decimal, Decimal, Decimal, float]) -> Decimal:
+        bid, ask, mid, _ = bbo
+        return (ask - bid) / mid * Decimal("10000")
+
+    def _vacuum_gate_enabled(self) -> bool:
+        return self.runtime.max_close_cross_spread_bps > 0 and self.runtime.close_vacuum_defer_max_secs > 0
+
+    def _get_close_vacuum_defer_ts(self, position_id: str) -> int | None:
+        if position_id in self._close_vacuum_defer_started:
+            return self._close_vacuum_defer_started[position_id]
+        started = self.ledger.get_close_vacuum_defer_ts(position_id)
+        self._close_vacuum_defer_started[position_id] = started
+        return started
+
+    def _get_or_start_close_vacuum_defer(
+        self,
+        position_id: str,
+        *,
+        reason: str,
+        spread_bps: Decimal,
+        now_s: int,
+    ) -> int:
+        existing = self._get_close_vacuum_defer_ts(position_id)
+        if existing is not None:
+            return existing
+        started = self.ledger.record_close_vacuum_defer_start(
+            position_id,
+            reason=reason,
+            spread_bps=spread_bps,
+            deadline_secs=self.runtime.close_vacuum_defer_max_secs,
+            ts_s=now_s,
+        )
+        self._close_vacuum_defer_started[position_id] = started
+        return started
+
+    def _vacuum_defer_active(
+        self,
+        *,
+        position_id: str,
+        reason: str,
+        spread_bps: Decimal,
+        imbalanced: bool,
+        vacuum_deadline_expired: bool,
+        now_s: int,
+    ) -> bool:
+        if (
+            imbalanced
+            or vacuum_deadline_expired
+            or not self._vacuum_gate_enabled()
+            or spread_bps <= self.runtime.max_close_cross_spread_bps
+        ):
+            return False
+        started = self._get_or_start_close_vacuum_defer(
+            position_id,
+            reason=reason,
+            spread_bps=spread_bps,
+            now_s=now_s,
+        )
+        return (now_s - started) < self.runtime.close_vacuum_defer_max_secs
+
     def on_cancel_rejected(self, client_order_id: str) -> None:
         ctx = self._active_makers.get(client_order_id)
         if ctx is not None:
             ctx.cancel_requested = False
+            ctx.vacuum_canceled = False
 
     def has_any_in_flight_orders(self) -> bool:
         return bool(
@@ -575,9 +639,14 @@ class CarryExecutionController:
                                 now_s=now_s,
                                 live_mids=live_mids,
                             )
+                    elif is_risk_close_reason(str(pos.get("close_reason") or "")):
+                        # Preserve risk-driven CLOSING positions across shutdown: sliced risk closes resume cleanly,
+                        # while hard risk closes stay CLOSING (blocking shutdown / halting startup) rather than reopening.
+                        pass
                     else:
-                        self.ledger.update_position_status(pid, status="OPEN", ts_s=now_s)
+                        self.ledger.revert_closing_to_open(pid, ts_s=now_s)
                         self._slice_attempts.pop(pid, None)
+                        self._close_vacuum_defer_started.pop(pid, None)
 
     def is_shutdown_ready(
         self,
@@ -589,9 +658,22 @@ class CarryExecutionController:
         blockers: list[str] = []
         if self.has_any_in_flight_orders():
             blockers.append("in_flight_orders")
+        kill_halted = self.ledger.is_kill_halted()[0]
         for pid, pos in sorted(self.ledger.active_positions().items()):
             status = str(pos["status"])
-            if status != "OPEN":
+            cur_l = Decimal(str(pos["long_base_qty"]))
+            cur_s = Decimal(str(pos["short_base_qty"]))
+            balanced_risk_closing = (
+                status == "CLOSING"
+                and not kill_halted
+                and is_sliced_risk_close_reason(
+                    str(pos.get("close_reason") or ""),
+                    basis_stop_via_closing=self.risk.basis_stop_via_closing,
+                )
+                and cur_l > Decimal("0")
+                and cur_s > Decimal("0")
+            )
+            if status != "OPEN" and not balanced_risk_closing:
                 blockers.append(f"position_not_settled:{pid}:{status}")
             spec_l = specs.get(str(pos["iid_long"]))
             spec_s = specs.get(str(pos["iid_short"]))
@@ -811,6 +893,7 @@ class CarryExecutionController:
         now_s: int,
         close_reason: str | None = None,
     ) -> None:
+        self._close_vacuum_defer_started.pop(position_id, None)
         price_pnl = self.ledger.compute_position_price_pnl(position_id)
         funding_pnl = self.ledger.get_position_funding_pnl(position_id)
         fee_usd = self.ledger.compute_position_fee_usd(
@@ -1768,12 +1851,15 @@ class CarryExecutionController:
         quotes: Mapping[str, tuple[float, float]],
         mids: Mapping[str, float],
         now_s: int,
+        only_position_id: str | None = None,
     ) -> list[str]:
         """Submit the next $50 slice for OPENING or CLOSING positions that have no in-flight orders."""
         if self._stopping or self.ledger.is_reconcile_halted()[0]:
             return []
         submitted: list[str] = []
         for pid, pos in sorted(self.ledger.active_positions().items()):
+            if only_position_id is not None and pid != only_position_id:
+                continue
             status = str(pos["status"])
             if status not in ("OPENING", "CLOSING"):
                 continue
@@ -1907,71 +1993,174 @@ class CarryExecutionController:
                     self._finalize_closed_position(pid, now_s=now_s)
                     self._slice_attempts.pop(pid, None)
                     continue
-                if self._slice_attempts.get(pid, 0) >= self.runtime.maker_max_attempts:
+                imbalanced = self._has_unhedged_exposure(
+                    pos, spec_l=spec_l, spec_s=spec_s, live_mids=mids
+                ) or self._is_position_imbalanced(pos, spec_l, spec_s)
+                started_ts = self._get_close_vacuum_defer_ts(pid)
+                vacuum_deadline_expired = (
+                    self._vacuum_gate_enabled()
+                    and started_ts is not None
+                    and (now_s - started_ts) >= self.runtime.close_vacuum_defer_max_secs
+                )
+                close_reason = str(pos.get("close_reason") or "closing")
+                use_dual_taker = (
+                    self._slice_attempts.get(pid, 0) >= self.runtime.maker_max_attempts
+                    or vacuum_deadline_expired
+                    or imbalanced
+                )
+                if not use_dual_taker:
+                    missing_leg_bbo = (cur_l > Decimal("0") and bbo_l is None) or (
+                        cur_s > Decimal("0") and bbo_s is None
+                    )
+                    if missing_leg_bbo:
+                        if self._vacuum_gate_enabled() and not imbalanced and not vacuum_deadline_expired:
+                            started = self._get_or_start_close_vacuum_defer(
+                                pid,
+                                reason=f"{close_reason}:missing_bbo",
+                                spread_bps=Decimal("0"),
+                                now_s=now_s,
+                            )
+                            if (now_s - started) >= self.runtime.close_vacuum_defer_max_secs:
+                                vacuum_deadline_expired = True
+                                use_dual_taker = True
+                            else:
+                                continue
+                        else:
+                            continue
+                if not use_dual_taker:
+                    assert bbo_l is not None and bbo_s is not None
+                    bid_l, ask_l, mid_l, sp_l = bbo_l
+                    bid_s, ask_s, mid_s, sp_s = bbo_s
+                    maker_is_long = self._choose_maker_side(
+                        str(pos["long_venue"]), str(pos["short_venue"]), sp_l, sp_s
+                    )
+                    hedge_sp = self._bbo_spread_bps_dec(bbo_s if maker_is_long else bbo_l)
+                    if self._vacuum_defer_active(
+                        position_id=pid,
+                        reason=close_reason,
+                        spread_bps=hedge_sp,
+                        imbalanced=imbalanced,
+                        vacuum_deadline_expired=vacuum_deadline_expired,
+                        now_s=now_s,
+                    ):
+                        continue
+                    ok, err = self._submit_next_slice(
+                        position_id=pid, is_opening=False, spec_l=spec_l, spec_s=spec_s,
+                        leg_l_bid=bid_l, leg_l_ask=ask_l, leg_l_mid=mid_l,
+                        leg_s_bid=bid_s, leg_s_ask=ask_s, leg_s_mid=mid_s,
+                        remaining_base=rem, sp_l=sp_l, sp_s=sp_s, now_s=now_s,
+                    )
+                    if ok:
+                        submitted.append(pid)
+                        continue
+                    if err in _OPENING_UNFILLABLE_DUST_ERRORS:
+                        use_dual_taker = True
+                if use_dual_taker:
+                    if (
+                        self._vacuum_gate_enabled()
+                        and not imbalanced
+                        and not vacuum_deadline_expired
+                        and ((cur_l > Decimal("0") and bbo_l is None) or (cur_s > Decimal("0") and bbo_s is None))
+                    ):
+                        started = self._get_or_start_close_vacuum_defer(
+                            pid,
+                            reason=f"{close_reason}:missing_bbo",
+                            spread_bps=Decimal("0"),
+                            now_s=now_s,
+                        )
+                        if (now_s - started) < self.runtime.close_vacuum_defer_max_secs:
+                            continue
+                        vacuum_deadline_expired = True
                     raw_ml = mids.get(iid_l)
                     raw_ms = mids.get(iid_s)
-                    if bbo_l is not None:
-                        bid_l, mid_l = bbo_l[0], bbo_l[2]
-                    elif raw_ml is not None and raw_ml > 0:
-                        bid_l = mid_l = Decimal(str(raw_ml))
+                    if cur_l > Decimal("0"):
+                        if bbo_l is not None:
+                            bid_l, mid_l = bbo_l[0], bbo_l[2]
+                        elif raw_ml is not None and raw_ml > 0:
+                            bid_l = mid_l = Decimal(str(raw_ml))
+                        else:
+                            continue
                     else:
+                        bid_l = mid_l = Decimal("0")
+                    if cur_s > Decimal("0"):
+                        if bbo_s is not None:
+                            ask_s, mid_s = bbo_s[1], bbo_s[2]
+                        elif raw_ms is not None and raw_ms > 0:
+                            ask_s = mid_s = Decimal(str(raw_ms))
+                        else:
+                            continue
+                    else:
+                        ask_s = mid_s = Decimal("0")
+                    if cur_l > Decimal("0") and cur_s > Decimal("0"):
+                        mid = Decimal("0.5") * (mid_l + mid_s)
+                        slice_usd = self._closing_slice_target_usd(
+                            rem_usd=rem * mid, spec_l=spec_l, spec_s=spec_s, mid=mid
+                        )
+                        aligned, _ = align_leg_quantities(
+                            spec_l,
+                            spec_s,
+                            target_usd=slice_usd,
+                            mid_price=mid,
+                            max_mismatch_pct=self.risk.max_qty_mismatch_pct,
+                        )
+                        if aligned is not None:
+                            close_l = min(cur_l, aligned.long_base_qty)
+                            close_s = min(cur_s, aligned.short_base_qty)
+                        else:
+                            close_l, close_s = cur_l, cur_s
+                    else:
+                        nz_mid = mid_l if cur_l > Decimal("0") else mid_s
+                        nz_spec = spec_l if cur_l > Decimal("0") else spec_s
+                        nz_cur = cur_l if cur_l > Decimal("0") else cur_s
+                        nz_min_qty_base = nz_spec.min_quantity * nz_spec.contract_multiplier
+                        nz_min_notional_base = (
+                            (nz_spec.min_notional_usd / nz_mid)
+                            if (nz_spec.min_notional_usd > 0 and nz_mid > 0)
+                            else Decimal("0")
+                        )
+                        min_raw_base = max(nz_spec.base_step, nz_min_qty_base, nz_min_notional_base)
+                        min_steps = max(
+                            Decimal("1"),
+                            (min_raw_base / nz_spec.base_step).to_integral_value(rounding=ROUND_CEILING),
+                        )
+                        min_base = min_steps * nz_spec.base_step
+                        slice_usd = self._closing_slice_target_usd(
+                            rem_usd=nz_cur * nz_mid, spec_l=nz_spec, spec_s=nz_spec, mid=nz_mid
+                        )
+                        if nz_cur <= min_base or nz_cur * nz_mid <= slice_usd or nz_mid <= 0:
+                            nz_close = nz_cur
+                        else:
+                            target_steps = ((slice_usd / nz_mid) / nz_spec.base_step).to_integral_value(rounding=ROUND_DOWN)
+                            nz_close = max(min_base, target_steps * nz_spec.base_step)
+                            if nz_cur - nz_close < min_base:
+                                nz_close = nz_cur
+                            nz_close = min(nz_cur, nz_close)
+                        close_l = nz_close if cur_l > Decimal("0") else Decimal("0")
+                        close_s = nz_close if cur_s > Decimal("0") else Decimal("0")
+
+                    cross_spreads: list[Decimal] = []
+                    if close_l > Decimal("0") and bbo_l is not None:
+                        cross_spreads.append(self._bbo_spread_bps_dec(bbo_l))
+                    if close_s > Decimal("0") and bbo_s is not None:
+                        cross_spreads.append(self._bbo_spread_bps_dec(bbo_s))
+                    cross_sp = max(cross_spreads, default=Decimal("0"))
+                    if self._vacuum_defer_active(
+                        position_id=pid,
+                        reason=close_reason,
+                        spread_bps=cross_sp,
+                        imbalanced=imbalanced,
+                        vacuum_deadline_expired=vacuum_deadline_expired,
+                        now_s=now_s,
+                    ):
                         continue
-                    if bbo_s is not None:
-                        ask_s, mid_s = bbo_s[1], bbo_s[2]
-                    elif raw_ms is not None and raw_ms > 0:
-                        ask_s = mid_s = Decimal(str(raw_ms))
-                    else:
-                        continue
-                    mid = Decimal("0.5") * (mid_l + mid_s)
-                    slice_usd = self._closing_slice_target_usd(
-                        rem_usd=rem * mid, spec_l=spec_l, spec_s=spec_s, mid=mid
-                    )
-                    aligned, _ = align_leg_quantities(
-                        spec_l,
-                        spec_s,
-                        target_usd=slice_usd,
-                        mid_price=mid,
-                        max_mismatch_pct=self.risk.max_qty_mismatch_pct,
-                    )
-                    if aligned is not None and cur_l > Decimal("0") and cur_s > Decimal("0"):
-                        close_l = min(cur_l, aligned.long_base_qty)
-                        close_s = min(cur_s, aligned.short_base_qty)
-                    else:
-                        close_l, close_s = cur_l, cur_s
-                    ok, _ = self._submit_dual_taker_close_slice(
+
+                    ok_tc, _ = self._submit_dual_taker_close_slice(
                         position_id=pid,
                         pos=pos,
                         spec_l=spec_l,
                         spec_s=spec_s,
                         close_l_base=close_l,
                         close_s_base=close_s,
-                        leg_l_bid=bid_l,
-                        leg_s_ask=ask_s,
-                        now_s=now_s,
-                    )
-                    if ok:
-                        submitted.append(pid)
-                    continue
-                if bbo_l is None or bbo_s is None:
-                    continue
-                bid_l, ask_l, mid_l, sp_l = bbo_l
-                bid_s, ask_s, mid_s, sp_s = bbo_s
-                ok, err = self._submit_next_slice(
-                    position_id=pid, is_opening=False, spec_l=spec_l, spec_s=spec_s,
-                    leg_l_bid=bid_l, leg_l_ask=ask_l, leg_l_mid=mid_l,
-                    leg_s_bid=bid_s, leg_s_ask=ask_s, leg_s_mid=mid_s,
-                    remaining_base=rem, sp_l=sp_l, sp_s=sp_s, now_s=now_s,
-                )
-                if ok:
-                    submitted.append(pid)
-                elif err in ("min_lot_exceeds_target_usd", "target_below_coarse_step", "alignment_mismatch_exceeds_tolerance"):
-                    ok_tc, _ = self._submit_dual_taker_close_slice(
-                        position_id=pid,
-                        pos=pos,
-                        spec_l=spec_l,
-                        spec_s=spec_s,
-                        close_l_base=cur_l,
-                        close_s_base=cur_s,
                         leg_l_bid=bid_l,
                         leg_s_ask=ask_s,
                         now_s=now_s,
@@ -1990,16 +2179,58 @@ class CarryExecutionController:
         reason: str,
         now_s: int,
     ) -> bool:
-        """Initiate normal Maker-First + IOC-Hedge sliced exit for carry_decay."""
-        if self.ledger.is_reconcile_halted()[0]:
+        """Initiate or escalate Maker-First + IOC-Hedge sliced exit without resetting active attempts."""
+        if self.ledger.is_reconcile_halted()[0] or position_id in self._active_emergency_closes:
             return False
+        pos = self.ledger.active_positions().get(position_id)
+        if pos is None:
+            return False
+        for coid, ctx in list(self._active_makers.items()):
+            if ctx.position_id != position_id or not ctx.is_opening or ctx.cancel_requested:
+                continue
+            c_ack = self.gateway.cancel_order(
+                client_order_id=coid,
+                venue=ctx.maker_venue,
+                instrument_id=ctx.spec_maker.instrument_id,
+            )
+            ctx.cancel_requested = True
+            self._update_order_from_ack(coid, c_ack, now_s=now_s)
+            if c_ack.filled_base_qty > ctx.accounted_maker_base_qty:
+                delta_base = c_ack.filled_base_qty - ctx.accounted_maker_base_qty
+                self._apply_leg_fill_delta(
+                    position_id,
+                    is_long=ctx.maker_side_is_long,
+                    is_opening=True,
+                    delta_base=delta_base,
+                    now_s=now_s,
+                )
+                ctx.accounted_maker_base_qty += delta_base
+            if c_ack.status in TERMINAL_ORDER_STATUSES:
+                self._active_makers.pop(coid, None)
         pos = self.ledger.active_positions().get(position_id)
         if pos is None:
             return False
         if str(pos["status"]) != "CLOSING":
             self._slice_attempts.pop(position_id, None)
+            self._close_vacuum_defer_started.pop(position_id, None)
             self.ledger.update_position_status(position_id, status="CLOSING", ts_s=now_s, close_reason=reason)
-        return bool(self.advance_pending_slices(specs=specs, quotes=quotes, mids=mids, now_s=now_s))
+        else:
+            existing_reason = str(pos.get("close_reason") or "")
+            if close_reason_priority(reason) > close_reason_priority(existing_reason):
+                self.ledger.update_position_status(position_id, status="CLOSING", ts_s=now_s, close_reason=reason)
+        return position_id in self.advance_pending_slices(
+            specs=specs,
+            quotes=quotes,
+            mids=mids,
+            now_s=now_s,
+            only_position_id=position_id,
+        )
+
+    def _increment_slice_attempt_if_phase_matches(self, position_id: str, *, is_opening: bool) -> None:
+        pos = self.ledger.active_positions().get(position_id)
+        expected = "OPENING" if is_opening else "CLOSING"
+        if pos is not None and str(pos["status"]) == expected:
+            self._slice_attempts[position_id] = self._slice_attempts.get(position_id, 0) + 1
 
     def poll_active_orders(
         self,
@@ -2033,42 +2264,74 @@ class CarryExecutionController:
             if coid in self._active_makers and ack.status in TERMINAL_ORDER_STATUSES:
                 self._active_makers.pop(coid, None)
                 self._reconcile_or_finalize_position(ctx.position_id, now_s=now_s, live_mids=live_mids)
-                if ctx.cancel_requested and ack.status != "FILLED":
-                    self._slice_attempts[ctx.position_id] = self._slice_attempts.get(ctx.position_id, 0) + 1
-                    timed_out.append(coid)
-                elif ack.status in ("CANCELED", "REJECTED") and ack.filled_base_qty <= Decimal("0"):
-                    self._slice_attempts[ctx.position_id] = self._slice_attempts.get(ctx.position_id, 0) + 1
-            elif (
-                coid in self._active_makers
-                and not ctx.cancel_requested
-                and not self.ledger.is_reconcile_halted()[0]
-                and now_s - ctx.submitted_ts >= self.runtime.maker_requote_secs
-            ):
-                c_ack = self.gateway.cancel_order(
-                    client_order_id=coid,
-                    venue=ctx.maker_venue,
-                    instrument_id=ctx.spec_maker.instrument_id,
-                )
-                ctx.cancel_requested = True
-                self._update_order_from_ack(coid, c_ack, now_s=now_s)
-                if c_ack.filled_base_qty > ctx.accounted_maker_base_qty or (
-                    c_ack.status in TERMINAL_ORDER_STATUSES and self._maker_unhedged_qty(ctx) > Decimal("0")
-                ):
-                    h_mid, h_bbo = self._hedge_quote_ctx(ctx, live_mids, live_quotes)
-                    self.on_maker_progress(
-                        coid,
-                        filled_base_qty=c_ack.filled_base_qty,
-                        terminal=(c_ack.status in TERMINAL_ORDER_STATUSES),
-                        hedge_mid=h_mid,
-                        now_s=now_s,
-                        hedge_bbo=h_bbo,
-                    )
-                if coid in self._active_makers and c_ack.status in TERMINAL_ORDER_STATUSES:
-                    self._active_makers.pop(coid, None)
-                    self._reconcile_or_finalize_position(ctx.position_id, now_s=now_s, live_mids=live_mids)
-                    if c_ack.status != "FILLED":
-                        self._slice_attempts[ctx.position_id] = self._slice_attempts.get(ctx.position_id, 0) + 1
+                if not ctx.vacuum_canceled:
+                    if ctx.cancel_requested and ack.status != "FILLED":
+                        self._increment_slice_attempt_if_phase_matches(ctx.position_id, is_opening=ctx.is_opening)
                         timed_out.append(coid)
+                    elif ack.status in ("CANCELED", "REJECTED") and ack.filled_base_qty <= Decimal("0"):
+                        self._increment_slice_attempt_if_phase_matches(ctx.position_id, is_opening=ctx.is_opening)
+            elif coid in self._active_makers and not ctx.cancel_requested and not self.ledger.is_reconcile_halted()[0]:
+                vacuum_cancel = False
+                deadline_cancel = False
+                if not ctx.is_opening and self._vacuum_gate_enabled():
+                    started_c = self._get_close_vacuum_defer_ts(ctx.position_id)
+                    expired_c = started_c is not None and (
+                        now_s - started_c
+                    ) >= self.runtime.close_vacuum_defer_max_secs
+                    if expired_c:
+                        deadline_cancel = True
+                    elif live_quotes is not None:
+                        h_bbo = self._valid_bbo(live_quotes, ctx.spec_hedge.instrument_id)
+                        if h_bbo is not None:
+                            hedge_sp = self._bbo_spread_bps_dec(h_bbo)
+                            if hedge_sp > self.runtime.max_close_cross_spread_bps:
+                                pos_cur = self.ledger.active_positions().get(ctx.position_id)
+                                if pos_cur is not None:
+                                    spec_l_c, spec_s_c = (
+                                        (ctx.spec_maker, ctx.spec_hedge)
+                                        if ctx.maker_side_is_long
+                                        else (ctx.spec_hedge, ctx.spec_maker)
+                                    )
+                                    imbalanced_c = self._has_unhedged_exposure(
+                                        pos_cur, spec_l=spec_l_c, spec_s=spec_s_c, live_mids=live_mids
+                                    ) or self._is_position_imbalanced(pos_cur, spec_l_c, spec_s_c)
+                                    if self._vacuum_defer_active(
+                                        position_id=ctx.position_id,
+                                        reason=str(pos_cur.get("close_reason") or "closing"),
+                                        spread_bps=hedge_sp,
+                                        imbalanced=imbalanced_c,
+                                        vacuum_deadline_expired=False,
+                                        now_s=now_s,
+                                    ):
+                                        vacuum_cancel = True
+                if vacuum_cancel or deadline_cancel or (now_s - ctx.submitted_ts >= self.runtime.maker_requote_secs):
+                    c_ack = self.gateway.cancel_order(
+                        client_order_id=coid,
+                        venue=ctx.maker_venue,
+                        instrument_id=ctx.spec_maker.instrument_id,
+                    )
+                    ctx.cancel_requested = True
+                    if vacuum_cancel or deadline_cancel:
+                        ctx.vacuum_canceled = True
+                    self._update_order_from_ack(coid, c_ack, now_s=now_s)
+                    if c_ack.filled_base_qty > ctx.accounted_maker_base_qty or (
+                        c_ack.status in TERMINAL_ORDER_STATUSES and self._maker_unhedged_qty(ctx) > Decimal("0")
+                    ):
+                        h_mid, h_bbo = self._hedge_quote_ctx(ctx, live_mids, live_quotes)
+                        self.on_maker_progress(
+                            coid,
+                            filled_base_qty=c_ack.filled_base_qty,
+                            terminal=(c_ack.status in TERMINAL_ORDER_STATUSES),
+                            hedge_mid=h_mid,
+                            now_s=now_s,
+                            hedge_bbo=h_bbo,
+                        )
+                    if coid in self._active_makers and c_ack.status in TERMINAL_ORDER_STATUSES:
+                        self._active_makers.pop(coid, None)
+                        self._reconcile_or_finalize_position(ctx.position_id, now_s=now_s, live_mids=live_mids)
+                        if c_ack.status != "FILLED" and not ctx.vacuum_canceled:
+                            self._increment_slice_attempt_if_phase_matches(ctx.position_id, is_opening=ctx.is_opening)
+                            timed_out.append(coid)
 
         for batch in list(self._active_dual_takers.values()):
             for leg in batch.active_legs():
@@ -2093,7 +2356,7 @@ class CarryExecutionController:
                     leg.fallback_filled_base_qty = f_ack.filled_base_qty
             outcome = self._reconcile_dual_taker_batch(batch, now_s=now_s)
             if outcome == "UNFILLED":
-                self._slice_attempts[batch.position_id] = self._slice_attempts.get(batch.position_id, 0) + 1
+                self._increment_slice_attempt_if_phase_matches(batch.position_id, is_opening=batch.is_opening)
 
         for task in list(self._active_hedges.values()):
             if task.status not in TERMINAL_ORDER_STATUSES:
@@ -2364,6 +2627,13 @@ class CarryExecutionController:
         pos = self.ledger.active_positions().get(position_id)
         if pos is None:
             return
+        existing_reason = str(pos.get("close_reason") or "")
+        persisted_reason = (
+            reason
+            if (str(pos["status"]) != "CLOSING" or close_reason_priority(reason) >= close_reason_priority(existing_reason))
+            else existing_reason
+        )
+        self.ledger.update_position_status(position_id, status="CLOSING", ts_s=now_s, close_reason=persisted_reason)
         for coid, ctx in list(self._active_makers.items()):
             if ctx.position_id != position_id:
                 continue
@@ -2390,7 +2660,6 @@ class CarryExecutionController:
         pos = self.ledger.active_positions().get(position_id)
         if pos is None:
             return
-        self.ledger.update_position_status(position_id, status="CLOSING", ts_s=now_s, close_reason=reason)
         spec_l = specs[str(pos["iid_long"])]
         spec_s = specs[str(pos["iid_short"])]
         fb_l = Decimal(str(live_mids[spec_l.instrument_id])) if (live_mids and spec_l.instrument_id in live_mids) else None
@@ -2398,7 +2667,7 @@ class CarryExecutionController:
 
         close_task = ActiveEmergencyClose(
             position_id=position_id,
-            reason=reason,
+            reason=persisted_reason,
             legs=[],
             submitted_ts=now_s,
             spec_l=spec_l,

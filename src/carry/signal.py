@@ -470,6 +470,72 @@ def evaluate_watch_candidates(
     return out
 
 
+def _dual_leg_window_net_funding_bps(
+    leg_l: LegMarketInfo,
+    leg_s: LegMarketInfo,
+    now_s: int,
+    end_ts: int,
+) -> float | None:
+    """Compute merged signed funding in (now_s, end_ts] across both legs, or None if missing rates."""
+    rate_l = leg_l.current_rate_bps_h if leg_l.current_rate_bps_h is not None else leg_l.r8_bps_h
+    rate_s = leg_s.current_rate_bps_h if leg_s.current_rate_bps_h is not None else leg_s.r8_bps_h
+    if rate_l is None or rate_s is None:
+        return None
+    window_net_bps = 0.0
+    for leg, is_long, rate in ((leg_l, True, float(rate_l)), (leg_s, False, float(rate_s))):
+        iv = max(1, int(leg.interval_h))
+        step_s = iv * 3600
+        first_ts = _first_future_settle_ts(int(leg.next_settle_ts), iv, int(now_s))
+        n_settle = 0 if first_ts > end_ts else (1 + (end_ts - first_ts) // step_s)
+        signed_bps_h = (-rate) if is_long else rate
+        window_net_bps += float(n_settle) * signed_bps_h * float(iv)
+    return window_net_bps
+
+
+def select_cex_exit_defer_ts(
+    leg_l: LegMarketInfo,
+    leg_s: LegMarketInfo,
+    policy: CarryPolicy,
+    now_s: int,
+    *,
+    pinned_defer_ts: int | None = None,
+) -> int | None:
+    """Return CEX settlement timestamp to defer exit for, honoring dual-leg net check and pinned target."""
+    defer_s = policy.cex_exit_defer_before_settle_mins * 60
+    if defer_s <= 0:
+        return None
+    if pinned_defer_ts is not None and now_s >= pinned_defer_ts:
+        return None
+
+    candidates: list[int] = []
+    for leg, is_long in ((leg_l, True), (leg_s, False)):
+        if leg.venue not in CEX_VENUES or leg.interval_h < 2 or leg.next_settle_ts <= now_s:
+            continue
+        if leg.next_settle_ts - now_s <= defer_s:
+            rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else (leg.r8_bps_h or 0.0)
+            leg_receiving = (rate < 0) if is_long else (rate > 0)
+            if leg_receiving:
+                candidates.append(int(leg.next_settle_ts))
+    if not candidates:
+        return None
+
+    uniq = sorted(set(candidates))
+    if not policy.cex_exit_defer_dual_leg_net:
+        return uniq[0]
+
+    if pinned_defer_ts is not None:
+        if pinned_defer_ts not in uniq:
+            return None
+        net_bps = _dual_leg_window_net_funding_bps(leg_l, leg_s, now_s, pinned_defer_ts)
+        return pinned_defer_ts if (net_bps is not None and net_bps > 1e-12) else None
+
+    for target_ts in uniq:
+        net_bps = _dual_leg_window_net_funding_bps(leg_l, leg_s, now_s, target_ts)
+        if net_bps is not None and net_bps > 1e-12:
+            return target_ts
+    return None
+
+
 def should_exit_carry_decay(
     *,
     opened_ts: int,
@@ -477,6 +543,7 @@ def should_exit_carry_decay(
     leg_s: LegMarketInfo,
     policy: CarryPolicy,
     now_s: int,
+    pinned_defer_ts: int | None = None,
 ) -> tuple[bool, str]:
     """Check normal carry-decay exit, honoring min_hold_h and CEX settlement collection deferral."""
     if now_s - opened_ts < policy.min_hold_h * 3600:
@@ -488,16 +555,8 @@ def should_exit_carry_decay(
         return False, "carry_healthy"
 
     # Defer normal carry_decay exit if a >=2h CEX leg is due to RECEIVE funding within defer window
-    defer_s = policy.cex_exit_defer_before_settle_mins * 60
-    if defer_s > 0:
-        for leg, is_long in ((leg_l, True), (leg_s, False)):
-            if leg.venue not in CEX_VENUES or leg.interval_h < 2 or leg.next_settle_ts <= now_s:
-                continue
-            if leg.next_settle_ts - now_s <= defer_s:
-                rate = leg.current_rate_bps_h if leg.current_rate_bps_h is not None else (leg.r8_bps_h or 0.0)
-                leg_receiving = (rate < 0) if is_long else (rate > 0)
-                if leg_receiving:
-                    return False, "defer_collect_cex_settlement"
+    if select_cex_exit_defer_ts(leg_l, leg_s, policy, now_s, pinned_defer_ts=pinned_defer_ts) is not None:
+        return False, "defer_collect_cex_settlement"
     return True, "carry_decay"
 
 

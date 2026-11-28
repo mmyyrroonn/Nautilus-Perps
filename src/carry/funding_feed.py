@@ -4,6 +4,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from decimal import Decimal
 import inspect
 import json
 import threading
@@ -131,7 +132,7 @@ class LegMarketInfo:
     @property
     def mid(self) -> float:
         if self.bid > 0 and self.ask > 0:
-            return 0.5 * (self.bid + self.ask)
+            return float((Decimal(str(self.bid)) + Decimal(str(self.ask))) * Decimal("0.5"))
         return self.mark_price
 
     @property
@@ -256,6 +257,7 @@ def parse_bybit_tickers(
     now_s: int = 0,
     explicit_iv_out: set[str] | None = None,
     explicit_nxt_out: set[str] | None = None,
+    ticker_iv_out: dict[str, int] | None = None,
 ) -> dict[str, LegMarketInfo]:
     """Normalize Bybit /v5/market/tickers?category=linear."""
     rows = tickers_payload.get("result", {}).get("list", []) if isinstance(tickers_payload, dict) else []
@@ -276,6 +278,8 @@ def parse_bybit_tickers(
             iv = max(1, int(raw_iv))
             if explicit_iv_out is not None:
                 explicit_iv_out.add(raw)
+            if ticker_iv_out is not None:
+                ticker_iv_out[raw] = iv
         elif raw in iv_map:
             iv = max(1, int(iv_map[raw]))
             if explicit_iv_out is not None:
@@ -713,6 +717,8 @@ class PublicCarryFeed:
             elif leg.fetched_ts > 0:
                 nxt = next_hourly_settle_ts(leg.fetched_ts, max(1, int(iv)))
         elif leg.venue == "OKX":
+            b_nxt: int | None = None
+            cached_iv = max(1, int(iv))
             if okx_bulk_funding and leg.raw_symbol in okx_bulk_funding:
                 b_raw_fr, b_live_iv, b_nxt = okx_bulk_funding[leg.raw_symbol]
                 if b_live_iv is not None:
@@ -721,8 +727,11 @@ class PublicCarryFeed:
                     nxt = b_nxt
                 if b_raw_fr is not None:
                     cur_rate = b_raw_fr * 1e4 / max(1, iv)
-            elif cached_nxt > 0 and leg.fetched_ts > 0 and cached_nxt <= leg.fetched_ts:
-                nxt = self._advance_cached_settle_ts(cached_nxt, leg.fetched_ts, max(1, int(iv)))
+            if b_nxt is None and leg.fetched_ts > 0 and (nxt <= leg.fetched_ts or cached_iv != max(1, int(iv))):
+                if cached_nxt > 0 and cached_iv == max(1, int(iv)):
+                    nxt = self._advance_cached_settle_ts(cached_nxt, leg.fetched_ts, max(1, int(iv)))
+                else:
+                    nxt = next_hourly_settle_ts(leg.fetched_ts, max(1, int(iv)))
         elif leg.venue == "BITGET":
             if leg.interval_h > 0:
                 iv = leg.interval_h
@@ -907,8 +916,11 @@ class PublicCarryFeed:
         r8, r24, iv = compute_trailing_rates(settle_events, now_s, live_iv or leg.interval_h)
         if live_iv is not None:
             iv = live_iv
-        elif leg.venue == "BYBIT" and cur_rate_bps_h is not None and iv > 0 and iv != leg.interval_h:
-            cur_rate_bps_h = cur_rate_bps_h * float(leg.interval_h) / float(iv)
+        elif leg.venue == "BYBIT" and iv > 0 and iv != leg.interval_h:
+            if cur_rate_bps_h is not None:
+                cur_rate_bps_h = cur_rate_bps_h * float(leg.interval_h) / float(iv)
+            if leg.raw_symbol not in self._byb_explicit_nxt_raw and now_s > 0:
+                nxt_settle = next_hourly_settle_ts(now_s, iv)
         if leg.venue == "OKX" and raw_fr is not None:
             cur_rate_bps_h = raw_fr * 1e4 / max(1, iv)
         sorted_settles = tuple(sorted({int(ts): float(val) for ts, val in settle_events}.items()))
@@ -1017,6 +1029,7 @@ class PublicCarryFeed:
                 tk = self._request(f"{self._bybit_base}/v5/market/tickers?category=linear", None)
                 byb_explicit_iv: set[str] = set()
                 byb_explicit_nxt: set[str] = set()
+                byb_ticker_iv: dict[str, int] = {}
                 _merge(
                     parse_bybit_tickers(
                         tk,
@@ -1024,8 +1037,10 @@ class PublicCarryFeed:
                         now_s=ts,
                         explicit_iv_out=byb_explicit_iv,
                         explicit_nxt_out=byb_explicit_nxt,
+                        ticker_iv_out=byb_ticker_iv,
                     )
                 )
+                self._byb_iv_cache.update(byb_ticker_iv)
                 self._byb_explicit_iv_raw = byb_explicit_iv
                 self._byb_explicit_nxt_raw = byb_explicit_nxt
                 succeeded_venues.append("BYBIT")

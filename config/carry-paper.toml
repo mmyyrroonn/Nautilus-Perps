@@ -23,6 +23,7 @@ max_price_ratio_deviation = "0.05"
 max_1h_split_divergence = "0.15"
 cex_entry_blackout_before_settle_mins = 30
 cex_exit_defer_before_settle_mins = 20
+cex_exit_defer_dual_leg_net = true
 
 [policy.maker_fee_bps_by_venue]
 HL = "1.5"
@@ -44,12 +45,17 @@ max_venue_notional_usd = "400"
 max_gross_notional_usd = "1200"
 basis_stop_bps = "200"
 basis_persist_mins = 30
+basis_stop_via_closing = true
 margin_guard_pct = "25"
+soft_margin_guard_pct = "20"
+carry_inversion_stop_bps_h = "3.0"
+carry_inversion_persist_mins = 30
 max_unhedged_usd = "60"
 max_unhedged_secs = 10
 max_daily_loss_usd = "40"
 max_consecutive_unhedged = 3
 stop_loss_cooldown_hours = 24
+margin_guard_cooldown_hours = 2
 max_qty_mismatch_pct = "2.0"
 reconcile_tolerance_pct = "2.0"
 
@@ -64,6 +70,8 @@ unsubscribe_hysteresis_secs = 600
 maker_requote_secs = 15
 maker_max_attempts = 4
 hedge_ioc_slippage_bps = "15"
+max_close_cross_spread_bps = "150"
+close_vacuum_defer_max_secs = 180
 update_instruments_interval_mins = 60
 duration_secs = 0
 record_dir = "../reports/carry/tape-paper"

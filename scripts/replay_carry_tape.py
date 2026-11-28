@@ -17,13 +17,23 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from carry.config import CarryConfigError, CarryPlan, CarryPolicy, DEX_VENUES, load_carry_plan  # noqa: E402
+from carry.config import (  # noqa: E402
+    CarryConfigError,
+    CarryPlan,
+    CarryPolicy,
+    CarryRiskPolicy,
+    CarryRuntimePolicy,
+    DEX_VENUES,
+    load_carry_plan,
+)
 from carry.funding_feed import LegMarketInfo  # noqa: E402
-from carry.risk import BasisStopTracker, FastRiskEvaluator  # noqa: E402
+from carry.ledger import close_reason_priority  # noqa: E402
+from carry.risk import BasisStopTracker, CarryInversionTracker, FastRiskEvaluator  # noqa: E402
 from carry.signal import (  # noqa: E402
     EntryCandidate,
     estimate_exec_basis_bps,
     evaluate_entry_candidates,
+    select_cex_exit_defer_ts,
     should_exit_carry_decay,
 )
 
@@ -221,6 +231,8 @@ class _SimPosition:
     slice_attempts: int = 0
     close_reason: str | None = None
     closed_ts: int | None = None
+    close_vacuum_defer_started_ts: int | None = None
+    exit_defer_target_ts: int | None = None
     entry_pay_leg_cr_bps_h: float | None = None
     entry_c_live_bps_h: float | None = None
     entry_would_block_d: bool = False
@@ -270,6 +282,8 @@ def replay_tape(
     tape_dir: Path,
     plan: CarryPlan,
     policy_override: CarryPolicy | None = None,
+    risk_override: CarryRiskPolicy | None = None,
+    runtime_override: CarryRuntimePolicy | None = None,
     execution_mode: str = "hybrid",
 ) -> dict[str, Any]:
     """Replay recorded slow snapshots & fast BBO streams with realistic L1 fills and net PnL."""
@@ -282,8 +296,8 @@ def replay_tape(
         if execution_mode == "maker_ioc"
         else base_policy
     )
-    risk = plan.risk
-    runtime = plan.runtime
+    risk = risk_override or plan.risk
+    runtime = runtime_override or plan.runtime
     maker_fees = dict(effective_policy.maker_fee_bps_by_venue)
     taker_fees = dict(effective_policy.taker_fee_bps_by_venue)
 
@@ -292,7 +306,13 @@ def replay_tape(
         persist_mins=risk.basis_persist_mins,
         max_gap_secs=max(30, runtime.slow_poll_secs + 15),
     )
+    inversion_tracker = CarryInversionTracker(
+        inversion_stop_bps_h=risk.carry_inversion_stop_bps_h,
+        persist_mins=risk.carry_inversion_persist_mins,
+        max_gap_secs=max(180, runtime.slow_poll_secs * 2 + 30),
+    )
     fast_risk = FastRiskEvaluator(risk)
+    vacuum_enabled = runtime.max_close_cross_spread_bps > 0 and runtime.close_vacuum_defer_max_secs > 0
 
     stats: dict[str, int] = {
         "slow_files": 0,
@@ -306,6 +326,7 @@ def replay_tape(
         "candidates_passed": 0,
         "candidates_would_block_d": 0,
         "vetoed_window_recv_within_h_plus_defer": 0,
+        "close_vacuum_defers": 0,
     }
 
     live_quotes: dict[str, tuple[float, float, float]] = {}
@@ -324,6 +345,7 @@ def replay_tape(
     pos_seq = 0
     last_basis_check_s = -1
     last_fast_check_s = -1
+    last_maker_poll_s = -1
 
     def _fresh_bbo(iid: str, now_f: float) -> tuple[float, float] | None:
         q = live_quotes.get(iid)
@@ -375,6 +397,40 @@ def replay_tape(
         bps = maker_fees.get(venue, Decimal("0")) if is_maker else taker_fees.get(venue, Decimal("0"))
         pos.fee_usd += (qty * px * bps) / Decimal("10000")
 
+    def _sim_bbo_spread_bps(bbo: tuple[float, float]) -> Decimal:
+        bid_d = Decimal(str(bbo[0]))
+        ask_d = Decimal(str(bbo[1]))
+        mid_d = Decimal("0.5") * (bid_d + ask_d)
+        return ((ask_d - bid_d) / mid_d * Decimal("10000")) if mid_d > 0 else Decimal("0")
+
+    def _is_sim_imbalanced(pos: _SimPosition, now_f: float) -> bool:
+        cur_l, cur_s = pos.long_base_qty, pos.short_base_qty
+        hi = max(cur_l, cur_s)
+        if hi <= 0:
+            return False
+        if cur_l <= 0 or cur_s <= 0:
+            return True
+        diff = abs(cur_l - cur_s)
+        mids = _fresh_mid_map(now_f)
+        ref_px = Decimal(str(mids.get(pos.iid_long) or mids.get(pos.iid_short) or pos.entry_l or pos.entry_s or 0))
+        unhedged_usd = diff * ref_px
+        return unhedged_usd > risk.max_unhedged_usd or (diff / hi * Decimal("100")) > risk.max_qty_mismatch_pct
+
+    def _vacuum_defer_active(pos: _SimPosition, spread_bps: Decimal, ts_s: int, now_f: float) -> bool:
+        if not vacuum_enabled or _is_sim_imbalanced(pos, now_f):
+            return False
+        if (
+            pos.close_vacuum_defer_started_ts is not None
+            and (ts_s - pos.close_vacuum_defer_started_ts) >= runtime.close_vacuum_defer_max_secs
+        ):
+            return False
+        if spread_bps <= runtime.max_close_cross_spread_bps:
+            return False
+        if pos.close_vacuum_defer_started_ts is None:
+            pos.close_vacuum_defer_started_ts = ts_s
+            diagnostics["close_vacuum_defers"] += 1
+        return (ts_s - pos.close_vacuum_defer_started_ts) < runtime.close_vacuum_defer_max_secs
+
     def _finalize_close(pos: _SimPosition, ts_s: int, reason: str) -> None:
         pos.pending_maker = None
         pos.status = "CLOSED"
@@ -382,13 +438,16 @@ def replay_tape(
         pos.close_reason = reason
         active_positions.pop(pos.position_id, None)
         basis_tracker.clear(pos.position_id)
+        inversion_tracker.clear(pos.position_id)
 
-        if (
-            reason.startswith("basis_stop")
-            or reason.startswith("margin_guard")
-            or reason.startswith("unhedged")
-        ) and risk.stop_loss_cooldown_hours > 0:
-            cooldown_until_by_sym[pos.symbol] = ts_s + risk.stop_loss_cooldown_hours * _HOUR_SECS
+        if reason.startswith(("basis_stop", "carry_inversion", "unhedged")) and risk.stop_loss_cooldown_hours > 0:
+            until = ts_s + risk.stop_loss_cooldown_hours * _HOUR_SECS
+            cooldown_until_by_sym[pos.symbol] = max(cooldown_until_by_sym.get(pos.symbol, 0), until)
+        elif reason.startswith(("margin_guard", "soft_margin_guard")):
+            mg_h = risk.stop_loss_cooldown_hours if risk.margin_guard_cooldown_hours is None else risk.margin_guard_cooldown_hours
+            if mg_h > 0:
+                until = ts_s + mg_h * _HOUR_SECS
+                cooldown_until_by_sym[pos.symbol] = max(cooldown_until_by_sym.get(pos.symbol, 0), until)
 
         cost_l = (pos.open_l_notional / pos.open_l_qty) if pos.open_l_qty > 0 else Decimal(str(pos.entry_l))
         cost_s = (pos.open_s_notional / pos.open_s_qty) if pos.open_s_qty > 0 else Decimal(str(pos.entry_s))
@@ -463,22 +522,39 @@ def replay_tape(
         pos: _SimPosition,
         *,
         is_opening: bool,
-        bbo_l: tuple[float, float],
-        bbo_s: tuple[float, float],
+        bbo_l: tuple[float, float] | None,
+        bbo_s: tuple[float, float] | None,
         ts_s: int,
+        now_f: float | None = None,
     ) -> bool:
         nonlocal maker_orders_submitted, taker_orders_submitted
-        bid_l_dec = Decimal(str(bbo_l[0]))
-        ask_l_dec = Decimal(str(bbo_l[1]))
-        bid_s_dec = Decimal(str(bbo_s[0]))
-        ask_s_dec = Decimal(str(bbo_s[1]))
-        mid_l = (bid_l_dec + ask_l_dec) / Decimal("2")
-        mid_s = (bid_s_dec + ask_s_dec) / Decimal("2")
-        mid = (mid_l + mid_s) / Decimal("2")
+        now_f_val = float(ts_s) if now_f is None else now_f
+        if is_opening:
+            if bbo_l is None or bbo_s is None:
+                return False
+            bid_l_dec = Decimal(str(bbo_l[0]))
+            ask_l_dec = Decimal(str(bbo_l[1]))
+            bid_s_dec = Decimal(str(bbo_s[0]))
+            ask_s_dec = Decimal(str(bbo_s[1]))
+            mid_l = (bid_l_dec + ask_l_dec) / Decimal("2")
+            mid_s = (bid_s_dec + ask_s_dec) / Decimal("2")
+            mid = (mid_l + mid_s) / Decimal("2")
+        else:
+            if (pos.long_base_qty > 0 and bbo_l is None) or (pos.short_base_qty > 0 and bbo_s is None):
+                return False
+            mid_l = ((Decimal(str(bbo_l[0])) + Decimal(str(bbo_l[1]))) / Decimal("2")) if bbo_l is not None else Decimal("0")
+            mid_s = ((Decimal(str(bbo_s[0])) + Decimal(str(bbo_s[1]))) / Decimal("2")) if bbo_s is not None else Decimal("0")
+            if pos.long_base_qty > 0 and pos.short_base_qty > 0:
+                mid = (mid_l + mid_s) / Decimal("2")
+            elif pos.long_base_qty > 0:
+                mid = mid_l
+            else:
+                mid = mid_s
         if mid <= 0:
             return False
 
         if is_opening:
+            assert bbo_l is not None and bbo_s is not None
             if (
                 bid_l_dec <= 0
                 or ask_l_dec < bid_l_dec
@@ -533,10 +609,30 @@ def replay_tape(
             if rem_base <= 0:
                 _finalize_close(pos, ts_s, pos.close_reason or "carry_decay")
                 return False
+            imbalanced = _is_sim_imbalanced(pos, now_f_val)
+            vacuum_expired = (
+                vacuum_enabled
+                and pos.close_vacuum_defer_started_ts is not None
+                and (ts_s - pos.close_vacuum_defer_started_ts) >= runtime.close_vacuum_defer_max_secs
+            )
             slice_usd = min(risk.slice_usd, rem_base * mid)
             slice_qty = min(rem_base, _q4(slice_usd / mid)) if rem_base * mid > risk.slice_usd else rem_base
-            if execution_mode == "dual_taker" or pos.slice_attempts >= runtime.maker_max_attempts:
+            if (
+                execution_mode == "dual_taker"
+                or pos.slice_attempts >= runtime.maker_max_attempts
+                or vacuum_expired
+                or imbalanced
+            ):
+                cross_spreads: list[Decimal] = []
+                if pos.long_base_qty > 0 and bbo_l is not None and bbo_l[0] > 0 and bbo_l[1] >= bbo_l[0]:
+                    cross_spreads.append(_sim_bbo_spread_bps(bbo_l))
+                if pos.short_base_qty > 0 and bbo_s is not None and bbo_s[0] > 0 and bbo_s[1] >= bbo_s[0]:
+                    cross_spreads.append(_sim_bbo_spread_bps(bbo_s))
+                cross_sp = max(cross_spreads, default=Decimal("0"))
+                if _vacuum_defer_active(pos, cross_sp, ts_s, now_f_val):
+                    return False
                 if pos.long_base_qty > 0:
+                    assert bbo_l is not None
                     q_l = min(pos.long_base_qty, slice_qty)
                     _book_fill(
                         pos, is_long=True, is_opening=False, is_maker=False,
@@ -544,6 +640,7 @@ def replay_tape(
                     )
                     taker_orders_submitted += 1
                 if pos.short_base_qty > 0:
+                    assert bbo_s is not None
                     q_s = min(pos.short_base_qty, slice_qty)
                     _book_fill(
                         pos, is_long=False, is_opening=False, is_maker=False,
@@ -554,7 +651,12 @@ def replay_tape(
                     _finalize_close(pos, ts_s, pos.close_reason or "carry_decay")
                 return True
 
+        assert bbo_l is not None and bbo_s is not None
         maker_is_long = _choose_maker_is_long(pos.long_venue, pos.short_venue, bbo_l, bbo_s)
+        if (not is_opening) and _vacuum_defer_active(
+            pos, _sim_bbo_spread_bps(bbo_s if maker_is_long else bbo_l), ts_s, now_f_val
+        ):
+            return False
         if maker_is_long:
             maker_side = "BUY" if is_opening else "SELL"
             px = _anchored_maker_px(float(mid_s), bbo_l[0], bbo_l[1], maker_side)
@@ -607,7 +709,7 @@ def replay_tape(
                 return
             if bbo_l is None or bbo_s is None:
                 return
-            if not _submit_slice(pos, is_opening=True, bbo_l=bbo_l, bbo_s=bbo_s, ts_s=ts_s):
+            if not _submit_slice(pos, is_opening=True, bbo_l=bbo_l, bbo_s=bbo_s, ts_s=ts_s, now_f=now_f):
                 pos.slice_attempts += 1
                 if pos.slice_attempts >= runtime.maker_max_attempts:
                     if pos.long_base_qty <= 0 and pos.short_base_qty <= 0:
@@ -620,18 +722,73 @@ def replay_tape(
             if pos.long_base_qty <= 0 and pos.short_base_qty <= 0:
                 _finalize_close(pos, ts_s, pos.close_reason or "carry_decay")
                 return
-            if bbo_l is None or bbo_s is None:
-                if pos.slice_attempts >= runtime.maker_max_attempts:
+            imbalanced_now = _is_sim_imbalanced(pos, now_f)
+            vacuum_expired = (
+                vacuum_enabled
+                and pos.close_vacuum_defer_started_ts is not None
+                and (ts_s - pos.close_vacuum_defer_started_ts) >= runtime.close_vacuum_defer_max_secs
+            )
+            missing_leg_bbo = (pos.long_base_qty > 0 and bbo_l is None) or (pos.short_base_qty > 0 and bbo_s is None)
+            if missing_leg_bbo:
+                if vacuum_enabled and not imbalanced_now and not vacuum_expired:
+                    if pos.close_vacuum_defer_started_ts is None:
+                        pos.close_vacuum_defer_started_ts = ts_s
+                        diagnostics["close_vacuum_defers"] += 1
+                    return
+                if (
+                    execution_mode == "dual_taker"
+                    or pos.slice_attempts >= runtime.maker_max_attempts
+                    or vacuum_expired
+                    or imbalanced_now
+                ):
                     mids_now = _fresh_mid_map(now_f)
                     ml = mids_now.get(pos.iid_long)
                     ms = mids_now.get(pos.iid_short)
-                    if bbo_l is None and ml and ml > 0:
+                    if pos.long_base_qty > 0 and bbo_l is None and ml and ml > 0:
                         bbo_l = (ml, ml)
-                    if bbo_s is None and ms and ms > 0:
+                    if pos.short_base_qty > 0 and bbo_s is None and ms and ms > 0:
                         bbo_s = (ms, ms)
-                if bbo_l is None or bbo_s is None:
+                if (pos.long_base_qty > 0 and bbo_l is None) or (pos.short_base_qty > 0 and bbo_s is None):
                     return
-            _submit_slice(pos, is_opening=False, bbo_l=bbo_l, bbo_s=bbo_s, ts_s=ts_s)
+            _submit_slice(pos, is_opening=False, bbo_l=bbo_l, bbo_s=bbo_s, ts_s=ts_s, now_f=now_f)
+
+    def _start_closing(pos: _SimPosition, ts_s: int, reason: str, now_f: float) -> None:
+        if pos.status != "CLOSING":
+            if pos.pending_maker is not None and pos.pending_maker.is_opening:
+                pos.pending_maker = None
+            pos.status = "CLOSING"
+            pos.close_reason = reason
+            pos.slice_attempts = 0
+            pos.close_vacuum_defer_started_ts = None
+            pos.exit_defer_target_ts = None
+        elif close_reason_priority(reason) > close_reason_priority(pos.close_reason):
+            pos.close_reason = reason
+        if pos.pending_maker is None:
+            _advance_position_slices(pos, ts_s, now_f)
+
+    def _poll_pending_makers_1s(ts_s: int, now_f: float) -> None:
+        """Mirror runtime _on_fast_risk_timer -> poll_active_orders closing-vacuum, deadline & timeout checks at 1s cadence."""
+        for pos in list(active_positions.values()):
+            pm = pos.pending_maker
+            if pm is None:
+                continue
+            if (not pm.is_opening) and vacuum_enabled:
+                expired_c = (
+                    pos.close_vacuum_defer_started_ts is not None
+                    and (ts_s - pos.close_vacuum_defer_started_ts) >= runtime.close_vacuum_defer_max_secs
+                )
+                if expired_c:
+                    pos.pending_maker = None
+                    _advance_position_slices(pos, ts_s, now_f)
+                    continue
+                q_h = _fresh_bbo(pm.hedge_iid, now_f)
+                if q_h is not None and _vacuum_defer_active(pos, _sim_bbo_spread_bps(q_h), ts_s, now_f):
+                    pos.pending_maker = None
+                    continue
+            if ts_s - pm.submitted_ts >= runtime.maker_requote_secs:
+                pos.pending_maker = None
+                pos.slice_attempts += 1
+                _advance_position_slices(pos, ts_s, now_f)
 
     def _check_pending_makers(ts_s: int, now_f: float, trigger_iid: str | None = None) -> None:
         nonlocal maker_orders_filled, taker_orders_submitted, aborted_entries
@@ -688,10 +845,6 @@ def replay_tape(
                             else:
                                 _advance_position_slices(pos, ts_s, now_f)
                         continue
-            if ts_s - pm.submitted_ts >= runtime.maker_requote_secs:
-                pos.pending_maker = None
-                pos.slice_attempts += 1
-                _advance_position_slices(pos, ts_s, now_f)
 
     def _accrue_funding_for_slow(snapshot: Mapping[str, Mapping[str, LegMarketInfo]], ts_s: int) -> None:
         for pos in list(active_positions.values()):
@@ -740,8 +893,41 @@ def replay_tape(
             for venue, leg in vmap.items():
                 last_leg_info[(venue, sym)] = leg
 
+    def _next_maker_due_ts() -> int | None:
+        earliest: int | None = None
+        for pos in active_positions.values():
+            pm = pos.pending_maker
+            if pm is None:
+                continue
+            due = pm.submitted_ts + runtime.maker_requote_secs
+            if (not pm.is_opening) and vacuum_enabled and pos.close_vacuum_defer_started_ts is not None:
+                due = min(due, pos.close_vacuum_defer_started_ts + runtime.close_vacuum_defer_max_secs)
+            if earliest is None or due < earliest:
+                earliest = due
+        return earliest
+
+    def _advance_maker_timers_before(ts_s: int) -> None:
+        nonlocal last_maker_poll_s
+        step = max(1, int(runtime.fast_risk_poll_secs))
+        if last_maker_poll_s >= 0 and (ts_s - last_maker_poll_s) >= step:
+            if _next_maker_due_ts() is not None:
+                t_first = last_maker_poll_s + step
+                if t_first <= ts_s:
+                    _poll_pending_makers_1s(t_first, float(t_first))
+                    last_maker_poll_s = t_first
+            for _ in range(32):
+                due = _next_maker_due_ts()
+                if due is None or due > ts_s:
+                    break
+                t_tick = max(last_maker_poll_s + step, due)
+                if t_tick > ts_s:
+                    break
+                _poll_pending_makers_1s(t_tick, float(t_tick))
+                last_maker_poll_s = t_tick
+            last_maker_poll_s = max(last_maker_poll_s, ts_s - step)
+
     def _run_risk_checks(ts_s: int, now_f: float) -> None:
-        nonlocal halted_reason, last_basis_check_s, last_fast_check_s
+        nonlocal halted_reason, last_basis_check_s, last_fast_check_s, last_maker_poll_s
         mids = _fresh_mid_map(now_f)
         if last_basis_check_s < 0 or (ts_s - last_basis_check_s) >= runtime.basis_sample_secs:
             last_basis_check_s = ts_s
@@ -764,17 +950,31 @@ def replay_tape(
                     sample_ts=sample_ts,
                 )
                 if hit:
-                    _emergency_close(pos, ts_s, f"basis_stop_{risk.basis_persist_mins}m", now_f)
+                    reason = f"basis_stop_{risk.basis_persist_mins}m"
+                    if risk.basis_stop_via_closing:
+                        _start_closing(pos, ts_s, reason, now_f)
+                    else:
+                        _emergency_close(pos, ts_s, reason, now_f)
 
         if last_fast_check_s < 0 or (ts_s - last_fast_check_s) >= runtime.fast_risk_poll_secs:
             last_fast_check_s = ts_s
+            if last_maker_poll_s < 0 or (ts_s - last_maker_poll_s) >= runtime.fast_risk_poll_secs:
+                _poll_pending_makers_1s(ts_s, now_f)
+                last_maker_poll_s = ts_s
             daily_pnl = daily_pnl_by_day.get(_utc_day(ts_s), Decimal("0"))
+            quotes_now = {
+                iid: q
+                for pos in active_positions.values()
+                for iid in (pos.iid_long, pos.iid_short)
+                if (q := _fresh_bbo(iid, now_f)) is not None
+            }
             dec = fast_risk.evaluate(
                 positions={pid: pos.as_risk_row() for pid, pos in active_positions.items()},
                 live_mids=mids,
                 daily_realized_pnl_usd=daily_pnl,
                 consecutive_unhedged=0,
                 now_s=ts_s,
+                live_quotes=quotes_now,
             )
             if dec.halt_system and halted_reason is None:
                 halted_reason = dec.halt_reason
@@ -782,16 +982,21 @@ def replay_tape(
                 pos = active_positions.get(pid)
                 if pos is not None:
                     _emergency_close(pos, ts_s, reason, now_f)
+            for pid, reason in dec.soft_close_positions:
+                pos = active_positions.get(pid)
+                if pos is not None:
+                    _start_closing(pos, ts_s, reason, now_f)
 
     for ts, kind_order, row in _merged_tape_events(tape_dir, stats):
         ts_s = int(ts)
+        _advance_maker_timers_before(ts_s)
         if kind_order == 0:
             iid = str(row.get("iid") or "")
             bid = float(row.get("b") or 0.0)
             ask = float(row.get("a") or 0.0)
             if not iid or bid <= 0.0 or ask < bid:
                 continue
-            mid = float(row.get("m") or (0.5 * (bid + ask)))
+            mid = float(row.get("m") or float((Decimal(str(bid)) + Decimal(str(ask))) * Decimal("0.5")))
             live_quotes[iid] = (bid, ask, ts)
             live_mids[iid] = (mid, ts)
             _check_pending_makers(ts_s, ts, trigger_iid=iid)
@@ -818,24 +1023,42 @@ def replay_tape(
         _run_risk_checks(ts_s, ts)
 
         for pid, pos in list(active_positions.items()):
-            if pos.status not in ("OPEN", "OPENING"):
-                continue
             vmap = snap.get(pos.symbol, {})
             ll, ls = vmap.get(pos.long_venue), vmap.get(pos.short_venue)
             if ll is not None and ls is not None:
+                rate_l = ll.current_rate_bps_h if ll.current_rate_bps_h is not None else ll.r8_bps_h
+                rate_s = ls.current_rate_bps_h if ls.current_rate_bps_h is not None else ls.r8_bps_h
+                live_c = (
+                    (Decimal(str(rate_s)) - Decimal(str(rate_l)))
+                    if (rate_l is not None and rate_s is not None)
+                    else None
+                )
+                inv_hit, _ = inversion_tracker.observe(position_id=pid, live_carry_bps_h=live_c, now_s=ts_s)
+                if inv_hit:
+                    _start_closing(pos, ts_s, f"carry_inversion_{risk.carry_inversion_persist_mins}m", ts)
+                    continue
+                if pos.status not in ("OPEN", "OPENING"):
+                    continue
                 do_exit, rsn = should_exit_carry_decay(
                     opened_ts=pos.opened_ts,
                     leg_l=ll,
                     leg_s=ls,
                     policy=effective_policy,
                     now_s=ts_s,
+                    pinned_defer_ts=pos.exit_defer_target_ts,
                 )
+                if rsn == "carry_healthy":
+                    pos.exit_defer_target_ts = None
+                elif (
+                    rsn == "defer_collect_cex_settlement"
+                    and effective_policy.cex_exit_defer_dual_leg_net
+                    and pos.exit_defer_target_ts is None
+                ):
+                    pos.exit_defer_target_ts = select_cex_exit_defer_ts(ll, ls, effective_policy, ts_s)
                 if do_exit:
-                    pos.pending_maker = None
-                    pos.status = "CLOSING"
-                    pos.close_reason = rsn
-                    pos.slice_attempts = 0
-                    _advance_position_slices(pos, ts_s, ts)
+                    _start_closing(pos, ts_s, rsn, ts)
+            else:
+                inversion_tracker.observe(position_id=pid, live_carry_bps_h=None, now_s=ts_s)
 
         if halted_reason is not None:
             continue
@@ -930,7 +1153,7 @@ def replay_tape(
                 entry_would_block_d=would_block_d,
             )
             active_positions[pid] = pos
-            if not _submit_slice(pos, is_opening=True, bbo_l=bbo_l, bbo_s=bbo_s, ts_s=ts_s):
+            if not _submit_slice(pos, is_opening=True, bbo_l=bbo_l, bbo_s=bbo_s, ts_s=ts_s, now_f=ts):
                 active_positions.pop(pid, None)
                 aborted_entries += 1
                 continue
