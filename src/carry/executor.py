@@ -261,6 +261,7 @@ class ActiveMakerLeg:
     spec_hedge: InstrumentSpec
     submitted_ts: int
     attempts: int
+    target_base_qty: Decimal = Decimal("0")
     accounted_maker_base_qty: Decimal = Decimal("0")
     settled_hedged_base_qty: Decimal = Decimal("0")
     cancel_requested: bool = False
@@ -280,6 +281,7 @@ class ActiveDualTakerLeg:
     accounted_base_qty: Decimal = Decimal("0")
     fallback_coid: str | None = None
     fallback_status: str | None = None
+    fallback_target_base_qty: Decimal = Decimal("0")
     fallback_filled_base_qty: Decimal = Decimal("0")
     fallback_accounted_base_qty: Decimal = Decimal("0")
 
@@ -314,6 +316,7 @@ class ActiveHedgeOrder:
     accounted_base_qty: Decimal = Decimal("0")
     fallback_coid: str | None = None
     fallback_status: str | None = None
+    fallback_target_base_qty: Decimal = Decimal("0")
     fallback_filled_base_qty: Decimal = Decimal("0")
     fallback_accounted_base_qty: Decimal = Decimal("0")
     maker_coid: str | None = None
@@ -613,6 +616,71 @@ class CarryExecutionController:
             return True
         return any(h.position_id == position_id and h.is_opening for h in self._active_hedges.values())
 
+    def _external_in_flight_closing_qty(self, position_id: str) -> tuple[Decimal, Decimal]:
+        ext_l = Decimal("0")
+        ext_s = Decimal("0")
+        for ctx in self._active_makers.values():
+            if ctx.position_id == position_id and not ctx.is_opening:
+                rem = max(Decimal("0"), ctx.target_base_qty - ctx.accounted_maker_base_qty)
+                if ctx.maker_side_is_long:
+                    ext_l += rem
+                else:
+                    ext_s += rem
+        for h in self._active_hedges.values():
+            if h.position_id == position_id and not h.is_opening:
+                if h.status not in TERMINAL_ORDER_STATUSES:
+                    rem = max(Decimal("0"), h.target_base_qty - h.accounted_base_qty)
+                    if h.hedge_is_long:
+                        ext_l += rem
+                    else:
+                        ext_s += rem
+                if h.fallback_coid is not None and h.fallback_status not in TERMINAL_ORDER_STATUSES:
+                    rem_fb = max(Decimal("0"), h.fallback_target_base_qty - h.fallback_accounted_base_qty)
+                    if h.hedge_is_long:
+                        ext_l += rem_fb
+                    else:
+                        ext_s += rem_fb
+        batch = self._active_dual_takers.get(position_id)
+        if batch is not None and not batch.is_opening:
+            for leg in batch.active_legs():
+                if leg.status not in TERMINAL_ORDER_STATUSES:
+                    rem = max(Decimal("0"), leg.target_base_qty - leg.accounted_base_qty)
+                    if leg.is_long:
+                        ext_l += rem
+                    else:
+                        ext_s += rem
+                if leg.fallback_coid is not None and leg.fallback_status not in TERMINAL_ORDER_STATUSES:
+                    rem_fb = max(Decimal("0"), leg.fallback_target_base_qty - leg.fallback_accounted_base_qty)
+                    if leg.is_long:
+                        ext_l += rem_fb
+                    else:
+                        ext_s += rem_fb
+        return ext_l, ext_s
+
+    def _has_external_in_flight_closing_orders(self, position_id: str) -> bool:
+        if any(ctx.position_id == position_id and not ctx.is_opening for ctx in self._active_makers.values()):
+            return True
+        if any(h.position_id == position_id and not h.is_opening for h in self._active_hedges.values()):
+            return True
+        batch = self._active_dual_takers.get(position_id)
+        return batch is not None and not batch.is_opening
+
+    def _reconcile_or_finalize_position(
+        self,
+        position_id: str,
+        *,
+        now_s: int,
+        live_mids: Mapping[str, float] | None = None,
+    ) -> None:
+        if position_id in self._active_emergency_closes:
+            self._reconcile_emergency_close(
+                self._active_emergency_closes[position_id],
+                now_s=now_s,
+                live_mids=live_mids,
+            )
+        else:
+            self._maybe_finalize_position(position_id, now_s=now_s)
+
     def _maker_unhedged_qty(self, ctx: ActiveMakerLeg) -> Decimal:
         in_flight = sum(
             (
@@ -659,7 +727,7 @@ class CarryExecutionController:
                 )
             if coid in self._active_makers and c_ack.status in TERMINAL_ORDER_STATUSES:
                 self._active_makers.pop(coid, None)
-                self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+                self._reconcile_or_finalize_position(ctx.position_id, now_s=now_s, live_mids=live_mids)
         return canceled
 
     def _update_order_from_ack(
@@ -1077,6 +1145,7 @@ class CarryExecutionController:
             spec_hedge=spec_h,
             submitted_ts=now_s,
             attempts=attempt,
+            target_base_qty=base_m,
         )
         self._active_makers[coid] = ctx
         if ack.filled_base_qty > 0:
@@ -1312,6 +1381,7 @@ class CarryExecutionController:
                             self._update_order_from_ack(m_coid, m_ack, now_s=now_s, fallback_price=lagging.ref_price)
                             lagging.fallback_coid = m_coid
                             lagging.fallback_status = m_ack.status
+                            lagging.fallback_target_base_qty = rem_c * lagging.spec.contract_multiplier
                             lagging.fallback_filled_base_qty = m_ack.filled_base_qty
                             if m_ack.filled_base_qty > 0:
                                 self._apply_leg_fill_delta(
@@ -1355,6 +1425,7 @@ class CarryExecutionController:
                         self._update_order_from_ack(m_coid, m_ack, now_s=now_s, fallback_price=leg.ref_price)
                         leg.fallback_coid = m_coid
                         leg.fallback_status = m_ack.status
+                        leg.fallback_target_base_qty = rem_c * leg.spec.contract_multiplier
                         leg.fallback_filled_base_qty = m_ack.filled_base_qty
                         if m_ack.filled_base_qty > 0:
                             self._apply_leg_fill_delta(
@@ -1651,6 +1722,7 @@ class CarryExecutionController:
             self._update_order_from_ack(m_coid, m_ack, now_s=now_s, fallback_price=task.ref_price)
             task.fallback_coid = m_coid
             task.fallback_status = m_ack.status
+            task.fallback_target_base_qty = rem_contracts * task.spec.contract_multiplier
             task.fallback_filled_base_qty = m_ack.filled_base_qty
             if m_ack.filled_base_qty > 0:
                 self._apply_leg_fill_delta(
@@ -1960,7 +2032,7 @@ class CarryExecutionController:
                 )
             if coid in self._active_makers and ack.status in TERMINAL_ORDER_STATUSES:
                 self._active_makers.pop(coid, None)
-                self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+                self._reconcile_or_finalize_position(ctx.position_id, now_s=now_s, live_mids=live_mids)
                 if ctx.cancel_requested and ack.status != "FILLED":
                     self._slice_attempts[ctx.position_id] = self._slice_attempts.get(ctx.position_id, 0) + 1
                     timed_out.append(coid)
@@ -1993,7 +2065,7 @@ class CarryExecutionController:
                     )
                 if coid in self._active_makers and c_ack.status in TERMINAL_ORDER_STATUSES:
                     self._active_makers.pop(coid, None)
-                    self._maybe_finalize_position(ctx.position_id, now_s=now_s)
+                    self._reconcile_or_finalize_position(ctx.position_id, now_s=now_s, live_mids=live_mids)
                     if c_ack.status != "FILLED":
                         self._slice_attempts[ctx.position_id] = self._slice_attempts.get(ctx.position_id, 0) + 1
                         timed_out.append(coid)
@@ -2188,8 +2260,9 @@ class CarryExecutionController:
                 ),
                 Decimal("0"),
             )
-            uncovered_l = cur_l - in_flight_l
-            uncovered_s = cur_s - in_flight_s
+            ext_l, ext_s = self._external_in_flight_closing_qty(close_task.position_id)
+            uncovered_l = cur_l - in_flight_l - ext_l
+            uncovered_s = cur_s - in_flight_s - ext_s
 
             if (uncovered_l > Decimal("0") and close_task.long_failures > max_retries) or (
                 uncovered_s > Decimal("0") and close_task.short_failures > max_retries
@@ -2260,7 +2333,9 @@ class CarryExecutionController:
 
         if any(leg.status not in TERMINAL_ORDER_STATUSES for leg in close_task.legs):
             return
-        if self._has_in_flight_opening_orders(close_task.position_id):
+        if self._has_in_flight_opening_orders(close_task.position_id) or self._has_external_in_flight_closing_orders(
+            close_task.position_id
+        ):
             return
         pos_end = self.ledger.active_positions().get(close_task.position_id)
         if pos_end is None:
